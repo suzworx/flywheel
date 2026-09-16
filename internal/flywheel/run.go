@@ -854,16 +854,36 @@ func otherWorktrees(dir string) map[string]map[string]string {
 	return snap
 }
 
-// samePath reports whether a and b name the same location, compared
-// case-insensitively on Windows the same way isOutsideWorktree does.
+// samePath reports whether a and b name the same location. Each is resolved
+// with resolvePath first, so a symlinked temp root — macOS's /var ->
+// /private/var, or an equivalent form a Windows CI runner reports — does not
+// read as a different worktree from the one git itself is rooted at (issue
+// #87); comparison is case-insensitive on Windows, the same way
+// isOutsideWorktree compares paths.
 func samePath(a, b string) bool {
-	a = strings.TrimSuffix(filepath.ToSlash(a), "/")
-	b = strings.TrimSuffix(filepath.ToSlash(b), "/")
+	a = resolvePath(a)
+	b = resolvePath(b)
 	if runtime.GOOS == "windows" {
 		a = strings.ToLower(a)
 		b = strings.ToLower(b)
 	}
 	return a == b
+}
+
+// resolvePath makes p absolute and, when possible, resolves symlinks in it
+// (filepath.EvalSymlinks); a path that cannot be resolved (for instance, one
+// that does not exist) falls back to its absolute form, and a path that
+// cannot even be made absolute is returned unchanged. The result is
+// normalised to forward slashes with any trailing slash trimmed, so it can be
+// compared directly.
+func resolvePath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	return strings.TrimSuffix(filepath.ToSlash(p), "/")
 }
 
 // clipNote trims s and caps it at 200 characters for a finished note.
