@@ -1177,3 +1177,180 @@ func TestRunShortRunNoNoPlan(t *testing.T) {
 		}
 	}
 }
+
+// offCourseFixture writes a fixture of one step_start, one tool_use event per
+// (tool, path) call, and a final step_finish reason stop, and returns its
+// absolute path. grep and glob calls carry their path under state.input.path;
+// every other tool carries it under state.input.filePath (issue #72).
+func offCourseFixture(t *testing.T, calls [][2]string) string {
+	t.Helper()
+	session := "ses_test_offcourse_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	for _, c := range calls {
+		tool, path := c[0], c[1]
+		key := "filePath"
+		if tool == "grep" || tool == "glob" {
+			key = "path"
+		}
+		fmt.Fprintf(&b, `{"type":"tool_use","sessionID":%q,"part":{"type":"tool_use","tool":%q,"state":{"input":{%q:%q}}}}`+"\n", session, tool, key, path)
+	}
+	fmt.Fprintf(&b, `{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop"}}`+"\n", session)
+	path := filepath.Join(t.TempDir(), "offcourse.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+// shortOutsideDir returns a short absolute path outside dir's tree, on the
+// same volume, without touching the filesystem: long temp-dir names (Windows
+// especially) would otherwise blow past clipNote's 200-character cap before
+// a test can see all 5 distinct paths in the off-course note.
+func shortOutsideDir(dir string) string {
+	return filepath.Join(filepath.VolumeName(dir)+string(filepath.Separator), "fw72-outside")
+}
+
+// TestRunOffCourseFlaggedAt5DistinctPaths checks 5 distinct reads of paths
+// outside the worktree record exactly one off-course event naming the paths,
+// without changing the run's outcome (issue #72).
+func TestRunOffCourseFlaggedAt5DistinctPaths(t *testing.T) {
+	dir := setupTask(t)
+	outside := shortOutsideDir(dir)
+	calls := [][2]string{
+		{"read", filepath.Join(outside, "o1.go")},
+		{"read", filepath.Join(outside, "o2.go")},
+		{"read", filepath.Join(outside, "o3.go")},
+		{"read", filepath.Join(outside, "o4.go")},
+		{"read", filepath.Join(outside, "o5.go")},
+	}
+	if err := WriteConfig(dir, simConfig(offCourseFixture(t, calls))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop (off-course must not change the outcome)", res.RC, res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	var oc Event
+	for _, e := range evs {
+		if e.Kind == "off-course" {
+			count++
+			oc = e
+		}
+	}
+	if count != 1 {
+		t.Fatalf("off-course events = %d, want exactly 1", count)
+	}
+	if oc.Task != "T1" || oc.Attempt != "r1" {
+		t.Errorf("off-course event = %v, want task T1 attempt r1", oc)
+	}
+	for _, c := range calls {
+		if !strings.Contains(oc.Note, c[1]) {
+			t.Errorf("off-course note = %q, want it to list %q", oc.Note, c[1])
+		}
+	}
+}
+
+// TestRunFourDistinctOutsideNoOffCourse checks 4 distinct outside paths never
+// trigger the off-course event (issue #72).
+func TestRunFourDistinctOutsideNoOffCourse(t *testing.T) {
+	dir := setupTask(t)
+	outside := t.TempDir()
+	calls := [][2]string{
+		{"read", filepath.Join(outside, "o1.go")},
+		{"read", filepath.Join(outside, "o2.go")},
+		{"read", filepath.Join(outside, "o3.go")},
+		{"read", filepath.Join(outside, "o4.go")},
+	}
+	if err := WriteConfig(dir, simConfig(offCourseFixture(t, calls))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "off-course" {
+			t.Errorf("events include an off-course event at 4 distinct outside paths: %v", e)
+		}
+	}
+}
+
+// TestRunInsideReadsNeverCount checks reads of paths inside the worktree
+// never count toward off-course, however many distinct ones there are
+// (issue #72).
+func TestRunInsideReadsNeverCount(t *testing.T) {
+	dir := setupTask(t)
+	calls := [][2]string{
+		{"read", filepath.Join(dir, "a.go")},
+		{"read", filepath.Join(dir, "b.go")},
+		{"read", filepath.Join(dir, "c.go")},
+		{"read", filepath.Join(dir, "d.go")},
+		{"read", filepath.Join(dir, "e.go")},
+		{"read", filepath.Join(dir, "f.go")},
+	}
+	if err := WriteConfig(dir, simConfig(offCourseFixture(t, calls))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "off-course" {
+			t.Errorf("events include an off-course event for in-worktree reads: %v", e)
+		}
+	}
+}
+
+// TestRunGrepGlobCountThroughPathFallback checks grep and glob tool calls,
+// whose path arrives via the state.input.path fallback (not filePath), still
+// count toward off-course (issue #72).
+func TestRunGrepGlobCountThroughPathFallback(t *testing.T) {
+	dir := setupTask(t)
+	outside := shortOutsideDir(dir)
+	calls := [][2]string{
+		{"grep", filepath.Join(outside, "o1.go")},
+		{"glob", filepath.Join(outside, "o2.go")},
+		{"grep", filepath.Join(outside, "o3.go")},
+		{"glob", filepath.Join(outside, "o4.go")},
+		{"grep", filepath.Join(outside, "o5.go")},
+	}
+	if err := WriteConfig(dir, simConfig(offCourseFixture(t, calls))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	for _, e := range evs {
+		if e.Kind == "off-course" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("off-course events via grep/glob = %d, want exactly 1", count)
+	}
+}
