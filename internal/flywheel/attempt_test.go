@@ -37,6 +37,47 @@ func TestAttemptBriefFreshUsesPlannedBrief(t *testing.T) {
 	}
 }
 
+func TestAttemptBriefFreshAttemptIgnoresDifferentPromptPath(t *testing.T) {
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "copy.txt", "owns: a.go\nneeds: none\ngate: exit 9\n\n# TASK\n")
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "copy.txt"},
+	}
+	header, paths, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "brief.txt" {
+		t.Errorf("paths = %v, want [brief.txt]", paths)
+	}
+	if len(header.Gates) != 1 || header.Gates[0] != "exit 0" {
+		t.Errorf("gates = %v, want [exit 0] (copy.txt's own gate must not appear)", header.Gates)
+	}
+}
+
+func TestAttemptBriefCorrectionIdenticalContentUsesBriefAlone(t *testing.T) {
+	dir := t.TempDir()
+	body := "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n"
+	writeAttemptBrief(t, dir, "brief.txt", body)
+	writeAttemptBrief(t, dir, "copy.txt", body)
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "copy.txt"},
+	}
+	header, paths, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "brief.txt" {
+		t.Errorf("paths = %v, want [brief.txt]", paths)
+	}
+	if len(header.Owns) != 1 || header.Owns[0] != "a.go" {
+		t.Errorf("owns = %v, want [a.go]", header.Owns)
+	}
+}
+
 func TestAttemptBriefAmendedReplacesPlanned(t *testing.T) {
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")

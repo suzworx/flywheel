@@ -66,6 +66,17 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 			os.Exit(1)
 		}
 	}
+	finishLog(dir, nil, noState)
+}
+
+// finishLog reports a non-nil err and exits 1; otherwise it derives state
+// unless noState. Shared by appendEvents and the planned/amended fast paths
+// so every flywheel log invocation refreshes state the same way.
+func finishLog(dir string, err error, noState bool) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+		os.Exit(1)
+	}
 	if noState {
 		return
 	}
@@ -115,6 +126,19 @@ func runLog(args []string) {
 	}
 	if o.jsonIn != "" {
 		runLogJSON(o.dir, o.jsonIn, o.noState)
+		return
+	}
+	if o.kind == "amended" {
+		if o.note == "" {
+			fmt.Fprintf(os.Stderr, "flywheel log: --kind amended requires --note <why>\n")
+			usage(os.Stderr)
+			os.Exit(2)
+		}
+		finishLog(o.dir, flywheel.RecordAmended(o.dir, o.task, o.brief, o.note), o.noState)
+		return
+	}
+	if o.kind == "planned" && o.brief != "" {
+		finishLog(o.dir, flywheel.RecordPlanned(o.dir, o.task, o.brief), o.noState)
 		return
 	}
 

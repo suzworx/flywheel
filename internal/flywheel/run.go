@@ -55,8 +55,13 @@ type Result struct {
 // denies external_directory — OpenCode's documented permission for tool
 // calls (read, edit, glob, grep and bash) that touch paths outside the
 // working directory (issue #87) — a line the canonical reference file does
-// not carry. The user's own opencode.json is never touched.
+// not carry. It also carries "instructions", pointing at worker-rules.md
+// next to it (issue #31), so every run loads the worker rules into the
+// worker's context without a tool call — including under --pure, which
+// skips only plugins, never instructions. The user's own opencode.json is
+// never touched.
 var workerPermissionPolicy = `{
+  "instructions": ["worker-rules.md"],
   "permission": {
     "bash": {
       "*": "allow",
@@ -79,6 +84,19 @@ var workerPermissionPolicy = `{
     "external_directory": "deny"
   }
 }`
+
+// workerRules is the embedded worker rules text written to
+// .flywheel/worker-rules.md when missing (issue #31): the embedded policy's
+// "instructions" key points at that file, so OpenCode loads these rules into
+// every worker's context without a tool call — briefs no longer need to
+// repeat them. skills/flywheel/references/worker-rules.md carries the same
+// text.
+const workerRules = `- Stay inside owns: and the worktree. At most one write per response (at most 120 lines); batch read-only calls together.
+- Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
+- Build or typecheck after each file; run the full checks at the end.
+- Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
+- Never commit, push, or write secrets.
+`
 
 // NoWorkerSession is the refusal returned by a resume when the task has no
 // recorded worker session. The CLI maps it to exit 2 (usage); every other run
@@ -223,6 +241,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// opencode.json.
 	policySHA, err := workerPolicySHA(dir)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := writeWorkerRules(dir); err != nil {
 		return Result{}, err
 	}
 
@@ -939,6 +960,19 @@ func workerPolicySHA(dir string) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// writeWorkerRules writes workerRules to .flywheel/worker-rules.md when
+// missing, never overwriting an existing file — the same way workerPolicySHA
+// writes the permission policy (issue #31).
+func writeWorkerRules(dir string) error {
+	path := filepath.Join(dir, ".flywheel", "worker-rules.md")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte(workerRules), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // workerEnv is the environment for an opencode child: the current environment
