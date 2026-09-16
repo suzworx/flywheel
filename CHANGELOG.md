@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0](https://github.com/suzworx/flywheel/compare/v0.11.0...v0.12.0) (2026-09-16)
+
+
+### Features
+
+* add flywheel upgrade, a self-update with checksum verification ([#205](https://github.com/suzworx/flywheel/issues/205)) ([937ed95](https://github.com/suzworx/flywheel/commit/937ed95fc61ab8c5f4d802737f725d498d9fcf75)), closes [#201](https://github.com/suzworx/flywheel/issues/201)
+* record each changed file's shape in the readings (checkpoint) ([#206](https://github.com/suzworx/flywheel/issues/206)) ([58ba50d](https://github.com/suzworx/flywheel/commit/58ba50d58073f042dfedeafedb7eecad03d04048))
+* refuse an owns collision with a running unit at dispatch ([#204](https://github.com/suzworx/flywheel/issues/204)) ([454c11c](https://github.com/suzworx/flywheel/commit/454c11c3d66fee246f001a1f5e0a90cc9e17adf9)), closes [#164](https://github.com/suzworx/flywheel/issues/164)
+
+
+### Documentation
+
+* add the flywheel mark, and a GitHub Pages landing page ([#202](https://github.com/suzworx/flywheel/issues/202)) ([16798e1](https://github.com/suzworx/flywheel/commit/16798e139eea0a804bdc989c9ab984d840271137))
+* refresh the terminal screenshots and link the docs site ([#207](https://github.com/suzworx/flywheel/issues/207)) ([c432b18](https://github.com/suzworx/flywheel/commit/c432b18168e76b8f280cf8f77dff61c73f21688b))
+* say what is deterministic, what is not, and what that guarantees ([#208](https://github.com/suzworx/flywheel/issues/208)) ([ec61b2b](https://github.com/suzworx/flywheel/commit/ec61b2be334dbafa2d7cd296ce4dd505475713d5))
+
 ## [0.11.0](https://github.com/suzworx/flywheel/compare/v0.10.0...v0.11.0) (2026-09-16)
 
 
