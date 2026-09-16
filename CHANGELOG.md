@@ -5,6 +5,7 @@
 
 ### Features
 
+* add live-gate:, a gate that runs only in the lead's verification pass ([#191](https://github.com/suzworx/flywheel/issues/191)) ([4861685](https://github.com/suzworx/flywheel/commit/4861685)), closes [#152](https://github.com/suzworx/flywheel/issues/152)
 * add flywheel doctor, and gate a resumed model switch on approved fallbacks ([#190](https://github.com/suzworx/flywheel/issues/190)) ([e2794ea](https://github.com/suzworx/flywheel/commit/e2794eaad0b379100171370529cef01a82c6811a)), closes [#23](https://github.com/suzworx/flywheel/issues/23)
 * add flywheel feedback: add, list, dismiss, and a generated learnings.md ([#195](https://github.com/suzworx/flywheel/issues/195)) ([dd7e1cd](https://github.com/suzworx/flywheel/commit/dd7e1cd54713c58247a7168a1164e7e2d62c6704))
 * record a reviewer's domain checklist on the reviewed event ([#184](https://github.com/suzworx/flywheel/issues/184)) ([c394358](https://github.com/suzworx/flywheel/commit/c3943580fe88e64d88f0cecd6df00e35f0c32250)), closes [#32](https://github.com/suzworx/flywheel/issues/32)
