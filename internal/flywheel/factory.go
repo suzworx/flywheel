@@ -59,11 +59,11 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, capped, provider-error, done
+	RunState string // silent, running, exploring, long-step, stalled, capped, provider-error, failed, done
 }
 
-// Andon is one stopped-line condition: a unit in silent, stalled, capped or
-// provider-error, newest first.
+// Andon is one stopped-line condition: a unit in silent, stalled, capped,
+// provider-error or failed, newest first.
 type Andon struct {
 	Task  string
 	State string
@@ -81,8 +81,12 @@ type Output struct {
 	Cost          float64 // cost across finished events
 }
 
-// stageOf maps a derived status to a floor stage.
-func stageOf(status string) string {
+// stageOf maps a derived status (and, while status is "finished", that task's
+// finished reason) to a floor stage: cut-off when the reason is "length",
+// failed for any other reason except "stop" or empty (a clean finish), and
+// finished otherwise. Every other status ignores reason and keeps its own
+// mapping.
+func stageOf(status, reason string) string {
 	switch status {
 	case "planned":
 		return "planned"
@@ -91,7 +95,14 @@ func stageOf(status string) string {
 	case "running":
 		return "building"
 	case "finished":
-		return "finished"
+		switch reason {
+		case "length":
+			return "cut-off"
+		case "", "stop":
+			return "finished"
+		default:
+			return "failed"
+		}
 	case "passed":
 		return "passed"
 	case "needs-correction":
@@ -108,8 +119,8 @@ func stageOf(status string) string {
 
 // liveRun reports whether a run state is an in-flight, not-yet-dead unit:
 // either actively progressing or merely unhealthy enough to reach the andon
-// but still live. Capped and provider-error runs are dead: they logged a
-// finished event and no longer occupy a busy slot.
+// but still live. Capped, provider-error and failed runs are dead: they
+// logged a finished event and no longer occupy a busy slot.
 func liveRun(state string) bool {
 	switch state {
 	case "running", "exploring", "long-step", "silent", "stalled":
@@ -120,18 +131,32 @@ func liveRun(state string) bool {
 
 // classifyRun maps a run's observed signals to a run state. done is set when
 // the attempt's finished event exists; age is the seconds since the run file
-// last grew. A capped or provider-error run still records a finished event, so
-// those signals are checked before done or the unit would never reach the
-// andon.
+// last grew. Once done, lastReason (the caller overrides it with the
+// attempt's finished-event reason when one is recorded, since that is always
+// a complete line while the run file's own tail may not be) decides the run
+// state outright: "length" is capped, "error" is provider-error, "stop" or
+// empty is a clean done, and any other reason (start-failed, silent, ...) is
+// failed. Live (not done) classification still checks hasError and
+// lastReason=="length" before the other live signals, since a capped or
+// provider-error run in progress has not recorded a finished event yet.
 func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int) string {
+	if done {
+		switch lastReason {
+		case "length":
+			return "capped"
+		case "error":
+			return "provider-error"
+		case "", "stop":
+			return "done"
+		default:
+			return "failed"
+		}
+	}
 	if hasError {
 		return "provider-error"
 	}
 	if lastReason == "length" {
 		return "capped"
-	}
-	if done {
-		return "done"
 	}
 	if size == 0 && age > 60 {
 		return "silent"
@@ -341,7 +366,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string) ([]Unit, map[st
 	byModel := map[string]int{}
 	for _, t := range st.Tasks {
 		u := Unit{
-			Task: t.ID, Stage: stageOf(t.Status), Attempt: t.Attempt,
+			Task: t.ID, Stage: stageOf(t.Status, t.Reason), Attempt: t.Attempt,
 			Session: shortSession(t.Session), Model: t.Model,
 			Steps: 0, LastAge: ageOf(t.UpdatedAt, now), RunState: "waiting",
 		}
@@ -353,7 +378,14 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string) ([]Unit, map[st
 			}
 			done := t.Status != "planned" && t.Status != "dispatched" && t.Status != "running"
 			age := ageOfTime(mtime, now)
-			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], w.runReason[rel], size, age)
+			// A done attempt's finished-event reason (from the event log, always
+			// a complete line) overrides the run file's own last-reason scan,
+			// which can miss a final line the process never newline-terminated.
+			reason := w.runReason[rel]
+			if done && t.Reason != "" {
+				reason = t.Reason
+			}
+			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age)
 			u.Steps = w.runSteps[rel]
 		}
 		if liveRun(u.RunState) {
@@ -440,12 +472,13 @@ func ageOfTime(t, now time.Time) int {
 	return int(d.Seconds())
 }
 
-// buildAndon lists the units in silent, stalled, capped or provider-error,
-// newest first.
+// buildAndon lists the units in silent, stalled, capped, provider-error or
+// failed, newest first.
 func buildAndon(units []Unit) []Andon {
 	var out []Andon
 	for _, u := range units {
-		if u.RunState == "silent" || u.RunState == "stalled" || u.RunState == "capped" || u.RunState == "provider-error" {
+		switch u.RunState {
+		case "silent", "stalled", "capped", "provider-error", "failed":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}

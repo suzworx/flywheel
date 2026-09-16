@@ -119,6 +119,10 @@ func printStatus(rep flywheel.StatusReport) {
 	fmt.Printf("Last event: %s\n", describeLast(rep.LastEventAt))
 	fmt.Printf("Last meaningful progress: %s\n", describeLast(rep.LastProgressAt))
 	fmt.Printf("Andon: %d\n", rep.Andon)
+	fmt.Printf("Attention: %d\n", len(rep.Attention))
+	for _, a := range rep.Attention {
+		fmt.Printf("  %s %s %s\n", a.Task, a.Attempt, a.Reason)
+	}
 }
 
 // describeLast renders a LastEvent as "ts (Ns ago)", or "(none)" when nil.

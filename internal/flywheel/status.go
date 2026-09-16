@@ -12,14 +12,24 @@ import (
 // derived only from the event log (via Derive) and the factory floor's run
 // states and andon.
 type StatusReport struct {
-	Factory        string         `json:"factory"`
-	Tasks          StatusTasks    `json:"tasks"`
-	Attempts       StatusAttempts `json:"attempts"`
-	Goals          StatusGoals    `json:"goals"`
-	Leases         StatusLeases   `json:"leases"`
-	LastEventAt    *LastEvent     `json:"last_event_at,omitempty"`
-	LastProgressAt *LastEvent     `json:"last_progress_at,omitempty"`
-	Andon          int            `json:"andon"`
+	Factory        string          `json:"factory"`
+	Tasks          StatusTasks     `json:"tasks"`
+	Attempts       StatusAttempts  `json:"attempts"`
+	Goals          StatusGoals     `json:"goals"`
+	Leases         StatusLeases    `json:"leases"`
+	LastEventAt    *LastEvent      `json:"last_event_at,omitempty"`
+	LastProgressAt *LastEvent      `json:"last_progress_at,omitempty"`
+	Andon          int             `json:"andon"`
+	Attention      []AttentionLine `json:"attention,omitempty"`
+}
+
+// AttentionLine is one task whose current attempt ended for a reason other
+// than a clean stop: the task id, its current attempt and that attempt's
+// finished reason (length, start-failed, silent, error, ...).
+type AttentionLine struct {
+	Task    string `json:"task"`
+	Attempt string `json:"attempt"`
+	Reason  string `json:"reason"`
 }
 
 // StatusGoals counts the goals in each status plus one entry per goal, sorted
@@ -128,6 +138,9 @@ func Status(dir string, now time.Time) (StatusReport, error) {
 			rep.Tasks.Lost++
 		case "landed":
 			rep.Tasks.Landed++
+		}
+		if ts.Status == "finished" && ts.Reason != "" && ts.Reason != "stop" {
+			rep.Attention = append(rep.Attention, AttentionLine{Task: ts.ID, Attempt: ts.Attempt, Reason: ts.Reason})
 		}
 		if ts.Attempt == "" {
 			continue
