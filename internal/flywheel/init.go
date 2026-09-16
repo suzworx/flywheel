@@ -32,39 +32,55 @@ Placeholder: role assignments go here.
 Placeholder: completed tasks are logged here.
 `
 
+// ScaffoldPiece reports the status of one piece of the on-disk scaffold
+// InitSeeded manages. Pieces are always returned in the same fixed order:
+// flywheel.md, then the six pieces under .flywheel/ (state.json,
+// events.jsonl, config.json, .gitignore, .gitattributes, briefs/).
+type ScaffoldPiece struct {
+	Path  string // relative to dir, forward-slash (e.g. ".flywheel/state.json")
+	Added bool   // this call created it, or (flywheel.md only) force-reset it
+}
+
 // Init scaffolds flywheel state files into dir. It returns the absolute path
 // of the initialized directory.
 //
-// When force is false, Init refuses to touch a directory that already
-// contains either flywheel.md or .flywheel/state.json, and preserves the
-// directory byte-for-byte. When force is true, preexisting regular files at
-// those paths are reset, but directories and symlinks are rejected as file
-// destinations either way. Non-force writes create files exclusively so a
-// racing creator is detected instead of silently truncated.
+// Init never refuses because something already exists: each scaffold piece
+// is filled in independently when missing and left byte-identical when
+// present. flywheel.md is the one exception — with force, an existing
+// regular file there is replaced with the built-in template; directories and
+// symlinks are rejected as its destination either way. See InitSeeded for
+// the full piece-by-piece contract.
 //
 // Init is not a crash-atomic multi-file transaction. Payloads are staged
 // before any write, and a returned error rolls back only what this call
-// itself created or overwrote (preexisting bytes are restored, newly created
-// files are removed, directories created by this call are removed when
-// empty). Unrelated files are never touched. A crash mid-write can still
-// leave partial state; retries may need --force.
+// itself created or overwrote (a force-reset flywheel.md's preexisting bytes
+// are restored, other pieces this call created are removed, directories
+// created by this call are removed when empty). Unrelated files are never
+// touched. A crash mid-write can still leave partial state; retries are
+// always safe.
 func Init(dir string, force bool) (string, error) {
 	path, _, err := InitSeeded(dir, force, "", "")
 	return path, err
 }
 
-// InitSeeded is Init with optional model and variant seeding: when either
-// value is non-empty and .flywheel/config.json does not exist, the new
-// config is written from DefaultConfig with the default worker's model
-// and/or variant replaced by the given values (validated through
-// WriteConfig). An existing config.json is never touched, even with --force;
-// the caller says how to edit it. In addition to Init's return values,
-// InitSeeded reports the relative paths of the scaffold files this call
-// created (flywheel.md, .flywheel/state.json, .flywheel/events.jsonl,
-// .flywheel/config.json, .flywheel/.gitignore; only the ones this call
-// created). An already-initialized directory that creates nothing returns an
-// empty list.
-func InitSeeded(dir string, force bool, model, variant string) (string, []string, error) {
+// InitSeeded is Init with optional model and variant seeding, and reports
+// the status of every scaffold piece instead of just Init's path and error.
+//
+// Every piece — flywheel.md and, under .flywheel/, state.json,
+// events.jsonl, config.json, .gitignore, .gitattributes and briefs/ — is
+// handled independently: a missing piece is created, and one that already
+// exists is left byte-identical and reported present. Running init again
+// after an upgrade (for example one that adds .gitattributes to the
+// scaffold) fills in only what's new, without touching anything else,
+// whether or not flywheel.md already exists.
+//
+// flywheel.md is the one piece force affects: with force, an existing
+// regular file there is replaced with the built-in template. Every other
+// piece is created only if missing and never overwritten, with or without
+// force. model and variant seed a freshly created config.json's default
+// worker (validated through WriteConfig); an existing config.json is never
+// touched.
+func InitSeeded(dir string, force bool, model, variant string) (string, []ScaffoldPiece, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve %q: %w", dir, err)
@@ -79,23 +95,8 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []string
 	gitattributesPath := filepath.Join(dotFlywheel, ".gitattributes")
 	configPath := filepath.Join(dotFlywheel, configFileName)
 
-	// An already-initialized directory — every scaffold file already present,
-	// and nothing forced — has nothing to do: report success with an empty
-	// created list instead of refusing, so `flywheel init` is idempotent.
-	if !force &&
-		regularFileExists(mdPath) && regularFileExists(statePath) &&
-		regularFileExists(eventsPath) && regularFileExists(configPath) &&
-		regularFileExists(gitignorePath) && regularFileExists(gitattributesPath) &&
-		dirExisted(briefsDir) {
-		return abs, nil, nil
-	}
-
-	// Preflight both file destinations before touching anything so a refusal
-	// preserves the directory exactly as it was.
-	for _, p := range []string{mdPath, statePath} {
-		if err := preflightDestination(p, force); err != nil {
-			return "", nil, err
-		}
+	if err := preflightMarkdown(mdPath); err != nil {
+		return "", nil, err
 	}
 
 	// Stage the payloads before publishing anything.
@@ -118,35 +119,27 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []string
 	}
 	configBytes := append(configJSON, '\n')
 
-	// Snapshot what existed before this call so a failure can restore
-	// preexisting bytes and remove only what this call created.
+	// Snapshot what existed before this call so a failed force-reset can
+	// restore flywheel.md's preexisting bytes, and a rollback can remove only
+	// what this call created.
 	mdExisted, mdPrev := snapshotFile(mdPath)
-	stateExisted, statePrev := snapshotFile(statePath)
-	configExisted := false
-	if _, err := os.Lstat(configPath); err == nil {
-		configExisted = true
-	}
 	briefsExisted := dirExisted(briefsDir)
 	dotFlywheelExisted := dirExisted(dotFlywheel)
-	createdMD := false
-	createdState := false
-	createdEvents := false
-	createdGitignore := false
-	createdGitattributes := false
-	createdConfig := false
+	var mdAdded, createdState, createdEvents, createdGitignore, createdGitattributes, createdConfig bool
 
 	// rollback undoes this call's own footprint after an error: restore
-	// preexisting regular-file bytes, remove files this call created, and
-	// remove directories this call created (only if empty, never recursive).
+	// flywheel.md's preexisting bytes if force reset it, remove pieces this
+	// call created, and remove directories this call created (only if empty,
+	// never recursive).
 	rollback := func() {
-		if mdExisted {
-			_ = os.WriteFile(mdPath, mdPrev, 0o644)
-		} else if createdMD {
-			_ = os.Remove(mdPath)
+		if mdAdded {
+			if mdExisted {
+				_ = os.WriteFile(mdPath, mdPrev, 0o644)
+			} else {
+				_ = os.Remove(mdPath)
+			}
 		}
-		if stateExisted {
-			_ = os.WriteFile(statePath, statePrev, 0o644)
-		} else if createdState {
+		if createdState {
 			_ = os.Remove(statePath)
 		}
 		if createdEvents {
@@ -174,31 +167,30 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []string
 		return "", nil, fmt.Errorf("create %s: %w", briefsDir, err)
 	}
 
-	createdMD, err = publishFile(mdPath, mdBytes, force)
+	mdAdded, err = publishMarkdown(mdPath, mdBytes, force)
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", mdPath, err)
 	}
 
-	createdState, err = publishFile(statePath, stateBytes, force)
+	// Everything below is created only if missing and never overwritten or
+	// truncated, with or without force: state.json and events.jsonl are the
+	// project's source of truth, and config.json/.gitignore/.gitattributes
+	// are left for the caller to edit once they exist.
+	createdState, err = createIfMissing(statePath, stateBytes)
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", statePath, err)
 	}
-
-	// The event log is the source of truth: create it and .gitignore only if
-	// missing. Neither is ever overwritten or truncated, even with --force.
 	createdEvents, err = createIfMissing(eventsPath, []byte{})
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", eventsPath, err)
 	}
-	// The config is the project configuration: create it from the built-in
-	// default only if missing. It is never overwritten, even with --force.
 	// --model and --variant seed a fresh config through WriteConfig; an
 	// existing one is left untouched for the caller to edit.
 	if model != "" || variant != "" {
-		if !configExisted {
+		if !regularFileExists(configPath) {
 			if err := WriteConfig(dir, cfg); err != nil {
 				rollback()
 				return "", nil, fmt.Errorf("write %s: %w", configPath, err)
@@ -223,31 +215,25 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []string
 		return "", nil, fmt.Errorf("write %s: %w", gitattributesPath, err)
 	}
 
-	var created []string
-	if createdMD {
-		created = append(created, "flywheel.md")
-	}
-	if createdState {
-		created = append(created, ".flywheel/state.json")
-	}
-	if createdEvents {
-		created = append(created, ".flywheel/events.jsonl")
-	}
-	if createdConfig {
-		created = append(created, ".flywheel/config.json")
-	}
-	if createdGitignore {
-		created = append(created, ".flywheel/.gitignore")
+	pieces := []ScaffoldPiece{
+		{Path: "flywheel.md", Added: mdAdded},
+		{Path: ".flywheel/state.json", Added: createdState},
+		{Path: ".flywheel/events.jsonl", Added: createdEvents},
+		{Path: ".flywheel/config.json", Added: createdConfig},
+		{Path: ".flywheel/.gitignore", Added: createdGitignore},
+		{Path: ".flywheel/.gitattributes", Added: createdGitattributes},
+		{Path: ".flywheel/briefs/", Added: !briefsExisted},
 	}
 
-	return abs, created, nil
+	return abs, pieces, nil
 }
 
-// preflightDestination checks that path is a usable regular-file destination
-// before Init writes anything. Under force, directories and symlinks are
-// rejected (writes must not go through them); without force, any existing
-// entry is refused so the directory is preserved byte-for-byte.
-func preflightDestination(path string, force bool) error {
+// preflightMarkdown checks that mdPath is a usable destination for
+// flywheel.md — absent, or an existing regular file — before InitSeeded
+// touches anything. A directory or symlink there is refused unconditionally:
+// a fresh write would go through it, and a force reset must not write
+// through a symlink.
+func preflightMarkdown(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -261,35 +247,23 @@ func preflightDestination(path string, force bool) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file; refusing to overwrite it", path)
 	}
-	if !force {
-		return fmt.Errorf("%s already exists (use --force to overwrite)", path)
-	}
 	return nil
 }
 
-// publishFile writes b to path. With force the file is truncated and
-// rewritten; otherwise it must not already exist and is created exclusively
-// (O_EXCL) so a racing creator fails the write instead of being truncated.
-// It reports whether this call created the file, so a rollback can remove it
-// without touching a file created by someone else.
-func publishFile(path string, b []byte, force bool) (created bool, err error) {
+// publishMarkdown creates flywheel.md if it is missing. If it already exists
+// as a regular file (preflightMarkdown must have confirmed that), force
+// replaces its bytes and non-force leaves it untouched. It reports whether
+// this call wrote to the file — freshly created, or force-reset — so the
+// caller can label it "added" and a later failure can be rolled back.
+func publishMarkdown(path string, b []byte, force bool) (added bool, err error) {
 	if force {
-		return false, os.WriteFile(path, b, 0o644)
+		if _, err := os.Lstat(path); err == nil {
+			return true, os.WriteFile(path, b, 0o644)
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("check %s: %w", path, err)
+		}
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return false, err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		os.Remove(path)
-		return true, err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(path)
-		return true, err
-	}
-	return true, nil
+	return createIfMissing(path, b)
 }
 
 // createIfMissing writes b to path only when path does not exist, using
