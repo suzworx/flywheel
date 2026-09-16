@@ -40,6 +40,9 @@ You do:
   the plan a `live-gate:` that runs the real path, not a mock. Forty-two units of mocked green is
   weaker evidence than one real turn — a unit whose deliverable is a provider-facing contract has
   no failing gate available to it on a mock, only on the real thing.
+- Write a gate for a document as a **structure** check — every required heading present and a
+  minimum line count — never only keywords, which a truncated tail can satisfy: a part-by-part
+  overwrite leaves the last section only, and keywords that survive in it still pass.
 
 You never:
 - Dispatch. Dispatch is the foreman's call, and it needs the ready filter.
