@@ -90,6 +90,10 @@ all.
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
   #156), `sha256` (of the whole run file).
+- `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
+  normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
+  `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider
+  reported no reason the adapter recognised, which is information, not a bug (issue #176).
 - Effect: `Derive` sets status `finished`. `stageOf` (`factory.go`) then reads `reason`: `stop` (or
   empty) is stage `finished`; `length` is stage **cut-off**; anything else, `stalled` included, is
   stage **failed** — both cut-off and failed units reach the andon and `flywheel status`'s

@@ -64,56 +64,56 @@ func TestStageOf(t *testing.T) {
 }
 
 func TestClassifyRun(t *testing.T) {
-	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0, 600) != "done" {
+	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0, 600, false) != "done" {
 		t.Error("done unit not classified done")
 	}
-	if classifyRun(true, 1, 0, 0, false, "", 100, 0, 600) != "done" {
+	if classifyRun(true, 1, 0, 0, false, "", 100, 0, 600, false) != "done" {
 		t.Error("done unit with an empty reason not classified done")
 	}
-	if classifyRun(false, 1, 0, 0, true, "stop", 100, 0, 600) != "provider-error" {
+	if classifyRun(false, 1, 0, 0, true, "stop", 100, 0, 600, false) != "provider-error" {
 		t.Error("provider-error not classified provider-error")
 	}
-	if classifyRun(false, 1, 0, 0, false, "length", 100, 0, 600) != "capped" {
+	if classifyRun(false, 1, 0, 0, false, "length", 100, 0, 600, false) != "capped" {
 		t.Error("capped not classified capped")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 0, 120, 600) != "silent" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 0, 120, 600, false) != "silent" {
 		t.Error("empty old run not classified silent")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 700, 600) != "stalled" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 700, 600, false) != "stalled" {
 		t.Error("no-growth 700s not classified stalled at the 600s default")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600) != "long-step" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600, false) != "long-step" {
 		t.Error("no-growth 400s not classified long-step at the 600s default")
 	}
-	if classifyRun(false, 10, 3, 0, false, "stop", 100, 0, 600) != "exploring" {
+	if classifyRun(false, 10, 3, 0, false, "stop", 100, 0, 600, false) != "exploring" {
 		t.Error("10 steps, 3 reads, 0 edits not classified exploring")
 	}
-	if classifyRun(false, 10, 3, 1, false, "stop", 100, 0, 600) != "running" {
+	if classifyRun(false, 10, 3, 1, false, "stop", 100, 0, 600, false) != "running" {
 		t.Error("exploring with an edit not classified running")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 0, 600) != "running" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 0, 600, false) != "running" {
 		t.Error("healthy run not classified running")
 	}
 	// A capped or provider-error run still records a finished event, so the
 	// signal wins over done: the unit must reach the andon.
-	if classifyRun(true, 5, 1, 0, false, "length", 200, 0, 600) != "capped" {
+	if classifyRun(true, 5, 1, 0, false, "length", 200, 0, 600, false) != "capped" {
 		t.Error("finished capped run not classified capped")
 	}
-	if classifyRun(true, 5, 1, 0, false, "error", 200, 0, 600) != "provider-error" {
+	if classifyRun(true, 5, 1, 0, false, "error", 200, 0, 600, false) != "provider-error" {
 		t.Error("finished provider-error run not classified provider-error")
 	}
-	if classifyRun(true, 5, 1, 1, false, "stop", 200, 0, 600) != "done" {
+	if classifyRun(true, 5, 1, 1, false, "stop", 200, 0, 600, false) != "done" {
 		t.Error("clean finished run not classified done")
 	}
 	// Any other done reason (start-failed, silent, ...) is a failed run, not a
 	// silent success (issue #131), including the new stalled reason (#85).
-	if classifyRun(true, 0, 0, 0, false, "start-failed", 100, 0, 600) != "failed" {
+	if classifyRun(true, 0, 0, 0, false, "start-failed", 100, 0, 600, false) != "failed" {
 		t.Error("finished start-failed run not classified failed")
 	}
-	if classifyRun(true, 0, 0, 0, false, "silent", 100, 0, 600) != "failed" {
+	if classifyRun(true, 0, 0, 0, false, "silent", 100, 0, 600, false) != "failed" {
 		t.Error("finished silent run not classified failed")
 	}
-	if classifyRun(true, 3, 1, 0, false, "stalled", 100, 0, 600) != "failed" {
+	if classifyRun(true, 3, 1, 0, false, "stalled", 100, 0, 600, false) != "failed" {
 		t.Error("finished stalled run not classified failed")
 	}
 }
@@ -123,27 +123,56 @@ func TestClassifyRun(t *testing.T) {
 // hardcoded 600/300, so the view and the runner agree on a non-default
 // worker config (issue #85).
 func TestClassifyRunFollowsStallTimeout(t *testing.T) {
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 40, 100) != "running" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 40, 100, false) != "running" {
 		t.Error("age 40 under a 100s stall timeout not classified running")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 60, 100) != "long-step" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 60, 100, false) != "long-step" {
 		t.Error("age 60 over half a 100s stall timeout not classified long-step")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 150, 100) != "stalled" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 150, 100, false) != "stalled" {
 		t.Error("age 150 over a 100s stall timeout not classified stalled")
 	}
 	// The same age classifies differently under a shorter stall timeout,
 	// proving the threshold is not still hardcoded.
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600) != "long-step" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600, false) != "long-step" {
 		t.Error("age 400 under a 600s stall timeout not classified long-step")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 200) != "stalled" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 200, false) != "stalled" {
 		t.Error("age 400 over a 200s stall timeout not classified stalled")
 	}
 }
 
+// TestClassifyRunNoWrites checks the three no-writes conditions (issue #176):
+// 20+ steps, zero edits and a recorded no-plan event on the current attempt
+// all have to hold, so a quiet start, a run with edits, or a run that stated
+// its plan is left exactly as it classified before.
+func TestClassifyRunNoWrites(t *testing.T) {
+	if classifyRun(false, 20, 0, 0, false, "stop", 100, 0, 600, true) != "no-writes" {
+		t.Error("20 steps, 0 edits, no-plan recorded not classified no-writes")
+	}
+	if classifyRun(false, 20, 0, 0, false, "stop", 100, 0, 600, false) != "running" {
+		t.Error("20 steps, 0 edits, a plan recorded (no no-plan event) wrongly classified no-writes")
+	}
+	if classifyRun(false, 20, 0, 1, false, "stop", 100, 0, 600, true) != "running" {
+		t.Error("20 steps with an edit wrongly classified no-writes")
+	}
+	if classifyRun(false, 19, 0, 0, false, "stop", 100, 0, 600, true) != "running" {
+		t.Error("19 steps (short of the threshold) wrongly classified no-writes")
+	}
+	// A run that is both no-writes-eligible and past the stall threshold still
+	// needs the threshold itself to report stalled: no-writes is checked
+	// first, so it wins here, exactly as the brief specifies.
+	if classifyRun(false, 20, 0, 0, false, "stop", 100, 700, 600, true) != "no-writes" {
+		t.Error("no-writes-eligible and stalled by age not classified no-writes")
+	}
+	// A done run is unaffected by noPlan in every case.
+	if classifyRun(true, 20, 0, 0, false, "stop", 100, 0, 600, true) != "done" {
+		t.Error("done run wrongly reclassified by noPlan")
+	}
+}
+
 func TestLiveRun(t *testing.T) {
-	for _, s := range []string{"running", "exploring", "long-step", "silent", "stalled"} {
+	for _, s := range []string{"running", "exploring", "long-step", "silent", "stalled", "no-writes"} {
 		if !liveRun(s) {
 			t.Errorf("liveRun(%q) = false, want true", s)
 		}
@@ -673,5 +702,102 @@ func TestStopFinishIsDoneAndFinished(t *testing.T) {
 	}
 	if andonHas(fl.Andon, "clean") {
 		t.Errorf("clean done unit wrongly on andon: %v", fl.Andon)
+	}
+}
+
+// noStepsRunFile writes a run file of n step_finish lines (reason stop, no
+// tool_use lines, so zero reads and zero edits) for the no-writes tests
+// (issue #176).
+func noStepsRunFile(t *testing.T, dir, task, attempt string, n int) {
+	run := filepath.Join(dir, ".flywheel", "runs", task+"."+attempt+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(run), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	content := ""
+	for i := 0; i < n; i++ {
+		content += `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop"}}` + "\n"
+	}
+	if err := os.WriteFile(run, []byte(content), 0o644); err != nil {
+		t.Fatalf("write run file: %v", err)
+	}
+}
+
+// TestNoWritesReachesAndon checks a live run that reached 20 steps with zero
+// edits and a recorded no-plan event on its current attempt classifies
+// no-writes, stays live, and reaches the andon (issue #176).
+func TestNoWritesReachesAndon(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "quiet", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "quiet", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "quiet", Kind: "started", Session: "s1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "quiet", Kind: "no-plan", Attempt: "r1"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	noStepsRunFile(t, dir, "quiet", "r1", 20)
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "quiet")
+	if !ok {
+		t.Fatal("unit quiet missing")
+	}
+	if u.RunState != "no-writes" {
+		t.Errorf("run state = %q, want no-writes", u.RunState)
+	}
+	if !liveRun(u.RunState) {
+		t.Errorf("no-writes run state %q not live", u.RunState)
+	}
+	if !andonHas(fl.Andon, "quiet") {
+		t.Errorf("andon missing quiet: %v", fl.Andon)
+	}
+}
+
+// TestNoWritesUntouchedWithPlan checks the identical run WITH its plan
+// recorded (no no-plan event) does not classify no-writes and does not reach
+// the andon (issue #176): a legitimately read-only unit that stated its plan
+// is left alone.
+func TestNoWritesUntouchedWithPlan(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "stated", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "stated", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "stated", Kind: "started", Session: "s1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "stated", Kind: "worker_plan"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	noStepsRunFile(t, dir, "stated", "r1", 20)
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "stated")
+	if !ok {
+		t.Fatal("unit stated missing")
+	}
+	if u.RunState == "no-writes" {
+		t.Errorf("run state = %q, wrongly no-writes despite a recorded plan", u.RunState)
+	}
+	if andonHas(fl.Andon, "stated") {
+		t.Errorf("andon wrongly holds stated: %v", fl.Andon)
 	}
 }
