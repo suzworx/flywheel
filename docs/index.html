@@ -70,6 +70,10 @@
   th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
   td code{white-space:nowrap}
   .scroll{overflow-x:auto}
+  ul{padding-left:20px;margin:10px 0}
+  li{margin-bottom:7px}
+  li strong{color:var(--ink)}
+  h3{font-weight:650}
 
   footer{padding-block:34px 56px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;
          display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
@@ -175,6 +179,57 @@ flywheel doctor        # check every configured model is usable</code></pre>
     </tbody>
   </table>
   </div>
+</section>
+
+<section>
+  <h2>What is deterministic, and what is not</h2>
+  <p class="lede">flywheel does not try to make the model reproducible. It makes non-determinism
+  irrelevant to the accept/reject decision.</p>
+  <p><strong>Non-deterministic — everything the agent does.</strong> Which files it reads, how many
+  steps it takes, what code it writes, how it words its report, whether it finishes at all, which
+  model was even available. Run the same work order twice and you get two different diffs.</p>
+  <p><strong>Deterministic — everything that decides whether the work may land:</strong></p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Mechanism</th><th>Why it is deterministic</th></tr></thead>
+    <tbody>
+      <tr><td>Tree hash</td><td>A git tree SHA computed with a throwaway index. Same tree, same hash, always.</td></tr>
+      <tr><td>Gates</td><td>Shell commands with real exit codes, re-run by the lead — never the worker's claim.</td></tr>
+      <tr><td><code>owns:</code> check</td><td>A set comparison of the paths actually changed against the declared list.</td></tr>
+      <tr><td>Brief hash</td><td>SHA-256 stamped at dispatch, so a work order edited afterwards is detectable.</td></tr>
+      <tr><td>Event log</td><td>Append-only. Derived state is a fold over it and is never hand-edited.</td></tr>
+      <tr><td>Rules T1–T10</td><td>Pure functions over that log. Same log, same verdict.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 style="font-size:1rem;margin:26px 0 8px">What that guarantees</h3>
+  <p>Narrow claims, each mechanically checkable — which is the point:</p>
+  <ul>
+    <li><strong>No unit lands without a passing reading on the exact tree that landed.</strong> Not
+    "the tests passed somewhere": the CLI ran the gates itself, and the reading is bound to that
+    tree hash. Change one byte and the reading no longer applies.</li>
+    <li><strong>No unit silently changes files outside its declared boundary.</strong></li>
+    <li><strong>The session that inspects is never the session that built.</strong></li>
+    <li><strong>The record cannot be quietly rewritten</strong> — append-only, derived state, and
+    <code>flywheel verify</code> re-checks the chain.</li>
+  </ul>
+  <p>An agent can be as erratic as it likes; it cannot talk its way past a gate, because nothing
+  it <em>says</em> is an input to the decision.</p>
+
+  <h3 style="font-size:1rem;margin:26px 0 8px">What it does not guarantee</h3>
+  <p>It guarantees the gates ran. It cannot guarantee the gates were the <em>right</em> gates — and
+  that is where every real failure has come from. A feature shipped across 42 units, every gate
+  green, and broke on the first call against the real provider, because every test mocked the
+  provider: the gate proved the mock. A UI suite of 316 green tests while the app's navigation was
+  unreachable by a human, because the tests asserted the defect as the specification. A truncated
+  document that satisfied a keyword gate, because the keywords survived in the tail.</p>
+  <p>So the honest claim is this: flywheel moves the trust boundary from <em>trust the agent</em> to
+  <em>trust a small, auditable set of deterministic checks, plus the quality of the gates you
+  wrote</em>. It shrinks what you must reason about from a model's entire behaviour to one
+  reviewable list per unit. It does not remove human judgement; it concentrates it where judgement
+  is cheap and auditable. <code>live-gate:</code> exists because of the first failure above, and
+  structural document readings because of the third.</p>
 </section>
 
 <section>
