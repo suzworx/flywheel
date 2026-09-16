@@ -12,7 +12,7 @@ description: >-
   passing emitted session IDs by hand.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.3.0 # x-release-please-version
 ---
 
 # Flywheel Operator

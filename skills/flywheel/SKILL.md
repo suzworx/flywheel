@@ -10,7 +10,7 @@ description: >-
   do not take over implementation yourself.
 license: MIT
 metadata:
-  version: 0.3.0
+  version: 0.3.0 # x-release-please-version
 ---
 
 # Flywheel
