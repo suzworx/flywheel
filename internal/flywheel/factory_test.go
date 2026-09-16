@@ -518,6 +518,50 @@ func TestMissingNewlineReasonComesFromFinishedEvent(t *testing.T) {
 	}
 }
 
+// TestPeakReasoningFillsUnit checks a capped unit's Peak is filled from its
+// current attempt's latest finished event's peak_reasoning, and a unit with
+// no such finished event keeps Peak at 0 (issue #84).
+func TestPeakReasoningFillsUnit(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "capped2", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "capped2", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "capped2", Kind: "started", Session: "s1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "capped2", Kind: "finished", Attempt: "r1", Reason: "length", PeakReasoning: 50},
+		{TS: "2026-09-15T00:00:00Z", Task: "nopeak", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "nopeak", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "nopeak", Kind: "started", Session: "s2"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "capped2")
+	if !ok {
+		t.Fatal("unit capped2 missing")
+	}
+	if u.Peak != 50 {
+		t.Errorf("capped2 Peak = %d, want 50", u.Peak)
+	}
+	np, ok := unitBy(fl.Units, "nopeak")
+	if !ok {
+		t.Fatal("unit nopeak missing")
+	}
+	if np.Peak != 0 {
+		t.Errorf("nopeak Peak = %d, want 0 (no finished event yet)", np.Peak)
+	}
+}
+
 // TestStartFailedFinishIsFailedOnAndon checks a finished event with reason
 // start-failed is a failed run state, reaches the andon, and its stage is
 // failed (issue #131).

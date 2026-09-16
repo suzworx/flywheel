@@ -140,6 +140,61 @@ func TestRenderTextPassedRejectedStages(t *testing.T) {
 	}
 }
 
+// TestRenderTextCappedShowsPeak checks a capped unit's RUN cell carries its
+// peak reasoning figure, a capped unit with no recorded peak still renders
+// plain "capped", and every other state is unaffected (issue #84).
+func TestRenderTextCappedShowsPeak(t *testing.T) {
+	fl := Floor{
+		Refreshed: time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC),
+		Units: []Unit{
+			{Task: "peaked", Stage: "cut-off", Attempt: "r1", RunState: "capped", Peak: 50},
+			{Task: "nopeak", Stage: "cut-off", Attempt: "r1", RunState: "capped", Peak: 0},
+			{Task: "clean", Stage: "finished", Attempt: "r1", RunState: "done", Peak: 0},
+		},
+	}
+	var buf bytes.Buffer
+	RenderText(&buf, fl, 80, false)
+	out := buf.String()
+	if !strings.Contains(out, "capped 50") {
+		t.Errorf("capped unit with a peak does not show capped 50:\n%s", out)
+	}
+	if strings.Contains(out, "capped 0") {
+		t.Errorf("capped unit with no peak wrongly shows capped 0:\n%s", out)
+	}
+	if !strings.Contains(out, "done") {
+		t.Errorf("done unit's RUN cell missing:\n%s", out)
+	}
+}
+
+// TestRenderJSONCarriesPeakReasoning checks the units[] JSON entry carries
+// peak_reasoning, 0 when none (issue #84).
+func TestRenderJSONCarriesPeakReasoning(t *testing.T) {
+	fl := Floor{
+		Units: []Unit{
+			{Task: "peaked", RunState: "capped", Peak: 50},
+			{Task: "clean", RunState: "done", Peak: 0},
+		},
+	}
+	var buf bytes.Buffer
+	RenderJSON(&buf, fl)
+	var j jFloor
+	if err := json.Unmarshal(buf.Bytes(), &j); err != nil {
+		t.Fatalf("RenderJSON() does not parse: %v\n%s", err, buf.String())
+	}
+	if len(j.Units) != 2 {
+		t.Fatalf("units = %d, want 2", len(j.Units))
+	}
+	if j.Units[0].PeakReasoning != 50 {
+		t.Errorf("peaked unit peak_reasoning = %d, want 50", j.Units[0].PeakReasoning)
+	}
+	if j.Units[1].PeakReasoning != 0 {
+		t.Errorf("clean unit peak_reasoning = %d, want 0", j.Units[1].PeakReasoning)
+	}
+	if !strings.Contains(buf.String(), `"peak_reasoning": 0`) {
+		t.Errorf("JSON does not carry peak_reasoning 0 explicitly:\n%s", buf.String())
+	}
+}
+
 func TestRenderOutputFormats(t *testing.T) {
 	fl := Floor{Output: Output{LandedToday: 1, Finished: 1, Rework: 0.33333, Tokens: 260, Cost: 0.001597088}}
 	var buf bytes.Buffer
