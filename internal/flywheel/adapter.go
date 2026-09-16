@@ -304,17 +304,28 @@ func (a claudeAdapter) Name() string {
 // is read here; a read failure yields an empty prompt rather than a panic,
 // surfacing downstream as a start-failed run like any other unreadable
 // brief. --permission-mode acceptEdits mirrors opencode's --auto: edits go
-// through without a prompt, nothing beyond that is granted.
+// through without a prompt, nothing beyond that is granted. A resume (r.Resume
+// with a non-empty r.Session) leads the prompt with resumeMessage instead of
+// freshMessage and adds --resume <session>, mirroring opencodeAdapter.Command.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	prompt, _ := os.ReadFile(r.PromptFile)
-	return "claude", []string{
-		"-p", string(prompt),
+	msg := freshMessage
+	resuming := r.Resume && r.Session != ""
+	if resuming {
+		msg = resumeMessage
+	}
+	args := []string{
+		"-p", msg + "\n" + string(prompt),
 		"--output-format", "stream-json",
 		"--verbose",
 		"--max-turns", "200",
 		"--model", r.Model,
 		"--permission-mode", "acceptEdits",
 	}
+	if resuming {
+		args = append(args, "--resume", r.Session)
+	}
+	return "claude", args
 }
 
 // Parse decodes one line of `claude -p ... --output-format stream-json
@@ -322,9 +333,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 // assistant becomes "tool" from the first tool_use content block, else
 // "text" from the first text block (message.usage supplies Tokens either
 // way); a "result" line, or any line carrying a top-level is_error, becomes
-// "step" (Reason from stop_reason/subtype, Cost from total_cost_usd).
-// Anything else — hook events, user echoes — returns false, and unparseable
-// JSON never panics.
+// "step" (Reason from stop_reason/subtype/is_error — see claudeReason; Cost
+// from total_cost_usd). Anything else — hook events, user echoes — returns
+// false, and unparseable JSON never panics.
 func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -342,7 +353,11 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		}
 	case typ == "result" || hasKey(m, "is_error"):
 		obs.Kind = "step"
-		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"))
+		var isError bool
+		if raw, ok := m["is_error"]; ok {
+			_ = json.Unmarshal(raw, &isError)
+		}
+		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"), isError)
 		obs.Cost, _ = rawFloat(m, "total_cost_usd")
 	default:
 		return Observation{}, false
@@ -468,12 +483,17 @@ func claudeTokens(msg map[string]json.RawMessage) *Tokens {
 	return t
 }
 
-// claudeReason maps a result line's stop_reason/subtype to a step Reason:
-// end_turn, stop_sequence, or subtype "success" wins first (issue #49's
-// captured transcript pairs stop_sequence with a top-level is_error from an
-// unrelated auth failure, and still reads as a clean stop); max_tokens is
-// "length"; anything else, including an unmatched is_error, is "error".
-func claudeReason(stopReason, subtype string) string {
+// claudeReason maps a result line's stop_reason/subtype/is_error to a step
+// Reason. A top-level is_error of true is never a clean stop, whatever
+// stop_reason or subtype say: testdata/claude-limit.jsonl is a real captured
+// line pairing stop_sequence and subtype "success" with is_error:true and a
+// session-limit message — that run did no work, so is_error wins. Otherwise:
+// end_turn, stop_sequence, or subtype "success" is "stop"; max_tokens is
+// "length"; anything else is "error".
+func claudeReason(stopReason, subtype string, isError bool) string {
+	if isError {
+		return "error"
+	}
 	switch {
 	case stopReason == "end_turn" || stopReason == "stop_sequence" || subtype == "success":
 		return "stop"
