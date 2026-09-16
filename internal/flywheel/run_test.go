@@ -1982,3 +1982,170 @@ func TestRunCleanFinishNoExtraWroteLine(t *testing.T) {
 		t.Errorf("clean finish printed an extra wrote line; got:\n%s", plog)
 	}
 }
+
+// ownsBrief writes a brief file under dir with the given owns: line and a
+// minimal valid header, and returns the repo-relative path.
+func ownsBrief(t *testing.T, dir, name, owns string) string {
+	t.Helper()
+	content := "owns: " + owns + "\ngate: true\n\n# TASK: " + name + "\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write brief %s: %v", name, err)
+	}
+	return name
+}
+
+// planAndDispatch records a planned event (brief at path) and a dispatched
+// event for task, leaving it in flight (derived status dispatched).
+func planAndDispatch(t *testing.T, dir, task, brief string) {
+	t.Helper()
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: task, Kind: "planned", Brief: brief}); err != nil {
+		t.Fatalf("AppendEvent() planned %s: %v", task, err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: task, Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched %s: %v", task, err)
+	}
+}
+
+// planOnly records a planned event for task (brief at path).
+func planOnly(t *testing.T, dir, task, brief string) {
+	t.Helper()
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: task, Kind: "planned", Brief: brief}); err != nil {
+		t.Fatalf("AppendEvent() planned %s: %v", task, err)
+	}
+}
+
+// TestRunRefusesOwnsCollision checks a dispatch whose owns: shares a path
+// with an in-flight task's owns: is refused with the owns RuleRefusal, the
+// message names the shared path and the owning task, and no event is appended
+// (issue #164).
+func TestRunRefusesOwnsCollision(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "a.go, shared.go"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "b.go, shared.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T2"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "owns" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal owns", err)
+	}
+	if !strings.Contains(r.Fix, "shared.go") || !strings.Contains(r.Fix, "T1") {
+		t.Errorf("refusal fix = %q, want it naming the shared path shared.go and the owning task T1", r.Fix)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 {
+		t.Errorf("events = %d, want 3 (planned/dispatched T1, planned T2); a refused dispatch must record nothing", len(evs))
+	}
+}
+
+// TestRunOwnsDisjointFromRunningDispatches checks a dispatch whose owns: is
+// disjoint from the in-flight task's owns: dispatches normally (issue #164).
+func TestRunOwnsDisjointFromRunningDispatches(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "a.go, shared.go"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "b.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	res, err := Run(dir, RunOptions{Task: "T2"})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch (owns disjoint)", err)
+	}
+	if res.Attempt != "r1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean r1 run", res)
+	}
+}
+
+// TestRunAllowOverlapRecordsOwnsOverlap checks --allow-overlap dispatches
+// despite an owns: collision and records the overlap on the dispatched event's
+// note, naming the colliding paths and the other task (issue #164).
+func TestRunAllowOverlapRecordsOwnsOverlap(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "shared.go"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "b.go, shared.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T2", AllowOverlap: true}); err != nil {
+		t.Fatalf("Run() with --allow-overlap error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Task == "T2" && e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if !strings.Contains(d.Note, "owns-overlap: shared.go with T1") {
+		t.Errorf("dispatched note = %q, want it to record owns-overlap: shared.go with T1", d.Note)
+	}
+}
+
+// TestRunOwnsCollisionWithNotInFlightDispatches checks a collision with a task
+// that is no longer in flight (landed or passed) does not refuse (issue #164).
+func TestRunOwnsCollisionWithNotInFlightDispatches(t *testing.T) {
+	for _, final := range []string{"landed", "passed"} {
+		t.Run(final, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Init(dir, false); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "a.go, shared.go"))
+			if final == "landed" {
+				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "landed"}); err != nil {
+					t.Fatalf("AppendEvent() landed: %v", err)
+				}
+			} else {
+				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+					t.Fatalf("AppendEvent() inspected: %v", err)
+				}
+			}
+			planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "b.go, shared.go"))
+			if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			if _, err := Run(dir, RunOptions{Task: "T2"}); err != nil {
+				t.Fatalf("Run() error = %v, want a normal dispatch (the owning task is no longer in flight)", err)
+			}
+		})
+	}
+}
+
+// TestRunRefusesDirectoryPrefixOwnsCollision checks a directory-prefix owns:
+// entry (internal/foo/) collides with a file owned by an in-flight task under
+// it (issue #164).
+func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "internal/foo/"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "internal/foo/bar.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T2"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "owns" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal owns", err)
+	}
+	if !strings.Contains(r.Fix, "internal/foo/bar.go") {
+		t.Errorf("refusal fix = %q, want it naming the file under the directory prefix", r.Fix)
+	}
+}

@@ -30,6 +30,7 @@ type RunOptions struct {
 	Resume       bool
 	ForceModel   bool   // bypass the L-03 refusal when --resume --model names a model that is not an approved fallback
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
+	AllowOverlap bool   // skip the owns-collision refusal; the dispatched note records the overlap
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -189,6 +190,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", o.Task, o.Task)
 	}
 
+	// Owns collision (issue #164): a dispatch whose owns: overlaps an
+	// in-flight task's owns: is refused before any event is recorded, so a
+	// worker never starts knowing another unit is writing the same files.
+	// --allow-overlap skips the refusal and records the crossing on the
+	// dispatched note instead. A task with no readable brief contributes no
+	// owns and never blocks.
+	myOwns := []string{}
+	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+		myOwns = header.Owns
+	}
+	overlap := ownsCollisionWith(dir, events, o.Task, myOwns)
+	if !o.AllowOverlap && overlap != nil {
+		return Result{}, &RuleRefusal{
+			Rule: "owns",
+			Fix:  fmt.Sprintf("owns collision with %s (%s): %s; wait for it to land, narrow this brief's owns:, or pass --allow-overlap", overlap.task, overlap.status, strings.Join(overlap.paths, ", ")),
+		}
+	}
+
 	// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
 	// delta, not the resume flag, makes a dispatch a correction: a given
 	// --delta is always the prompt, with or without --resume.
@@ -283,7 +302,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
-		Brief: promptBriefField, Note: "policy sha256=" + policySHA,
+		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap),
 		Baseline: baseline, Worktrees: worktrees,
 	}); err != nil {
 		return Result{}, err
@@ -780,6 +799,80 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
 	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost}, nil
+}
+
+// ownsCollision describes one owns: overlap between the task being dispatched
+// and an in-flight task: the other task, its derived status, and the
+// colliding paths.
+type ownsCollision struct {
+	task   string
+	status string
+	paths  []string
+}
+
+// ownsCollisionWith returns the first owns: overlap between owns and an
+// in-flight task's owns:, or nil. In-flight means a derived status of
+// dispatched or running: that worker is still writing, so an overlapping
+// owns: list can silently lose an edit (issue #164). A task with no planned
+// brief, or one whose brief cannot be read, is skipped rather than erroring:
+// an unreadable brief must never block a dispatch. Two owns: entries collide
+// when they are equal, when either is a directory prefix (trailing /)
+// containing the other, or when either matches the other as a shell pattern —
+// the same matching rule ownsContains applies, checked in both directions so
+// the relation is symmetric. The colliding paths are the entries involved,
+// deduplicated and sorted.
+func ownsCollisionWith(dir string, events []Event, task string, owns []string) *ownsCollision {
+	st := Derive(events)
+	status := make(map[string]string, len(st.Tasks))
+	for _, ts := range st.Tasks {
+		status[ts.ID] = ts.Status
+	}
+	for _, other := range inFlightOwners(events, task) {
+		switch status[other] {
+		case "dispatched", "running":
+		default:
+			continue
+		}
+		header, _, err := AttemptBrief(dir, events, other)
+		if err != nil {
+			continue
+		}
+		seen := map[string]bool{}
+		var paths []string
+		add := func(p string) {
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+		for _, a := range owns {
+			if ownsContains(header.Owns, a) {
+				add(a)
+			}
+		}
+		for _, b := range header.Owns {
+			if ownsContains(owns, b) {
+				add(b)
+			}
+		}
+		if len(paths) == 0 {
+			continue
+		}
+		sort.Strings(paths)
+		return &ownsCollision{task: other, status: status[other], paths: paths}
+	}
+	return nil
+}
+
+// dispatchedNote builds the dispatched event's note: the policy sha256 always,
+// and the owns-overlap record when --allow-overlap crossed an in-flight task's
+// owns: so a deliberate overlap stays visible in the ledger (issue #164).
+func dispatchedNote(policySHA string, overlap *ownsCollision) string {
+	note := "policy sha256=" + policySHA
+	if overlap != nil {
+		note += "; owns-overlap: " + strings.Join(overlap.paths, ", ") + " with " + overlap.task
+	}
+	return note
 }
 
 // progress writes a run transition line to w, when w is set.
