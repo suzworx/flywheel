@@ -58,6 +58,7 @@ land.
 | `flywheel plan`, `retry` | **planned** | Control plane: create tasks, resume, transfer between agents. |
 | `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
 | `flywheel artifacts` | **planned** | Data plane: worker outputs. |
+| `flywheel feedback [--dir DIR]` | **implemented** | List learnings, one line per learning in log order, then the untriaged-signals line; `add --task ID --severity P0\|P1\|P2 --title T --observed O --evidence E --ask A [--signals a,b]` records a learning and rewrites `learnings.md`; `dismiss L-NN --reason WHY` dismisses one by id without renumbering. Export and submit land with [#40](https://github.com/suzworx/flywheel/issues/40). |
 
 ## Install
 

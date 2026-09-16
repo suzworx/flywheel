@@ -65,6 +65,16 @@ type Event struct {
 	Persona   string                       `json:"persona,omitempty"`
 	GoalID    string                       `json:"goal_id,omitempty"`
 	Goal      *GoalSpec                    `json:"goal,omitempty"`
+	// Learning fields (issue #38): a learning event carries severity, title,
+	// observed, evidence, ask and signals; a dismissed event carries id
+	// (the learning it targets, ^L-[0-9]+$) and reuses Note for the reason.
+	Severity string   `json:"severity,omitempty"`
+	Title    string   `json:"title,omitempty"`
+	Observed string   `json:"observed,omitempty"`
+	Evidence string   `json:"evidence,omitempty"`
+	Ask      string   `json:"ask,omitempty"`
+	Signals  []string `json:"signals,omitempty"`
+	ID       string   `json:"id,omitempty"`
 }
 
 // kinds is the set of event kinds understood by Derive.
@@ -90,6 +100,24 @@ var kinds = map[string]bool{
 	"session_command": true,
 	"session_end":     true,
 	"goal":            true,
+	"learning":        true,
+	"dismissed":       true,
+}
+
+// severities is the set of severities a learning event may carry.
+var severities = map[string]bool{"P0": true, "P1": true, "P2": true}
+
+// learningIDOK reports whether s matches ^L-[0-9]+$.
+func learningIDOK(s string) bool {
+	if len(s) < 3 || s[0] != 'L' || s[1] != '-' {
+		return false
+	}
+	for i := 2; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isTaskChar reports whether c is allowed in a task id: ^[A-Za-z0-9._-]+$.
@@ -177,7 +205,23 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed", e.Kind)
+	}
+	if e.Kind == "learning" {
+		if !severities[e.Severity] {
+			return fmt.Errorf("learning event severity %q is not one of P0, P1, P2", e.Severity)
+		}
+		if e.Title == "" || e.Observed == "" || e.Evidence == "" || e.Ask == "" {
+			return fmt.Errorf("learning event must carry title, observed, evidence, and ask")
+		}
+	}
+	if e.Kind == "dismissed" {
+		if !learningIDOK(e.ID) {
+			return fmt.Errorf("dismissed event id %q does not match ^L-[0-9]+$", e.ID)
+		}
+		if e.Note == "" {
+			return fmt.Errorf("dismissed event must carry a note")
+		}
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)

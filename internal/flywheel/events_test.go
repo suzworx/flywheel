@@ -512,6 +512,61 @@ func TestValidateGoalEvent(t *testing.T) {
 	}
 }
 
+func TestValidateLearningEvent(t *testing.T) {
+	ok := Event{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "runs", Ask: "repeat"}
+	if err := Validate(ok); err != nil {
+		t.Errorf("Validate() rejected a valid learning event: %v", err)
+	}
+	for _, sev := range []string{"", "P3", "high"} {
+		e := ok
+		e.Severity = sev
+		if err := Validate(e); err == nil {
+			t.Errorf("Validate() accepted learning severity %q", sev)
+		} else if !strings.Contains(err.Error(), "severity") {
+			t.Errorf("Validate() error = %v, want severity message", err)
+		}
+	}
+	for _, field := range []string{"title", "observed", "evidence", "ask"} {
+		e := ok
+		switch field {
+		case "title":
+			e.Title = ""
+		case "observed":
+			e.Observed = ""
+		case "evidence":
+			e.Evidence = ""
+		case "ask":
+			e.Ask = ""
+		}
+		if err := Validate(e); err == nil {
+			t.Errorf("Validate() accepted learning with empty %s", field)
+		}
+	}
+}
+
+func TestValidateDismissedEvent(t *testing.T) {
+	ok := Event{Task: "t1", Kind: "dismissed", ID: "L-01", Note: "fixed"}
+	if err := Validate(ok); err != nil {
+		t.Errorf("Validate() rejected a valid dismissed event: %v", err)
+	}
+	for _, id := range []string{"", "L01", "l-01", "L-"} {
+		e := ok
+		e.ID = id
+		if err := Validate(e); err == nil {
+			t.Errorf("Validate() accepted dismissed id %q", id)
+		} else if !strings.Contains(err.Error(), "id") {
+			t.Errorf("Validate() error = %v, want id message", err)
+		}
+	}
+	empty := ok
+	empty.Note = ""
+	if err := Validate(empty); err == nil {
+		t.Error("Validate() accepted dismissed without a note")
+	} else if !strings.Contains(err.Error(), "note") {
+		t.Errorf("Validate() error = %v, want note message", err)
+	}
+}
+
 func TestValidateRejectsGoalOnOtherKinds(t *testing.T) {
 	g := &GoalSpec{ID: "g1", Title: "Ship", Status: "active"}
 	for _, k := range []string{"planned", "staffed", "dispatched", "finished"} {
