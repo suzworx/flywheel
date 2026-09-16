@@ -251,10 +251,10 @@ func TestOpenCodeParseToolPathFallsBackToPathField(t *testing.T) {
 
 // TestClaudeParseRealFixture parses testdata/claude-real.jsonl, five REAL
 // lines captured from `claude -p ... --output-format stream-json --verbose`
-// on this machine. The captured session failed to authenticate, so the
-// assistant line's text is an API error message and the result line carries
-// is_error: true; that is still real structure, asserted as captured, not as
-// a successful run would read.
+// on this machine. The captured session failed to authenticate and did no
+// work, so even though the result line's stop_reason is stop_sequence and
+// subtype is "success", its top-level is_error: true makes the step Reason
+// "error", per claudeReason.
 func TestClaudeParseRealFixture(t *testing.T) {
 	a, _ := AdapterFor("claude")
 	lines := fixtureLines("claude-real.jsonl", t)
@@ -275,8 +275,8 @@ func TestClaudeParseRealFixture(t *testing.T) {
 		t.Errorf("assistant line = %v, %v, want the captured auth-error text", obs, ok)
 	}
 	obs, ok = a.Parse([]byte(lines[4]))
-	if !ok || obs.Kind != "step" || obs.Reason != "stop" || obs.Cost != 0 {
-		t.Errorf("result line = %v, %v, want step stop cost 0 (is_error:true does not override stop_reason:stop_sequence)", obs, ok)
+	if !ok || obs.Kind != "step" || obs.Reason != "error" || obs.Cost != 0 {
+		t.Errorf("result line = %v, %v, want step error cost 0 (is_error:true overrides stop_reason:stop_sequence)", obs, ok)
 	}
 }
 
@@ -301,6 +301,96 @@ func TestClaudeParseToolUseFixture(t *testing.T) {
 	obs, ok = a.Parse([]byte(lines[2]))
 	if !ok || obs.Kind != "step" || obs.Reason != "length" {
 		t.Errorf("max_tokens result = %v, %v, want step length", obs, ok)
+	}
+}
+
+// TestClaudeParseLimitFixture parses testdata/claude-limit.jsonl, one REAL
+// line captured from `claude -p ...` on this machine after it hit its
+// session limit: stop_reason stop_sequence and subtype "success", but with
+// a top-level is_error: true and a session-limit result message. is_error
+// wins, so the step Reason is "error".
+func TestClaudeParseLimitFixture(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	lines := fixtureLines("claude-limit.jsonl", t)
+	if len(lines) != 1 {
+		t.Fatalf("claude-limit.jsonl has %d lines, want 1", len(lines))
+	}
+	obs, ok := a.Parse([]byte(lines[0]))
+	if !ok || obs.Kind != "step" || obs.Reason != "error" || obs.Session != "340a5fef-5f5d-4fb6-a42d-0a7d55b65a38" {
+		t.Errorf("limit result line = %v, %v, want step error with the session", obs, ok)
+	}
+}
+
+// TestClaudeParseStopSequenceWithoutIsError checks that a result line
+// carrying stop_reason stop_sequence with no top-level is_error still reads
+// as a clean stop.
+func TestClaudeParseStopSequenceWithoutIsError(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	line := []byte(`{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":"ses_x","total_cost_usd":0.01}`)
+	obs, ok := a.Parse(line)
+	if !ok || obs.Kind != "step" || obs.Reason != "stop" {
+		t.Errorf("result line = %v, %v, want step stop", obs, ok)
+	}
+}
+
+func TestClaudeCommandFresh(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	bin, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1",
+		PromptFile: briefPath,
+	})
+	if bin != "claude" {
+		t.Errorf("bin = %q, want claude", bin)
+	}
+	for i, arg := range args {
+		if arg == "--resume" {
+			t.Errorf("args[%d] = --resume, want no --resume on a fresh run: %v", i, args)
+		}
+	}
+	if len(args) < 2 || !strings.HasPrefix(args[1], freshMessage) {
+		t.Errorf("args[1] = %q, want it to lead with freshMessage", args[1])
+	}
+}
+
+func TestClaudeCommandResume(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	deltaPath := filepath.Join(t.TempDir(), "delta.txt")
+	_, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "c1", Title: "T1-c1", Model: "m1",
+		Session: "ses_emitted_9", PromptFile: deltaPath, Resume: true,
+	})
+	found := false
+	for i, arg := range args {
+		if arg == "--resume" {
+			found = true
+			if i+1 >= len(args) || args[i+1] != "ses_emitted_9" {
+				t.Errorf("--resume not followed by the session: args = %v", args)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("args = %v, want --resume ses_emitted_9", args)
+	}
+	if len(args) < 2 || !strings.HasPrefix(args[1], resumeMessage) {
+		t.Errorf("args[1] = %q, want it to lead with resumeMessage", args[1])
+	}
+}
+
+func TestClaudeCommandResumeWithoutSession(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	deltaPath := filepath.Join(t.TempDir(), "delta.txt")
+	_, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "c1", Title: "T1-c1", Model: "m1",
+		PromptFile: deltaPath, Resume: true,
+	})
+	for i, arg := range args {
+		if arg == "--resume" {
+			t.Errorf("args[%d] = --resume, want no --resume when Session is empty: %v", i, args)
+		}
+	}
+	if len(args) < 2 || !strings.HasPrefix(args[1], freshMessage) {
+		t.Errorf("args[1] = %q, want it to lead with freshMessage when Session is empty", args[1])
 	}
 }
 
