@@ -15,16 +15,24 @@ import (
 func TestInitCreatesScaffold(t *testing.T) {
 	dir := t.TempDir()
 
-	got, created, err := InitSeeded(dir, false, "", "")
+	got, pieces, err := InitSeeded(dir, false, "", "")
 	if err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
 	if got != dir {
 		t.Fatalf("InitSeeded() = %q, want %q", got, dir)
 	}
-	wantCreated := []string{"flywheel.md", ".flywheel/state.json", ".flywheel/events.jsonl", ".flywheel/config.json", ".flywheel/.gitignore"}
-	if !reflect.DeepEqual(created, wantCreated) {
-		t.Errorf("InitSeeded() created = %v, want %v", created, wantCreated)
+	wantPaths := []string{"flywheel.md", ".flywheel/state.json", ".flywheel/events.jsonl", ".flywheel/config.json", ".flywheel/.gitignore", ".flywheel/.gitattributes", ".flywheel/briefs/"}
+	if len(pieces) != len(wantPaths) {
+		t.Fatalf("InitSeeded() pieces = %+v, want %d entries", pieces, len(wantPaths))
+	}
+	for i, p := range pieces {
+		if p.Path != wantPaths[i] {
+			t.Errorf("pieces[%d].Path = %q, want %q", i, p.Path, wantPaths[i])
+		}
+		if !p.Added {
+			t.Errorf("pieces[%d] (%s) Added = false, want true on a fresh init", i, p.Path)
+		}
 	}
 
 	for _, f := range []string{"flywheel.md", ".flywheel/state.json", ".flywheel/events.jsonl", ".flywheel/.gitignore", ".flywheel/.gitattributes", ".flywheel/briefs"} {
@@ -34,25 +42,57 @@ func TestInitCreatesScaffold(t *testing.T) {
 	}
 }
 
-func TestInitSeededOmitsPreexistingFilesFromCreated(t *testing.T) {
+// TestInitAddsOnlyMissingGitattributes covers the issue #121 scenario: an
+// adopted directory that already has everything except .gitattributes gets
+// exactly that piece added, and every other piece is left byte-identical.
+func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
 	dir := t.TempDir()
-	dot := filepath.Join(dir, ".flywheel")
-	if err := os.MkdirAll(dot, 0o755); err != nil {
-		t.Fatalf("mkdir .flywheel: %v", err)
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
 	}
-	for _, f := range []string{"config.json", "events.jsonl", ".gitignore"} {
-		if err := os.WriteFile(filepath.Join(dot, filepath.FromSlash(f)), []byte{}, 0o644); err != nil {
-			t.Fatalf("write %s: %v", f, err)
-		}
+	mdPath := filepath.Join(dir, "flywheel.md")
+	configPath := filepath.Join(dir, ".flywheel", "config.json")
+	eventsPath := filepath.Join(dir, ".flywheel", "events.jsonl")
+	gitattributesPath := filepath.Join(dir, ".flywheel", ".gitattributes")
+
+	mdBefore, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("read flywheel.md: %v", err)
+	}
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	eventsBefore, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if err := os.Remove(gitattributesPath); err != nil {
+		t.Fatalf("remove .gitattributes: %v", err)
 	}
 
-	_, created, err := InitSeeded(dir, false, "", "")
+	_, pieces, err := InitSeeded(dir, false, "", "")
 	if err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
-	want := []string{"flywheel.md", ".flywheel/state.json"}
-	if !reflect.DeepEqual(created, want) {
-		t.Errorf("InitSeeded() created = %v, want %v", created, want)
+	for _, p := range pieces {
+		want := p.Path == ".flywheel/.gitattributes"
+		if p.Added != want {
+			t.Errorf("piece %s Added = %v, want %v", p.Path, p.Added, want)
+		}
+	}
+
+	if b, err := os.ReadFile(mdPath); err != nil || string(b) != string(mdBefore) {
+		t.Errorf("flywheel.md changed: got %q, err %v, want %q", b, err, mdBefore)
+	}
+	if b, err := os.ReadFile(configPath); err != nil || string(b) != string(configBefore) {
+		t.Errorf("config.json changed: got %q, err %v, want %q", b, err, configBefore)
+	}
+	if b, err := os.ReadFile(eventsPath); err != nil || string(b) != string(eventsBefore) {
+		t.Errorf("events.jsonl changed: got %q, err %v, want %q", b, err, eventsBefore)
+	}
+	if b, err := os.ReadFile(gitattributesPath); err != nil || string(b) != "* text eol=lf\n" {
+		t.Errorf(".gitattributes = %q, err %v, want it recreated with the default", b, err)
 	}
 }
 
@@ -62,10 +102,14 @@ func TestInitSeededOnInitializedDirCreatesNothing(t *testing.T) {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
 
-	if _, created, err := InitSeeded(dir, false, "", ""); err != nil {
+	_, pieces, err := InitSeeded(dir, false, "", "")
+	if err != nil {
 		t.Fatalf("InitSeeded() second call error = %v, want idempotent success", err)
-	} else if len(created) != 0 {
-		t.Errorf("InitSeeded() second call created = %v, want none", created)
+	}
+	for _, p := range pieces {
+		if p.Added {
+			t.Errorf("InitSeeded() second call added %s, want a fully initialized directory to add nothing", p.Path)
+		}
 	}
 }
 
@@ -141,12 +185,16 @@ func TestInitRepeatedCallCreatesNothing(t *testing.T) {
 		t.Fatalf("Init() error = %v", err)
 	}
 
-	// An already-initialized directory has nothing to do: success, no
-	// created files, nothing refused.
-	if _, created, err := InitSeeded(dir, false, "", ""); err != nil {
+	// An already-initialized directory has nothing to do: success, nothing
+	// added, nothing refused.
+	_, pieces, err := InitSeeded(dir, false, "", "")
+	if err != nil {
 		t.Fatalf("InitSeeded() second call error = %v, want idempotent success", err)
-	} else if len(created) != 0 {
-		t.Errorf("InitSeeded() second call created = %v, want none", created)
+	}
+	for _, p := range pieces {
+		if p.Added {
+			t.Errorf("InitSeeded() second call added %s, want none", p.Path)
+		}
 	}
 
 	// Nothing changed: flywheel.md still present, state.json still valid.
@@ -179,7 +227,7 @@ func TestInitCreatesMissingParentDirs(t *testing.T) {
 	}
 }
 
-func TestInitRefusesExistingStateWithoutMarkdown(t *testing.T) {
+func TestInitLeavesJunkStateUntouchedAndAddsMarkdown(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, ".flywheel", "state.json")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
@@ -190,25 +238,24 @@ func TestInitRefusesExistingStateWithoutMarkdown(t *testing.T) {
 		t.Fatalf("write state.json: %v", err)
 	}
 
-	if _, err := Init(dir, false); err == nil {
-		t.Fatal("Init() without --force: got nil error, want refusal when state.json exists")
-	} else if !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("Init() error = %v, want 'already exists'", err)
+	// state.json already existing no longer stops init: it's left alone and
+	// the missing pieces, including flywheel.md, are filled in around it.
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v, want success around an existing state.json", err)
 	}
-
-	// Refusal preserved exact bytes and created nothing.
 	b, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("read state.json: %v", err)
 	}
 	if string(b) != string(junk) {
-		t.Errorf("state.json changed after refusal: got %q, want %q", b, junk)
+		t.Errorf("state.json changed: got %q, want untouched junk %q", b, junk)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "flywheel.md")); !os.IsNotExist(err) {
-		t.Errorf("flywheel.md exists after refusal, want absent")
+	if _, err := os.Stat(filepath.Join(dir, "flywheel.md")); err != nil {
+		t.Errorf("flywheel.md not created: %v", err)
 	}
 
-	// Force resets the existing state file and adds the markdown.
+	// state.json is never overwritten, even with --force: only flywheel.md
+	// responds to force.
 	if _, err := Init(dir, true); err != nil {
 		t.Fatalf("Init() --force error = %v", err)
 	}
@@ -216,16 +263,12 @@ func TestInitRefusesExistingStateWithoutMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state.json after force: %v", err)
 	}
-	var state map[string]json.RawMessage
-	if err := json.Unmarshal(b, &state); err != nil {
-		t.Fatalf("state.json not valid JSON after force: %v", err)
-	}
-	if len(state) != 4 {
-		t.Errorf("state.json not reset by force: %v", string(b))
+	if string(b) != string(junk) {
+		t.Errorf("--force changed state.json: got %q, want untouched junk %q", b, junk)
 	}
 }
 
-func TestInitRefusesExistingMarkdownWithoutState(t *testing.T) {
+func TestInitLeavesExistingMarkdownUntouchedAndAddsState(t *testing.T) {
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	custom := []byte("keep me")
@@ -233,10 +276,10 @@ func TestInitRefusesExistingMarkdownWithoutState(t *testing.T) {
 		t.Fatalf("write flywheel.md: %v", err)
 	}
 
-	if _, err := Init(dir, false); err == nil {
-		t.Fatal("Init() without --force: got nil error, want refusal when flywheel.md exists")
-	} else if !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("Init() error = %v, want 'already exists'", err)
+	// flywheel.md already existing no longer stops init: it's reported
+	// present and the missing pieces, including state.json, are added.
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v, want success around an existing flywheel.md", err)
 	}
 
 	b, err := os.ReadFile(mdPath)
@@ -244,7 +287,10 @@ func TestInitRefusesExistingMarkdownWithoutState(t *testing.T) {
 		t.Fatalf("read flywheel.md: %v", err)
 	}
 	if string(b) != string(custom) {
-		t.Errorf("flywheel.md changed after refusal: got %q, want %q", b, custom)
+		t.Errorf("flywheel.md changed: got %q, want %q", b, custom)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "state.json")); err != nil {
+		t.Errorf("state.json not created: %v", err)
 	}
 }
 
@@ -277,34 +323,34 @@ func TestInitInvalidStateDestinationLeavesNoMarkdown(t *testing.T) {
 	}
 }
 
-func TestInitFailedForceRestoresPreexistingBytes(t *testing.T) {
+func TestInitFailedForceRestoresMarkdown(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 	mdPath := filepath.Join(dir, "flywheel.md")
-	statePath := filepath.Join(dir, ".flywheel", "state.json")
 
 	// Simulate a preexisting markdown a failed force update must restore.
 	custom := []byte("custom markdown that must survive a failed force update")
 	if err := os.WriteFile(mdPath, custom, 0o644); err != nil {
 		t.Fatalf("write custom flywheel.md: %v", err)
 	}
-	origState, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read state.json: %v", err)
+
+	// Turn .gitattributes into a directory so the force call fails on a
+	// later piece, after it has already force-reset flywheel.md.
+	gitattributesPath := filepath.Join(dir, ".flywheel", ".gitattributes")
+	if err := os.Remove(gitattributesPath); err != nil {
+		t.Fatalf("remove .gitattributes: %v", err)
+	}
+	if err := os.Mkdir(gitattributesPath, 0o755); err != nil {
+		t.Fatalf("mkdir .gitattributes obstruction: %v", err)
 	}
 
-	// Make state.json unwritable so the force update fails after the
-	// markdown was already overwritten.
-	if err := os.Chmod(statePath, 0o444); err != nil {
-		t.Fatalf("chmod state.json: %v", err)
-	}
 	if _, err := Init(dir, true); err == nil {
-		t.Skip("read-only state.json did not block the write (privileged user); skipping restore assertion")
+		t.Skip("directory obstruction did not fail the write; skipping restore assertion")
 	}
 
-	// The preexisting markdown bytes were restored, state.json untouched.
+	// flywheel.md's preexisting bytes were restored.
 	b, err := os.ReadFile(mdPath)
 	if err != nil {
 		t.Fatalf("read flywheel.md: %v", err)
@@ -312,17 +358,10 @@ func TestInitFailedForceRestoresPreexistingBytes(t *testing.T) {
 	if string(b) != string(custom) {
 		t.Errorf("flywheel.md not restored after failed force: got %q, want %q", b, custom)
 	}
-	b, err = os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read state.json: %v", err)
-	}
-	if string(b) != string(origState) {
-		t.Errorf("state.json changed by failed force: got %q, want %q", b, origState)
-	}
 
-	// Unblock and verify a retry succeeds and resets both files.
-	if err := os.Chmod(statePath, 0o644); err != nil {
-		t.Fatalf("chmod state.json back: %v", err)
+	// Unblock and verify a retry succeeds and resets flywheel.md.
+	if err := os.Remove(gitattributesPath); err != nil {
+		t.Fatalf("remove obstruction: %v", err)
 	}
 	if _, err := Init(dir, true); err != nil {
 		t.Fatalf("Init() retry after unblock error = %v", err)
@@ -334,12 +373,9 @@ func TestInitFailedForceRestoresPreexistingBytes(t *testing.T) {
 	if string(b) != markdownTemplate {
 		t.Errorf("flywheel.md not reset by successful force: got %q", b)
 	}
-	if _, err := os.Stat(statePath); err != nil {
-		t.Errorf("state.json missing after successful force: %v", err)
-	}
 }
 
-func TestInitForceResetsRegularFiles(t *testing.T) {
+func TestInitForceResetsMarkdownOnly(t *testing.T) {
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	statePath := filepath.Join(dir, ".flywheel", "state.json")
@@ -349,10 +385,13 @@ func TestInitForceResetsRegularFiles(t *testing.T) {
 	if err := os.WriteFile(mdPath, []byte("junk markdown"), 0o644); err != nil {
 		t.Fatalf("write flywheel.md: %v", err)
 	}
-	if err := os.WriteFile(statePath, []byte("junk state"), 0o644); err != nil {
+	junkState := []byte("junk state")
+	if err := os.WriteFile(statePath, junkState, 0o644); err != nil {
 		t.Fatalf("write state.json: %v", err)
 	}
 
+	// --force resets flywheel.md but leaves every other piece, including
+	// state.json, untouched.
 	if _, err := Init(dir, true); err != nil {
 		t.Fatalf("Init() --force error = %v", err)
 	}
@@ -368,12 +407,8 @@ func TestInitForceResetsRegularFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state.json: %v", err)
 	}
-	var state map[string]json.RawMessage
-	if err := json.Unmarshal(b, &state); err != nil {
-		t.Fatalf("state.json not valid JSON after force: %v", err)
-	}
-	if len(state) != 4 {
-		t.Errorf("state.json not reset by force: %v", string(b))
+	if string(b) != string(junkState) {
+		t.Errorf("--force overwrote state.json: got %q, want untouched junk %q", b, junkState)
 	}
 }
 
