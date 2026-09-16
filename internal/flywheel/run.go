@@ -123,14 +123,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	brief := ""
+	brief, _ := latestBaseBriefAndAttempt(events, o.Task)
 	lastSession := ""
 	for _, e := range events {
 		if e.Task != o.Task {
 			continue
-		}
-		if e.Kind == "planned" && e.Brief != "" {
-			brief = e.Brief
 		}
 		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
 			lastSession = e.Session

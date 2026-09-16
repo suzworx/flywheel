@@ -34,12 +34,13 @@ type GateOut struct {
 // GaugeResult reports a full validation pass: the tree hash, one entry per
 // gate, and the paths found outside owns.
 type GaugeResult struct {
-	Tree    string
-	Attempt string
-	Gates   []GateOut
-	Outside []string
-	GatesOK bool
-	OwnsOK  bool
+	Tree       string
+	Attempt    string
+	BriefPaths []string // the base brief, then a delta when the attempt has one
+	Gates      []GateOut
+	Outside    []string
+	GatesOK    bool
+	OwnsOK     bool
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
@@ -70,31 +71,18 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if err != nil {
 		return GaugeResult{}, err
 	}
-	briefPath := ""
-	attempt := ""
-	for _, e := range events {
-		if e.Task != task {
-			continue
-		}
-		if e.Kind == "planned" && e.Brief != "" {
-			briefPath = e.Brief
-		}
-		if e.Attempt != "" {
-			attempt = e.Attempt
-		}
-	}
-	if briefPath == "" {
-		return GaugeResult{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", task, task)
-	}
-	if !filepath.IsAbs(briefPath) {
-		briefPath = filepath.Join(o.Dir, briefPath)
-	}
-	header, err := ParseBriefHeader(briefPath)
+	header, briefPaths, err := AttemptBrief(o.Dir, events, task)
 	if err != nil {
-		return GaugeResult{}, fmt.Errorf("parse brief %s: %w", briefPath, err)
+		return GaugeResult{}, err
 	}
 	if len(header.Gates) == 0 {
-		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPath)
+		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])
+	}
+	attempt := ""
+	for _, e := range events {
+		if e.Task == task && e.Attempt != "" {
+			attempt = e.Attempt
+		}
 	}
 	if attempt == "" {
 		attempt = "r1"
@@ -111,6 +99,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	var res GaugeResult
 	res.Tree = tree
 	res.Attempt = attempt
+	res.BriefPaths = briefPaths
 	res.GatesOK = true
 
 	for i, gate := range header.Gates {
