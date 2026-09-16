@@ -64,54 +64,81 @@ func TestStageOf(t *testing.T) {
 }
 
 func TestClassifyRun(t *testing.T) {
-	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0) != "done" {
+	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0, 600) != "done" {
 		t.Error("done unit not classified done")
 	}
-	if classifyRun(true, 1, 0, 0, false, "", 100, 0) != "done" {
+	if classifyRun(true, 1, 0, 0, false, "", 100, 0, 600) != "done" {
 		t.Error("done unit with an empty reason not classified done")
 	}
-	if classifyRun(false, 1, 0, 0, true, "stop", 100, 0) != "provider-error" {
+	if classifyRun(false, 1, 0, 0, true, "stop", 100, 0, 600) != "provider-error" {
 		t.Error("provider-error not classified provider-error")
 	}
-	if classifyRun(false, 1, 0, 0, false, "length", 100, 0) != "capped" {
+	if classifyRun(false, 1, 0, 0, false, "length", 100, 0, 600) != "capped" {
 		t.Error("capped not classified capped")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 0, 120) != "silent" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 0, 120, 600) != "silent" {
 		t.Error("empty old run not classified silent")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 700) != "stalled" {
-		t.Error("no-growth 700s not classified stalled")
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 700, 600) != "stalled" {
+		t.Error("no-growth 700s not classified stalled at the 600s default")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400) != "long-step" {
-		t.Error("no-growth 400s not classified long-step")
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600) != "long-step" {
+		t.Error("no-growth 400s not classified long-step at the 600s default")
 	}
-	if classifyRun(false, 10, 3, 0, false, "stop", 100, 0) != "exploring" {
+	if classifyRun(false, 10, 3, 0, false, "stop", 100, 0, 600) != "exploring" {
 		t.Error("10 steps, 3 reads, 0 edits not classified exploring")
 	}
-	if classifyRun(false, 10, 3, 1, false, "stop", 100, 0) != "running" {
+	if classifyRun(false, 10, 3, 1, false, "stop", 100, 0, 600) != "running" {
 		t.Error("exploring with an edit not classified running")
 	}
-	if classifyRun(false, 1, 0, 0, false, "stop", 100, 0) != "running" {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 0, 600) != "running" {
 		t.Error("healthy run not classified running")
 	}
 	// A capped or provider-error run still records a finished event, so the
 	// signal wins over done: the unit must reach the andon.
-	if classifyRun(true, 5, 1, 0, false, "length", 200, 0) != "capped" {
+	if classifyRun(true, 5, 1, 0, false, "length", 200, 0, 600) != "capped" {
 		t.Error("finished capped run not classified capped")
 	}
-	if classifyRun(true, 5, 1, 0, false, "error", 200, 0) != "provider-error" {
+	if classifyRun(true, 5, 1, 0, false, "error", 200, 0, 600) != "provider-error" {
 		t.Error("finished provider-error run not classified provider-error")
 	}
-	if classifyRun(true, 5, 1, 1, false, "stop", 200, 0) != "done" {
+	if classifyRun(true, 5, 1, 1, false, "stop", 200, 0, 600) != "done" {
 		t.Error("clean finished run not classified done")
 	}
 	// Any other done reason (start-failed, silent, ...) is a failed run, not a
-	// silent success (issue #131).
-	if classifyRun(true, 0, 0, 0, false, "start-failed", 100, 0) != "failed" {
+	// silent success (issue #131), including the new stalled reason (#85).
+	if classifyRun(true, 0, 0, 0, false, "start-failed", 100, 0, 600) != "failed" {
 		t.Error("finished start-failed run not classified failed")
 	}
-	if classifyRun(true, 0, 0, 0, false, "silent", 100, 0) != "failed" {
+	if classifyRun(true, 0, 0, 0, false, "silent", 100, 0, 600) != "failed" {
 		t.Error("finished silent run not classified failed")
+	}
+	if classifyRun(true, 3, 1, 0, false, "stalled", 100, 0, 600) != "failed" {
+		t.Error("finished stalled run not classified failed")
+	}
+}
+
+// TestClassifyRunFollowsStallTimeout checks the stalled and long-step
+// thresholds scale with the stallTimeout argument instead of the old
+// hardcoded 600/300, so the view and the runner agree on a non-default
+// worker config (issue #85).
+func TestClassifyRunFollowsStallTimeout(t *testing.T) {
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 40, 100) != "running" {
+		t.Error("age 40 under a 100s stall timeout not classified running")
+	}
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 60, 100) != "long-step" {
+		t.Error("age 60 over half a 100s stall timeout not classified long-step")
+	}
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 150, 100) != "stalled" {
+		t.Error("age 150 over a 100s stall timeout not classified stalled")
+	}
+	// The same age classifies differently under a shorter stall timeout,
+	// proving the threshold is not still hardcoded.
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 600) != "long-step" {
+		t.Error("age 400 under a 600s stall timeout not classified long-step")
+	}
+	if classifyRun(false, 1, 0, 0, false, "stop", 100, 400, 200) != "stalled" {
+		t.Error("age 400 over a 200s stall timeout not classified stalled")
 	}
 }
 

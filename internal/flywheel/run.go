@@ -19,7 +19,9 @@ import (
 )
 
 // RunOptions configures one dispatch. StartTimeout bounds the wait for the
-// first stdout line; zero means the default 60s.
+// first stdout line; zero means the default 60s. StallTimeout bounds the gap
+// between two run-file lines once the run has started; zero means the
+// worker's configured stall_timeout (itself defaulting to 600s).
 type RunOptions struct {
 	Task         string
 	Worker       string // worker name; empty selects the default worker
@@ -27,7 +29,9 @@ type RunOptions struct {
 	Resume       bool
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
 	StartTimeout time.Duration
+	StallTimeout time.Duration
 	Progress     io.Writer
+	Stderr       io.Writer     // notices (e.g. the long-step warning); nil discards them
 	SimDelay     time.Duration // unexported test hook: sim waits before its first line
 	SimLineDelay time.Duration // unexported test hook: sim waits between lines
 }
@@ -323,6 +327,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
+	stallDur := o.StallTimeout
+	if stallDur == 0 {
+		stallDur = worker.stallTimeoutDuration()
+	}
+	halfDur := stallDur / 2
 
 	// The command request. The session is passed only on a resume: a fresh
 	// run must start a new conversation, never continue the previous one.
@@ -374,6 +383,18 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		killChild()
 	})
 
+	// Stall check, armed once the run has started (issue #85): a run-file gap
+	// of stallDur with the process still alive is stopped the same way a
+	// silent start is, but recorded as reason=stalled, not silent. Both timers
+	// are reset on every line so they measure the gap since the last line, not
+	// since the run started; noticeOnce keeps the half-timeout warning to one
+	// line even if the gap recurs later in the same run.
+	var stalled atomic.Bool
+	var stallTimer, halfTimer *time.Timer
+	var noticeOnce sync.Once
+	noticeLine := fmt.Sprintf("%s %s long step: no output for %ds; the stall timeout fires at %ds",
+		o.Task, attempt, int(halfDur.Seconds()), int(stallDur.Seconds()))
+
 	if worker.Adapter == "sim" {
 		if o.SimDelay > 0 {
 			time.Sleep(o.SimDelay)
@@ -408,18 +429,29 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	firstLine := true
 	for sc.Scan() {
-		if silent.Load() {
+		if silent.Load() || stalled.Load() {
 			break
 		}
 		line := sc.Bytes()
 		if firstLine {
 			// The start check ends when the first line arrives. If Stop
-			// reports the timer already fired, the run is silent.
+			// reports the timer already fired, the run is silent. Otherwise
+			// the stall timers arm now, counting from this first line.
 			firstLine = false
 			if !watchdog.Stop() {
 				silent.Store(true)
 				break
 			}
+			stallTimer = time.AfterFunc(stallDur, func() {
+				stalled.Store(true)
+				killChild()
+			})
+			halfTimer = time.AfterFunc(halfDur, func() {
+				noticeOnce.Do(func() { progress(o.Stderr, noticeLine) })
+			})
+		} else {
+			stallTimer.Reset(stallDur)
+			halfTimer.Reset(halfDur)
 		}
 		if _, err := runFile.Write(line); err != nil {
 			return Result{}, fmt.Errorf("write %s: %w", filepath.Join(runsDir, runName), err)
@@ -506,6 +538,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 	watchdog.Stop()
+	if stallTimer != nil {
+		stallTimer.Stop()
+	}
+	if halfTimer != nil {
+		halfTimer.Stop()
+	}
 	stopRenewer()
 
 	// Silent: no output within the start timeout; we already killed the process
@@ -536,6 +574,33 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		_ = RemoveLease(dir, o.Task, attempt)
 		_, _ = WriteState(dir)
 		return Result{Attempt: attempt, RC: -1, Reason: "silent"}, nil
+	}
+
+	// Stalled: the run file stopped growing for stallDur while the process was
+	// still alive; the stall timer already killed it. steps holds the last
+	// completed step, same as any other mid-stream stop.
+	if stalled.Load() {
+		runFile.Close()
+		if errFile != nil {
+			errFile.Close()
+		}
+		if fixture != nil {
+			fixture.Close()
+		}
+		if cmd != nil {
+			_ = cmd.Wait()
+		}
+		runSHA := hex.EncodeToString(hasher.Sum(nil))
+		if err := AppendEvent(dir, Event{
+			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
+			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA,
+		}); err != nil {
+			return Result{}, err
+		}
+		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=stalled model=%s steps=%d", o.Task, attempt, model, steps))
+		_ = RemoveLease(dir, o.Task, attempt)
+		_, _ = WriteState(dir)
+		return Result{Attempt: attempt, Session: session, RC: -1, Reason: "stalled", Steps: steps}, nil
 	}
 
 	if errFile != nil {
@@ -622,10 +687,13 @@ func progress(w io.Writer, line string) {
 
 // ExitCode maps a result to the CLI exit code: 0 when the worker exited 0
 // with reason stop, 4 when it exited nonzero or ended capped or with an
-// error, 3 on a start timeout.
+// error, 3 on a start timeout, 7 on a mid-stream stall.
 func ExitCode(r Result) int {
 	if r.Reason == "silent" {
 		return 3
+	}
+	if r.Reason == "stalled" {
+		return 7
 	}
 	if r.RC == 0 && r.Reason == "stop" {
 		return 0

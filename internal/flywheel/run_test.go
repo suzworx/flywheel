@@ -563,6 +563,110 @@ func TestRunStartTimeoutSilent(t *testing.T) {
 	}
 }
 
+// stallFixture writes a fixture of n step_finish lines (reason "stop"), one
+// per line, for the mid-stream stall tests (issue #85). The sim adapter's
+// SimLineDelay applies uniformly after every line, so a delay exceeding the
+// stall timeout is already exceeded by the first inter-line gap: the run
+// stops right after the first line, and steps holds whatever that first
+// line completed.
+func stallFixture(t *testing.T, n int) string {
+	t.Helper()
+	session := "ses_test_stall_001"
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, `{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop"}}`+"\n", session)
+	}
+	path := filepath.Join(t.TempDir(), "stall.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+// TestRunStalledMidStream checks a run gone silent mid-stream for longer than
+// --stall-timeout is stopped and recorded as finished reason=stalled (exit 7,
+// distinct from silent's 3 and a generic failure's 4), keeping the last
+// completed step, and that the half-timeout notice reaches Stderr (issue #85).
+func TestRunStalledMidStream(t *testing.T) {
+	dir := setupTask(t)
+	model := stallFixture(t, 2)
+	if err := WriteConfig(dir, simConfig(model)); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	res, err := Run(dir, RunOptions{
+		Task: "T1", StallTimeout: time.Second, SimLineDelay: 1500 * time.Millisecond,
+		Progress: &out, Stderr: &errBuf,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stalled" {
+		t.Errorf("reason = %q, want stalled", res.Reason)
+	}
+	if res.Steps != 1 {
+		t.Errorf("steps = %d, want 1 (the one step completed before the stall)", res.Steps)
+	}
+	if ExitCode(res) != 7 {
+		t.Errorf("ExitCode() = %d, want 7", ExitCode(res))
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	f := evs[len(evs)-1]
+	if f.Kind != "finished" || f.Reason != "stalled" || f.Steps != 1 || f.Model != model {
+		t.Errorf("finished event = %v, want reason stalled, steps 1, model %q", f, model)
+	}
+	notice := "T1 r1 long step: no output for 0s; the stall timeout fires at 1s"
+	if !strings.Contains(errBuf.String(), notice) {
+		t.Errorf("stderr missing the half-timeout notice %q; got:\n%s", notice, errBuf.String())
+	}
+	want := "T1 r1 finished rc=-1 reason=stalled model=" + model + " steps=1"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("progress missing %q; got:\n%s", want, out.String())
+	}
+}
+
+// TestRunStalledUsesWorkerConfigWhenFlagAbsent checks the worker's configured
+// stall_timeout applies when --stall-timeout is not given (issue #85).
+func TestRunStalledUsesWorkerConfigWhenFlagAbsent(t *testing.T) {
+	dir := setupTask(t)
+	model := stallFixture(t, 1)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "sim", Adapter: "sim", Model: model, StallTimeout: 1}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", SimLineDelay: 1500 * time.Millisecond, Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stalled" {
+		t.Errorf("reason = %q, want stalled (from the worker's configured 1s stall_timeout)", res.Reason)
+	}
+}
+
+// TestRunStallTimeoutOverrideCleanRun checks a generous --stall-timeout never
+// interferes with a normal clean run (issue #85).
+func TestRunStallTimeoutOverrideCleanRun(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", StallTimeout: 5 * time.Minute, Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop", res.RC, res.Reason)
+	}
+	if ExitCode(res) != 0 {
+		t.Errorf("ExitCode() = %d, want 0", ExitCode(res))
+	}
+}
+
 func TestWorkerEnvAndPolicy(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
