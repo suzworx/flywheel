@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/suzworx/flywheel/compare/v0.9.0...v0.10.0) (2026-09-16)
+
+
+### Features
+
+* carry declared machine state into an isolated workdir ([#182](https://github.com/suzworx/flywheel/issues/182)) ([b38acc8](https://github.com/suzworx/flywheel/commit/b38acc809d550d4607308f74cffe80842a948782))
+* record the files an attempt wrote, and name them when it fails ([#180](https://github.com/suzworx/flywheel/issues/180)) ([9fa4533](https://github.com/suzworx/flywheel/commit/9fa453353314aaed252c913ddda4779db9f1616b))
+
+
+### Documentation
+
+* say exactly what is verified about the claude adapter ([#183](https://github.com/suzworx/flywheel/issues/183)) ([27d61b8](https://github.com/suzworx/flywheel/commit/27d61b861781634e30ac809a04822a10a68fd5c7))
+
 ## [0.9.0](https://github.com/suzworx/flywheel/compare/v0.8.0...v0.9.0) (2026-09-16)
 
 
