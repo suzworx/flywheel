@@ -1434,3 +1434,183 @@ func TestValidateBaselinedPathNotAttributed(t *testing.T) {
 		t.Errorf("attributed = %v, want nothing (baseline excuses first)", res.Attributed)
 	}
 }
+
+// initTaskOwns is initTask with a custom owns list, so a test can own files
+// beyond the committed a.go.
+func initTaskOwns(t *testing.T, owns []string, gates []string) (string, error) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		return "", fmt.Errorf("Init() error = %w", err)
+	}
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write .gitignore: %w", err)
+	}
+	brief := "owns: " + strings.Join(owns, ", ") + "\nneeds: none\n"
+	for _, g := range gates {
+		brief = brief + "gate: " + g + "\n"
+	}
+	brief = brief + "\n# TASK: gauges\n"
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+		return "", fmt.Errorf("write brief: %w", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		return "", fmt.Errorf("AppendEvent() error = %w", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "brief"})
+	return dir, nil
+}
+
+// TestValidateFilesRecordsMarkdownShape checks a validated task whose owns
+// include a Markdown file records that file's line and heading counts both on
+// GaugeResult.Files and on the owns_checked event, with the JSON field names
+// "path", "lines" and "headings" in the ledger (issue #130).
+func TestValidateFilesRecordsMarkdownShape(t *testing.T) {
+	dir, err := initTaskOwns(t, []string{"a.go", "doc.md"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskOwns() error = %v", err)
+	}
+	doc := "# Title\n\none\n## Section A\ntwo\n## Section B\nthree\n"
+	if err := os.WriteFile(filepath.Join(dir, "doc.md"), []byte(doc), 0o644); err != nil {
+		t.Fatalf("write doc.md: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("files = %v, want one entry for doc.md", res.Files)
+	}
+	f := res.Files[0]
+	if f.Path != "doc.md" || f.Lines != 7 || f.Headings != 3 {
+		t.Errorf("file = %+v, want doc.md 7 lines 3 headings", f)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "owns_checked" {
+			found = true
+			if len(e.Files) != 1 || e.Files[0].Path != "doc.md" || e.Files[0].Lines != 7 || e.Files[0].Headings != 3 {
+				t.Errorf("owns_checked files = %v, want doc.md 7 lines 3 headings", e.Files)
+			}
+		}
+	}
+	if !found {
+		t.Error("no owns_checked event recorded")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if !strings.Contains(string(b), `"lines":7`) || !strings.Contains(string(b), `"headings":3`) {
+		t.Error("owns_checked event JSON missing \"lines\":7 or \"headings\":3")
+	}
+}
+
+// TestValidateFilesNonMarkdownZeroHeadings checks a non-Markdown owned file
+// records its line count with zero headings, and that headings is omitted from
+// the event JSON when zero (issue #130).
+func TestValidateFilesNonMarkdownZeroHeadings(t *testing.T) {
+	dir, err := initTaskOwns(t, []string{"a.go", "notes.txt"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskOwns() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write notes.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("files = %v, want one entry for notes.txt", res.Files)
+	}
+	f := res.Files[0]
+	if f.Path != "notes.txt" || f.Lines != 3 || f.Headings != 0 {
+		t.Errorf("file = %+v, want notes.txt 3 lines 0 headings", f)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if strings.Contains(string(b), `"headings"`) {
+		t.Error("non-markdown owns_checked event JSON carries a headings field, want it omitted")
+	}
+}
+
+// TestValidateFilesSkipsOutsideOwns checks a changed file outside owns is not
+// measured: it fails the owns check but never appears in Files (issue #130).
+func TestValidateFilesSkipsOutsideOwns(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stray.md"), []byte("# H\nbody\n"), 0o644); err != nil {
+		t.Fatalf("write stray.md: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK {
+		t.Error("OwnsOK = true, want false (stray.md is outside owns)")
+	}
+	if len(res.Files) != 0 {
+		t.Errorf("files = %v, want nothing outside owns", res.Files)
+	}
+}
+
+// TestValidateFilesATXHeadingRule checks the simple, documented ATX rule: a
+// '#' inside a fenced code block still counts only when the whole line is a
+// real ATX heading (first non-space characters are one to six '#' followed by
+// a space); a mid-line '#' never counts. No fenced-code tracking (issue #130).
+func TestValidateFilesATXHeadingRule(t *testing.T) {
+	dir, err := initTaskOwns(t, []string{"a.go", "code.md"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskOwns() error = %v", err)
+	}
+	doc := "```go\n# comment in fence\nx := 1 // # not a heading\n```\n# Real heading\n"
+	if err := os.WriteFile(filepath.Join(dir, "code.md"), []byte(doc), 0o644); err != nil {
+		t.Fatalf("write code.md: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("files = %v, want one entry for code.md", res.Files)
+	}
+	f := res.Files[0]
+	if f.Path != "code.md" || f.Lines != 5 || f.Headings != 2 {
+		t.Errorf("file = %+v, want code.md 5 lines 2 headings (the fenced # line counts, the mid-line # does not)", f)
+	}
+}
+
+// TestValidateFilesSkipsUnreadable checks a changed owned file that can no
+// longer be read (deleted) is skipped, not measured as zero lines (issue
+// #130).
+func TestValidateFilesSkipsUnreadable(t *testing.T) {
+	dir, err := initTaskOwns(t, []string{"a.go", "gone.txt"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskOwns() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gone.txt"), []byte("byebye\n"), 0o644); err != nil {
+		t.Fatalf("write gone.txt: %v", err)
+	}
+	git(t, dir, []string{"add", "gone.txt"})
+	git(t, dir, []string{"commit", "-m", "add gone.txt"})
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatalf("remove gone.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Files) != 0 {
+		t.Errorf("files = %v, want nothing (gone.txt is deleted, cannot be read)", res.Files)
+	}
+}

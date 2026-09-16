@@ -104,6 +104,13 @@ func runValidate(args []string) {
 	if res.LiveDeclared > 0 && !res.LiveRun {
 		fmt.Printf("%s live-gate: %d declared, not run (--live)\n", task, res.LiveDeclared)
 	}
+	for _, f := range res.Files {
+		line := fmt.Sprintf("%s file %s: %d lines", task, f.Path, f.Lines)
+		if strings.HasSuffix(strings.ToLower(f.Path), ".md") && f.Headings > 0 {
+			line += fmt.Sprintf(", %d headings", f.Headings)
+		}
+		fmt.Println(line)
+	}
 	if len(res.Attributed) > 0 {
 		fmt.Printf("%s owns: attributed %s\n", task, strings.Join(res.Attributed, ", "))
 	}

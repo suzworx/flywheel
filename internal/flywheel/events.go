@@ -57,6 +57,10 @@ type Event struct {
 	Baseline   map[string]string `json:"baseline,omitempty"`
 	Baselined  []string          `json:"baselined,omitempty"`
 	Attributed []string          `json:"attributed,omitempty"`
+	// Files is an owns_checked event's measured shape of every changed path
+	// inside the unit's owns, sorted by path (issue #130), so a truncated
+	// document is visible in the ledger without re-reading the tree.
+	Files []FileShape `json:"files,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git

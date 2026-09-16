@@ -54,6 +54,18 @@ type GateOut struct {
 	Live bool
 }
 
+// FileShape reports one changed file's measured shape: its repo-relative path,
+// its line count and, for Markdown files only, the number of ATX heading lines
+// (a line whose first non-space characters are one to six '#' followed by a
+// space). It is a reading, not a gate: a short file is a fact the lead can see
+// at a glance, never an error (issue #130). Headings is omitted from JSON when
+// zero.
+type FileShape struct {
+	Path     string `json:"path"`
+	Lines    int    `json:"lines"`
+	Headings int    `json:"headings,omitempty"`
+}
+
 // GaugeResult reports a full validation pass: the tree hash, one entry per
 // gate, and the paths found outside owns.
 type GaugeResult struct {
@@ -67,8 +79,12 @@ type GaugeResult struct {
 	// while that task is in flight (issue #117): the lead's stray-file
 	// review can skip it, but it never counts toward OwnsOK's outside set.
 	Attributed []string
-	GatesOK    bool
-	OwnsOK     bool
+	// Files lists the measured shape of every changed path inside the unit's
+	// owns, sorted by path; paths outside owns and flywheel's own bookkeeping
+	// are never measured (issue #130). A reading, never a gate.
+	Files   []FileShape
+	GatesOK bool
+	OwnsOK  bool
 	// LiveDeclared is how many live-gate: lines the brief declared, set
 	// whether or not this pass ran them (issue #152).
 	LiveDeclared int
@@ -324,9 +340,11 @@ func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []stri
 	res.Outside = outside
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
+	res.Files = measureFiles(wd, owns, changed)
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
-		Tree: tree, Outside: outside, Baselined: baselined, Attributed: attributed, Persona: "supervisor",
+		Tree: tree, Outside: outside, Baselined: baselined, Attributed: attributed,
+		Files: res.Files, Persona: "supervisor",
 	}); err != nil {
 		return GaugeResult{}, err
 	}
@@ -770,4 +788,70 @@ func copyFileMode(src, dst string, mode os.FileMode) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// measureFiles returns the measured shape of every changed path inside the
+// unit's owns — the same ownsContains the owns check uses — sorted by path.
+// Paths outside owns and flywheel's own bookkeeping are never measured; a file
+// that cannot be read is skipped rather than erroring (issue #130).
+func measureFiles(wd string, owns []string, changed []string) []FileShape {
+	var files []FileShape
+	for _, p := range changed {
+		if !ownsContains(owns, p) || isFlywheelOwnPath(p) {
+			continue
+		}
+		fs, ok := fileShape(wd, p)
+		if !ok {
+			continue
+		}
+		files = append(files, fs)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files
+}
+
+// fileShape reads p inside wd and returns its measured shape: the line count
+// and, for a Markdown file, the number of ATX heading lines. A file that
+// cannot be read (deleted, say) reports ok=false so the caller skips it
+// rather than erroring.
+func fileShape(wd, p string) (FileShape, bool) {
+	b, err := os.ReadFile(filepath.Join(wd, filepath.FromSlash(p)))
+	if err != nil {
+		return FileShape{}, false
+	}
+	fs := FileShape{Path: p}
+	lines := strings.Split(string(b), "\n")
+	switch {
+	case len(b) == 0:
+		// no lines
+	case b[len(b)-1] == '\n':
+		fs.Lines = len(lines) - 1
+	default:
+		fs.Lines = len(lines)
+	}
+	if strings.HasSuffix(strings.ToLower(p), ".md") {
+		for _, line := range lines {
+			if isATXHeading(line) {
+				fs.Headings++
+			}
+		}
+	}
+	return fs, true
+}
+
+// isATXHeading reports whether line is a Markdown ATX heading line: its first
+// non-space characters are one to six '#' followed by a space. The rule is
+// deliberately simple and documented — no fenced-code tracking, no full
+// Markdown parsing — so a '#' inside a code block still counts only when the
+// whole line is a real ATX heading (issue #130).
+func isATXHeading(line string) bool {
+	line = strings.TrimLeft(line, " \t")
+	if line == "" || line[0] != '#' {
+		return false
+	}
+	h := 0
+	for h < len(line) && line[h] == '#' {
+		h++
+	}
+	return h >= 1 && h <= 6 && h < len(line) && line[h] == ' '
 }

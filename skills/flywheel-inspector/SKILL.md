@@ -29,6 +29,10 @@ You do:
 - Apply the review traps: gate failures in unowned files, superuser-only passes, debug or
   test-only surfaces under a production flag, contract prose that disagrees with its tests, error
   paths that fall through, assumptions the worker never questioned.
+- Read the `file <path>: <n> lines` gauge readings on a document unit: that is where a
+  part-by-part overwrite shows up. A document whose file is far shorter than the brief implies is
+  a rework even with green gates — a keyword gate is satisfied by a truncated tail, the shape of
+  the file is not.
 - Give a verdict: **pass**, **rework** (with a delta brief for the foreman), **scrap**, or
   **escalate**.
 - Get the lead's sign-off before passing a sensitive-domain unit (auth, row-level security,
