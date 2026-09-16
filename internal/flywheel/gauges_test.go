@@ -572,3 +572,109 @@ func TestValidateCorrectionDeltaOwnsAndGates(t *testing.T) {
 		t.Errorf("OwnsOK = false, want true (delta.txt owns b.go); outside = %v", res.Outside)
 	}
 }
+
+// wantHostBlockNote builds the persistent-host-block note ValidateTask must
+// record and print for the given parsed file (issue #101).
+func wantHostBlockNote(file string) string {
+	return "persistent host block: " + file +
+		"; compile then run (go test -c -o <dir>/x.test.exe <pkg> && <dir>/x.test.exe) or run the gate in CI"
+}
+
+// TestValidatePersistentHostBlockRecordsNote checks a gate whose output
+// carries the host-block message on both runs (a rerun can never help)
+// records the persistent note, naming the file parsed from "fork/exec
+// <path>:", on both the GateOut and the validated event, which keeps its
+// Reason host-blocked.
+func TestValidatePersistentHostBlockRecordsNote(t *testing.T) {
+	gate := "printf 'fork/exec /tmp/go-build/b1/flywheel.test.exe: An Application Control policy has blocked this file\\n'; exit 1"
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].HostBlocked {
+		t.Fatalf("HostBlocked = false, want true (both runs blocked)")
+	}
+	want := wantHostBlockNote("/tmp/go-build/b1/flywheel.test.exe")
+	if res.Gates[0].Note != want {
+		t.Errorf("note = %q, want %q", res.Gates[0].Note, want)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" {
+			found = true
+			if e.Reason != "host-blocked" {
+				t.Errorf("reason = %q, want host-blocked", e.Reason)
+			}
+			if e.Note != want {
+				t.Errorf("event note = %q, want %q", e.Note, want)
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded")
+	}
+}
+
+// TestValidatePersistentHostBlockFileEmptyWhenUnparsed checks output that
+// carries the host-block message without a "fork/exec <path>:" prefix parses
+// to an empty file, not an error.
+func TestValidatePersistentHostBlockFileEmptyWhenUnparsed(t *testing.T) {
+	gate := "printf 'An Application Control policy has blocked this file\\n'; exit 1"
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].HostBlocked {
+		t.Fatalf("HostBlocked = false, want true (both runs blocked)")
+	}
+	want := wantHostBlockNote("")
+	if res.Gates[0].Note != want {
+		t.Errorf("note = %q, want %q (no fork/exec prefix to parse)", res.Gates[0].Note, want)
+	}
+}
+
+// TestValidateHostBlockedRerunPassRecordsPass checks a gate blocked on its
+// first run but passing on the rerun keeps today's recording: no note, no
+// Reason host-blocked, and the passing rc.
+func TestValidateHostBlockedRerunPassRecordsPass(t *testing.T) {
+	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "ran"))
+	gate := fmt.Sprintf(`if [ -f "%s" ]; then exit 0; else touch "%s"; printf 'fork/exec /x: An Application Control policy has blocked this file\n'; exit 1; fi`, marker, marker)
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Gates[0].HostBlocked {
+		t.Errorf("HostBlocked = true, want false (the rerun passed)")
+	}
+	if res.Gates[0].RC != 0 {
+		t.Errorf("rc = %d, want 0 (the rerun passed)", res.Gates[0].RC)
+	}
+	if res.Gates[0].Note != "" {
+		t.Errorf("note = %q, want empty (a block followed by a pass keeps today's recording)", res.Gates[0].Note)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "validated" && e.Reason == "host-blocked" {
+			t.Error("validated event carries Reason host-blocked, want none (block then pass is today's recording)")
+		}
+	}
+}
