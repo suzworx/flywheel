@@ -12,7 +12,7 @@ import (
 
 func init() {
 	register("validate", "run a task's gates and check owns", runValidate)
-	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]...", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
+	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]... [--live]", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
 }
 
 // validateOptions holds the parsed validate flags.
@@ -20,6 +20,7 @@ type validateOptions struct {
 	dir     string
 	workdir string
 	carry   repeatable
+	live    bool
 }
 
 // validateFlags defines validate's flags once, so help and run share them.
@@ -30,12 +31,13 @@ func validateFlags() (*flag.FlagSet, *validateOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.workdir, "workdir", "", "git working tree the gates run in")
 	fs.Var(&o.carry, "carry", "repo-relative path to copy from dir into workdir before gates run (repeatable)")
+	fs.BoolVar(&o.live, "live", false, "also run the brief's declared live-gate: lines (the lead's verification pass)")
 	return fs, o
 }
 
 // validateUsage prints the flywheel validate usage line.
 func validateUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]...")
+	fmt.Fprintln(w, "usage: flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]... [--live]")
 }
 
 // runValidate implements `flywheel validate <task>`: run the task's declared
@@ -56,7 +58,7 @@ func runValidate(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
-	res, err := flywheel.ValidateTask(o.dir, task, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir, Carry: o.carry})
+	res, err := flywheel.ValidateTask(o.dir, task, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir, Carry: o.carry, Live: o.live})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
 		os.Exit(1)
@@ -71,6 +73,9 @@ func runValidate(args []string) {
 		fmt.Printf("validate: brief %s\n", res.BriefPaths[0])
 	}
 	for _, g := range res.Gates {
+		if g.Live {
+			continue
+		}
 		if g.HostBlocked {
 			fmt.Printf("%s gate %s: %s\n", task, g.Gate, g.Note)
 		} else if g.Inconclusive {
@@ -80,6 +85,24 @@ func runValidate(args []string) {
 		} else {
 			fmt.Printf("%s gate %s: failed (rc=%d)\n", task, g.Gate, g.RC)
 		}
+	}
+	for _, g := range res.Gates {
+		if !g.Live {
+			continue
+		}
+		n := strings.TrimPrefix(g.Gate, "live")
+		if g.HostBlocked {
+			fmt.Printf("%s live-gate %s: %s\n", task, n, g.Note)
+		} else if g.Inconclusive {
+			fmt.Printf("%s live-gate %s: inconclusive (%s)\n", task, n, g.Note)
+		} else if g.RC == 0 {
+			fmt.Printf("%s live-gate %s: pass (%dms)\n", task, n, g.DurationMS)
+		} else {
+			fmt.Printf("%s live-gate %s: failed (rc=%d)\n", task, n, g.RC)
+		}
+	}
+	if res.LiveDeclared > 0 && !res.LiveRun {
+		fmt.Printf("%s live-gate: %d declared, not run (--live)\n", task, res.LiveDeclared)
 	}
 	if len(res.Attributed) > 0 {
 		fmt.Printf("%s owns: attributed %s\n", task, strings.Join(res.Attributed, ", "))

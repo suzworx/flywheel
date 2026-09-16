@@ -9,7 +9,7 @@ import (
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
-// exclusive, review.
+// live-gate, exclusive, review.
 type BriefHeader struct {
 	Owns  []string // comma-separated, annotations stripped
 	Needs []string
@@ -18,9 +18,14 @@ type BriefHeader struct {
 	// have: a database, a stack, git-ignored env files (issue #136).
 	NeedsState []string // comma-separated, accumulated across repeated lines
 	Gates      []string // one shell command per line, order kept
-	Exclusive  []string
-	Review     []string
-	SHA256     string
+	// LiveGates are `live-gate:` lines, one shell command per line, order
+	// kept: gates that run only in the lead's verification pass
+	// (`flywheel validate <task> --live`), never on a worker's own mocked
+	// run (issue #152).
+	LiveGates []string
+	Exclusive []string
+	Review    []string
+	SHA256    string
 }
 
 // ParseBriefHeader reads the header block at the top of a brief: the lines
@@ -72,6 +77,8 @@ func ParseBriefHeader(path string) (BriefHeader, error) {
 			}
 		case "gate":
 			h.Gates = append(h.Gates, val)
+		case "live-gate":
+			h.LiveGates = append(h.LiveGates, val)
 		case "exclusive":
 			h.Exclusive = append(h.Exclusive, val)
 		case "review":

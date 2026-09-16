@@ -67,6 +67,14 @@ func LintBrief(dir, path string) (LintResult, error) {
 			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s is not a directory", e.path))
 		}
 	}
+	for i, lg := range header.LiveGates {
+		for j, g := range header.Gates {
+			if lg == g {
+				res.Problems = append(res.Problems, fmt.Sprintf("live-gate %d repeats gate %d; a live gate must run the real path, not the mocked one", i+1, j+1))
+				break
+			}
+		}
+	}
 	if len(header.Needs) == 0 {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}
