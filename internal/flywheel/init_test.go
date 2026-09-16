@@ -781,3 +781,89 @@ func TestIgnoredStateFilesReportsNothingOutsideGit(t *testing.T) {
 		t.Errorf("IgnoredStateFiles() = %v, want none", ignored)
 	}
 }
+
+func TestIgnoreMarkdownCreatesFile(t *testing.T) {
+	dir := t.TempDir()
+	added, err := IgnoreMarkdown(dir)
+	if err != nil {
+		t.Fatalf("IgnoreMarkdown() error = %v", err)
+	}
+	if !added {
+		t.Error("IgnoreMarkdown() added = false, want true for a missing .gitignore")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if string(b) != "flywheel.md\n" {
+		t.Errorf(".gitignore = %q, want %q", b, "flywheel.md\n")
+	}
+}
+
+func TestIgnoreMarkdownAppendsAfterOtherLines(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("runs/\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	added, err := IgnoreMarkdown(dir)
+	if err != nil {
+		t.Fatalf("IgnoreMarkdown() error = %v", err)
+	}
+	if !added {
+		t.Error("IgnoreMarkdown() added = false, want true")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if string(b) != "runs/\nflywheel.md\n" {
+		t.Errorf(".gitignore = %q, want %q", b, "runs/\nflywheel.md\n")
+	}
+}
+
+func TestIgnoreMarkdownNeverDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := IgnoreMarkdown(dir); err != nil {
+		t.Fatalf("IgnoreMarkdown() first call error = %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	added, err := IgnoreMarkdown(dir)
+	if err != nil {
+		t.Fatalf("IgnoreMarkdown() second call error = %v", err)
+	}
+	if added {
+		t.Error("IgnoreMarkdown() second call added = true, want false (already present)")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("re-read .gitignore: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf(".gitignore changed on repeat call: got %q, want %q", after, before)
+	}
+}
+
+func TestIgnoreMarkdownLeavesExistingLineAlone(t *testing.T) {
+	dir := t.TempDir()
+	custom := []byte("node_modules/\nflywheel.md\ndist/\n")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), custom, 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	added, err := IgnoreMarkdown(dir)
+	if err != nil {
+		t.Fatalf("IgnoreMarkdown() error = %v", err)
+	}
+	if added {
+		t.Error("IgnoreMarkdown() added = true, want false for an existing exact line")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("re-read .gitignore: %v", err)
+	}
+	if string(b) != string(custom) {
+		t.Errorf(".gitignore changed: got %q, want untouched %q", b, custom)
+	}
+}

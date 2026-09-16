@@ -33,7 +33,11 @@ back to the documented raw commands where it doesn't yet.
 
 - `flywheel init --dir <target>` — scaffold `flywheel.md`, `.flywheel/state.json`,
   `.flywheel/events.jsonl`, `.flywheel/config.json`, `.flywheel/.gitignore` and
-  `.flywheel/briefs/`; warns when the repo's `.gitignore` hides the state files.
+  `.flywheel/briefs/`; warns when the repo's `.gitignore` hides the state files. By default (or
+  with `--track`), `flywheel.md` is committed as the shared status page; `flywheel init --ignore`
+  appends `flywheel.md` to the target's root `.gitignore` so every worktree stays clean (a
+  local-only setup can add it to `.git/info/exclude` instead) — the owns check never treats
+  `flywheel.md` or `.flywheel/**` as outside a worker's scope either way.
 - Everything else is in the CLI: `flywheel help` lists every command, and `flywheel help
   <command>` (or `<command> -h`) prints a command's flags.
 

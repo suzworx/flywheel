@@ -22,6 +22,8 @@ type initOptions struct {
 	force   bool
 	model   string
 	variant string
+	track   bool
+	ignore  bool
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -33,6 +35,8 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.StringVar(&o.model, "model", "", "seed a new .flywheel/config.json's default worker model")
 	fs.StringVar(&o.variant, "variant", "", "seed a new .flywheel/config.json's default worker variant")
 	fs.BoolVar(&o.force, "force", false, "reset an existing flywheel.md (a directory or symlink there is still refused)")
+	fs.BoolVar(&o.track, "track", false, "keep flywheel.md a normal, commit-able file (default)")
+	fs.BoolVar(&o.ignore, "ignore", false, "add flywheel.md to the target's root .gitignore so every worktree stays clean")
 	return fs, o
 }
 
@@ -45,6 +49,11 @@ func runInit(args []string) {
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "flywheel init: unexpected argument %q\n", fs.Arg(0))
+		usage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.track && o.ignore {
+		fmt.Fprintf(os.Stderr, "flywheel init: --track and --ignore are mutually exclusive\n")
 		usage(os.Stderr)
 		os.Exit(2)
 	}
@@ -64,12 +73,25 @@ func runInit(args []string) {
 			break
 		}
 	}
+	// --ignore ensures the target's root .gitignore hides flywheel.md; --track
+	// and the default leave it a normal, commit-able file.
+	var ignoreAdded bool
+	if o.ignore {
+		ignoreAdded, err = flywheel.IgnoreMarkdown(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	if !anyAdded {
 		names := make([]string, len(pieces))
 		for i, p := range pieces {
 			names[i] = p.Path
 		}
 		fmt.Printf("init: nothing to do (%s present)\n", strings.Join(names, ", "))
+		if ignoreAdded {
+			fmt.Println("ignored: flywheel.md")
+		}
 	} else {
 		for _, p := range pieces {
 			if p.Added {
@@ -77,6 +99,9 @@ func runInit(args []string) {
 			} else {
 				fmt.Printf("present: %s\n", p.Path)
 			}
+		}
+		if o.ignore {
+			fmt.Println("ignored: flywheel.md")
 		}
 		fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 	}
