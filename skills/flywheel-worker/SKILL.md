@@ -95,6 +95,9 @@ A brief is a plain-text file with these parts:
     20-45 steps in library source with zero edits.
 13. **Blocked → report and halt.** Environment broken, tool missing, file on the don't-touch list
     needed — say so plainly and stop. Never take over orchestrator judgment.
+14. **Catch external calls safely.** A catch around an external call must record the error class and
+    status when the surrounding code has logging—never the content, always the diagnosis. Swallowing
+    the error is a defect to report.
 
 ## Example shape
 
