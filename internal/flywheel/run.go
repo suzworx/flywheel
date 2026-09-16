@@ -49,7 +49,6 @@ type Result struct {
 // bash comes FIRST and the git denies follow, and OpenCode applies the last
 // matching rule. The user's own opencode.json is never touched.
 var workerPermissionPolicy = `{
-  "$schema": "https://opencode.ai/config.json",
   "permission": {
     "bash": {
       "*": "allow",
