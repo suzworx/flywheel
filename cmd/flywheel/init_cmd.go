@@ -32,7 +32,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.model, "model", "", "seed a new .flywheel/config.json's default worker model")
 	fs.StringVar(&o.variant, "variant", "", "seed a new .flywheel/config.json's default worker variant")
-	fs.BoolVar(&o.force, "force", false, "reset existing flywheel.md and .flywheel/state.json (directories and symlinks are still refused)")
+	fs.BoolVar(&o.force, "force", false, "reset an existing flywheel.md (a directory or symlink there is still refused)")
 	return fs, o
 }
 
@@ -52,17 +52,31 @@ func runInit(args []string) {
 	if _, err := os.Stat(filepath.Join(o.dir, ".flywheel", "config.json")); err == nil {
 		configExisted = true
 	}
-	path, created, err := flywheel.InitSeeded(o.dir, o.force, o.model, o.variant)
+	path, pieces, err := flywheel.InitSeeded(o.dir, o.force, o.model, o.variant)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
 		os.Exit(1)
 	}
-	if len(created) == 0 && !o.force {
-		fmt.Printf("init: nothing to do (%s present)\n", strings.Join(presentScaffoldFiles(o.dir), ", "))
+	anyAdded := false
+	for _, p := range pieces {
+		if p.Added {
+			anyAdded = true
+			break
+		}
+	}
+	if !anyAdded {
+		names := make([]string, len(pieces))
+		for i, p := range pieces {
+			names[i] = p.Path
+		}
+		fmt.Printf("init: nothing to do (%s present)\n", strings.Join(names, ", "))
 	} else {
-		fmt.Println(path)
-		for _, p := range created {
-			fmt.Printf("created: %s\n", p)
+		for _, p := range pieces {
+			if p.Added {
+				fmt.Printf("added: %s\n", p.Path)
+			} else {
+				fmt.Printf("present: %s\n", p.Path)
+			}
 		}
 		fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 	}
@@ -79,16 +93,4 @@ func runInit(args []string) {
 			fmt.Fprintln(os.Stderr, "!"+p)
 		}
 	}
-}
-
-// presentScaffoldFiles lists which of the scaffold files init creates already
-// exist in dir, as relative paths, for the quiet nothing-to-do message.
-func presentScaffoldFiles(dir string) []string {
-	var present []string
-	for _, name := range []string{"flywheel.md", ".flywheel/state.json", ".flywheel/events.jsonl", ".flywheel/config.json", ".flywheel/.gitignore"} {
-		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name))); err == nil {
-			present = append(present, name)
-		}
-	}
-	return present
 }
