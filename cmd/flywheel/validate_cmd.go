@@ -67,6 +67,8 @@ func runValidate(args []string) {
 	for _, g := range res.Gates {
 		if g.HostBlocked {
 			fmt.Printf("%s gate %s: %s\n", task, g.Gate, g.Note)
+		} else if g.Inconclusive {
+			fmt.Printf("%s gate %s: inconclusive (%s)\n", task, g.Gate, g.Note)
 		} else if g.RC == 0 {
 			fmt.Printf("%s gate %s: pass (%dms)\n", task, g.Gate, g.DurationMS)
 		} else {
