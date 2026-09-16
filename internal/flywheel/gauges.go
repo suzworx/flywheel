@@ -76,8 +76,11 @@ type GaugeResult struct {
 	Outside    []string
 	// Attributed lists, sorted, "<path> -> <task>" entries for every changed
 	// path that sits outside this task's owns but inside another task's owns
-	// while that task is in flight (issue #117): the lead's stray-file
-	// review can skip it, but it never counts toward OwnsOK's outside set.
+	// while that task is in flight (issue #117), and, for a changed path in
+	// another worktree that an in-flight task there owns,
+	// "<worktree path>: <path> -> <task>" (issue #200): the lead's
+	// stray-file review can skip it, but it never counts toward OwnsOK's
+	// outside set.
 	Attributed []string
 	// Files lists the measured shape of every changed path inside the unit's
 	// owns, sorted by path; paths outside owns and flywheel's own bookkeeping
@@ -293,10 +296,13 @@ func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID
 // never the unit's own work, whether or not this run actually carried it.
 // When the task's dispatched event carries a worktrees snapshot (issue #87),
 // every other worktree's current changed paths are compared against it too:
-// a path that is new or whose sha changed is always outside, listed as
-// "<worktree path>: <path>" — never excused by this task's own owns list,
-// except flywheel's own bookkeeping (issue #186), which that worktree's
-// factory view rewrites on every state refresh and is never anyone's work.
+// a path that is new or whose sha changed is never excused by this task's
+// own owns list, except flywheel's own bookkeeping (issue #186), which that
+// worktree's factory view rewrites on every state refresh and is never
+// anyone's work. Such a path is outside, listed as "<worktree path>:
+// <path>", unless an in-flight task in that worktree's own event log owns it
+// (issue #200): then it is attributed as "<worktree path>: <path> ->
+// <task>" instead.
 func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
@@ -332,11 +338,16 @@ func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []stri
 					continue
 				}
 				if bh, ok := wtBase[p]; !ok || fileSHA(wtPath, p) != bh {
+					if owner := worktreeOwner(wtPath, p); owner != "" {
+						attributed = append(attributed, wtPath+": "+p+" -> "+owner)
+						continue
+					}
 					outside = append(outside, wtPath+": "+p)
 				}
 			}
 		}
 	}
+	sort.Strings(attributed)
 	res.Outside = outside
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
@@ -404,6 +415,30 @@ func attributeOutside(dir, task string, events []Event, candidates []string) (at
 	}
 	sort.Strings(attributed)
 	return attributed, outside
+}
+
+// worktreeOwner reports the task in worktree W whose brief owns the changed
+// path p (relative to W), or "" when no in-flight task there owns it (issue
+// #200). It reads W's own event log — that worktree's own record of what it
+// is building — so the attribution is trustworthy. An unreadable sibling log
+// is never an error: it attributes nothing. Owners are tried in
+// inFlightOwners' sorted order, matching attributeOutside, and a task whose
+// brief cannot be read is skipped, never treated as an owner.
+func worktreeOwner(W, p string) string {
+	wEvents, err := ReadEvents(W)
+	if err != nil {
+		return ""
+	}
+	for _, other := range inFlightOwners(wEvents, "") {
+		header, _, err := AttemptBrief(W, wEvents, other)
+		if err != nil {
+			continue
+		}
+		if ownsContains(header.Owns, p) {
+			return other
+		}
+	}
+	return ""
 }
 
 // worktreesFor returns the first dispatched event's worktrees snapshot for
