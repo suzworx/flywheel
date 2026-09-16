@@ -258,15 +258,39 @@ func TestAppendConcurrent(t *testing.T) {
 }
 
 func TestNewKindsValidate(t *testing.T) {
-	for _, k := range []string{"worker_plan", "report", "lost"} {
+	for _, k := range []string{"worker_plan", "no-plan", "report", "lost"} {
 		if err := Validate(Event{Task: "T1", Kind: k}); err != nil {
 			t.Errorf("Validate() rejected kind %s: %v", k, err)
 		}
 	}
 	if err := Validate(Event{Task: "T1", Kind: "bogus"}); err == nil {
 		t.Error("Validate() accepted unknown kind")
-	} else if !strings.Contains(err.Error(), "worker_plan") || !strings.Contains(err.Error(), "report") || !strings.Contains(err.Error(), "lost") {
+	} else if !strings.Contains(err.Error(), "worker_plan") || !strings.Contains(err.Error(), "no-plan") ||
+		!strings.Contains(err.Error(), "report") || !strings.Contains(err.Error(), "lost") {
 		t.Errorf("Validate() error = %v, want the full kind list", err)
+	}
+}
+
+// TestNoPlanKindRoundTrips checks the no-plan kind carries its task and
+// attempt like the other run kinds and round-trips through the event log
+// (issue #65).
+func TestNoPlanKindRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("ReadEvents() = %d events, want 1", len(evs))
+	}
+	if evs[0].Kind != "no-plan" || evs[0].Task != "T1" || evs[0].Attempt != "r1" {
+		t.Errorf("no-plan round trip mismatch: %v", evs[0])
+	}
+	if err := Validate(Event{Task: "T1", Kind: "no-plan", Attempt: "bad"}); err == nil {
+		t.Error("Validate() accepted no-plan with a malformed attempt")
 	}
 }
 

@@ -50,9 +50,11 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   exit status, and anything it left undone or uncertain, plus a "Findings outside `owns:`"
   section: real problems noticed outside the task, reported not fixed. One such finding became
   a new task.
-- **Plan check-in** — the brief says "state your plan in one text message before step 20", so
-  the orchestrator can check direction without interrupting (a 53-step exploration was otherwise
-  unreadable).
+- **Plan check-in** — the brief says "before step 20, state your plan in one text message in this
+  fixed shape, one line each, verbatim:" followed by `PLAN files-to-read: ...`,
+  `PLAN files-to-change: ...`, `PLAN order: ...`, `PLAN checks: ...`, so the orchestrator can check
+  direction without interrupting (a 53-step exploration was otherwise unreadable). A run that
+  reaches step 20 with no `PLAN `-prefixed line is flagged with a `no-plan` event (issue #65).
 - **Moves and renames** — when a task moves or renames a file, grant "files that reference it
   (list them with grep first)" in `owns:`. Moves break every test that reads the file by path;
   workers handled it correctly, but had to flag it instead of being allowed.
