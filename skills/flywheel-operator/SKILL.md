@@ -52,7 +52,8 @@ planned subcommands land — don't invoke commands that aren't built.
 | `flywheel plan`, `retry`, `handoff` | **planned** | Control plane: create tasks, resume, transfer between agents. |
 | `flywheel handoff [--dir DIR] [--stdout]` | **implemented** | Print the handoff summary for a new head — in-flight tasks (with session and model), blockers, next ready tasks and the default worker model; with `--stdout` to stdout, otherwise into `flywheel.md` between the handoff markers. |
 | `flywheel plan`, `retry` | **planned** | Control plane: create tasks, resume, transfer between agents. |
-| `flywheel trace`, `artifacts` | **planned** | Data plane: task positions, worker outputs. |
+| `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
+| `flywheel artifacts` | **planned** | Data plane: worker outputs. |
 
 ## Install
 

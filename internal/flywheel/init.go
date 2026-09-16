@@ -500,3 +500,146 @@ func gitIgnores(dir, path string) bool {
 	}
 	return true
 }
+
+// claudeSettings, claudeHooks, claudeHookGroup and claudeHookCmd mirror just
+// enough of Claude Code's .claude/settings.json hook schema to describe the
+// three hooks InitHooks installs.
+type claudeSettings struct {
+	Hooks claudeHooks `json:"hooks"`
+}
+
+type claudeHooks struct {
+	SessionStart []claudeHookGroup `json:"SessionStart"`
+	PostToolUse  []claudeHookGroup `json:"PostToolUse"`
+	SessionEnd   []claudeHookGroup `json:"SessionEnd"`
+}
+
+type claudeHookGroup struct {
+	Matcher string          `json:"matcher,omitempty"`
+	Hooks   []claudeHookCmd `json:"hooks"`
+}
+
+type claudeHookCmd struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+// The three hook scripts below each read the hook payload Claude Code sends
+// as one line of JSON on stdin and pull a field out with sed, so the hook
+// depends on nothing beyond a POSIX shell and the flywheel binary on PATH —
+// no jq, no Node. sessionCommandHook additionally checks the tool's command
+// text starts with "flywheel" before logging it, since the PostToolUse
+// matcher can only select by tool name (Bash), not by command text.
+const (
+	claudeSessionStartHook   = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_start --session "$s"'`
+	claudeSessionEndHook     = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_end --session "$s"'`
+	claudeSessionCommandHook = `sh -c 'j=$(cat); c=$(printf "%s" "$j" | sed -n "s/.*\"command\":\"\([^\"]*\)\".*/\1/p"); case "$c" in flywheel*) s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_command --session "$s" --note "$c";; esac'`
+)
+
+// claudeSettingsPayload renders the .claude/settings.json bytes InitHooks
+// writes: SessionStart and SessionEnd record the session boundary, and a
+// PostToolUse hook matched on the Bash tool records any flywheel command the
+// session ran.
+func claudeSettingsPayload() ([]byte, error) {
+	cfg := claudeSettings{Hooks: claudeHooks{
+		SessionStart: []claudeHookGroup{{Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionStartHook}}}},
+		PostToolUse:  []claudeHookGroup{{Matcher: "Bash", Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionCommandHook}}}},
+		SessionEnd:   []claudeHookGroup{{Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionEndHook}}}},
+	}}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// opencodeSessionPlugin is the .opencode/plugin/flywheel-session.mjs
+// InitHooks writes: an OpenCode plugin with the same three hooks as
+// claudeSettingsPayload, using node:child_process directly (no OpenCode
+// helper, no jq) so the only runtime requirement is the flywheel binary on
+// PATH.
+const opencodeSessionPlugin = `// flywheel-session.mjs records session_start, session_command and
+// session_end events to .flywheel/events.jsonl by invoking the flywheel
+// binary on PATH. Written by "flywheel init --hooks"; a rerun never
+// overwrites this file, so local edits are safe.
+import { execFile } from "node:child_process"
+
+function log(args) {
+  return new Promise((resolve) => {
+    execFile("flywheel", args, () => resolve())
+  })
+}
+
+export const FlywheelSession = async () => {
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.created") {
+        await log(["log", "--kind", "session_start", "--session", event.properties.sessionID])
+      } else if (event.type === "session.deleted" || event.type === "session.idle") {
+        await log(["log", "--kind", "session_end", "--session", event.properties.sessionID])
+      }
+    },
+    "tool.execute.after": async (input, output) => {
+      const command = output && output.title
+      if (typeof command !== "string" || !command.startsWith("flywheel")) return
+      await log(["log", "--kind", "session_command", "--session", input.sessionID, "--note", command])
+    },
+  }
+}
+`
+
+// InitHooks writes the two agent-hook files that record a session's
+// lifecycle to the event log: .claude/settings.json (Claude Code hooks) and
+// .opencode/plugin/flywheel-session.mjs (an OpenCode plugin). Both invoke
+// `flywheel log --kind <kind> --session <id> [--note <command>]` — session_start
+// on a session's first turn, session_command for a flywheel command the
+// session runs, session_end when the session ends — resolving the flywheel
+// binary from PATH and the session id from the platform's own hook
+// environment. Like every InitSeeded piece, each file is created only when
+// missing and never overwritten; a failure after one file is written rolls
+// back exactly what this call created, so a retry starts clean.
+func InitHooks(dir string) (string, []ScaffoldPiece, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve %q: %w", dir, err)
+	}
+	settingsPath := filepath.Join(abs, ".claude", "settings.json")
+	pluginPath := filepath.Join(abs, ".opencode", "plugin", "flywheel-session.mjs")
+
+	settingsJSON, err := claudeSettingsPayload()
+	if err != nil {
+		return "", nil, fmt.Errorf("encode %s: %w", settingsPath, err)
+	}
+
+	var createdSettings, createdPlugin bool
+	rollback := func() {
+		if createdSettings {
+			_ = os.Remove(settingsPath)
+		}
+		if createdPlugin {
+			_ = os.Remove(pluginPath)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return "", nil, fmt.Errorf("create %s: %w", filepath.Dir(settingsPath), err)
+	}
+	if createdSettings, err = createIfMissing(settingsPath, settingsJSON); err != nil {
+		rollback()
+		return "", nil, fmt.Errorf("write %s: %w", settingsPath, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(pluginPath), 0o755); err != nil {
+		rollback()
+		return "", nil, fmt.Errorf("create %s: %w", filepath.Dir(pluginPath), err)
+	}
+	if createdPlugin, err = createIfMissing(pluginPath, []byte(opencodeSessionPlugin)); err != nil {
+		rollback()
+		return "", nil, fmt.Errorf("write %s: %w", pluginPath, err)
+	}
+
+	return abs, []ScaffoldPiece{
+		{Path: ".claude/settings.json", Added: createdSettings},
+		{Path: ".opencode/plugin/flywheel-session.mjs", Added: createdPlugin},
+	}, nil
+}
