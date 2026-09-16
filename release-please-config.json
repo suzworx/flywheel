@@ -21,6 +21,16 @@
         { "type": "test", "section": "Tests", "hidden": true },
         { "type": "style", "section": "Style", "hidden": true },
         { "type": "build", "section": "Build", "hidden": true }
+      ],
+      "extra-files": [
+        { "type": "generic", "path": "skills/flywheel/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-operator/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-worker/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-foreman/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-planner/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-inspector/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-auditor/SKILL.md" },
+        { "type": "generic", "path": "skills/flywheel-steward/SKILL.md" }
       ]
     }
   }
