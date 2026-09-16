@@ -15,7 +15,7 @@ import (
 func TestInitCreatesScaffold(t *testing.T) {
 	dir := t.TempDir()
 
-	got, pieces, err := InitSeeded(dir, false, "", "")
+	got, pieces, err := InitSeeded(dir, false, "", "", false)
 	if err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
@@ -71,7 +71,7 @@ func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
 		t.Fatalf("remove .gitattributes: %v", err)
 	}
 
-	_, pieces, err := InitSeeded(dir, false, "", "")
+	_, pieces, err := InitSeeded(dir, false, "", "", false)
 	if err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
@@ -98,11 +98,11 @@ func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
 
 func TestInitSeededOnInitializedDirCreatesNothing(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := InitSeeded(dir, false, "", ""); err != nil {
+	if _, _, err := InitSeeded(dir, false, "", "", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
 
-	_, pieces, err := InitSeeded(dir, false, "", "")
+	_, pieces, err := InitSeeded(dir, false, "", "", false)
 	if err != nil {
 		t.Fatalf("InitSeeded() second call error = %v, want idempotent success", err)
 	}
@@ -187,7 +187,7 @@ func TestInitRepeatedCallCreatesNothing(t *testing.T) {
 
 	// An already-initialized directory has nothing to do: success, nothing
 	// added, nothing refused.
-	_, pieces, err := InitSeeded(dir, false, "", "")
+	_, pieces, err := InitSeeded(dir, false, "", "", false)
 	if err != nil {
 		t.Fatalf("InitSeeded() second call error = %v, want idempotent success", err)
 	}
@@ -669,7 +669,7 @@ func TestInitRollbackRemovesCreatedGitattributes(t *testing.T) {
 
 func TestInitSeedsModelAndVariant(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := InitSeeded(dir, false, "x/y", "max"); err != nil {
+	if _, _, err := InitSeeded(dir, false, "x/y", "max", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
 	cfg, exists, err := LoadConfig(dir)
@@ -693,7 +693,7 @@ func TestInitSeedsModelAndVariant(t *testing.T) {
 
 func TestInitSeedsVariantOnly(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, err := InitSeeded(dir, false, "", "max"); err != nil {
+	if _, _, err := InitSeeded(dir, false, "", "max", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
 	cfg, _, err := LoadConfig(dir)
@@ -723,7 +723,7 @@ func TestInitSeededKeepsExistingConfig(t *testing.T) {
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	if _, _, err := InitSeeded(dir, true, "x/y", "max"); err != nil {
+	if _, _, err := InitSeeded(dir, true, "x/y", "max", false); err != nil {
 		t.Fatalf("InitSeeded() --force error = %v", err)
 	}
 	b, err := os.ReadFile(configPath)
@@ -865,5 +865,119 @@ func TestIgnoreMarkdownLeavesExistingLineAlone(t *testing.T) {
 	}
 	if string(b) != string(custom) {
 		t.Errorf(".gitignore changed: got %q, want untouched %q", b, custom)
+	}
+}
+
+func TestInitAgentsMDWritesBlock(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := InitSeeded(dir, false, "", "", true); err != nil {
+		t.Fatalf("InitSeeded() error = %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	content := string(b)
+	for _, want := range []string{
+		agentsMDStart, agentsMDEnd,
+		"npx skills add suzworx/flywheel --skill <name>",
+		"- flywheel: lead",
+		"- flywheel-worker: worker",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("AGENTS.md missing %q, got %q", want, content)
+		}
+	}
+}
+
+func TestInitAgentsMDRerunReplacesBlockNotDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := InitSeeded(dir, false, "", "", true); err != nil {
+		t.Fatalf("InitSeeded() error = %v", err)
+	}
+	path := filepath.Join(dir, "AGENTS.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+
+	_, pieces, err := InitSeeded(dir, false, "", "", true)
+	if err != nil {
+		t.Fatalf("InitSeeded() second call error = %v", err)
+	}
+	for _, p := range pieces {
+		if p.Path == "AGENTS.md" && p.Added {
+			t.Error("AGENTS.md piece Added = true on an unchanged rerun, want false")
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("re-read AGENTS.md: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("AGENTS.md changed on an idempotent rerun: got %q, want %q", after, before)
+	}
+	if n := strings.Count(string(after), agentsMDStart); n != 1 {
+		t.Errorf("AGENTS.md has %d start markers, want exactly 1", n)
+	}
+}
+
+func TestInitAgentsMDKeepsExistingContent(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	path := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(path, []byte("own text\n"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	if _, _, err := InitSeeded(dir, false, "", "", true); err != nil {
+		t.Fatalf("InitSeeded() --agents-md error = %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	content := string(b)
+	if !strings.Contains(content, "own text") {
+		t.Errorf("AGENTS.md lost its existing content: got %q", content)
+	}
+	if !strings.Contains(content, "- flywheel-worker: worker") {
+		t.Errorf("AGENTS.md missing the persona block: got %q", content)
+	}
+}
+
+func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	path := filepath.Join(dir, "AGENTS.md")
+	custom := []byte("custom AGENTS.md that must survive a failed init step\n")
+	if err := os.WriteFile(path, custom, 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	// Block .gitattributes so InitSeeded fails on a later piece, after it has
+	// already rewritten AGENTS.md (no markers means the write is not a no-op).
+	gitattributesPath := filepath.Join(dir, ".flywheel", ".gitattributes")
+	if err := os.Remove(gitattributesPath); err != nil {
+		t.Fatalf("remove .gitattributes: %v", err)
+	}
+	if err := os.Mkdir(gitattributesPath, 0o755); err != nil {
+		t.Fatalf("mkdir .gitattributes obstruction: %v", err)
+	}
+
+	if _, _, err := InitSeeded(dir, false, "", "", true); err == nil {
+		t.Skip("directory obstruction did not fail the write; skipping restore assertion")
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if string(b) != string(custom) {
+		t.Errorf("AGENTS.md not restored after failed init: got %q, want %q", b, custom)
 	}
 }

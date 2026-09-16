@@ -36,7 +36,8 @@ Placeholder: completed tasks are logged here.
 // ScaffoldPiece reports the status of one piece of the on-disk scaffold
 // InitSeeded manages. Pieces are always returned in the same fixed order:
 // flywheel.md, then the six pieces under .flywheel/ (state.json,
-// events.jsonl, config.json, .gitignore, .gitattributes, briefs/).
+// events.jsonl, config.json, .gitignore, .gitattributes, briefs/), then
+// AGENTS.md last, when --agents-md requested it.
 type ScaffoldPiece struct {
 	Path  string // relative to dir, forward-slash (e.g. ".flywheel/state.json")
 	Added bool   // this call created it, or (flywheel.md only) force-reset it
@@ -60,12 +61,13 @@ type ScaffoldPiece struct {
 // touched. A crash mid-write can still leave partial state; retries are
 // always safe.
 func Init(dir string, force bool) (string, error) {
-	path, _, err := InitSeeded(dir, force, "", "")
+	path, _, err := InitSeeded(dir, force, "", "", false)
 	return path, err
 }
 
-// InitSeeded is Init with optional model and variant seeding, and reports
-// the status of every scaffold piece instead of just Init's path and error.
+// InitSeeded is Init with optional model and variant seeding and an
+// optional AGENTS.md piece, and reports the status of every scaffold piece
+// instead of just Init's path and error.
 //
 // Every piece — flywheel.md and, under .flywheel/, state.json,
 // events.jsonl, config.json, .gitignore, .gitattributes and briefs/ — is
@@ -81,7 +83,15 @@ func Init(dir string, force bool) (string, error) {
 // force. model and variant seed a freshly created config.json's default
 // worker (validated through WriteConfig); an existing config.json is never
 // touched.
-func InitSeeded(dir string, force bool, model, variant string) (string, []ScaffoldPiece, error) {
+//
+// agentsMD, when true, adds one more piece: <dir>/AGENTS.md carries a block
+// between markers naming the installed skills and the persona each plays.
+// A missing AGENTS.md is created with just that block; an existing one has
+// exactly its previous marked block replaced (or the block appended, if it
+// never had one), and the rest of the file is left alone. Byte-identical
+// content is reported present, like every other piece, so a rerun with
+// --agents-md over an already-current file never reports a change.
+func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (string, []ScaffoldPiece, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve %q: %w", dir, err)
@@ -96,8 +106,15 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []Scaffo
 	gitattributesPath := filepath.Join(dotFlywheel, ".gitattributes")
 	configPath := filepath.Join(dotFlywheel, configFileName)
 
-	if err := preflightMarkdown(mdPath); err != nil {
+	agentsMDPath := filepath.Join(abs, "AGENTS.md")
+
+	if err := preflightRegularFile(mdPath); err != nil {
 		return "", nil, err
+	}
+	if agentsMD {
+		if err := preflightRegularFile(agentsMDPath); err != nil {
+			return "", nil, err
+		}
 	}
 
 	// Stage the payloads before publishing anything.
@@ -127,17 +144,26 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []Scaffo
 	briefsExisted := dirExisted(briefsDir)
 	dotFlywheelExisted := dirExisted(dotFlywheel)
 	var mdAdded, createdState, createdEvents, createdGitignore, createdGitattributes, createdConfig bool
+	var agentsMDWritten, agentsMDExisted bool
+	var agentsMDPrev []byte
 
 	// rollback undoes this call's own footprint after an error: restore
-	// flywheel.md's preexisting bytes if force reset it, remove pieces this
-	// call created, and remove directories this call created (only if empty,
-	// never recursive).
+	// flywheel.md's (and AGENTS.md's) preexisting bytes if this call changed
+	// them, remove pieces this call created, and remove directories this
+	// call created (only if empty, never recursive).
 	rollback := func() {
 		if mdAdded {
 			if mdExisted {
 				_ = os.WriteFile(mdPath, mdPrev, 0o644)
 			} else {
 				_ = os.Remove(mdPath)
+			}
+		}
+		if agentsMDWritten {
+			if agentsMDExisted {
+				_ = os.WriteFile(agentsMDPath, agentsMDPrev, 0o644)
+			} else {
+				_ = os.Remove(agentsMDPath)
 			}
 		}
 		if createdState {
@@ -172,6 +198,22 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []Scaffo
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", mdPath, err)
+	}
+
+	// --agents-md is a piece like any other: created when AGENTS.md is
+	// missing, and updated in place — replacing exactly the previous marked
+	// block, or appending a fresh one when none is found — when it already
+	// exists. Byte-identical content is left unwritten and reported present.
+	if agentsMD {
+		agentsMDExisted, agentsMDPrev = snapshotFile(agentsMDPath)
+		next := agentsMDMerged(agentsMDExisted, agentsMDPrev)
+		if !agentsMDExisted || string(agentsMDPrev) != string(next) {
+			if err := os.WriteFile(agentsMDPath, next, 0o644); err != nil {
+				rollback()
+				return "", nil, fmt.Errorf("write %s: %w", agentsMDPath, err)
+			}
+			agentsMDWritten = true
+		}
 	}
 
 	// Everything below is created only if missing and never overwritten or
@@ -225,16 +267,20 @@ func InitSeeded(dir string, force bool, model, variant string) (string, []Scaffo
 		{Path: ".flywheel/.gitattributes", Added: createdGitattributes},
 		{Path: ".flywheel/briefs/", Added: !briefsExisted},
 	}
+	if agentsMD {
+		pieces = append(pieces, ScaffoldPiece{Path: "AGENTS.md", Added: agentsMDWritten})
+	}
 
 	return abs, pieces, nil
 }
 
-// preflightMarkdown checks that mdPath is a usable destination for
-// flywheel.md — absent, or an existing regular file — before InitSeeded
-// touches anything. A directory or symlink there is refused unconditionally:
-// a fresh write would go through it, and a force reset must not write
-// through a symlink.
-func preflightMarkdown(path string) error {
+// preflightRegularFile checks that path is a usable scaffold destination —
+// absent, or an existing regular file — before InitSeeded touches anything.
+// A directory or symlink there is refused unconditionally: a fresh write
+// would go through it, and a force reset (flywheel.md only) must not write
+// through a symlink. Used for both flywheel.md and, when --agents-md is
+// requested, AGENTS.md.
+func preflightRegularFile(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -304,6 +350,76 @@ func snapshotFile(p string) (existed bool, prev []byte) {
 		return true, nil // exists but unreadable; restore as best effort
 	}
 	return true, b
+}
+
+// agentsMDStart and agentsMDEnd delimit the block InitSeeded writes into
+// AGENTS.md for --agents-md: a pointer to installing the skills, and the
+// persona each one plays for a lead that reads AGENTS.md instead of loading
+// skills directly. A rerun replaces exactly this block and leaves the rest
+// of the file alone.
+const (
+	agentsMDStart = "<!-- flywheel:agents:start -->"
+	agentsMDEnd   = "<!-- flywheel:agents:end -->"
+)
+
+// agentsMDPersonas lists, in the order printed, every skill folder shipped
+// with flywheel and the persona it plays.
+var agentsMDPersonas = [][2]string{
+	{"flywheel", "lead"},
+	{"flywheel-operator", "operator"},
+	{"flywheel-foreman", "foreman"},
+	{"flywheel-inspector", "inspector"},
+	{"flywheel-auditor", "auditor"},
+	{"flywheel-planner", "planner"},
+	{"flywheel-steward", "steward"},
+	{"flywheel-worker", "worker"},
+}
+
+// agentsMDBlock returns the exact bytes InitSeeded writes between
+// agentsMDStart and agentsMDEnd: a short pointer to installing the skills,
+// then one "- skill: persona" line per entry in agentsMDPersonas.
+func agentsMDBlock() []byte {
+	var b strings.Builder
+	b.WriteString(agentsMDStart + "\n")
+	b.WriteString("flywheel: a factory for AI coding agents. Install the skills with\n")
+	b.WriteString("`npx skills add suzworx/flywheel --skill <name>`, or copy the skill folders directly.\n\n")
+	for _, p := range agentsMDPersonas {
+		fmt.Fprintf(&b, "- %s: %s\n", p[0], p[1])
+	}
+	b.WriteString(agentsMDEnd + "\n")
+	return []byte(b.String())
+}
+
+// agentsMDMerged returns what AGENTS.md should contain after applying
+// InitSeeded's block to prev (existed reports whether prev came from a real
+// file). A missing file gets just the block. An existing file with a
+// well-formed agentsMDStart/agentsMDEnd pair has exactly that pair replaced
+// (its own trailing newline consumed, so a rerun never grows blank lines);
+// content outside the markers is untouched. An existing file with no
+// well-formed pair gets the block appended after its own content.
+func agentsMDMerged(existed bool, prev []byte) []byte {
+	block := agentsMDBlock()
+	if !existed {
+		return block
+	}
+	s := string(prev)
+	if start := strings.Index(s, agentsMDStart); start >= 0 {
+		if rel := strings.Index(s[start:], agentsMDEnd); rel >= 0 {
+			end := start + rel + len(agentsMDEnd)
+			if end < len(s) && s[end] == '\n' {
+				end++
+			}
+			return []byte(s[:start] + string(block) + s[end:])
+		}
+	}
+	out := append([]byte(nil), prev...)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	if len(out) > 0 {
+		out = append(out, '\n')
+	}
+	return append(out, block...)
 }
 
 // dirExisted reports whether p existed before Init ran; used only to decide

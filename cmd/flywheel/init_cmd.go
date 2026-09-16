@@ -18,12 +18,13 @@ func init() {
 
 // initOptions holds the parsed init flags.
 type initOptions struct {
-	dir     string
-	force   bool
-	model   string
-	variant string
-	track   bool
-	ignore  bool
+	dir      string
+	force    bool
+	model    string
+	variant  string
+	track    bool
+	ignore   bool
+	agentsMD bool
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -37,6 +38,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.BoolVar(&o.force, "force", false, "reset an existing flywheel.md (a directory or symlink there is still refused)")
 	fs.BoolVar(&o.track, "track", false, "keep flywheel.md a normal, commit-able file (default)")
 	fs.BoolVar(&o.ignore, "ignore", false, "add flywheel.md to the target's root .gitignore so every worktree stays clean")
+	fs.BoolVar(&o.agentsMD, "agents-md", false, "write/refresh AGENTS.md with a flywheel:agents block naming the installed skills and the persona each plays")
 	return fs, o
 }
 
@@ -61,7 +63,7 @@ func runInit(args []string) {
 	if _, err := os.Stat(filepath.Join(o.dir, ".flywheel", "config.json")); err == nil {
 		configExisted = true
 	}
-	path, pieces, err := flywheel.InitSeeded(o.dir, o.force, o.model, o.variant)
+	path, pieces, err := flywheel.InitSeeded(o.dir, o.force, o.model, o.variant, o.agentsMD)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
 		os.Exit(1)
