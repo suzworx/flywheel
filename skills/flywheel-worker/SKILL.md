@@ -52,7 +52,8 @@ A brief is a plain-text file with these parts:
 4. **Write in chunks.** At most one write per response and at most 120 lines per write; batch
    read-only calls (read, grep, glob) together in one response. Build a large file across several
    edits. Drafting a whole file in one response hits the output cap: the run ends and nothing is
-   written.
+   written. Never compose file contents in reply text: put code only in write and edit tool calls,
+   and write each part as soon as it is ready.
 5. **State your plan first.** Before step 20, post one short text message with your plan as the
    four fixed lines: `PLAN files-to-read: ...`, `PLAN files-to-change: ...`, `PLAN order: ...`,
    `PLAN checks: ...`. Then work.
