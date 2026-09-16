@@ -15,6 +15,81 @@ import (
 	"time"
 )
 
+// TestAdapterForClaude checks AdapterFor("claude") resolves to the claude
+// adapter (issue #49).
+func TestAdapterForClaude(t *testing.T) {
+	a, err := AdapterFor("claude")
+	if err != nil || a.Name() != "claude" {
+		t.Errorf("AdapterFor(claude) = %v, %v", a, err)
+	}
+}
+
+// TestClaudeCommandFlags checks Command's binary and required flags: the
+// binary "claude" driving --output-format stream-json and the model.
+func TestClaudeCommandFlags(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	if err := os.WriteFile(briefPath, []byte("do the thing"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	bin, args := a.Command(RunRequest{Task: "T1", Attempt: "r1", Model: "claude-sonnet-5", PromptFile: briefPath})
+	if bin != "claude" {
+		t.Errorf("bin = %q, want claude", bin)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--output-format stream-json") {
+		t.Errorf("args = %v, want --output-format stream-json", args)
+	}
+	if !strings.Contains(joined, "claude-sonnet-5") {
+		t.Errorf("args = %v, want the model claude-sonnet-5", args)
+	}
+}
+
+// TestRunGeneralizesToNonSimAdapters checks Run's process-launch guard
+// (internal/flywheel/run.go, formerly `worker.Adapter == "opencode"`, now
+// `worker.Adapter != "sim"`) actually reaches adap.Command and exec.Command
+// for a worker configured with adapter "claude" — not just opencode
+// (issue #49). commandHook fires before that branch, so it captures the
+// RunRequest Run built without needing the real claude binary; PATH is
+// cleared first so exec.Command's own lookup fails fast instead of finding
+// and starting the real Claude CLI installed on this machine (the one used
+// to capture testdata/claude-real.jsonl) — this test never spawns it.
+func TestRunGeneralizesToNonSimAdapters(t *testing.T) {
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	t.Setenv("PATH", t.TempDir())
+
+	var got RunRequest
+	commandHook = func(r RunRequest) { got = r }
+	defer func() { commandHook = nil }()
+
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	if err == nil {
+		t.Fatal("Run() error = nil, want a lookup failure with PATH cleared (proves no real binary ran)")
+	}
+	if !strings.Contains(err.Error(), "claude") {
+		t.Errorf("Run() error = %v, want it naming the claude binary it tried to start", err)
+	}
+	if got.Model != "claude-sonnet-5" {
+		t.Fatalf("commandHook did not fire before the launch branch; got = %+v", got)
+	}
+
+	a, aerr := AdapterFor("claude")
+	if aerr != nil {
+		t.Fatalf("AdapterFor(claude) error = %v", aerr)
+	}
+	bin, args := a.Command(got)
+	if bin != "claude" {
+		t.Errorf("resolved bin = %q, want claude", bin)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--output-format stream-json") {
+		t.Errorf("resolved args = %v, want --output-format stream-json", args)
+	}
+}
+
 // setupTask returns an initialized temp dir with a planned T1 event pointing
 // at a brief file.
 func setupTask(t *testing.T) string {

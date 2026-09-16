@@ -751,3 +751,136 @@ func TestValidateHostBlockedRerunPassRecordsPass(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateInconclusiveGate checks a gate that fails naming only a changed
+// path outside owns is recorded inconclusive, with the "blocked by <paths>"
+// note, on both the GateOut and the validated event, and still fails GatesOK
+// (issue #162).
+func TestValidateInconclusiveGate(t *testing.T) {
+	gate := `printf 'FAIL b.txt:3: broken\n'; exit 1`
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].Inconclusive {
+		t.Fatalf("Inconclusive = false, want true (only an outside changed path is named)")
+	}
+	want := "blocked by b.txt"
+	if res.Gates[0].Note != want {
+		t.Errorf("note = %q, want %q", res.Gates[0].Note, want)
+	}
+	if res.GatesOK || res.OK() {
+		t.Error("GatesOK = true, want false: an inconclusive reading is not a pass")
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" {
+			found = true
+			if e.Reason != "inconclusive" {
+				t.Errorf("reason = %q, want inconclusive", e.Reason)
+			}
+			if e.Note != want {
+				t.Errorf("event note = %q, want %q", e.Note, want)
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded")
+	}
+}
+
+// TestValidateInconclusiveGateOwnsPathIsOrdinary checks that naming a path
+// inside owns keeps the failure ordinary, even when an outside changed path
+// is also named.
+func TestValidateInconclusiveGateOwnsPathIsOrdinary(t *testing.T) {
+	gate := `printf 'FAIL a.go:1: broken, also b.txt changed\n'; exit 1`
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Gates[0].Inconclusive {
+		t.Errorf("Inconclusive = true, want false: the output also names a.go, inside owns")
+	}
+	if res.Gates[0].Note != "" {
+		t.Errorf("note = %q, want empty for an ordinary failure", res.Gates[0].Note)
+	}
+}
+
+// TestValidateOutsidePathUnchangedIsOrdinary checks that naming a real,
+// existing path outside owns that is NOT changed against HEAD is an ordinary
+// failure, not inconclusive.
+func TestValidateOutsidePathUnchangedIsOrdinary(t *testing.T) {
+	dir, err := initTask(t, []string{`printf 'see other.txt\n'; exit 1`})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("settled\n"), 0o644); err != nil {
+		t.Fatalf("write other.txt: %v", err)
+	}
+	git(t, dir, []string{"add", "other.txt"})
+	git(t, dir, []string{"commit", "-m", "settle other.txt"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Gates[0].Inconclusive {
+		t.Errorf("Inconclusive = true, want false: other.txt is named but not changed against HEAD")
+	}
+	if res.Gates[0].Note != "" {
+		t.Errorf("note = %q, want empty", res.Gates[0].Note)
+	}
+}
+
+// TestValidateHostBlockedGateNotInconclusive checks a host-blocked gate keeps
+// its own handling and is never also marked inconclusive.
+func TestValidateHostBlockedGateNotInconclusive(t *testing.T) {
+	gate := "printf 'fork/exec /tmp/go-build/b1/flywheel.test.exe: An Application Control policy has blocked this file\\n'; exit 1"
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].HostBlocked {
+		t.Fatalf("HostBlocked = false, want true (both runs blocked)")
+	}
+	if res.Gates[0].Inconclusive {
+		t.Error("Inconclusive = true, want false: a host block keeps its own handling")
+	}
+}
+
+// TestValidatePassingGateNotInconclusive checks a passing gate is untouched
+// by the inconclusive scan.
+func TestValidatePassingGateNotInconclusive(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Gates[0].Inconclusive || res.Gates[0].Note != "" {
+		t.Errorf("Inconclusive/Note = %v/%q, want false/empty for a passing gate", res.Gates[0].Inconclusive, res.Gates[0].Note)
+	}
+}

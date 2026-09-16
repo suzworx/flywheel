@@ -110,7 +110,9 @@ increment in 493 s with at most ~1 k reasoning tokens per step.
 > **OpenCode adapter note.** In phase 1 the worker adapter's CLI is OpenCode. Everything from here
 > to the end of §2 — the flags, `OPENCODE_CONFIG`, the run-file format — is OpenCode-specific. A
 > different worker adapter needs its own equivalents; look them up from that CLI's own help, never
-> from memory.
+> from memory. The `claude` adapter (issue #49) is one such worker: it drives the Claude CLI's own
+> `-p`/`--output-format stream-json` flags directly and carries no `OPENCODE_CONFIG` permission
+> policy — see `claudeAdapter` in `internal/flywheel/adapter.go` for its exact command and parsing.
 
 Before relying on raw `opencode run` options, run:
 

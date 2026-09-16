@@ -147,6 +147,11 @@ all.
   freshly built binary twice in a row).
 - Effect: no status change. `Validate` requires `gate` and `tree` to be non-empty. A `host-blocked`
   reading never counts as passing for T3, matching `ValidateTask`'s own `GatesOK=false` for it.
+- A gate that fails for a reason attributable entirely to a changed path outside the unit's own
+  `owns:` — another unit's half-written file in the same tree, not this unit's own work — is
+  recorded with `reason` `inconclusive` and a `note` of `blocked by <paths>` (issue #162). T3 still
+  requires a *passing* reading for every declared gate: an `inconclusive` reading is not a pass, and
+  `flywheel validate` still exits 5 for it, exactly like an ordinary failure.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass.
