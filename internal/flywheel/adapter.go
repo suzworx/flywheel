@@ -30,15 +30,16 @@ const (
 
 // Observation is one decoded event from a run stream.
 type Observation struct {
-	Kind    string // "start", "text", "tool", "step", "error"
-	Session string
-	Text    string
-	Tool    string
-	Path    string
-	Reason  string // step finish reason
-	Error   string
-	Tokens  *Tokens
-	Cost    float64
+	Kind     string // "start", "text", "tool", "step", "error"
+	Session  string
+	Text     string
+	Tool     string
+	Path     string
+	Reason   string // step finish reason
+	Error    string
+	Tokens   *Tokens
+	Cost     float64
+	EndsTurn bool // true when this line completes one model turn; run.go counts turns with it
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -130,6 +131,7 @@ func (a opencodeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Reason, _ = partString(m, "reason")
 		obs.Tokens, _ = partTokens(m)
 		obs.Cost, _ = partFloat(m, "cost")
+		obs.EndsTurn = true
 	case "error":
 		obs.Kind = "error"
 		obs.Error, _ = errorMessage(m)
@@ -351,8 +353,10 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		if obs, ok = claudeAssistantObs(m); !ok {
 			return Observation{}, false
 		}
+		obs.EndsTurn = true
 	case typ == "result" || hasKey(m, "is_error"):
 		obs.Kind = "step"
+		obs.EndsTurn = true
 		var isError bool
 		if raw, ok := m["is_error"]; ok {
 			_ = json.Unmarshal(raw, &isError)

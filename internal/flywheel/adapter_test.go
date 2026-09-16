@@ -409,3 +409,81 @@ func TestSimAdapter(t *testing.T) {
 		t.Errorf("sim Parse() = %v, %v, want the opencode text observation", obs, ok)
 	}
 }
+
+// TestOpenCodeParseEndsTurn checks EndsTurn is set only on step_finish: that
+// is the line that completes a model turn in the opencode stream (issue #187).
+func TestOpenCodeParseEndsTurn(t *testing.T) {
+	a, _ := AdapterFor("opencode")
+	cases := []struct {
+		name     string
+		line     string
+		wantEnds bool
+	}{
+		{"step_start", `{"type":"step_start","sessionID":"s","part":{"type":"step_start"}}`, false},
+		{"text", `{"type":"text","sessionID":"s","part":{"type":"text","text":"hello"}}`, false},
+		{"tool_use", `{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"read","state":{"input":{"filePath":"a.go"}}}}`, false},
+		{"step_finish", `{"type":"step_finish","sessionID":"s","part":{"type":"step_finish","reason":"stop"}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs, ok := a.Parse([]byte(tc.line))
+			if !ok {
+				t.Fatalf("Parse() rejected %s", tc.name)
+			}
+			if obs.EndsTurn != tc.wantEnds {
+				t.Errorf("%s: EndsTurn = %v, want %v", tc.name, obs.EndsTurn, tc.wantEnds)
+			}
+		})
+	}
+}
+
+// TestClaudeParseEndsTurn checks EndsTurn is set on every assistant line and
+// on the terminal result line, and false on the system/init line (issue #187).
+func TestClaudeParseEndsTurn(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	cases := []struct {
+		name     string
+		line     string
+		wantKind string
+		wantEnds bool
+	}{
+		{
+			name:     "system_init",
+			line:     `{"type":"system","subtype":"init","session_id":"ses_x"}`,
+			wantKind: "start",
+			wantEnds: false,
+		},
+		{
+			name:     "assistant_text",
+			line:     `{"type":"assistant","session_id":"ses_x","message":{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":5}}}`,
+			wantKind: "text",
+			wantEnds: true,
+		},
+		{
+			name:     "assistant_tool",
+			line:     `{"type":"assistant","session_id":"ses_x","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}],"usage":{"input_tokens":10,"output_tokens":5}}}`,
+			wantKind: "tool",
+			wantEnds: true,
+		},
+		{
+			name:     "result",
+			line:     `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":"ses_x","total_cost_usd":0.01}`,
+			wantKind: "step",
+			wantEnds: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs, ok := a.Parse([]byte(tc.line))
+			if !ok {
+				t.Fatalf("Parse() rejected %s", tc.name)
+			}
+			if obs.Kind != tc.wantKind {
+				t.Errorf("%s: Kind = %q, want %q", tc.name, obs.Kind, tc.wantKind)
+			}
+			if obs.EndsTurn != tc.wantEnds {
+				t.Errorf("%s: EndsTurn = %v, want %v", tc.name, obs.EndsTurn, tc.wantEnds)
+			}
+		})
+	}
+}

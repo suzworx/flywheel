@@ -1653,6 +1653,53 @@ func TestRunShortRunNoNoPlan(t *testing.T) {
 	}
 }
 
+// TestRunSimCleanStepsPinned pins the step count for the existing clean.jsonl
+// fixture, proving the opencode/sim path did not shift when step counting moved
+// from obs.Kind == "step" to obs.EndsTurn (issue #187).
+func TestRunSimCleanStepsPinned(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	res, err := Run(dir, RunOptions{Task: "T1"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Steps != 2 {
+		t.Errorf("steps = %d, want 2 (clean.jsonl step count must not shift)", res.Steps)
+	}
+}
+
+// TestRunNoPlanAtExactly20Steps checks a run whose stream ends turns exactly
+// 20 times with no PLAN text records one no-plan event (issue #187).
+func TestRunNoPlanAtExactly20Steps(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 20, false))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop", res.RC, res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	for _, e := range evs {
+		if e.Kind == "no-plan" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("no-plan events = %d, want exactly 1", count)
+	}
+}
+
 // offCourseFixture writes a fixture of one step_start, one tool_use event per
 // (tool, path) call, and a final step_finish reason stop, and returns its
 // absolute path. grep and glob calls carry their path under state.input.path;
