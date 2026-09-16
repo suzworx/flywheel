@@ -948,6 +948,127 @@ func TestInitAgentsMDKeepsExistingContent(t *testing.T) {
 	}
 }
 
+// TestInitHooksWritesBothFilesOnce checks InitHooks creates both hook files
+// on a fresh call and reports them added.
+func TestInitHooksWritesBothFilesOnce(t *testing.T) {
+	dir := t.TempDir()
+	_, pieces, err := InitHooks(dir)
+	if err != nil {
+		t.Fatalf("InitHooks() error = %v", err)
+	}
+	want := map[string]bool{".claude/settings.json": true, ".opencode/plugin/flywheel-session.mjs": true}
+	if len(pieces) != len(want) {
+		t.Fatalf("InitHooks() pieces = %+v, want %d entries", pieces, len(want))
+	}
+	for _, p := range pieces {
+		if !want[p.Path] {
+			t.Errorf("InitHooks() unexpected piece %q", p.Path)
+		}
+		if !p.Added {
+			t.Errorf("InitHooks() piece %s Added = false, want true on a fresh call", p.Path)
+		}
+	}
+	for path, wantSub := range map[string]string{
+		".claude/settings.json":                 "SessionStart",
+		".opencode/plugin/flywheel-session.mjs": "session_start",
+	} {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !strings.Contains(string(b), wantSub) {
+			t.Errorf("%s missing %q, got %q", path, wantSub, b)
+		}
+	}
+}
+
+// TestInitHooksSecondRunByteIdentical checks a rerun leaves both hook files
+// byte-identical: like every other init piece, they're created only once.
+func TestInitHooksSecondRunByteIdentical(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := InitHooks(dir); err != nil {
+		t.Fatalf("InitHooks() error = %v", err)
+	}
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	pluginPath := filepath.Join(dir, ".opencode", "plugin", "flywheel-session.mjs")
+	before1, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	before2, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+
+	_, pieces, err := InitHooks(dir)
+	if err != nil {
+		t.Fatalf("InitHooks() second call error = %v", err)
+	}
+	for _, p := range pieces {
+		if p.Added {
+			t.Errorf("InitHooks() second call added %s, want none", p.Path)
+		}
+	}
+	after1, err := os.ReadFile(settingsPath)
+	if err != nil || string(after1) != string(before1) {
+		t.Errorf("settings.json changed on rerun: got %q, err %v, want %q", after1, err, before1)
+	}
+	after2, err := os.ReadFile(pluginPath)
+	if err != nil || string(after2) != string(before2) {
+		t.Errorf("plugin changed on rerun: got %q, err %v, want %q", after2, err, before2)
+	}
+}
+
+// TestInitHooksLeavesExistingSettingsUntouched checks a preexisting
+// .claude/settings.json is never overwritten.
+func TestInitHooksLeavesExistingSettingsUntouched(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	custom := []byte(`{"own":"settings"}`)
+	if err := os.WriteFile(settingsPath, custom, 0o644); err != nil {
+		t.Fatalf("write settings.json: %v", err)
+	}
+
+	_, pieces, err := InitHooks(dir)
+	if err != nil {
+		t.Fatalf("InitHooks() error = %v", err)
+	}
+	for _, p := range pieces {
+		if p.Path == ".claude/settings.json" && p.Added {
+			t.Error("InitHooks() reported settings.json added over an existing file")
+		}
+	}
+	b, err := os.ReadFile(settingsPath)
+	if err != nil || string(b) != string(custom) {
+		t.Errorf("settings.json changed: got %q, err %v, want untouched %q", b, err, custom)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".opencode", "plugin", "flywheel-session.mjs")); err != nil {
+		t.Errorf("plugin not created alongside an existing settings.json: %v", err)
+	}
+}
+
+// TestInitHooksRollbackRemovesCreatedFile checks that when the plugin file
+// can't be written, the settings.json this same call already created is
+// rolled back so a retry starts clean.
+func TestInitHooksRollbackRemovesCreatedFile(t *testing.T) {
+	dir := t.TempDir()
+	// Block .opencode/plugin/flywheel-session.mjs with a directory so the
+	// call fails after settings.json is already written.
+	block := filepath.Join(dir, ".opencode", "plugin", "flywheel-session.mjs")
+	if err := os.MkdirAll(block, 0o755); err != nil {
+		t.Fatalf("mkdir block: %v", err)
+	}
+	if _, _, err := InitHooks(dir); err == nil {
+		t.Skip("InitHooks() did not fail; skipping rollback assertion")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Error("settings.json left behind after rollback")
+	}
+}
+
 func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {

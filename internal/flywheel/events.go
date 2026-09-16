@@ -59,24 +59,27 @@ type Event struct {
 
 // kinds is the set of event kinds understood by Derive.
 var kinds = map[string]bool{
-	"planned":      true,
-	"dispatched":   true,
-	"started":      true,
-	"worker_plan":  true,
-	"no-plan":      true,
-	"off-course":   true,
-	"finished":     true,
-	"report":       true,
-	"reviewed":     true,
-	"blocked":      true,
-	"lost":         true,
-	"landed":       true,
-	"amended":      true,
-	"validated":    true,
-	"owns_checked": true,
-	"inspected":    true,
-	"staffed":      true,
-	"goal":         true,
+	"planned":         true,
+	"dispatched":      true,
+	"started":         true,
+	"worker_plan":     true,
+	"no-plan":         true,
+	"off-course":      true,
+	"finished":        true,
+	"report":          true,
+	"reviewed":        true,
+	"blocked":         true,
+	"lost":            true,
+	"landed":          true,
+	"amended":         true,
+	"validated":       true,
+	"owns_checked":    true,
+	"inspected":       true,
+	"staffed":         true,
+	"session_start":   true,
+	"session_command": true,
+	"session_end":     true,
+	"goal":            true,
 }
 
 // isTaskChar reports whether c is allowed in a task id: ^[A-Za-z0-9._-]+$.
@@ -111,16 +114,40 @@ func attemptOK(s string) bool {
 	return true
 }
 
+// floorLevel reports whether kind may carry an empty task: staffed and the
+// three session kinds describe the floor itself rather than a task, and goal
+// events are validated against Goal instead of Task.
+func floorLevel(kind string) bool {
+	switch kind {
+	case "staffed", "goal", "session_start", "session_command", "session_end":
+		return true
+	default:
+		return false
+	}
+}
+
 // Validate enforces the task pattern, the attempt pattern, the kind set and
-// the reviewed-requires-verdict rule. staffed is a floor-level event: it may
-// carry an empty task (every other kind requires one) but must carry a
-// session.
+// the reviewed-requires-verdict rule. staffed, session_start, session_command
+// and session_end are floor-level events: they may carry an empty task (every
+// other kind requires one) but staffed and the two session-boundary kinds
+// must carry a session, and session_command must also carry a note.
 func Validate(e Event) error {
-	if e.Kind != "staffed" && e.Kind != "goal" && !taskOK(e.Task) {
+	if !floorLevel(e.Kind) && !taskOK(e.Task) {
 		return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
 	}
 	if e.Kind == "staffed" && e.Session == "" {
 		return fmt.Errorf("staffed event must carry a session")
+	}
+	if (e.Kind == "session_start" || e.Kind == "session_end") && e.Session == "" {
+		return fmt.Errorf("%s event must carry a session", e.Kind)
+	}
+	if e.Kind == "session_command" {
+		if e.Session == "" {
+			return fmt.Errorf("session_command event must carry a session")
+		}
+		if e.Note == "" {
+			return fmt.Errorf("session_command event must carry a note")
+		}
 	}
 	if e.Goal != nil && e.Kind != "goal" {
 		return fmt.Errorf("event kind %q cannot carry a goal", e.Kind)
@@ -140,7 +167,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, goal", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal", e.Kind)
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)

@@ -410,6 +410,45 @@ func TestValidateNewGaugeKinds(t *testing.T) {
 	}
 }
 
+// TestSessionKindsValidate checks the three session-boundary kinds added for
+// issue #62: session_start and session_end require a session, session_command
+// requires a session and a note, and the unknown-kind error message lists all
+// three (task stays optional on every one, like staffed).
+func TestSessionKindsValidate(t *testing.T) {
+	for _, k := range []string{"session_start", "session_end"} {
+		if err := Validate(Event{Kind: k}); err == nil {
+			t.Errorf("Validate() accepted %s without session", k)
+		} else if !strings.Contains(err.Error(), "session") {
+			t.Errorf("Validate() error = %v, want session message", err)
+		}
+		if err := Validate(Event{Kind: k, Session: "s1"}); err != nil {
+			t.Errorf("Validate() rejected %s with session: %v", k, err)
+		}
+		if err := Validate(Event{Task: "T1", Kind: k, Session: "s1"}); err != nil {
+			t.Errorf("Validate() rejected %s carrying a task: %v", k, err)
+		}
+	}
+	if err := Validate(Event{Kind: "session_command"}); err == nil {
+		t.Error("Validate() accepted session_command without session")
+	} else if !strings.Contains(err.Error(), "session") {
+		t.Errorf("Validate() error = %v, want session message", err)
+	}
+	if err := Validate(Event{Kind: "session_command", Session: "s1"}); err == nil {
+		t.Error("Validate() accepted session_command without note")
+	} else if !strings.Contains(err.Error(), "note") {
+		t.Errorf("Validate() error = %v, want note message", err)
+	}
+	if err := Validate(Event{Kind: "session_command", Session: "s1", Note: "flywheel inspect t1"}); err != nil {
+		t.Errorf("Validate() rejected valid session_command: %v", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "bogus"}); err == nil {
+		t.Error("Validate() accepted unknown kind")
+	} else if !strings.Contains(err.Error(), "session_start") || !strings.Contains(err.Error(), "session_command") ||
+		!strings.Contains(err.Error(), "session_end") {
+		t.Errorf("Validate() error = %v, want the session kinds listed", err)
+	}
+}
+
 func TestValidateGoalEvent(t *testing.T) {
 	ok := Event{Kind: "goal", Goal: &GoalSpec{ID: "g1", Title: "Ship", Status: "active"}}
 	if err := Validate(ok); err != nil {
