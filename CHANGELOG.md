@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/suzworx/flywheel/compare/v0.6.0...v0.7.0) (2026-09-16)
+
+
+### Features
+
+* lint accepts owns patterns, and the docs teach the glob form ([#139](https://github.com/suzworx/flywheel/issues/139)) ([9ba42d5](https://github.com/suzworx/flywheel/commit/9ba42d5d67a73c52521ba22281d872ece6450987))
+
+
+### Documentation
+
+* document --workdir for validating while other units run ([#137](https://github.com/suzworx/flywheel/issues/137)) ([8900aa4](https://github.com/suzworx/flywheel/commit/8900aa4ae24c45047d9f19521f29c60f730cdf7f))
+
 ## [0.6.0](https://github.com/suzworx/flywheel/compare/v0.5.0...v0.6.0) (2026-09-15)
 
 
