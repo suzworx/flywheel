@@ -202,6 +202,8 @@ output cap was hit), `part.tokens` `{total, input, output, reasoning, cache: {re
 | denied | a bash tool `error` event carrying the rule message: "The user has specified a rule which prevents you from using this specific tool call" | the foreman treats a worker trying to get around it as a signal — stop it and triage; never help it around the block. |
 | done | rc 0 and the last reason is `stop` | review it (§6). |
 
+`flywheel run` now records the off-course signal itself: one `off-course` event, naming the paths, when a read, grep or glob call names the 5th distinct path outside the worktree (issue #72).
+
 A gate or test that fails with "An Application Control policy has blocked this file" is the
 **host**, not the code — that message is Windows Smart App Control blocking a freshly built
 binary. Rerun, don't rework. A **persistent** block is the host rejecting a freshly built test

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -94,10 +95,12 @@ var commandHook func(RunRequest)
 
 // Run dispatches one task to the configured worker, streams the run into
 // .flywheel/runs/<task>.<attempt>.jsonl while parsing it, and records
-// dispatched, started, worker_plan, no-plan, report and finished events.
-// no-plan is appended once, at the 20th completed step, when no PLAN text has
-// been seen yet; it never changes the run's outcome. Every path after the
-// dispatched event records a finished event.
+// dispatched, started, worker_plan, no-plan, off-course, report and finished
+// events. no-plan is appended once, at the 20th completed step, when no PLAN
+// text has been seen yet. off-course is appended once, when a read, grep or
+// glob tool call names the 5th distinct path outside the worktree (library
+// source), naming the paths in its note. Neither changes the run's outcome.
+// Every path after the dispatched event records a finished event.
 func Run(dir string, o RunOptions) (res Result, err error) {
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -392,6 +395,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	started := false
 	planRecorded := false
 	noPlanRecorded := false
+	offCourseRecorded := false
+	outsideSeen := map[string]bool{}
+	var outsideOrder []string
 	lastText := ""
 	lastReason := ""
 	seenError := false
@@ -453,6 +459,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				progress(o.Progress, o.Task+" "+attempt+" plan recorded")
 			}
 			lastText = obs.Text
+		case "tool":
+			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(dir, obs.Path) && !outsideSeen[obs.Path] {
+				outsideSeen[obs.Path] = true
+				outsideOrder = append(outsideOrder, obs.Path)
+				if len(outsideOrder) == 5 {
+					offCourseRecorded = true
+					note := clipNote(strings.Join(outsideOrder, ", "))
+					if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "off-course", Attempt: attempt, Note: note}); err != nil {
+						return Result{}, err
+					}
+					progress(o.Progress, o.Task+" "+attempt+" off-course (paths outside the worktree)")
+				}
+			}
 		case "step":
 			steps++
 			if steps == 20 && !planRecorded && !noPlanRecorded {
@@ -637,6 +656,48 @@ func promptBrief(dir, src string) string {
 		}
 	}
 	return src
+}
+
+// offCourseTools is the set of read-only tools whose Path can point at
+// library source outside the worktree: read, grep and glob (issue #72).
+var offCourseTools = map[string]bool{"read": true, "grep": true, "glob": true}
+
+// isOutsideWorktree reports whether p, from a tool_use observation, names a
+// location outside the worktree rooted at dir: an absolute path that is not
+// under dir's absolute path (compared case-insensitively on Windows, where
+// paths are case-insensitive), or a relative path starting with "..". An
+// empty path is never outside.
+func isOutsideWorktree(dir, p string) bool {
+	if p == "" {
+		return false
+	}
+	if !isRootedPath(p) {
+		rel := filepath.ToSlash(p)
+		return rel == ".." || strings.HasPrefix(rel, "../")
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	a := strings.TrimSuffix(filepath.ToSlash(absDir), "/")
+	q := strings.TrimSuffix(filepath.ToSlash(p), "/")
+	if runtime.GOOS == "windows" {
+		a = strings.ToLower(a)
+		q = strings.ToLower(q)
+	}
+	return q != a && !strings.HasPrefix(q, a+"/")
+}
+
+// isRootedPath reports whether p is rooted: recognized as absolute by
+// filepath.IsAbs, or leading with a path separator. A tool call can report a
+// POSIX-style path (leading "/") verbatim even on a Windows host — e.g. one
+// built from a Git Bash temp dir — where filepath.IsAbs does not consider it
+// absolute; such a path is still rooted outside the worktree.
+func isRootedPath(p string) bool {
+	if filepath.IsAbs(p) {
+		return true
+	}
+	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }
 
 // clipNote trims s and caps it at 200 characters for a finished note.

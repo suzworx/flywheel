@@ -294,6 +294,30 @@ func TestNoPlanKindRoundTrips(t *testing.T) {
 	}
 }
 
+// TestOffCourseKindRoundTrips checks the off-course kind carries its task,
+// attempt and note like the other run kinds and round-trips through the
+// event log (issue #72).
+func TestOffCourseKindRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	note := "/outside/a.go, /outside/b.go, /outside/c.go, /outside/d.go, /outside/e.go"
+	if err := AppendEvent(dir, Event{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "off-course", Attempt: "r1", Note: note}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("ReadEvents() = %d events, want 1", len(evs))
+	}
+	if evs[0].Kind != "off-course" || evs[0].Task != "T1" || evs[0].Attempt != "r1" || evs[0].Note != note {
+		t.Errorf("off-course round trip mismatch: %v", evs[0])
+	}
+	if err := Validate(Event{Task: "T1", Kind: "off-course", Attempt: "bad"}); err == nil {
+		t.Error("Validate() accepted off-course with a malformed attempt")
+	}
+}
+
 func TestEventNewFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	toks := new(Tokens)
