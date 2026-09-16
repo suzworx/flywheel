@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const markdownTemplate = `## Status
@@ -335,6 +336,41 @@ func IgnoredStateFiles(dir string) []string {
 		}
 	}
 	return ignored
+}
+
+// IgnoreMarkdown ensures the root .gitignore in dir contains an exact
+// "flywheel.md" line, so a tracked repo never shows the shared status page as
+// an untracked file. Missing entirely, it is created with just that line.
+// Existing without the line, the line is appended (a missing trailing
+// newline is added first, so it never runs into the prior content). An
+// existing exact "flywheel.md" line is left alone and never duplicated. It
+// reports whether this call changed the file.
+func IgnoreMarkdown(dir string) (added bool, err error) {
+	path := filepath.Join(dir, ".gitignore")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("read %s: %w", path, err)
+		}
+		if err := os.WriteFile(path, []byte("flywheel.md\n"), 0o644); err != nil {
+			return false, fmt.Errorf("write %s: %w", path, err)
+		}
+		return true, nil
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimRight(line, "\r") == "flywheel.md" {
+			return false, nil
+		}
+	}
+	out := b
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	out = append(out, []byte("flywheel.md\n")...)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return false, fmt.Errorf("write %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // gitIgnores runs the read-only `git check-ignore -q <path>` in dir and
