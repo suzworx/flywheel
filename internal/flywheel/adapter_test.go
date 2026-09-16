@@ -226,6 +226,29 @@ func TestOpenCodeParseStepWithoutTokens(t *testing.T) {
 	}
 }
 
+// TestOpenCodeParseToolPathFallsBackToPathField checks a grep or glob
+// tool_use, which carries its target under part.state.input.path rather than
+// filePath, still decodes into Observation.Path (issue #72).
+func TestOpenCodeParseToolPathFallsBackToPathField(t *testing.T) {
+	a, _ := AdapterFor("opencode")
+	grepLine := []byte(`{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"grep","state":{"input":{"path":"../outside/lib.go"}}}}`)
+	obs, ok := a.Parse(grepLine)
+	if !ok || obs.Kind != "tool" || obs.Tool != "grep" || obs.Path != "../outside/lib.go" {
+		t.Errorf("grep tool_use = %v, %v, want tool grep with Path from state.input.path", obs, ok)
+	}
+	globLine := []byte(`{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"glob","state":{"input":{"path":"/outside/pkg"}}}}`)
+	obs, ok = a.Parse(globLine)
+	if !ok || obs.Kind != "tool" || obs.Tool != "glob" || obs.Path != "/outside/pkg" {
+		t.Errorf("glob tool_use = %v, %v, want tool glob with Path from state.input.path", obs, ok)
+	}
+	// filePath still wins when both are present.
+	both := []byte(`{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"read","state":{"input":{"filePath":"a.go","path":"b.go"}}}}`)
+	obs, ok = a.Parse(both)
+	if !ok || obs.Path != "a.go" {
+		t.Errorf("tool_use with both fields = %v, %v, want Path a.go (filePath takes priority)", obs, ok)
+	}
+}
+
 func TestSimAdapter(t *testing.T) {
 	a, _ := AdapterFor("sim")
 	if a.Name() != "sim" {

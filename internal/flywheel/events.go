@@ -63,6 +63,7 @@ var kinds = map[string]bool{
 	"started":      true,
 	"worker_plan":  true,
 	"no-plan":      true,
+	"off-course":   true,
 	"finished":     true,
 	"report":       true,
 	"reviewed":     true,
@@ -138,7 +139,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, goal", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, goal", e.Kind)
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)

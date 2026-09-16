@@ -114,7 +114,13 @@ func (a opencodeAdapter) Parse(line []byte) (Observation, bool) {
 	case "tool_use":
 		obs.Kind = "tool"
 		obs.Tool, _ = partString(m, "tool")
-		obs.Path, _ = partStateInputString(m, "filePath")
+		if p, has := partStateInputString(m, "filePath"); has {
+			obs.Path = p
+		} else {
+			// grep and glob carry their target under "path" instead of
+			// "filePath" (issue #72).
+			obs.Path, _ = partStateInputString(m, "path")
+		}
 	case "step_finish":
 		obs.Kind = "step"
 		obs.Reason, _ = partString(m, "reason")
