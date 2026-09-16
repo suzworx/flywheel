@@ -128,6 +128,37 @@ func TestStatusFixture(t *testing.T) {
 	}
 }
 
+// TestStatusAttentionListsCappedNotClean checks attention lists a task whose
+// current attempt ended capped (reason length) and omits a task that finished
+// cleanly (reason stop) (issue #131).
+func TestStatusAttentionListsCappedNotClean(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-14T00:00:00Z", Task: "t-capped", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T00:00:00Z", Task: "t-capped", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-14T00:00:01Z", Task: "t-capped", Kind: "finished", Attempt: "r1", Reason: "length"},
+		{TS: "2026-09-14T00:00:00Z", Task: "t-clean", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T00:00:00Z", Task: "t-clean", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-14T00:00:01Z", Task: "t-clean", Kind: "finished", Attempt: "r1", Reason: "stop"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	rep, err := Status(dir, statusNow(t))
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if len(rep.Attention) != 1 {
+		t.Fatalf("attention = %v, want exactly 1 entry", rep.Attention)
+	}
+	a := rep.Attention[0]
+	if a.Task != "t-capped" || a.Attempt != "r1" || a.Reason != "length" {
+		t.Errorf("attention[0] = %+v, want t-capped r1 length", a)
+	}
+}
+
 // TestStatusCountsLost: a lost event derives status lost and flywheel status
 // counts it in its task counts.
 func TestStatusCountsLost(t *testing.T) {

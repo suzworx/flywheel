@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.0](https://github.com/suzworx/flywheel/compare/v0.6.0...v0.7.0) (2026-09-16)
+
+
+### Features
+
+* lint accepts owns patterns, and the docs teach the glob form ([#139](https://github.com/suzworx/flywheel/issues/139)) ([9ba42d5](https://github.com/suzworx/flywheel/commit/9ba42d5d67a73c52521ba22281d872ece6450987))
+
+
+### Documentation
+
+* document --workdir for validating while other units run ([#137](https://github.com/suzworx/flywheel/issues/137)) ([8900aa4](https://github.com/suzworx/flywheel/commit/8900aa4ae24c45047d9f19521f29c60f730cdf7f))
+
+## [0.6.0](https://github.com/suzworx/flywheel/compare/v0.5.0...v0.6.0) (2026-09-15)
+
+
+### Features
+
+* a pure Reconcile and a read-only flywheel next ([#118](https://github.com/suzworx/flywheel/issues/118)) ([550c016](https://github.com/suzworx/flywheel/commit/550c016671ce7b5b5035f0ac05db1cf09ffcd477)), closes [#27](https://github.com/suzworx/flywheel/issues/27)
+* flywheel cost sums tokens and cost per task and per model ([#122](https://github.com/suzworx/flywheel/issues/122)) ([70c5b6f](https://github.com/suzworx/flywheel/commit/70c5b6f72c1faf5074ddc66c84aab34a311a8245)), closes [#29](https://github.com/suzworx/flywheel/issues/29)
+* flywheel handoff summarizes the factory for a new head ([#126](https://github.com/suzworx/flywheel/issues/126)) ([4eca0cc](https://github.com/suzworx/flywheel/commit/4eca0cc2ab10aa508a92aca1ff6a295684ee199d)), closes [#30](https://github.com/suzworx/flywheel/issues/30)
+* flywheel lint checks a brief before dispatch ([#124](https://github.com/suzworx/flywheel/issues/124)) ([64a8a3d](https://github.com/suzworx/flywheel/commit/64a8a3d2d69f993c533ea992dac5a087789128fc)), closes [#28](https://github.com/suzworx/flywheel/issues/28)
+* init and config validate report what they did; log help lists both verdict sets ([#128](https://github.com/suzworx/flywheel/issues/128)) ([d7b9b29](https://github.com/suzworx/flywheel/commit/d7b9b29d340535f367615914d304134d89ddde79))
+* the controller loop records lost and blocked work under a single-controller lock ([#129](https://github.com/suzworx/flywheel/issues/129)) ([0217e2e](https://github.com/suzworx/flywheel/commit/0217e2e6e2dcb2f486af99986d1a7d8a3e622d42))
+
+
+### Bug Fixes
+
+* run prints the cost rounded to four decimals ([#123](https://github.com/suzworx/flywheel/issues/123)) ([f29487a](https://github.com/suzworx/flywheel/commit/f29487a597ac93db3d8170de36c289ddeed92089)), closes [#81](https://github.com/suzworx/flywheel/issues/81)
+* status durations in human units; upgrade notes ([#125](https://github.com/suzworx/flywheel/issues/125)) ([0acb09a](https://github.com/suzworx/flywheel/commit/0acb09a1f967f52418ba94bbf6b8da02c2d29d31))
+* the factory's STAGE column shows passed and rejected ([#119](https://github.com/suzworx/flywheel/issues/119)) ([42e204f](https://github.com/suzworx/flywheel/commit/42e204fc9f5de614b30718ccd69b813eb03a2a6a)), closes [#110](https://github.com/suzworx/flywheel/issues/110)
+
 ## [0.5.0](https://github.com/suzworx/flywheel/compare/v0.4.0...v0.5.0) (2026-09-15)
 
 

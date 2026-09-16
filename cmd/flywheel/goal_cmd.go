@@ -13,7 +13,7 @@ import (
 
 func init() {
 	register("goal", "manage goals on the factory floor", runGoal)
-	registerHelp("goal", "flywheel goal add|list|show|set [flags]", func() *flag.FlagSet { fs, _ := goalFlags(); return fs })
+	registerHelp("goal", goalUsageLines(), func() *flag.FlagSet { fs, _ := goalFlags(); return fs })
 }
 
 // repeatable is a flag.Value collecting repeated string flags.
@@ -51,12 +51,22 @@ func goalFlags() (*flag.FlagSet, *goalOptions) {
 	return fs, o
 }
 
-// goalUsage prints the flywheel goal usage line.
+// goalUsageLines is the single source of truth for the four goal subcommand
+// usage lines (without the leading "usage: ", which both goalUsage and the
+// help registration add themselves), so `flywheel goal <bad args>` and
+// `flywheel help goal` show identical text.
+func goalUsageLines() string {
+	return strings.Join([]string{
+		"flywheel goal add <title> [--id ID] [--accept CMD]... [--require TASK]... [--dir DIR]",
+		"       flywheel goal list [--json] [--dir DIR]",
+		"       flywheel goal show <id> [--json] [--dir DIR]",
+		"       flywheel goal set <id> --status met|failed|abandoned [--note TEXT] [--dir DIR]",
+	}, "\n")
+}
+
+// goalUsage prints the flywheel goal usage lines to w.
 func goalUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel goal add <title> [--id ID] [--accept CMD]... [--require TASK]... [--dir DIR]")
-	fmt.Fprintln(w, "       flywheel goal list [--json] [--dir DIR]")
-	fmt.Fprintln(w, "       flywheel goal show <id> [--json] [--dir DIR]")
-	fmt.Fprintln(w, "       flywheel goal set <id> --status met|failed|abandoned [--note TEXT] [--dir DIR]")
+	fmt.Fprintf(w, "usage: %s\n", goalUsageLines())
 }
 
 // runGoal dispatches to the goal subcommands.

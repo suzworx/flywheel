@@ -186,6 +186,15 @@ that need you (silent, stalled, capped, provider-error).
   is that re-run and its evidence. You may run validation commands independently — but send any
   implementation change to the worker.
 
+#### Validating while other units run
+
+When multiple units run in parallel on one checkout, repo-wide gates turn red with each unit's
+half-written code. To avoid false failures, give each unit its own worktree (as flywheel's own
+build does), or keep one verify worktree: reset it to main's HEAD, clean it, and copy in only the
+unit's owned files. Then run `flywheel validate <task> --workdir <tree>` to measure gates on a
+stable tree, followed by `flywheel inspect <task> --verdict pass --workdir <tree>` using the same
+tree (so T3 finds a passing supervisor reading on that hash), and commit only the unit's files.
+
 ### 5. Correct or land
 - Needs changes → send a **correction** to the worker by resuming the **emitted session id** with a
   delta brief (never implement it yourself, never invent the session id). The resume carries the

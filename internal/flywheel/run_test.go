@@ -385,6 +385,9 @@ func TestRunRecordsBaseline(t *testing.T) {
 	}
 }
 
+// TestRunSimCapped checks a run cut off by the output-token cap (reason
+// length) records no report event, keeps the last reply as a partial file
+// instead, and a clean run still records its report (issue #131).
 func TestRunSimCapped(t *testing.T) {
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("capped.jsonl", t))); err != nil {
@@ -400,6 +403,33 @@ func TestRunSimCapped(t *testing.T) {
 	}
 	if ExitCode(res) != 4 {
 		t.Errorf("ExitCode() = %d, want 4", ExitCode(res))
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "report" {
+			t.Errorf("events include a report event for a capped run: %v", e)
+		}
+	}
+	if f := evs[len(evs)-1]; f.Kind != "finished" || f.Reason != "length" {
+		t.Errorf("finished event = %v, want reason length", f)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "runs", "T1.r1.report.md")); !os.IsNotExist(err) {
+		t.Errorf("report.md exists for a capped run, want none (err=%v)", err)
+	}
+	partialB, err := os.ReadFile(filepath.Join(dir, ".flywheel", "runs", "T1.r1.partial.md"))
+	if err != nil {
+		t.Fatalf("read partial.md: %v", err)
+	}
+	if string(partialB) != "Ran out of output budget mid-write." {
+		t.Errorf("partial.md = %q, want the last reply text", partialB)
+	}
+	plog := string(buf.Bytes())
+	want := "T1 r1 partial reply kept at .flywheel/runs/T1.r1.partial.md (reason=length)"
+	if !strings.Contains(plog, want) {
+		t.Errorf("progress missing %q; got:\n%s", want, plog)
 	}
 }
 

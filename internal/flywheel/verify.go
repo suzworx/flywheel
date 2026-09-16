@@ -96,12 +96,7 @@ func verifyTask(dir, task string, events []Event) []VerifyItem {
 // a tampered delta all fail naming the delta, and amendments never waive a
 // correction's hash check.
 func ruleT1(dir, task string, events []Event) []VerifyItem {
-	planned := ""
-	for _, e := range events {
-		if e.Task == task && e.Kind == "planned" && e.Brief != "" {
-			planned = e.Brief
-		}
-	}
+	planned := plannedBriefOnly(events, task)
 	var items []VerifyItem
 	if planned != "" {
 		briefPath := planned
@@ -163,6 +158,21 @@ func ruleT1(dir, task string, events []Event) []VerifyItem {
 		return []VerifyItem{{Task: task, Rule: "T1", Pass: true, Reason: "every dispatched event matches its brief"}}
 	}
 	return items
+}
+
+// plannedBriefOnly returns task's latest `planned` event's brief path,
+// deliberately ignoring `amended` events: T1 checks a dispatched hash
+// against the brief as it was planned, unlike AttemptBrief's amendment-aware
+// base (verify's T1 rule is unchanged by that fix).
+func plannedBriefOnly(events []Event, task string) string {
+	planned := ""
+	for _, e := range events {
+		if e.Task != task || e.Kind != "planned" || e.Brief == "" {
+			continue
+		}
+		planned = e.Brief
+	}
+	return planned
 }
 
 // isCorrection reports whether an attempt id is a correction attempt (c*).
@@ -244,22 +254,11 @@ func latestFinishedBefore(events []Event, task, ts string) time.Time {
 	return latest
 }
 
-// briefHeaderFor loads the task's planned brief header, or an error naming the
-// brief problem.
+// briefHeaderFor loads the header to measure for the task's current attempt
+// (base brief plus any correction delta), or an error naming the problem.
 func briefHeaderFor(dir, task string, events []Event) (BriefHeader, error) {
-	briefPath := ""
-	for _, e := range events {
-		if e.Task == task && e.Kind == "planned" && e.Brief != "" {
-			briefPath = e.Brief
-		}
-	}
-	if briefPath == "" {
-		return BriefHeader{}, fmt.Errorf("task %s has no planned brief", task)
-	}
-	if !filepath.IsAbs(briefPath) {
-		briefPath = filepath.Join(dir, briefPath)
-	}
-	return ParseBriefHeader(briefPath)
+	header, _, err := AttemptBrief(dir, events, task)
+	return header, err
 }
 
 // ruleT4 checks that no inspected event comes from a worker session.
