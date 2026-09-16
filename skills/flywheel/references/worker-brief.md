@@ -75,7 +75,7 @@ The header of a brief looks like this:
 owns: skills/flywheel/references/worker-brief.md
 needs: none
 gate: go build ./... && go vet ./...
-gate: go test ./...
+gate: d=$(mktemp -d) && go test -c -ldflags=-buildid=fw$(date +%s%N) -o "$d/t.test.exe" ./<pkg> && (cd <pkg> && "$d/t.test.exe")
 
 Work only in /abs/path/to/the/build/tree
 ```
@@ -202,7 +202,10 @@ output cap was hit), `part.tokens` `{total, input, output, reasoning, cache: {re
 
 A gate or test that fails with "An Application Control policy has blocked this file" is the
 **host**, not the code — that message is Windows Smart App Control blocking a freshly built
-binary. Rerun, don't rework.
+binary. Rerun, don't rework. A **persistent** block is the host rejecting a freshly built test
+binary by its content hash: identical code rebuilds to the identical binary, so rerunning never
+helps. The fix is the compile-then-run gate form (`go test -c -o <dir>/x.test.exe <pkg> &&
+<dir>/x.test.exe`) or running the gate in CI — never the security setting (#101).
 
 Detection commands:
 
