@@ -489,11 +489,18 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if cmd != nil {
 			_ = cmd.Wait()
 		}
+		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
+		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: "silent", SHA256: runSHA}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA}); err != nil {
 			return Result{}, err
 		}
-		progress(o.Progress, o.Task+" "+attempt+" finished rc=-1 reason=silent")
+		line := o.Task + " " + attempt + " finished rc=-1 reason=silent model=" + model
+		if note != "" {
+			line += " note=" + note
+		}
+		line += " err=" + errRel
+		progress(o.Progress, line)
 		_ = RemoveLease(dir, o.Task, attempt)
 		_, _ = WriteState(dir)
 		return Result{Attempt: attempt, RC: -1, Reason: "silent"}, nil
@@ -559,12 +566,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	*tokPtr = tok
 	runSHA := hex.EncodeToString(hasher.Sum(nil))
 	if err := AppendEvent(dir, Event{
-		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
+		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 	}); err != nil {
 		return Result{}, err
 	}
-	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s steps=%d tokens=%s cost=$%s", rc, reason, steps, tokensK(tok), costK(cost)))
+	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s model=%s steps=%d tokens=%s cost=$%s", rc, reason, model, steps, tokensK(tok), costK(cost)))
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
 	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost}, nil
