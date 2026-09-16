@@ -102,6 +102,18 @@ func TestLogHelpNamesBothVerdictSets(t *testing.T) {
 	}
 }
 
+// TestGoalHelpShowsSubcommandArguments checks `flywheel help goal` names the
+// positional argument each subcommand takes, not just the bare subcommand
+// names (issue #127).
+func TestGoalHelpShowsSubcommandArguments(t *testing.T) {
+	h := helpText("goal")
+	for _, want := range []string{"goal add <title>", "goal show <id>"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("helpText(goal) missing %q\n%s", want, h)
+		}
+	}
+}
+
 // TestBareAction checks the bare `flywheel` decision: open the factory view
 // when ./.flywheel exists, print the global help otherwise.
 func TestBareAction(t *testing.T) {
