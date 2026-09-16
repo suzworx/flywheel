@@ -24,35 +24,39 @@ type Tokens struct {
 // Event is one JSON object per line in .flywheel/events.jsonl. The event log
 // is the source of truth; state.json and flywheel.md are derived from it.
 type Event struct {
-	TS            string            `json:"ts"`
-	Task          string            `json:"task"`
-	Kind          string            `json:"kind"`
-	Session       string            `json:"session,omitempty"`
-	Model         string            `json:"model,omitempty"`
-	Attempt       string            `json:"attempt,omitempty"`
-	RC            *int              `json:"rc,omitempty"`
-	Reason        string            `json:"reason,omitempty"`
-	Verdict       string            `json:"verdict,omitempty"`
-	Brief         string            `json:"brief,omitempty"`
-	Needs         []string          `json:"needs,omitempty"`
-	Owns          []string          `json:"owns,omitempty"`
-	Commit        string            `json:"commit,omitempty"`
-	Note          string            `json:"note,omitempty"`
-	Adapter       string            `json:"adapter,omitempty"`
-	Path          string            `json:"path,omitempty"`
-	SHA256        string            `json:"sha256,omitempty"`
-	Tokens        *Tokens           `json:"tokens,omitempty"`
-	Cost          float64           `json:"cost,omitempty"`
-	Steps         int               `json:"steps,omitempty"`
-	PeakReasoning int               `json:"peak_reasoning,omitempty"`
-	Tree          string            `json:"tree,omitempty"`
-	Gate          string            `json:"gate,omitempty"`
-	Command       string            `json:"command,omitempty"`
-	DurationMS    int64             `json:"duration_ms,omitempty"`
-	Outside       []string          `json:"outside,omitempty"`
-	Baseline      map[string]string `json:"baseline,omitempty"`
-	Baselined     []string          `json:"baselined,omitempty"`
-	Attributed    []string          `json:"attributed,omitempty"`
+	TS            string   `json:"ts"`
+	Task          string   `json:"task"`
+	Kind          string   `json:"kind"`
+	Session       string   `json:"session,omitempty"`
+	Model         string   `json:"model,omitempty"`
+	Attempt       string   `json:"attempt,omitempty"`
+	RC            *int     `json:"rc,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	Verdict       string   `json:"verdict,omitempty"`
+	Brief         string   `json:"brief,omitempty"`
+	Needs         []string `json:"needs,omitempty"`
+	Owns          []string `json:"owns,omitempty"`
+	Commit        string   `json:"commit,omitempty"`
+	Note          string   `json:"note,omitempty"`
+	Adapter       string   `json:"adapter,omitempty"`
+	Path          string   `json:"path,omitempty"`
+	SHA256        string   `json:"sha256,omitempty"`
+	Tokens        *Tokens  `json:"tokens,omitempty"`
+	Cost          float64  `json:"cost,omitempty"`
+	Steps         int      `json:"steps,omitempty"`
+	PeakReasoning int      `json:"peak_reasoning,omitempty"`
+	// Wrote is a finished event's distinct paths written by edit/write tool
+	// calls during the attempt, sorted, at most 50 entries; empty when the
+	// attempt made no edits (issue #163).
+	Wrote      []string          `json:"wrote,omitempty"`
+	Tree       string            `json:"tree,omitempty"`
+	Gate       string            `json:"gate,omitempty"`
+	Command    string            `json:"command,omitempty"`
+	DurationMS int64             `json:"duration_ms,omitempty"`
+	Outside    []string          `json:"outside,omitempty"`
+	Baseline   map[string]string `json:"baseline,omitempty"`
+	Baselined  []string          `json:"baselined,omitempty"`
+	Attributed []string          `json:"attributed,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git

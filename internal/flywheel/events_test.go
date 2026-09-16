@@ -596,6 +596,51 @@ func TestPeakReasoningRoundTrips(t *testing.T) {
 	}
 }
 
+// TestWroteFieldRoundTrips checks the finished event's wrote field round-trips
+// through the event log, sorted paths intact, and is omitted from the line
+// when empty (issue #163).
+func TestWroteFieldRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1",
+		Reason: "length", Wrote: []string{"a.go", "b.go"},
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-16T00:00:01Z", Task: "T2", Kind: "finished", Attempt: "r1", Reason: "stop",
+	}); err != nil {
+		t.Fatalf("AppendEvent() plain error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("ReadEvents() = %d events, want 2", len(evs))
+	}
+	if want := []string{"a.go", "b.go"}; len(evs[0].Wrote) != 2 || evs[0].Wrote[0] != want[0] || evs[0].Wrote[1] != want[1] {
+		t.Errorf("wrote = %v, want %v", evs[0].Wrote, want)
+	}
+	if len(evs[1].Wrote) != 0 {
+		t.Errorf("plain event wrote = %v, want empty", evs[1].Wrote)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("events.jsonl = %d lines, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], `"wrote":["a.go","b.go"]`) {
+		t.Errorf("line 0 = %q, want wrote:[\"a.go\",\"b.go\"]", lines[0])
+	}
+	if strings.Contains(lines[1], "wrote") {
+		t.Errorf("line 1 = %q, want wrote omitted when empty", lines[1])
+	}
+}
+
 func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	e := Event{
