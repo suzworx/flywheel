@@ -172,6 +172,16 @@ same state files the planned subcommands will automate. `$MODEL` comes from
      "Apply the attached correction to the same task." --file .flywheel/briefs/<id>.delta.txt < /dev/null > .flywheel/runs/<id>.c<n>.jsonl; rc=$?
    ```
 
+### Validating while other units run
+
+When parallel units run on one checkout, repo-wide gates fail with each other's half-written code, triggering the T3 refusal (exit 6, "no passing supervisor validated reading on tree"). To avoid this, use separate worktrees: for each unit, reset a verify worktree to main's HEAD, clean it, and copy only that unit's owned files. Then:
+
+1. Run `flywheel validate <task> --workdir <tree>` to measure the gates on the stable worktree.
+2. Run `flywheel inspect <task> --verdict pass --workdir <tree>` using the same worktree (T3 will find the passing supervisor reading on that tree hash).
+3. Commit only the unit's owned files.
+
+A unit's gates may depend on machine state outside the repo — a database, a local stack, or git-ignored env files. A fresh worktree holds only the unit's files, so that state must be carried in before the gates run, or the gate result is meaningless: a red gate that looks like a defect in the unit.
+
 ## Control plane vs data plane
 
 | | Commands (all planned) | Purpose | Until they land |
