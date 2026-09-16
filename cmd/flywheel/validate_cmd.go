@@ -75,6 +75,9 @@ func runValidate(args []string) {
 			fmt.Printf("%s gate %s: failed (rc=%d)\n", task, g.Gate, g.RC)
 		}
 	}
+	if len(res.Attributed) > 0 {
+		fmt.Printf("%s owns: attributed %s\n", task, strings.Join(res.Attributed, ", "))
+	}
 	if len(res.Outside) == 0 {
 		fmt.Printf("%s owns: ok\n", task)
 	} else {
