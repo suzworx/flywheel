@@ -101,6 +101,45 @@ func TestParseBriefHeaderExclusiveAndReview(t *testing.T) {
 	}
 }
 
+func TestParseBriefHeaderNeedsState(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: none\nneeds-state: .env, data/db.sqlite\n"+
+		"needs-state: sub/\ngate: go build ./...\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	want := []string{".env", "data/db.sqlite", "sub/"}
+	if len(h.NeedsState) != len(want) {
+		t.Fatalf("needsState = %v, want %v", h.NeedsState, want)
+	}
+	for i := range want {
+		if h.NeedsState[i] != want[i] {
+			t.Errorf("needsState[%d] = %q, want %q", i, h.NeedsState[i], want[i])
+		}
+	}
+	// needs-state must not disturb owns/needs/gate parsing.
+	if len(h.Owns) != 1 || h.Owns[0] != "a.go" {
+		t.Errorf("owns = %v, want [a.go]", h.Owns)
+	}
+	if len(h.Needs) != 1 || h.Needs[0] != "none" {
+		t.Errorf("needs = %v, want [none]", h.Needs)
+	}
+	if len(h.Gates) != 1 || h.Gates[0] != "go build ./..." {
+		t.Errorf("gates = %v, want [go build ./...]", h.Gates)
+	}
+}
+
+func TestParseBriefHeaderNeedsStateAbsentIsEmpty(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if len(h.NeedsState) != 0 {
+		t.Errorf("needsState = %v, want empty", h.NeedsState)
+	}
+}
+
 func TestParseBriefHeaderMissingHeader(t *testing.T) {
 	path := writeBrief(t, "# TASK: no header keys here\n\n## Context\nbody\n")
 	h, err := ParseBriefHeader(path)

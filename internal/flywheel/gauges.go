@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -21,6 +23,10 @@ import (
 type ValidateOptions struct {
 	Dir     string // flywheel root; default "."
 	Workdir string // git working tree the gates run in; default Dir
+	// Carry lists repo-relative paths (from the repeatable --carry flag)
+	// copied from Dir into Workdir before the gates run, satisfying the
+	// brief's declared needs-state: paths in an isolated Workdir (#136).
+	Carry []string
 }
 
 // GateOut reports one gate run.
@@ -56,12 +62,17 @@ type GaugeResult struct {
 	Attributed []string
 	GatesOK    bool
 	OwnsOK     bool
+	// Refused carries the needs-state refusal message (issue #136) when
+	// validation stopped before running any gate because a brief-declared
+	// needs-state: path was neither present in an isolated Workdir nor
+	// carried; Gates, Outside and Attributed are all empty in that case.
+	Refused string
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
 // sits outside owns.
 func (r GaugeResult) OK() bool {
-	return r.GatesOK && r.OwnsOK
+	return r.Refused == "" && r.GatesOK && r.OwnsOK
 }
 
 // hostBlocked is the Windows Smart App Control message that intermittently
@@ -120,6 +131,17 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	}
 	if len(header.Gates) == 0 {
 		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])
+	}
+	// An isolated Workdir does not hold machine state outside the repo (a
+	// database, a local stack, git-ignored env files); with no --workdir the
+	// tree is the repo and needs-state: is satisfied by definition (#136).
+	if wd != o.Dir {
+		if err := carryPaths(o.Dir, wd, o.Carry); err != nil {
+			return GaugeResult{}, err
+		}
+		if refusal := missingNeedsState(wd, header.NeedsState); refusal != "" {
+			return GaugeResult{Refused: refusal}, nil
+		}
 	}
 	attempt := ""
 	for _, e := range events {
@@ -199,18 +221,21 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			res.GatesOK = false
 		}
 	}
-	return finishValidate(o.Dir, wd, task, attempt, tree, header.Owns, events, res)
+	return finishValidate(o.Dir, wd, task, attempt, tree, header.Owns, header.NeedsState, events, res)
 }
 
 // finishValidate runs the owns check, records owns_checked, refreshes derived
 // state, and returns the result. A changed path outside owns is excused when
 // it was in the dispatched baseline and its content is unchanged: the lead or
-// another worker left it dirty before this unit started. When the task's
-// dispatched event carries a worktrees snapshot (issue #87), every other
-// worktree's current changed paths are compared against it too: a path that
-// is new or whose sha changed is always outside, listed as "<worktree
-// path>: <path>" — never excused by this task's own owns list.
-func finishValidate(dir, wd, task, attempt, tree string, owns []string, events []Event, res GaugeResult) (GaugeResult, error) {
+// another worker left it dirty before this unit started. A path matching a
+// declared needs-state: entry is excused the same way flywheel's own
+// bookkeeping is (issue #136): it is machine state the harness carried in,
+// never the unit's own work, whether or not this run actually carried it.
+// When the task's dispatched event carries a worktrees snapshot (issue #87),
+// every other worktree's current changed paths are compared against it too:
+// a path that is new or whose sha changed is always outside, listed as
+// "<worktree path>: <path>" — never excused by this task's own owns list.
+func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
 		return GaugeResult{}, err
@@ -219,7 +244,7 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 	var candidates []string
 	var baselined []string
 	for _, p := range changed {
-		if !ownsContains(owns, p) {
+		if !ownsContains(owns, p) && !ownsContains(needsState, p) {
 			if bh, ok := base[p]; ok && fileSHA(wd, p) == bh {
 				baselined = append(baselined, p)
 				continue
@@ -599,4 +624,93 @@ func inconclusiveNote(paths []string) string {
 		note = note[:200]
 	}
 	return note
+}
+
+// missingNeedsState returns the refusal message for the first declared
+// needs-state path (issue #136) not present in wd, or "" when every declared
+// path exists (or none are declared). A trailing "/" marks a directory but
+// does not change the presence check: os.Stat succeeds for a directory too.
+func missingNeedsState(wd string, needsState []string) string {
+	for _, p := range needsState {
+		rel := strings.TrimSuffix(p, "/")
+		if rel == "" {
+			continue
+		}
+		full := filepath.Join(wd, filepath.FromSlash(rel))
+		if _, err := os.Stat(full); err != nil {
+			return fmt.Sprintf("needs-state %s is not in the workdir; pass --carry %s", p, p)
+		}
+	}
+	return ""
+}
+
+// carryPaths copies each carry path from dir into wd before the gates run
+// (issue #136), preserving the relative path and creating parent
+// directories; a directory is copied recursively. A carried path that does
+// not exist under dir is an error naming it.
+func carryPaths(dir, wd string, carry []string) error {
+	for _, p := range carry {
+		rel := strings.TrimSuffix(p, "/")
+		src := filepath.Join(dir, filepath.FromSlash(rel))
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("carry %s: not found under %s", p, dir)
+		}
+		dst := filepath.Join(wd, filepath.FromSlash(rel))
+		if err := copyPath(src, dst); err != nil {
+			return fmt.Errorf("carry %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// copyPath copies src to dst: a single file is copied directly, a directory
+// is walked and copied recursively, both preserving relative structure and
+// creating parent directories as needed.
+func copyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return copyFileMode(src, dst, info.Mode())
+	}
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		return copyFileMode(p, target, fi.Mode())
+	})
+}
+
+// copyFileMode copies src to dst byte for byte with the given file mode,
+// creating dst's parent directory and overwriting an existing dst so a
+// repeated carry stays idempotent.
+func copyFileMode(src, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
