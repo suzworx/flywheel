@@ -59,6 +59,11 @@ func runValidate(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
 		os.Exit(1)
 	}
+	if len(res.BriefPaths) > 1 {
+		fmt.Printf("validate: brief %s + delta %s\n", res.BriefPaths[0], res.BriefPaths[1])
+	} else if len(res.BriefPaths) == 1 {
+		fmt.Printf("validate: brief %s\n", res.BriefPaths[0])
+	}
 	for _, g := range res.Gates {
 		if g.HostBlocked {
 			fmt.Printf("%s gate %s: host blocked the gate, rerun (rc=%d)\n", task, g.Gate, g.RC)
