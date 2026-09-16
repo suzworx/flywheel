@@ -1753,3 +1753,109 @@ func TestRunGrepGlobCountThroughPathFallback(t *testing.T) {
 		t.Fatalf("off-course events via grep/glob = %d, want exactly 1", count)
 	}
 }
+
+// wroteFixture writes a fixture of one step_start, one tool_use event per
+// (tool, path) call, a text reply, and a final step_finish with the given
+// reason, and returns its absolute path (issue #163).
+func wroteFixture(t *testing.T, calls [][2]string, reason string) string {
+	t.Helper()
+	session := "ses_test_wrote_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	for _, c := range calls {
+		tool, path := c[0], c[1]
+		fmt.Fprintf(&b, `{"type":"tool_use","sessionID":%q,"part":{"type":"tool_use","tool":%q,"state":{"input":{"filePath":%q}}}}`+"\n", session, tool, path)
+	}
+	fmt.Fprintf(&b, `{"type":"text","sessionID":%q,"part":{"type":"text","text":"reply"}}`+"\n", session)
+	fmt.Fprintf(&b, `{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":%q}}`+"\n", session, reason)
+	path := filepath.Join(t.TempDir(), "wrote.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+// TestRunWroteRecordsSortedDedupedFiles checks edit/write tool calls are
+// recorded on the finished event's wrote field, sorted and deduplicated
+// (issue #163).
+func TestRunWroteRecordsSortedDedupedFiles(t *testing.T) {
+	dir := setupTask(t)
+	calls := [][2]string{
+		{"edit", filepath.Join(dir, "b.go")},
+		{"write", filepath.Join(dir, "a.go")},
+		{"edit", filepath.Join(dir, "b.go")},
+	}
+	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	f := evs[len(evs)-1]
+	want := []string{filepath.Join(dir, "a.go"), filepath.Join(dir, "b.go")}
+	if len(f.Wrote) != 2 || f.Wrote[0] != want[0] || f.Wrote[1] != want[1] {
+		t.Errorf("wrote = %v, want %v (sorted, deduplicated)", f.Wrote, want)
+	}
+}
+
+// TestRunNoEditsOmitsWroteField checks a run with no edit/write tool calls
+// omits the wrote field from its finished event (issue #163).
+func TestRunNoEditsOmitsWroteField(t *testing.T) {
+	dir := setupTask(t)
+	calls := [][2]string{{"read", filepath.Join(dir, "a.go")}}
+	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if f := evs[len(evs)-1]; len(f.Wrote) != 0 {
+		t.Errorf("wrote = %v, want empty (no edits)", f.Wrote)
+	}
+}
+
+// TestRunUncleanFinishWithFilesPrintsExtraLine checks an unclean finish
+// (reason length) that wrote files prints one extra progress line naming
+// them after the finished line (issue #163).
+func TestRunUncleanFinishWithFilesPrintsExtraLine(t *testing.T) {
+	dir := setupTask(t)
+	editPath := filepath.Join(dir, "a.go")
+	calls := [][2]string{{"edit", editPath}}
+	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "length"))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := fmt.Sprintf("T1 r1 wrote 1 file(s) before failing: %s", editPath)
+	if plog := buf.String(); !strings.Contains(plog, want) {
+		t.Errorf("progress missing %q; got:\n%s", want, plog)
+	}
+}
+
+// TestRunCleanFinishNoExtraWroteLine checks a clean finish (reason stop) that
+// wrote files prints no extra "wrote ... before failing" line, even though the
+// finished event itself still records the files (issue #163).
+func TestRunCleanFinishNoExtraWroteLine(t *testing.T) {
+	dir := setupTask(t)
+	calls := [][2]string{{"edit", filepath.Join(dir, "a.go")}}
+	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if plog := buf.String(); strings.Contains(plog, "before failing") {
+		t.Errorf("clean finish printed an extra wrote line; got:\n%s", plog)
+	}
+}

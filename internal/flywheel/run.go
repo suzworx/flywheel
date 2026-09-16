@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -479,6 +480,8 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	offCourseRecorded := false
 	outsideSeen := map[string]bool{}
 	var outsideOrder []string
+	wroteSeen := map[string]bool{}
+	var wroteOrder []string
 	lastText := ""
 	lastReason := ""
 	seenError := false
@@ -565,6 +568,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					progress(o.Progress, o.Task+" "+attempt+" off-course (paths outside the worktree)")
 				}
 			}
+			if (obs.Tool == "edit" || obs.Tool == "write") && obs.Path != "" && !wroteSeen[obs.Path] && len(wroteOrder) < 50 {
+				wroteSeen[obs.Path] = true
+				wroteOrder = append(wroteOrder, obs.Path)
+			}
 		case "step":
 			steps++
 			if steps == 20 && !planRecorded && !noPlanRecorded {
@@ -607,6 +614,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	stopRenewer()
 
+	// wrote is the distinct edit/write paths collected during the stream,
+	// sorted for a stable finished-event field (issue #163).
+	wrote := append([]string(nil), wroteOrder...)
+	sort.Strings(wrote)
+
 	// Silent: no output within the start timeout; we already killed the process
 	// we started. Every return path records a finished event.
 	if silent.Load() {
@@ -623,7 +635,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
 		line := o.Task + " " + attempt + " finished rc=-1 reason=silent model=" + model
@@ -632,6 +644,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		line += " err=" + errRel
 		progress(o.Progress, line)
+		if wl := wroteProgressLine(o.Task, attempt, "silent", wrote); wl != "" {
+			progress(o.Progress, wl)
+		}
 		_ = RemoveLease(dir, o.Task, attempt)
 		_, _ = WriteState(dir)
 		return Result{Attempt: attempt, RC: -1, Reason: "silent"}, nil
@@ -654,11 +669,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA,
+			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
 			return Result{}, err
 		}
 		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=stalled model=%s steps=%d", o.Task, attempt, model, steps))
+		if wl := wroteProgressLine(o.Task, attempt, "stalled", wrote); wl != "" {
+			progress(o.Progress, wl)
+		}
 		_ = RemoveLease(dir, o.Task, attempt)
 		_, _ = WriteState(dir)
 		return Result{Attempt: attempt, Session: session, RC: -1, Reason: "stalled", Steps: steps}, nil
@@ -726,11 +744,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak,
+		PeakReasoning: peak, Wrote: wrote,
 	}); err != nil {
 		return Result{}, err
 	}
 	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s model=%s steps=%d tokens=%s cost=$%s", rc, reason, model, steps, tokensK(tok), costK(cost)))
+	if wl := wroteProgressLine(o.Task, attempt, reason, wrote); wl != "" {
+		progress(o.Progress, wl)
+	}
 	if reason == "length" {
 		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
 	}
@@ -913,6 +934,17 @@ func resolvePath(p string) string {
 		p = resolved
 	}
 	return strings.TrimSuffix(filepath.ToSlash(p), "/")
+}
+
+// wroteProgressLine returns the extra progress line naming the files an
+// unclean attempt wrote before failing, or "" when the finish was clean
+// (reason "stop") or wrote nothing (issue #163).
+func wroteProgressLine(task, attempt, reason string, wrote []string) string {
+	if reason == "stop" || len(wrote) == 0 {
+		return ""
+	}
+	paths := clipNote(strings.Join(wrote, ", "))
+	return fmt.Sprintf("%s %s wrote %d file(s) before failing: %s", task, attempt, len(wrote), paths)
 }
 
 // clipNote trims s and caps it at 200 characters for a finished note.
