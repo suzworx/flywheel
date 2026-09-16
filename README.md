@@ -155,10 +155,11 @@ git still works.*
 its adapter; `flywheel run --worker <name>` picks between several configured workers, so one
 factory can be all-OpenCode, all-Claude, or a mix. The `opencode` adapter is the original,
 most-used path. The `claude` adapter (issue [#49](https://github.com/suzworx/flywheel/issues/49))
-is proven against captured fixtures — its parser is unit-tested against real recorded `claude -p
---output-format stream-json` transcripts — but it has **not been verified end to end** against the
-live `claude` CLI. Treat it as unverified until someone runs it against the real binary and reports
-back.
+has been exercised against the live CLI: `flywheel run` dispatches it, parses the
+`--output-format stream-json` stream, captures the session id and the assistant text, and
+records the finish. That run did not get past authentication in the environment where it
+was tried, so a productive run — tool calls, file edits, token and cost accounting — is
+still unverified. Try one real run in your own environment before depending on it.
 
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
