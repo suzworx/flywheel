@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/suzworx/flywheel/compare/v0.12.0...v0.13.0) (2026-09-16)
+
+
+### Features
+
+* attribute another worktree's own in-flight work instead of blaming this unit ([#209](https://github.com/suzworx/flywheel/issues/209)) ([7beea89](https://github.com/suzworx/flywheel/commit/7beea89292dedf73ee112b54a3757866b12f156c)), closes [#200](https://github.com/suzworx/flywheel/issues/200)
+
+
+### Documentation
+
+* add a quickstart and a concepts page ([#211](https://github.com/suzworx/flywheel/issues/211)) ([b199862](https://github.com/suzworx/flywheel/commit/b199862a426a458026aa20f3cd82bb470b31cb5a))
+
 ## [0.12.0](https://github.com/suzworx/flywheel/compare/v0.11.0...v0.12.0) (2026-09-16)
 
 
