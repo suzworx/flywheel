@@ -40,6 +40,12 @@ You never:
 - Dispatch. Dispatch is the foreman's call, and it needs the ready filter.
 - Overlap `owns:` between two work orders that may run concurrently.
 - Write to a worker's `owns:` files.
+- Invite a worker to edit its own brief or its `owns:` line — never invite a prose escape hatch
+  like "add it to owns if you create a separate file"; it breaks verify T1 (it hashes the brief)
+  and hides real tampering behind a plausible-looking edit. When the file a work order will
+  create does not have a known name yet, list a pattern in `owns:` instead — `src/voice/*.test.ts`
+  or a trailing-slash directory such as `src/voice/` — rather than leaving the entry to be added
+  later. Both forms are checked the same as a literal path at validate and lint time.
 
 ## Inputs and outputs
 
