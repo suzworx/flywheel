@@ -59,6 +59,7 @@ land.
 | `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
 | `flywheel artifacts` | **planned** | Data plane: worker outputs. |
 | `flywheel feedback [--dir DIR]` | **implemented** | List learnings, one line per learning in log order, then the untriaged-signals line; `add --task ID --severity P0\|P1\|P2 --title T --observed O --evidence E --ask A [--signals a,b]` records a learning and rewrites `learnings.md`; `dismiss L-NN --reason WHY` dismisses one by id without renumbering. Export and submit land with [#40](https://github.com/suzworx/flywheel/issues/40). |
+| `flywheel upgrade [--check] [--to VERSION] [--repo REPO]` | **implemented** | Self-update to a release with checksum verification: `--check` prints `current:`/`latest:` then `upgrade available` or `up to date` (exit 0 either way); otherwise download the host's zip, verify its SHA-256 against `checksums.txt` and install it atomically over the running binary. |
 
 ## Install
 
