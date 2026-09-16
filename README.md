@@ -232,6 +232,7 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 | `flywheel supervise` | planned ([#55](https://github.com/suzworx/flywheel/issues/55)) | Machine gauges: measure finished units, run the gates. |
 | `flywheel verify` | available | Check the event log against the transition rules T1, T3, T4, T5, T8 (exit 0/6). |
 | `flywheel inspect` | available | Inspection verdict, refused unless the gauges' readings cover the tree as it is now (T3/T4/T8; exit 6). |
+| `flywheel review <task> --verdict pass\|correct\|reject --session <session>` | available ([#24](https://github.com/suzworx/flywheel/issues/24)) | Re-run a task's gates and owns check on an isolated copy of the tree, so another in-flight worker's half-written files can't skew the reading; refused (exit 6) for a bad verdict, a worker's session, a changed path outside owns, or a failing gate. |
 | `flywheel audit` | planned ([#61](https://github.com/suzworx/flywheel/issues/61)) | External audit of first articles and samples. |
 | `flywheel land <task> --commit <sha>` | available | Record a landing for a passed task; refused without a passing inspection (exit 6). |
 | `flywheel factory` | available | Live terminal dashboard of the floor; bare `flywheel` opens it ([#63](https://github.com/suzworx/flywheel/issues/63)). |
