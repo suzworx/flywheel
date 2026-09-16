@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.8.0](https://github.com/suzworx/flywheel/compare/v0.7.0...v0.8.0) (2026-09-16)
+
+
+### Features
+
+* a silent finish says why, and every finish names the model ([#149](https://github.com/suzworx/flywheel/issues/149)) ([718d663](https://github.com/suzworx/flywheel/commit/718d663a9015ec3c84bae4835615f10e733eab12))
+* add flywheel stats, the factory's own numbers ([#146](https://github.com/suzworx/flywheel/issues/146)) ([f6267fb](https://github.com/suzworx/flywheel/commit/f6267fb31c6ef14193c6cb2fadde18d981f15d8d))
+* capture agent sessions and add flywheel trace ([#157](https://github.com/suzworx/flywheel/issues/157)) ([86bd162](https://github.com/suzworx/flywheel/commit/86bd1628b13e10f3b821ebc31d56aefb33281e28))
+* confine a worker to its worktree ([#161](https://github.com/suzworx/flywheel/issues/161)) ([7cbeae8](https://github.com/suzworx/flywheel/commit/7cbeae8af8fa654ce0d3060fee177c067352332c))
+* flag a run that reaches step 20 with no plan check-in ([#150](https://github.com/suzworx/flywheel/issues/150)) ([89a5c3d](https://github.com/suzworx/flywheel/commit/89a5c3d6a129c16488388f865bfb27bacdc4fb61))
+* flywheel init --agents-md, and vendor-neutral lead references ([#151](https://github.com/suzworx/flywheel/issues/151)) ([ddc86bc](https://github.com/suzworx/flywheel/commit/ddc86bc6ded90d0a68c90e1c98e1817445644057))
+* init --track/--ignore decides whether flywheel.md is committed ([#148](https://github.com/suzworx/flywheel/issues/148)) ([2f11c45](https://github.com/suzworx/flywheel/commit/2f11c4559b3bea17a261bbf57b0f7cdeaf985a7b))
+* record an off-course signal when a run reads outside its worktree ([#154](https://github.com/suzworx/flywheel/issues/154)) ([b94e330](https://github.com/suzworx/flywheel/commit/b94e33035bec4e4739f3325a5b43c75a2227dc98))
+* record the peak single-step reasoning, and hint when a run is capped ([#156](https://github.com/suzworx/flywheel/issues/156)) ([b21a79e](https://github.com/suzworx/flywheel/commit/b21a79ea112e871f7e96fc79f80d2e4ca5e507e0))
+* stamp the release version into every skill, and warn on stale skills ([#145](https://github.com/suzworx/flywheel/issues/145)) ([5a05139](https://github.com/suzworx/flywheel/commit/5a051394a2d9e9bdef013ba24d47681bb0e51019))
+* stop and record a run that goes silent mid-stream ([#158](https://github.com/suzworx/flywheel/issues/158)) ([bacf3cf](https://github.com/suzworx/flywheel/commit/bacf3cfaa8f6acbf58a3683d12ca61179b134bbf))
+
+
+### Bug Fixes
+
+* a run cut off by the output cap no longer reads as done ([#143](https://github.com/suzworx/flywheel/issues/143)) ([b061afd](https://github.com/suzworx/flywheel/commit/b061afdd91dbab0dd27e655db7bacc0763af2c07))
+* goal help shows its arguments, and log --goal refuses an unknown goal ([#140](https://github.com/suzworx/flywheel/issues/140)) ([8891722](https://github.com/suzworx/flywheel/commit/8891722e6e8dcb1673adbef8e1c8d314c0931f44))
+* init fills in missing scaffold pieces instead of refusing ([#142](https://github.com/suzworx/flywheel/issues/142)) ([e1601eb](https://github.com/suzworx/flywheel/commit/e1601ebcc3e1ce3ab9fdb5eeab3a98e24b38472a))
+* validate tells a persistent host block from a flaky one ([#147](https://github.com/suzworx/flywheel/issues/147)) ([dfceda1](https://github.com/suzworx/flywheel/commit/dfceda14bba88df514d835a40e29fab265532835))
+* validate, inspect and verify measure the attempt's own prompt ([#144](https://github.com/suzworx/flywheel/issues/144)) ([ca5a11f](https://github.com/suzworx/flywheel/commit/ca5a11f5f3e6fb2c89ad228612cba68e0df1911c))
+
+
+### Documentation
+
+* bring the protocol up to date with the kinds and codes that followed it ([#159](https://github.com/suzworx/flywheel/issues/159)) ([b017c08](https://github.com/suzworx/flywheel/commit/b017c08152257e2e2b4465ae6c8653f5677f4ac1))
+* write the flywheel protocol and cite it from every skill ([#155](https://github.com/suzworx/flywheel/issues/155)) ([c7203f6](https://github.com/suzworx/flywheel/commit/c7203f6d56faf1c4c5337172f188f025c4ab84c7))
+
 ## [0.7.0](https://github.com/suzworx/flywheel/compare/v0.6.0...v0.7.0) (2026-09-16)
 
 
