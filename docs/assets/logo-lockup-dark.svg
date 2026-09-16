@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 192" width="700" height="192" role="img" aria-label="flywheel — own the factory">
+  <title>flywheel — own the factory</title>
+  <g transform="translate(6,-32)">
+    <circle cx="128" cy="128" r="94" fill="none" stroke="#e9eef3" stroke-width="20"/>
+    <g transform="rotate(14 128 128)">
+      <circle cx="128" cy="128" r="54" fill="none" stroke="#e8933f" stroke-width="20" stroke-dasharray="34 22.55"/>
+    </g>
+    <circle cx="128" cy="128" r="16" fill="#e9eef3"/>
+  </g>
+  <text x="248" y="92" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="66" font-weight="700" letter-spacing="-2" fill="#e9eef3">flywheel</text>
+  <text x="252" y="130" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="18.5" letter-spacing="4" fill="#8c99a6">OWN THE FACTORY</text>
+</svg>

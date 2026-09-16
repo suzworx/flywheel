@@ -1,6 +1,11 @@
-# flywheel
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.svg">
+    <img src="assets/logo-lockup.svg" alt="flywheel — own the factory" width="380">
+  </picture>
+</p>
 
-**Own the factory. Rent the agents and the intelligence.**
+<p align="center"><strong>Own the factory. Rent the agents and the intelligence.</strong></p>
 
 A dark factory for AI coding work. The factory (work orders, gauges, the event log, its
 memory) is files you own. Agents and models are rented from any vendor and swapped at will:
@@ -247,6 +252,7 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 | `flywheel explain`, `flywheel context` | planned ([#58](https://github.com/suzworx/flywheel/issues/58)) | A task's traveler; the factory state sized for a joining agent. |
 | `flywheel trace <session> [--dir DIR]` | available ([#62](https://github.com/suzworx/flywheel/issues/62)) | Everything one session did, across tasks. |
 | `flywheel feedback` | available (add/list/dismiss; export and submit land with [#40](https://github.com/suzworx/flywheel/issues/40)) | Turn signals into learnings: `add`, list, `dismiss`, and a generated `learnings.md`. |
+| `flywheel upgrade` | available ([#201](https://github.com/suzworx/flywheel/issues/201)) | Self-update to a release with checksum verification: `--check` prints current and latest and whether an upgrade is available; otherwise download, verify the SHA-256 and install atomically. |
 
 ## Skills
 
