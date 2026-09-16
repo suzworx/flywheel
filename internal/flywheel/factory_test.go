@@ -40,20 +40,25 @@ func andonHas(a []Andon, task string) bool {
 func TestStageOf(t *testing.T) {
 	for _, tc := range []struct {
 		status string
+		reason string
 		want   string
 	}{
-		{"planned", "planned"},
-		{"dispatched", "building"},
-		{"running", "building"},
-		{"finished", "finished"},
-		{"passed", "passed"},
-		{"needs-correction", "building"},
-		{"rejected", "rejected"},
-		{"blocked", "blocked"},
-		{"landed", "landed"},
+		{"planned", "", "planned"},
+		{"dispatched", "", "building"},
+		{"running", "", "building"},
+		{"finished", "", "finished"},
+		{"finished", "stop", "finished"},
+		{"finished", "length", "cut-off"},
+		{"finished", "start-failed", "failed"},
+		{"finished", "silent", "failed"},
+		{"passed", "", "passed"},
+		{"needs-correction", "", "building"},
+		{"rejected", "", "rejected"},
+		{"blocked", "", "blocked"},
+		{"landed", "", "landed"},
 	} {
-		if got := stageOf(tc.status); got != tc.want {
-			t.Errorf("stageOf(%q) = %q, want %q", tc.status, got, tc.want)
+		if got := stageOf(tc.status, tc.reason); got != tc.want {
+			t.Errorf("stageOf(%q, %q) = %q, want %q", tc.status, tc.reason, got, tc.want)
 		}
 	}
 }
@@ -61,6 +66,9 @@ func TestStageOf(t *testing.T) {
 func TestClassifyRun(t *testing.T) {
 	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0) != "done" {
 		t.Error("done unit not classified done")
+	}
+	if classifyRun(true, 1, 0, 0, false, "", 100, 0) != "done" {
+		t.Error("done unit with an empty reason not classified done")
 	}
 	if classifyRun(false, 1, 0, 0, true, "stop", 100, 0) != "provider-error" {
 		t.Error("provider-error not classified provider-error")
@@ -91,11 +99,19 @@ func TestClassifyRun(t *testing.T) {
 	if classifyRun(true, 5, 1, 0, false, "length", 200, 0) != "capped" {
 		t.Error("finished capped run not classified capped")
 	}
-	if classifyRun(true, 5, 1, 0, true, "stop", 200, 0) != "provider-error" {
+	if classifyRun(true, 5, 1, 0, false, "error", 200, 0) != "provider-error" {
 		t.Error("finished provider-error run not classified provider-error")
 	}
 	if classifyRun(true, 5, 1, 1, false, "stop", 200, 0) != "done" {
 		t.Error("clean finished run not classified done")
+	}
+	// Any other done reason (start-failed, silent, ...) is a failed run, not a
+	// silent success (issue #131).
+	if classifyRun(true, 0, 0, 0, false, "start-failed", 100, 0) != "failed" {
+		t.Error("finished start-failed run not classified failed")
+	}
+	if classifyRun(true, 0, 0, 0, false, "silent", 100, 0) != "failed" {
+		t.Error("finished silent run not classified failed")
 	}
 }
 
@@ -105,7 +121,7 @@ func TestLiveRun(t *testing.T) {
 			t.Errorf("liveRun(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"capped", "provider-error", "done", "landed", "waiting"} {
+	for _, s := range []string{"capped", "provider-error", "failed", "done", "landed", "waiting"} {
 		if liveRun(s) {
 			t.Errorf("liveRun(%q) = true, want false", s)
 		}
@@ -446,5 +462,145 @@ func TestBuildOutputFirstPassFromInspectedAndReviewed(t *testing.T) {
 	}
 	if o.Finished != 0 {
 		t.Errorf("finished = %d, want 0 (no finished events)", o.Finished)
+	}
+}
+
+// TestMissingNewlineReasonComesFromFinishedEvent checks a run file whose last
+// line was never newline-terminated (a mid-write cut off) still classifies
+// correctly: the finished event's reason, always a complete line in the event
+// log, decides the run state and stage instead of the unreadable run-file
+// tail (issue #131).
+func TestMissingNewlineReasonComesFromFinishedEvent(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "cutoff", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "cutoff", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "cutoff", Kind: "started", Session: "s1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "cutoff", Kind: "finished", Attempt: "r1", Reason: "length"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	run := filepath.Join(dir, ".flywheel", "runs", "cutoff.r1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(run), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	// The final line has no trailing newline, so readRun's own scan can never
+	// fold it in and sees only the earlier stop-reasoned step.
+	content := `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop"}}` + "\n" +
+		`{"type":"text","sessionID":"s1","part":{"type":"text","text":"mid-write"}}`
+	if err := os.WriteFile(run, []byte(content), 0o644); err != nil {
+		t.Fatalf("write run file: %v", err)
+	}
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "cutoff")
+	if !ok {
+		t.Fatal("unit cutoff missing")
+	}
+	if u.RunState != "capped" {
+		t.Errorf("run state = %q, want capped", u.RunState)
+	}
+	if u.Stage != "cut-off" {
+		t.Errorf("stage = %q, want cut-off", u.Stage)
+	}
+	if !andonHas(fl.Andon, "cutoff") {
+		t.Errorf("andon missing cutoff: %v", fl.Andon)
+	}
+}
+
+// TestStartFailedFinishIsFailedOnAndon checks a finished event with reason
+// start-failed is a failed run state, reaches the andon, and its stage is
+// failed (issue #131).
+func TestStartFailedFinishIsFailedOnAndon(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "died", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "died", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "died", Kind: "finished", Attempt: "r1", Reason: "start-failed"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "died")
+	if !ok {
+		t.Fatal("unit died missing")
+	}
+	if u.RunState != "failed" {
+		t.Errorf("run state = %q, want failed", u.RunState)
+	}
+	if u.Stage != "failed" {
+		t.Errorf("stage = %q, want failed", u.Stage)
+	}
+	if !andonHas(fl.Andon, "died") {
+		t.Errorf("andon missing died: %v", fl.Andon)
+	}
+}
+
+// TestStopFinishIsDoneAndFinished checks a normal clean finish (reason stop)
+// still classifies done, stays off the andon, and keeps the finished stage
+// (issue #131 must not regress the common case).
+func TestStopFinishIsDoneAndFinished(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "clean", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "clean", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "clean", Kind: "started", Session: "s1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "clean", Kind: "finished", Attempt: "r1", Reason: "stop"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	run := filepath.Join(dir, ".flywheel", "runs", "clean.r1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(run), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	line := `{"type":"step_finish","sessionID":"s1","part":{"type":"step_finish","reason":"stop"}}` + "\n"
+	if err := os.WriteFile(run, []byte(line), 0o644); err != nil {
+		t.Fatalf("write run file: %v", err)
+	}
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "clean")
+	if !ok {
+		t.Fatal("unit clean missing")
+	}
+	if u.RunState != "done" {
+		t.Errorf("run state = %q, want done", u.RunState)
+	}
+	if u.Stage != "finished" {
+		t.Errorf("stage = %q, want finished", u.Stage)
+	}
+	if andonHas(fl.Andon, "clean") {
+		t.Errorf("clean done unit wrongly on andon: %v", fl.Andon)
 	}
 }
