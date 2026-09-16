@@ -537,3 +537,38 @@ func TestValidateAutocrlfWarningNotOutside(t *testing.T) {
 		t.Errorf("outside = %v, want nothing (stderr CRLF warning must not be a path)", res.Outside)
 	}
 }
+
+// TestValidateCorrectionDeltaOwnsAndGates checks that validate measures a
+// correction's own delta: b.go, owned only by the delta, stays inside owns,
+// and the delta's gate: line runs instead of the brief's.
+func TestValidateCorrectionDeltaOwnsAndGates(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 1"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel", "briefs"), 0o755); err != nil {
+		t.Fatalf("mkdir briefs: %v", err)
+	}
+	delta := "owns: b.go\ngate: exit 0\n\n# DELTA\n"
+	deltaRel := filepath.Join(".flywheel", "briefs", "delta.txt")
+	if err := os.WriteFile(filepath.Join(dir, deltaRel), []byte(delta), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T02:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: filepath.ToSlash(deltaRel)}); err != nil {
+		t.Fatalf("AppendEvent() correction dispatched error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Gates) != 1 || res.Gates[0].Command != "exit 0" {
+		t.Errorf("gates = %v, want the delta's own exit 0, not the brief's exit 1", res.Gates)
+	}
+	if !res.OwnsOK {
+		t.Errorf("OwnsOK = false, want true (delta.txt owns b.go); outside = %v", res.Outside)
+	}
+}

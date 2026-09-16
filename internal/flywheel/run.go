@@ -123,14 +123,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	brief := ""
+	brief, _ := latestBaseBriefAndAttempt(events, o.Task)
 	lastSession := ""
 	for _, e := range events {
 		if e.Task != o.Task {
 			continue
-		}
-		if e.Kind == "planned" && e.Brief != "" {
-			brief = e.Brief
 		}
 		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
 			lastSession = e.Session
@@ -517,22 +514,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
-	if lastText != "" {
-		reportPath := filepath.Join(runsDir, o.Task+"."+attempt+".report.md")
-		if err := os.WriteFile(reportPath, []byte(lastText), 0o644); err != nil {
-			return Result{}, err
-		}
-		reportSum := sha256.Sum256([]byte(lastText))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "report", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".report.md", SHA256: hex.EncodeToString(reportSum[:])}); err != nil {
-			return Result{}, err
-		}
-		progress(o.Progress, o.Task+" "+attempt+" report recorded")
-	}
-
 	// A worker that exits before any completed step is start-failed: record
 	// the first nonempty stderr line (trimmed, at most 200 characters) as the
 	// note. Provider errors keep the "error" reason and a silent run already
-	// returned above.
+	// returned above. The reason is final before the report/partial split
+	// below, so both branches see it.
 	note := ""
 	reason := lastReason
 	if seenError {
@@ -541,6 +527,32 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		reason = "start-failed"
 		note = firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 	}
+
+	// A clean stop records the reply as the worker's report, as always. Any
+	// other reason (length, error, start-failed, ...) means the reply is a
+	// mid-thought cut off, not a report: keep it as a partial file and record
+	// no report event, so a cut-off run never reads as done.
+	if reason == "stop" {
+		if lastText != "" {
+			reportPath := filepath.Join(runsDir, o.Task+"."+attempt+".report.md")
+			if err := os.WriteFile(reportPath, []byte(lastText), 0o644); err != nil {
+				return Result{}, err
+			}
+			reportSum := sha256.Sum256([]byte(lastText))
+			if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "report", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".report.md", SHA256: hex.EncodeToString(reportSum[:])}); err != nil {
+				return Result{}, err
+			}
+			progress(o.Progress, o.Task+" "+attempt+" report recorded")
+		}
+	} else if lastText != "" {
+		partialPath := filepath.Join(runsDir, o.Task+"."+attempt+".partial.md")
+		if err := os.WriteFile(partialPath, []byte(lastText), 0o644); err != nil {
+			return Result{}, err
+		}
+		partialRel := ".flywheel/runs/" + o.Task + "." + attempt + ".partial.md"
+		progress(o.Progress, fmt.Sprintf("%s %s partial reply kept at %s (reason=%s)", o.Task, attempt, partialRel, reason))
+	}
+
 	rcPtr := new(int)
 	*rcPtr = rc
 	tokPtr := new(Tokens)

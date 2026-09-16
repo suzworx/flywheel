@@ -3,7 +3,6 @@ package flywheel
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 )
 
@@ -91,21 +90,12 @@ func wd(workdir, dir string) string {
 // recorded after the task's latest finished event, and a clean owns_checked
 // for that tree. A non-empty rule on the returned value is a refusal.
 func requireReadings(dir, wd, task string, events []Event) (RuleRefusal, error) {
-	briefPath := ""
-	for _, e := range events {
-		if e.Task == task && e.Kind == "planned" && e.Brief != "" {
-			briefPath = e.Brief
-		}
-	}
-	if briefPath == "" {
-		return RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}, nil
-	}
-	if !filepath.IsAbs(briefPath) {
-		briefPath = filepath.Join(dir, briefPath)
-	}
-	header, err := ParseBriefHeader(briefPath)
+	header, _, err := AttemptBrief(dir, events, task)
 	if err != nil {
-		return RuleRefusal{}, fmt.Errorf("parse brief %s: %w", briefPath, err)
+		if errors.Is(err, errNoPlannedBrief) {
+			return RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}, nil
+		}
+		return RuleRefusal{}, err
 	}
 	if len(header.Gates) == 0 {
 		return RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}, nil
