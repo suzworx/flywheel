@@ -20,11 +20,12 @@ first line stops matching `^# flywheel protocol v`.
 
 ## 1. Required entries per task
 
-Seventeen event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
+Twenty-one event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
 `Validate` rejects anything else. Nine of them carry a task's status (`state.go`'s `kindRank`
-orders them for replay); the rest — `worker_plan`, `no-plan`, `report`, `validated`,
-`owns_checked`, `amended` — change other fields but never the status itself. `staffed` and `goal`
-are the two kinds that carry no `task` at all.
+orders them for replay); the rest — `worker_plan`, `no-plan`, `off-course`, `report`, `validated`,
+`owns_checked`, `amended` — change other fields but never the status itself. `staffed`, `goal`,
+`session_start`, `session_command` and `session_end` are the five kinds that carry no `task` at
+all.
 
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path>`.
@@ -71,16 +72,30 @@ are the two kinds that carry no `task` at all.
 - Effect: `Derive` ignores it for status exactly like `worker_plan`; it never changes `rc` or
   `reason` — it is a flag, not a verdict.
 
+### `off-course`
+- Written by: the CLI, at most once per attempt, the moment a `read`, `grep` or `glob` tool call
+  (`offCourseTools`) names the 5th distinct path outside the worktree — library source a worker
+  reached for instead of `go doc` (issue #72, #154).
+- Carries: `task`, `attempt`, `note` (the offending paths, in the order first seen, comma-joined
+  and capped at 200 characters by `clipNote`).
+- Effect: `Derive` has no case for it, so — like `worker_plan` and `no-plan` — it never touches
+  `Status`; it is a record for a human (or a future gauge) to notice, not a verdict.
+
 ### `finished`
 - Written by: the CLI, exactly once per attempt, on every code path out of a run (clean stop,
-  silent, provider error, output cap, start failure).
+  silent, stalled, provider error, output cap, start failure).
 - Carries: `task`, `session`, `attempt`, `model` (every `finished` event carries the model, issue
-  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error`; `start-failed`; `silent`),
-  `note`, `steps`, `tokens`, `cost`, `sha256` (of the whole run file).
+  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error`; `start-failed`; `silent`;
+  `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
+  for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
+  (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
+  #156), `sha256` (of the whole run file).
 - Effect: `Derive` sets status `finished`. `stageOf` (`factory.go`) then reads `reason`: `stop` (or
-  empty) is stage `finished`; `length` is stage **cut-off**; anything else is stage **failed** —
-  both cut-off and failed units reach the andon and `flywheel status`'s Attention list (issue
-  #131).
+  empty) is stage `finished`; `length` is stage **cut-off**; anything else, `stalled` included, is
+  stage **failed** — both cut-off and failed units reach the andon and `flywheel status`'s
+  Attention list (issue #131). `peak_reasoning` changes no stage: the factory floor (`render.go`)
+  prints it next to a **capped** unit's state, and a `length` finish's own progress line names it
+  in the hint suggesting smaller steps (`run.go`).
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.
@@ -151,10 +166,30 @@ are the two kinds that carry no `task` at all.
 
 ### `staffed`
 - Written by: `flywheel staff --role <role> --session <session> [--model M]`.
-- Carries: `session` (required — the only kind allowed an empty `task`), `persona` (defaults to
-  `"lead"` when not given).
+- Carries: `session` (required — floor-level kinds are the ones allowed an empty `task`), `persona`
+  (defaults to `"lead"` when not given).
 - Effect: task-less; `Derive` skips it outright (`if e.Task == "" { continue }`). It only feeds
   `flywheel factory`'s floor view.
+
+### `session_start`
+- Written by: `flywheel log --kind session_start --session <id>`, invoked by the Claude Code hook
+  or the OpenCode plugin (`flywheel-session.mjs`) that `flywheel init --hooks` installs, on a
+  session's first turn (issue #157).
+- Carries: `session` (required, like `staffed`) and no `task`.
+- Effect: floor-level; `Derive` skips it outright, the same way it skips `staffed`. `flywheel trace
+  <session>` is its only reader.
+
+### `session_command`
+- Written by: the same hook or plugin, once for every `flywheel`-prefixed command the session runs.
+- Carries: `session` and `note` (the command line) — both required; `Validate` rejects the event if
+  either is empty.
+- Effect: floor-level like `session_start`. `flywheel trace <session>` prints its `note` in the
+  trace line's detail column.
+
+### `session_end`
+- Written by: the same hook or plugin, when the session ends.
+- Carries: `session` (required) and no `task`.
+- Effect: floor-level like `session_start`.
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.
@@ -202,7 +237,7 @@ gates (exit 5) without touching the log's legality.
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, `allow_untriaged`, "by" attribution
-blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the seventeen kinds in
+blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the twenty-one kinds in
 `events.go` exist at all — `Validate` rejects any other kind by name, so an event carrying
 `audited` or `signal` today is simply a validation error, not a recognized-but-unchecked record.
 Concretely, still design-only:
@@ -280,7 +315,16 @@ failed, 6 rule refusal. The enforcing commands:
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, or T8 and its fix | 2 usage, 1 other error |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha>` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 | 2 usage, 1 other error |
-| `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
+| `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
+
+`flywheel run`'s own three codes (3, 4, 7) are not in `AGENTS.md`'s repo-wide list above — they are
+`ExitCode`'s reading of one `Result`, keyed by exit number instead of by command:
+
+| Exit | `flywheel run` reason |
+| --- | --- |
+| 3 | `silent` — no stdout line arrived within the start timeout |
+| 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, or `start-failed` |
+| 7 | `stalled` — the run had started but the run file stopped growing for the stall timeout (issue #158) |
 
 Everything upstream of these five commands — writing a brief, deciding what belongs in `owns:`,
 choosing which task to dispatch next — is judgment the protocol does not check; the CLI enforces
