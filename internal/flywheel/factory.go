@@ -59,7 +59,7 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, capped, provider-error, failed, done
+	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 }
 
@@ -76,8 +76,20 @@ func peakReasoningFor(events []Event, task, attempt string) int {
 	return peak
 }
 
-// Andon is one stopped-line condition: a unit in silent, stalled, capped,
-// provider-error or failed, newest first.
+// hasNoPlan reports whether a no-plan event was recorded for this task's
+// current attempt: the run reached step 20 with no PLAN text seen yet
+// (issue #150), the signal classifyRun's no-writes state consumes (#176).
+func hasNoPlan(events []Event, task, attempt string) bool {
+	for _, e := range events {
+		if e.Kind == "no-plan" && e.Task == task && e.Attempt == attempt {
+			return true
+		}
+	}
+	return false
+}
+
+// Andon is one stopped-line condition: a unit in silent, stalled, no-writes,
+// capped, provider-error or failed, newest first.
 type Andon struct {
 	Task  string
 	State string
@@ -137,7 +149,7 @@ func stageOf(status, reason string) string {
 // logged a finished event and no longer occupy a busy slot.
 func liveRun(state string) bool {
 	switch state {
-	case "running", "exploring", "long-step", "silent", "stalled":
+	case "running", "exploring", "long-step", "silent", "stalled", "no-writes":
 		return true
 	}
 	return false
@@ -155,8 +167,14 @@ func liveRun(state string) bool {
 // other reason (start-failed, silent, stalled, ...) is failed. Live (not
 // done) classification still checks hasError and lastReason=="length" before
 // the other live signals, since a capped or provider-error run in progress
-// has not recorded a finished event yet.
-func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int) string {
+// has not recorded a finished event yet. noPlan is whether the task's current
+// attempt has a recorded no-plan event (issue #150); a live run with 20+
+// steps, zero edits and noPlan classifies no-writes, checked right after the
+// provider-error and capped signals and before silent/stalled/long-step, so a
+// run that is also genuinely stalled still needs the stall threshold itself
+// to ever report stalled, and every other live state keeps its own meaning
+// unchanged (issue #176).
+func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int, noPlan bool) string {
 	if done {
 		switch lastReason {
 		case "length":
@@ -174,6 +192,9 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 	}
 	if lastReason == "length" {
 		return "capped"
+	}
+	if steps >= 20 && edits == 0 && noPlan {
+		return "no-writes"
 	}
 	if size == 0 && age > 60 {
 		return "silent"
@@ -405,7 +426,8 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			if done && t.Reason != "" {
 				reason = t.Reason
 			}
-			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout)
+			noPlan := hasNoPlan(w.events, t.ID, t.Attempt)
+			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan)
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 		}
@@ -499,7 +521,7 @@ func buildAndon(units []Unit) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "capped", "provider-error", "failed":
+		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}
