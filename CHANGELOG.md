@@ -6,7 +6,7 @@
 ### Features
 
 * add flywheel upgrade, a self-update with checksum verification ([#205](https://github.com/suzworx/flywheel/issues/205)) ([937ed95](https://github.com/suzworx/flywheel/commit/937ed95fc61ab8c5f4d802737f725d498d9fcf75)), closes [#201](https://github.com/suzworx/flywheel/issues/201)
-* record each changed file's shape in the readings (checkpoint) ([#206](https://github.com/suzworx/flywheel/issues/206)) ([58ba50d](https://github.com/suzworx/flywheel/commit/58ba50d58073f042dfedeafedb7eecad03d04048))
+* record each changed file's shape in the readings, so a truncated document is visible ([#206](https://github.com/suzworx/flywheel/issues/206)) ([58ba50d](https://github.com/suzworx/flywheel/commit/58ba50d58073f042dfedeafedb7eecad03d04048))
 * refuse an owns collision with a running unit at dispatch ([#204](https://github.com/suzworx/flywheel/issues/204)) ([454c11c](https://github.com/suzworx/flywheel/commit/454c11c3d66fee246f001a1f5e0a90cc9e17adf9)), closes [#164](https://github.com/suzworx/flywheel/issues/164)
 
 
