@@ -148,6 +148,22 @@ git still works.*
 
 `flywheel validate` runs a task's gates and checks its `owns` boundary, recording supervisor readings; `flywheel inspect` only passes a unit whose readings are on record (and refuses a worker session's verdict); `flywheel verify` checks every poka-yoke rule. `validate` exits 5 when a gate fails or a change sits outside `owns`, and an `inspect` refusal exits 6.
 
+### Worker adapters
+
+`flywheel run` dispatches through one of three adapters: `opencode`, `claude`, or the offline
+`sim` adapter used by tests and this repo's own demo. Each worker in `.flywheel/config.json` names
+its adapter; `flywheel run --worker <name>` picks between several configured workers, so one
+factory can be all-OpenCode, all-Claude, or a mix. The `opencode` adapter is the original,
+most-used path. The `claude` adapter (issue [#49](https://github.com/suzworx/flywheel/issues/49))
+is proven against captured fixtures — its parser is unit-tested against real recorded `claude -p
+--output-format stream-json` transcripts — but it has **not been verified end to end** against the
+live `claude` CLI. Treat it as unverified until someone runs it against the real binary and reports
+back.
+
+`flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
+timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
+mid-stream stall (no run-file line for the stall timeout while the process is still alive).
+
 ## Quickstart
 
 1. **Get the CLI.** Download **flywheel-v0.2.0-\<os\>-\<arch\>.zip** from the
@@ -204,7 +220,7 @@ git still works.*
 | `flywheel log` | available (v0.2.0) | Append an event to `.flywheel/events.jsonl` and re-derive state. |
 | `flywheel state` | available (v0.2.0) | Derive and print state from the event log. |
 | `flywheel config` | available | Read, validate and `set` `.flywheel/config.json` (config package merged). |
-| `flywheel run` | available | Dispatch an OpenCode worker and capture the run. |
+| `flywheel run` | available | Dispatch a worker (adapter and model from `.flywheel/config.json`, or `--worker <name>`) and capture the run. |
 | `flywheel status` | available ([#21](https://github.com/suzworx/flywheel/issues/21)) | Summarize the factory: task counts, live/stale attempts, last event and progress, andon. |
 | `flywheel handoff` | available | Print the handoff summary for a new head: in-flight tasks (with session and model), blockers, next ready tasks, and the default worker model; `--stdout` prints it, otherwise it goes into `flywheel.md`. |
 | `flywheel cost` | available ([#29](https://github.com/suzworx/flywheel/issues/29)) | Sum finished events' tokens and cost per task and per model. |
