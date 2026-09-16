@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.0](https://github.com/suzworx/flywheel/compare/v0.8.0...v0.9.0) (2026-09-16)
+
+
+### Features
+
+* a Claude worker adapter, and dispatch for every subprocess adapter ([#168](https://github.com/suzworx/flywheel/issues/168)) ([cf2bee2](https://github.com/suzworx/flywheel/commit/cf2bee2bd22835618065a3b1698bffcb003a9df0))
+* attribute a changed path to the in-flight unit that owns it ([#173](https://github.com/suzworx/flywheel/issues/173)) ([ee9befd](https://github.com/suzworx/flywheel/commit/ee9befd6080966451a3dc9d4f7691562e7b78895))
+* flywheel claim, release and claims — two leads on one repo ([#171](https://github.com/suzworx/flywheel/issues/171)) ([40cc015](https://github.com/suzworx/flywheel/commit/40cc015cedcae35a7e61550eabc300b5ad83f93c))
+* flywheel review runs a unit's gates and owns check in an isolated worktree ([#178](https://github.com/suzworx/flywheel/issues/178)) ([0e150d9](https://github.com/suzworx/flywheel/commit/0e150d98bfc6c3d253d91a55eb25de66fdcea03b))
+* load the worker rules on every run ([#174](https://github.com/suzworx/flywheel/issues/174)) ([6e2b423](https://github.com/suzworx/flywheel/commit/6e2b423b094c84cd5474120cd8d44ba73da60dab))
+* planned and amended events record the brief's owns and needs ([#175](https://github.com/suzworx/flywheel/issues/175)) ([b1986f9](https://github.com/suzworx/flywheel/commit/b1986f9a5fbb1da8068bf0c7d3922e7286dd6639))
+* raise the andon for a run that reads without writing and states no plan ([#179](https://github.com/suzworx/flywheel/issues/179)) ([72822b1](https://github.com/suzworx/flywheel/commit/72822b159677bd14d07477aec724a56b01fd90e9))
+* report a gate failure caused entirely outside owns as inconclusive ([#166](https://github.com/suzworx/flywheel/issues/166)) ([a928a64](https://github.com/suzworx/flywheel/commit/a928a6441d2e76facee4d4d2f2e349e62eb400ec))
+
+
+### Bug Fixes
+
+* a fresh dispatch is never a correction, whatever the prompt path says ([#170](https://github.com/suzworx/flywheel/issues/170)) ([45539bf](https://github.com/suzworx/flywheel/commit/45539bfc2ae3e9190578bc5fef79d22dfb0e18e1))
+
+
+### Documentation
+
+* a swallowed error on an external call is a finding ([#177](https://github.com/suzworx/flywheel/issues/177)) ([383a380](https://github.com/suzworx/flywheel/commit/383a380ae8c3a947ad8aec0b0b66784f617c22d6))
+* bring the README, the skills and the demo script up to date ([#172](https://github.com/suzworx/flywheel/issues/172)) ([c2c6f6d](https://github.com/suzworx/flywheel/commit/c2c6f6dcb0db0c682b89977959015a5b49f96054))
+
 ## [0.8.0](https://github.com/suzworx/flywheel/compare/v0.7.0...v0.8.0) (2026-09-16)
 
 
