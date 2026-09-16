@@ -89,7 +89,8 @@ all.
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
-  #156), `sha256` (of the whole run file).
+  #156), `sha256` (of the whole run file), `wrote` (the attempt's distinct edit/write paths, sorted,
+  at most 50, omitted when the attempt made no edits, issue #163).
 - `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
   normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
   `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider
@@ -100,6 +101,11 @@ all.
   Attention list (issue #131). `peak_reasoning` changes no stage: the factory floor (`render.go`)
   prints it next to a **capped** unit's state, and a `length` finish's own progress line names it
   in the hint suggesting smaller steps (`run.go`).
+- `classifyRun` (`factory.go`) reads `wrote` alongside `reason`: a done attempt with a non-`stop`
+  reason and a non-empty `wrote` classifies run state **failed-dirty** instead of plain `failed` (or
+  `capped`, when `reason` is `length`) — a failed attempt that left files behind, needing a human
+  decision (revert, resume, or re-dispatch) that a clean failure or a cut-off run that wrote nothing
+  does not (issue #163). `failed-dirty` reaches the andon and is dead, exactly as `failed` is.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

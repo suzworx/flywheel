@@ -59,7 +59,7 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, done
+	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 }
 
@@ -76,6 +76,19 @@ func peakReasoningFor(events []Event, task, attempt string) int {
 	return peak
 }
 
+// wroteFor returns the task's latest finished event's wrote paths for its
+// current attempt, scanning the accumulated event log in order so the last
+// matching event wins, the same way peakReasoningFor does (issue #163).
+func wroteFor(events []Event, task, attempt string) []string {
+	var wrote []string
+	for _, e := range events {
+		if e.Kind == "finished" && e.Task == task && e.Attempt == attempt {
+			wrote = e.Wrote
+		}
+	}
+	return wrote
+}
+
 // hasNoPlan reports whether a no-plan event was recorded for this task's
 // current attempt: the run reached step 20 with no PLAN text seen yet
 // (issue #150), the signal classifyRun's no-writes state consumes (#176).
@@ -89,7 +102,7 @@ func hasNoPlan(events []Event, task, attempt string) bool {
 }
 
 // Andon is one stopped-line condition: a unit in silent, stalled, no-writes,
-// capped, provider-error or failed, newest first.
+// capped, provider-error, failed or failed-dirty, newest first.
 type Andon struct {
 	Task  string
 	State string
@@ -173,17 +186,28 @@ func liveRun(state string) bool {
 // provider-error and capped signals and before silent/stalled/long-step, so a
 // run that is also genuinely stalled still needs the stall threshold itself
 // to ever report stalled, and every other live state keeps its own meaning
-// unchanged (issue #176).
-func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int, noPlan bool) string {
+// unchanged (issue #176). wrote is whether the done attempt's finished event
+// lists any written files; when done and lastReason is neither "" nor "stop",
+// a true wrote turns what would be "capped" (lastReason "length") or "failed"
+// (every other unclean reason) into "failed-dirty" instead — a failed attempt
+// that left files behind, needing a human decision the andon otherwise treats
+// the same as a clean failure (issue #163).
+func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int, noPlan bool, wrote bool) string {
 	if done {
 		switch lastReason {
 		case "length":
+			if wrote {
+				return "failed-dirty"
+			}
 			return "capped"
 		case "error":
 			return "provider-error"
 		case "", "stop":
 			return "done"
 		default:
+			if wrote {
+				return "failed-dirty"
+			}
 			return "failed"
 		}
 	}
@@ -427,7 +451,8 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 				reason = t.Reason
 			}
 			noPlan := hasNoPlan(w.events, t.ID, t.Attempt)
-			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan)
+			wrote := done && len(wroteFor(w.events, t.ID, t.Attempt)) > 0
+			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote)
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 		}
@@ -515,13 +540,13 @@ func ageOfTime(t, now time.Time) int {
 	return int(d.Seconds())
 }
 
-// buildAndon lists the units in silent, stalled, capped, provider-error or
-// failed, newest first.
+// buildAndon lists the units in silent, stalled, capped, provider-error,
+// failed or failed-dirty, newest first.
 func buildAndon(units []Unit) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed":
+		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}
