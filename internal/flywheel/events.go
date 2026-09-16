@@ -52,6 +52,7 @@ type Event struct {
 	Outside       []string          `json:"outside,omitempty"`
 	Baseline      map[string]string `json:"baseline,omitempty"`
 	Baselined     []string          `json:"baselined,omitempty"`
+	Attributed    []string          `json:"attributed,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git
