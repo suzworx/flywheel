@@ -115,9 +115,9 @@ func TestRunSimClean(t *testing.T) {
 	}
 	f := evs[5]
 	if f.Kind != "finished" || f.RC == nil || *f.RC != 0 || f.Reason != "stop" ||
-		f.Steps != 2 || f.Tokens == nil || f.Tokens.Input != 200 ||
+		f.Model != model || f.Steps != 2 || f.Tokens == nil || f.Tokens.Input != 200 ||
 		f.Cost < 0.00399 || f.Cost > 0.00401 {
-		t.Errorf("finished event = %v", f)
+		t.Errorf("finished event = %v, want model %q", f, model)
 	}
 	runSHA := shaOf(filepath.Join(dir, ".flywheel", "runs", "T1.r1.jsonl"), t)
 	if f.SHA256 != runSHA {
@@ -159,7 +159,7 @@ func TestRunSimClean(t *testing.T) {
 		"T1 r1 started ses_test_clean_001",
 		"T1 r1 plan recorded",
 		"T1 r1 report recorded",
-		"T1 r1 finished rc=0 reason=stop steps=2",
+		"T1 r1 finished rc=0 reason=stop model=" + model + " steps=2",
 	} {
 		if !strings.Contains(plog, want) {
 			t.Errorf("progress missing %q; got:\n%s", want, plog)
@@ -460,8 +460,18 @@ func TestRunSimProviderError(t *testing.T) {
 
 func TestRunStartTimeoutSilent(t *testing.T) {
 	dir := setupTask(t)
-	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+	model := fixturePath("clean.jsonl", t)
+	if err := WriteConfig(dir, simConfig(model)); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// Pre-seed the attempt's stderr file the way the opencode adapter would; a
+	// sim run never touches it, and the silent note now reads it too.
+	errPath := filepath.Join(dir, ".flywheel", "runs", "T1.r1.err")
+	if err := os.MkdirAll(filepath.Dir(errPath), 0o755); err != nil {
+		t.Fatalf("mkdir runs: %v", err)
+	}
+	if err := os.WriteFile(errPath, []byte("\nauth failed: bad api key\n"), 0o644); err != nil {
+		t.Fatalf("write stderr: %v", err)
 	}
 	var buf bytes.Buffer
 	res, err := Run(dir, RunOptions{
@@ -480,8 +490,9 @@ func TestRunStartTimeoutSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	if f := evs[len(evs)-1]; f.Kind != "finished" || f.Reason != "silent" {
-		t.Errorf("finished event = %v, want reason silent", f)
+	f := evs[len(evs)-1]
+	if f.Kind != "finished" || f.Reason != "silent" || f.Model != model || f.Note != "auth failed: bad api key" {
+		t.Errorf("finished event = %v, want reason silent, model %q, note from stderr", f, model)
 	}
 	runB, err := os.ReadFile(filepath.Join(dir, ".flywheel", "runs", "T1.r1.jsonl"))
 	if err != nil {
@@ -489,6 +500,12 @@ func TestRunStartTimeoutSilent(t *testing.T) {
 	}
 	if len(runB) != 0 {
 		t.Errorf("run file = %d bytes, want empty", len(runB))
+	}
+	plog := string(buf.Bytes())
+	want := "T1 r1 finished rc=-1 reason=silent model=" + model +
+		" note=auth failed: bad api key err=.flywheel/runs/T1.r1.err"
+	if !strings.Contains(plog, want) {
+		t.Errorf("progress missing %q; got:\n%s", want, plog)
 	}
 }
 
