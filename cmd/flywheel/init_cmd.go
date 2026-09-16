@@ -25,6 +25,7 @@ type initOptions struct {
 	track    bool
 	ignore   bool
 	agentsMD bool
+	hooks    bool
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -39,6 +40,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.BoolVar(&o.track, "track", false, "keep flywheel.md a normal, commit-able file (default)")
 	fs.BoolVar(&o.ignore, "ignore", false, "add flywheel.md to the target's root .gitignore so every worktree stays clean")
 	fs.BoolVar(&o.agentsMD, "agents-md", false, "write/refresh AGENTS.md with a flywheel:agents block naming the installed skills and the persona each plays")
+	fs.BoolVar(&o.hooks, "hooks", false, "write .claude/settings.json and .opencode/plugin/flywheel-session.mjs so every session records its start, its flywheel commands, and its end")
 	return fs, o
 }
 
@@ -106,6 +108,20 @@ func runInit(args []string) {
 			fmt.Println("ignored: flywheel.md")
 		}
 		fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
+	}
+	if o.hooks {
+		_, hpieces, herr := flywheel.InitHooks(o.dir)
+		if herr != nil {
+			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", herr)
+			os.Exit(1)
+		}
+		for _, p := range hpieces {
+			if p.Added {
+				fmt.Printf("added: %s\n", p.Path)
+			} else {
+				fmt.Printf("present: %s\n", p.Path)
+			}
+		}
 	}
 	if configExisted && (o.model != "" || o.variant != "") {
 		fmt.Println("config.json exists; change it with: flywheel config set model|variant <value>")
