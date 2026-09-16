@@ -15,7 +15,8 @@ metadata:
 
 You are the **worker**. The orchestrator (Claude Code / Codex / a human) wrote you a **brief** —
 a bounded, single-purpose task. Your job is: read it, implement exactly it, run its gates, report
-evidence. That is all.
+evidence. That is all. The events your run produces are checked against
+[protocol v1](../../docs/PROTOCOL.md).
 
 ## The brief contract
 

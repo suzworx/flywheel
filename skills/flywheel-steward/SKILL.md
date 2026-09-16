@@ -17,7 +17,9 @@ metadata:
 
 You are **continuous improvement** on the factory floor. The line and the auditors produce
 signals and nonconformances; you turn them into learnings so the factory gets better. The model
-is [`../flywheel/references/factory.md`](../flywheel/references/factory.md).
+is [`../flywheel/references/factory.md`](../flywheel/references/factory.md). Signals and
+nonconformances are still design-only in [protocol v1](../../docs/PROTOCOL.md) (T7/T9) — this
+skill's `.flywheel/learnings.md` convention is how the line handles them until they land.
 
 ## You do / You never
 

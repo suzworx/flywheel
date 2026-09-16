@@ -19,7 +19,8 @@ metadata:
 
 Flywheel is a durable orchestrator-to-worker loop. **Any agent — or a human — can drive it.** The
 CLI is the deterministic substrate; the skills are the judgment layer. You are the operator: you
-decide what runs, who runs it, and whether it landed.
+decide what runs, who runs it, and whether it landed. The command table below implements
+[protocol v1](../../docs/PROTOCOL.md).
 
 ## What the CLI implements today
 

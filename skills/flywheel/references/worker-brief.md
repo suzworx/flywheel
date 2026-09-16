@@ -2,7 +2,9 @@
 
 This is the operating manual for the orchestrator (Codex or Claude Code). The worker is the OpenCode
 CLI running the approved model (`$MODEL`). `$MODEL` is the approved worker model, set once in
-`skills/flywheel/SKILL.md` → Invariants. Everything below is a rule, not a suggestion.
+`skills/flywheel/SKILL.md` → Invariants. Everything below is a rule, not a suggestion. The event
+records this loop produces are checked against
+[protocol v1](../../../docs/PROTOCOL.md).
 
 ## 1. Precise, bounded briefs
 
