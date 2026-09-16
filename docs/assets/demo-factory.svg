@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="872" height="512" viewBox="0 0 872 512" role="img" aria-label="flywheel factory: the floor at a glance">
+<svg xmlns="http://www.w3.org/2000/svg" width="872" height="512" viewBox="0 0 872 512" role="img" aria-label="flywheel factory">
   <rect x="0" y="0" width="872" height="512" rx="12" fill="#0d1117"/>
   <rect x="0" y="0" width="872" height="36" fill="#0d1117"/>
   <circle cx="26" cy="18" r="6" fill="#ff5f57"/>
   <circle cx="48" cy="18" r="6" fill="#febc2e"/>
   <circle cx="70" cy="18" r="6" fill="#28c840"/>
-  <text x="436" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">flywheel factory: the floor at a glance</text>
+  <text x="436" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">flywheel factory</text>
   <text x="20" y="69" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <rect x="17" y="52" width="543.6" height="14" rx="3" fill="#161b22"/>
     <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel factory --once --width 100 --now 2026-09-12T00:30:00Z</tspan>
@@ -40,19 +40,19 @@
     <tspan xml:space="preserve">  TASK               STAGE     ATT  SESSION      MODEL                    STEPS   AGE RUN          </tspan>
   </text>
   <text x="20" y="289" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  capped             building  r1   w-capped     openrouter/deepseek/dee~    1  1800 capped       </tspan>
+    <tspan xml:space="preserve">  capped             building  r1   w-capped     openrouter/deepseek/dee~    1   30m capped       </tspan>
   </text>
   <text x="20" y="309" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  running            building  r1   w-running    openrouter/deepseek/dee~    1  1800 running      </tspan>
+    <tspan xml:space="preserve">  running            building  r1   w-running    openrouter/deepseek/dee~    1   30m running      </tspan>
   </text>
   <text x="20" y="329" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  finished           finished  c1   w-finished-~ openrouter/deepseek/dee~    1  1795 done         </tspan>
+    <tspan xml:space="preserve">  finished           finished  c1   w-finished-~ openrouter/deepseek/dee~    1   29m done         </tspan>
   </text>
   <text x="20" y="349" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  landed             landed    r1   w-landed     openrouter/deepseek/dee~    1  1798 done         </tspan>
+    <tspan xml:space="preserve">  landed             landed    r1   w-landed     openrouter/deepseek/dee~    1   29m done         </tspan>
   </text>
   <text x="20" y="369" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  planned            planned                                                 0  1800 waiting      </tspan>
+    <tspan xml:space="preserve">  planned            planned                                                 0   30m waiting      </tspan>
   </text>
   <text x="20" y="389" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <tspan xml:space="preserve"></tspan>
@@ -61,7 +61,7 @@
     <tspan xml:space="preserve">andon (1)</tspan>
   </text>
   <text x="20" y="429" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">  capped          capped         1800s</tspan>
+    <tspan xml:space="preserve">  capped          capped         30m</tspan>
   </text>
   <text x="20" y="449" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <tspan xml:space="preserve"></tspan>

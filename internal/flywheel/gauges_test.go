@@ -468,6 +468,36 @@ func dispatchedWithWorktree(t *testing.T, dir, wtDir string) {
 	}
 }
 
+// siblingInFlightTask sets up a sibling worktree wt with its own .flywheel/
+// and an in-flight (dispatched) task otherTask whose brief owns ownsPath,
+// committed clean so nothing is dirty at dispatch time. A caller then drives
+// the worktree's changed paths and validates the main tree (issue #200).
+func siblingInFlightTask(t *testing.T, otherTask, ownsPath string) string {
+	t.Helper()
+	wt := t.TempDir()
+	if _, err := Init(wt, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	initRepo(t, wt)
+	if err := os.WriteFile(filepath.Join(wt, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	brief := "owns: " + ownsPath + "\nneeds: none\ngate: exit 0\n\n# TASK: " + otherTask + "\n"
+	rel := otherTask + "-brief.txt"
+	if err := os.WriteFile(filepath.Join(wt, rel), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+	if err := AppendEvent(wt, Event{TS: "2026-09-12T00:30:00Z", Task: otherTask, Kind: "planned", Brief: rel}); err != nil {
+		t.Fatalf("AppendEvent() planned %s error = %v", otherTask, err)
+	}
+	if err := AppendEvent(wt, Event{TS: "2026-09-12T01:00:00Z", Task: otherTask, Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched %s error = %v", otherTask, err)
+	}
+	git(t, wt, []string{"add", "-A"})
+	git(t, wt, []string{"commit", "-m", otherTask + " brief"})
+	return wt
+}
+
 // TestValidateOtherWorktreeChangeIsOutside checks a new file appearing in
 // another worktree recorded at dispatch lands in Outside, formatted as
 // "<worktree path>: <path>", and fails OK() (issue #87).
@@ -603,6 +633,164 @@ func TestValidateOtherWorktreeDotFlywheelIsExcused(t *testing.T) {
 	}
 	if len(res.Outside) != 0 {
 		t.Errorf("outside = %v, want none", res.Outside)
+	}
+}
+
+// TestValidateOtherWorktreeInFlightTaskAttributed checks a changed path in a
+// sibling worktree whose own in-flight task's brief owns it lands in
+// Attributed as "<worktree>: <path> -> <task>" and is not outside: the path
+// is the sibling's own record of what it is building (issue #200).
+func TestValidateOtherWorktreeInFlightTaskAttributed(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := siblingInFlightTask(t, "B", "theirs.go")
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "theirs.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write theirs.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (theirs.go belongs to B, in flight in its own worktree)", res.OwnsOK)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing", res.Outside)
+	}
+	want := wt + ": theirs.go -> B"
+	if len(res.Attributed) != 1 || res.Attributed[0] != want {
+		t.Errorf("attributed = %v, want [%s]", res.Attributed, want)
+	}
+}
+
+// TestValidateOtherWorktreeNoInFlightOwnerStillOutside checks a sibling
+// worktree changing a path that NO in-flight task there owns is still
+// Outside and fails: attribution must never swallow a real violation.
+func TestValidateOtherWorktreeNoInFlightOwnerStillOutside(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := siblingInFlightTask(t, "B", "theirs.go")
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "nobody.go"), []byte("package n\n"), 0o644); err != nil {
+		t.Fatalf("write nobody.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (nobody.go is owned by no in-flight task there)", res.OwnsOK)
+	}
+	want := wt + ": nobody.go"
+	if len(res.Outside) != 1 || res.Outside[0] != want {
+		t.Errorf("outside = %v, want [%s]", res.Outside, want)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateOtherWorktreeUnreadableLogStillOutside checks a sibling whose
+// event log is missing or unreadable never attributes and never errors: an
+// unreadable sibling log must not block a validation (issue #200).
+func TestValidateOtherWorktreeUnreadableLogStillOutside(t *testing.T) {
+	t.Run("no .flywheel", func(t *testing.T) {
+		dir, err := initTask(t, []string{"exit 0"})
+		if err != nil {
+			t.Fatalf("initTask() error = %v", err)
+		}
+		wt := t.TempDir()
+		initRepo(t, wt)
+		dispatchedWithWorktree(t, dir, wt)
+		if err := os.WriteFile(filepath.Join(wt, "note.txt"), []byte("new\n"), 0o644); err != nil {
+			t.Fatalf("write note.txt: %v", err)
+		}
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		if res.OwnsOK {
+			t.Error("OwnsOK = true, want false (no event log, no owner)")
+		}
+		want := wt + ": note.txt"
+		if len(res.Outside) != 1 || res.Outside[0] != want {
+			t.Errorf("outside = %v, want [%s]", res.Outside, want)
+		}
+	})
+	t.Run("events.jsonl is a directory", func(t *testing.T) {
+		dir, err := initTask(t, []string{"exit 0"})
+		if err != nil {
+			t.Fatalf("initTask() error = %v", err)
+		}
+		wt := t.TempDir()
+		if _, err := Init(wt, false); err != nil {
+			t.Fatalf("Init() error = %v", err)
+		}
+		initRepo(t, wt)
+		if err := os.Remove(filepath.Join(wt, ".flywheel", "events.jsonl")); err != nil {
+			t.Fatalf("remove events.jsonl: %v", err)
+		}
+		if err := os.Mkdir(filepath.Join(wt, ".flywheel", "events.jsonl"), 0o755); err != nil {
+			t.Fatalf("mkdir events.jsonl: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(wt, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+			t.Fatalf("write .gitignore: %v", err)
+		}
+		git(t, wt, []string{"add", "-A"})
+		git(t, wt, []string{"commit", "-m", "setup"})
+		dispatchedWithWorktree(t, dir, wt)
+		if err := os.WriteFile(filepath.Join(wt, "note.txt"), []byte("new\n"), 0o644); err != nil {
+			t.Fatalf("write note.txt: %v", err)
+		}
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		if res.OwnsOK {
+			t.Error("OwnsOK = true, want false (events.jsonl is unreadable, no owner)")
+		}
+		want := wt + ": note.txt"
+		if len(res.Outside) != 1 || res.Outside[0] != want {
+			t.Errorf("outside = %v, want [%s]", res.Outside, want)
+		}
+	})
+}
+
+// TestValidateOtherWorktreeLandedTaskNotAttributed checks a sibling task that
+// has landed (no longer in flight) does not attribute its brief's paths: the
+// path stays outside and fails, exactly like the same task landing in the
+// main tree (issue #200).
+func TestValidateOtherWorktreeLandedTaskNotAttributed(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := siblingInFlightTask(t, "B", "theirs.go")
+	if err := AppendEvent(wt, Event{TS: "2026-09-12T01:30:00Z", Task: "B", Kind: "landed"}); err != nil {
+		t.Fatalf("AppendEvent() landed B error = %v", err)
+	}
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "theirs.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write theirs.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (B has landed, no longer in flight)", res.OwnsOK)
+	}
+	want := wt + ": theirs.go"
+	if len(res.Outside) != 1 || res.Outside[0] != want {
+		t.Errorf("outside = %v, want [%s]", res.Outside, want)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
 	}
 }
 
