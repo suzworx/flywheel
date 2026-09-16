@@ -380,7 +380,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		commandHook(req)
 	}
 
-	if worker.Adapter == "opencode" {
+	// Every subprocess adapter launches the same adapter-agnostic way: exec
+	// whatever bin/args its own Command returns. Only "sim" is excluded — it
+	// replays a fixture in-process below instead of spawning anything
+	// (issue #49: this used to read worker.Adapter == "opencode", which left
+	// every other real adapter, including claude, valid in config but
+	// unlaunchable). workerEnv's OPENCODE_CONFIG stays exactly as it is: an
+	// OpenCode-specific env var a non-opencode child simply ignores;
+	// reshaping per-adapter env handling is out of scope here.
+	if worker.Adapter != "sim" {
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
 		cmd.Dir = dir
