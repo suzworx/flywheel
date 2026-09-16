@@ -22,7 +22,9 @@ evidence that comes back.
 
 The five-step loop: **Plan → Brief → Dispatch → Review → Correct-or-land**. Steps 1, 4, and 5 are
 your judgment; 2 and 3 are mechanical. Full detail on every step is in
-[references/worker-brief.md](references/worker-brief.md) — read it before first dispatch.
+[references/worker-brief.md](references/worker-brief.md) — read it before first dispatch. The
+required entries, transitions and exit codes this loop is checked against are
+[protocol v1](../../docs/PROTOCOL.md).
 
 ## The substrate: the flywheel CLI
 

@@ -7,7 +7,8 @@ Flywheel is a **factory** that ships code. Its execution system has two planes:
   what result.
 
 This file is the shared model every persona skill links to. A *unit* is one dispatched work order
-(a brief plus its run). The protocol these roles follow is
+(a brief plus its run). The rules these roles are checked against are
+[protocol v1](../../../docs/PROTOCOL.md); the fuller design these roles follow is
 [docs/design/autonomous-shipping.md](../../../docs/design/autonomous-shipping.md).
 
 ## Roles
