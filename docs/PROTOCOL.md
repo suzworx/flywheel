@@ -157,8 +157,17 @@ all.
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass.
 - Carries: `task`, `attempt`, `tree`, `outside` (changed paths not covered by `owns:`), `baselined`
   (changed paths excused because they were already dirty at dispatch and are byte-identical now),
-  `persona` (`"supervisor"`).
+  `attributed` (changed paths blamed on another in-flight task instead — see below), `persona`
+  (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside` on the same tree.
+- A changed path outside `owns:` and not baselined is **attributed** rather than outside when some
+  other task's brief `owns:` it (`ownsContains`, the matching `flywheel validate` already uses) and
+  that task is currently in flight (`Derive` status `dispatched`, `running`, or `finished` — never
+  `landed`, `passed`, or `rejected`): a neighbour's own work in progress on a shared checkout, not
+  this task's stray file (issue #117). Attribution never excuses a path this task's own `owns:`
+  already covers — such a path was never outside to begin with — and never hides a path no in-flight
+  task owns: that path is still `outside`, and T3 still fails it. `flywheel validate` prints
+  attributed paths as `<task> owns: attributed <path> -> <task>[, ...]` before the outside line.
 
 ### `inspected`
 - Written by: the CLI only, via `flywheel inspect <task> --verdict ... --session ...`.

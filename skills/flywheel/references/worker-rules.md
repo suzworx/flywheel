@@ -1,0 +1,5 @@
+- Stay inside owns: and the worktree. At most one write per response (at most 120 lines); batch read-only calls together.
+- Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
+- Build or typecheck after each file; run the full checks at the end.
+- Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
+- Never commit, push, or write secrets.

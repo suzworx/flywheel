@@ -822,6 +822,79 @@ func TestWorkerPolicyMatchesCanonicalFile(t *testing.T) {
 	}
 }
 
+// TestRunWritesWorkerRules checks a run writes .flywheel/worker-rules.md
+// (matching workerRules) and points the policy's "instructions" at it
+// (issue #31).
+func TestRunWritesWorkerRules(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	policyB, err := os.ReadFile(filepath.Join(dir, ".flywheel", "opencode-worker.json"))
+	if err != nil {
+		t.Fatalf("read policy: %v", err)
+	}
+	var doc struct {
+		Instructions []string `json:"instructions"`
+	}
+	if err := json.Unmarshal(policyB, &doc); err != nil {
+		t.Fatalf("policy is not valid JSON: %v", err)
+	}
+	if len(doc.Instructions) != 1 || doc.Instructions[0] != "worker-rules.md" {
+		t.Errorf("policy instructions = %v, want [worker-rules.md]", doc.Instructions)
+	}
+	rulesB, err := os.ReadFile(filepath.Join(dir, ".flywheel", "worker-rules.md"))
+	if err != nil {
+		t.Fatalf("read worker-rules.md: %v", err)
+	}
+	if normLF(rulesB) != workerRules {
+		t.Errorf("worker-rules.md = %q, want workerRules %q", normLF(rulesB), workerRules)
+	}
+}
+
+// TestRunLeavesPreExistingWorkerFilesUntouched checks a run never overwrites
+// an opencode-worker.json or worker-rules.md that already exists (issue #31).
+func TestRunLeavesPreExistingWorkerFilesUntouched(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	policyPath := filepath.Join(dir, ".flywheel", "opencode-worker.json")
+	rulesPath := filepath.Join(dir, ".flywheel", "worker-rules.md")
+	if err := os.WriteFile(policyPath, []byte("KEEPME-POLICY"), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+	if err := os.WriteFile(rulesPath, []byte("KEEPME-RULES"), 0o644); err != nil {
+		t.Fatalf("write rules: %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	policyB, err := os.ReadFile(policyPath)
+	if err != nil || string(policyB) != "KEEPME-POLICY" {
+		t.Errorf("policy = %q, %v, want KEEPME-POLICY untouched", policyB, err)
+	}
+	rulesB, err := os.ReadFile(rulesPath)
+	if err != nil || string(rulesB) != "KEEPME-RULES" {
+		t.Errorf("worker-rules.md = %q, %v, want KEEPME-RULES untouched", rulesB, err)
+	}
+}
+
+// TestWorkerRulesMatchesReferenceFile checks workerRules stays identical to
+// skills/flywheel/references/worker-rules.md (issue #31).
+func TestWorkerRulesMatchesReferenceFile(t *testing.T) {
+	b, err := os.ReadFile("../../skills/flywheel/references/worker-rules.md")
+	if err != nil {
+		t.Fatalf("read reference worker-rules.md: %v", err)
+	}
+	if normLF(b) != workerRules {
+		t.Errorf("reference worker-rules.md = %q, want workerRules %q", normLF(b), workerRules)
+	}
+}
+
 func TestRunLongRunWithEarlyFirstLineFinishesStop(t *testing.T) {
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {

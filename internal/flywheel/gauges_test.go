@@ -884,3 +884,173 @@ func TestValidatePassingGateNotInconclusive(t *testing.T) {
 		t.Errorf("Inconclusive/Note = %v/%q, want false/empty for a passing gate", res.Gates[0].Inconclusive, res.Gates[0].Note)
 	}
 }
+
+// otherTaskPlanned commits a brief for otherTask owning ownsPath and records
+// its planned event, so AttemptBrief can resolve it the way attributeOutside
+// needs (issue #117).
+func otherTaskPlanned(t *testing.T, dir, otherTask, ownsPath string) {
+	t.Helper()
+	brief := "owns: " + ownsPath + "\nneeds: none\ngate: exit 0\n\n# TASK: " + otherTask + "\n"
+	rel := otherTask + "-brief.txt"
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:30:00Z", Task: otherTask, Kind: "planned", Brief: rel}); err != nil {
+		t.Fatalf("AppendEvent() planned %s error = %v", otherTask, err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", otherTask + " brief"})
+}
+
+// TestValidateAttributedToInFlightOwner checks a changed path outside T1's
+// owns, owned by another task's brief while that task is dispatched (in
+// flight), is attributed rather than outside, and the owns check passes.
+func TestValidateAttributedToInFlightOwner(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	otherTaskPlanned(t, dir, "B", "theirs.go")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched B error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theirs.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write theirs.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (theirs.go belongs to B, in flight)", res.OwnsOK)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing", res.Outside)
+	}
+	if len(res.Attributed) != 1 || res.Attributed[0] != "theirs.go -> B" {
+		t.Errorf("attributed = %v, want [theirs.go -> B]", res.Attributed)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "owns_checked" {
+			found = true
+			if len(e.Attributed) != 1 || e.Attributed[0] != "theirs.go -> B" {
+				t.Errorf("owns_checked attributed = %v, want [theirs.go -> B]", e.Attributed)
+			}
+		}
+	}
+	if !found {
+		t.Error("no owns_checked event recorded")
+	}
+}
+
+// TestValidateNotAttributedWhenOwnerLanded checks the same path with its
+// owner task landed (no longer in flight) is still outside and fails.
+func TestValidateNotAttributedWhenOwnerLanded(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	otherTaskPlanned(t, dir, "B", "theirs.go")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched B error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:30:00Z", Task: "B", Kind: "landed"}); err != nil {
+		t.Fatalf("AppendEvent() landed B error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theirs.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write theirs.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (B has landed, no longer in flight)", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "theirs.go" {
+		t.Errorf("outside = %v, want [theirs.go]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateNoOwnerStaysOutside checks a stray path no task's brief owns is
+// still outside and fails, and never appears in Attributed.
+func TestValidateNoOwnerStaysOutside(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nobody.go"), []byte("package n\n"), 0o644); err != nil {
+		t.Fatalf("write nobody.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "nobody.go" {
+		t.Errorf("outside = %v, want [nobody.go]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateOwnPathNeverAttributed checks a changed path inside the
+// validated task's own owns never appears in Outside or Attributed.
+func TestValidateOwnPathNeverAttributed(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\n// change\n"), 0o644); err != nil {
+		t.Fatalf("rewrite a.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (a.go is T1's own)", res.OwnsOK)
+	}
+	if len(res.Outside) != 0 || len(res.Attributed) != 0 {
+		t.Errorf("outside/attributed = %v/%v, want nothing", res.Outside, res.Attributed)
+	}
+}
+
+// TestValidateBaselinedPathNotAttributed checks a baselined path is excused
+// by the baseline, not counted as attributed, even when another in-flight
+// task's brief would also own it.
+func TestValidateBaselinedPathNotAttributed(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	otherTaskPlanned(t, dir, "B", "b.txt")
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("lead's edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:30:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched B error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (b.txt is baselined)", res.OwnsOK)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing (baseline excuses first)", res.Attributed)
+	}
+}

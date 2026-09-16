@@ -49,6 +49,11 @@ type GaugeResult struct {
 	BriefPaths []string // the base brief, then a delta when the attempt has one
 	Gates      []GateOut
 	Outside    []string
+	// Attributed lists, sorted, "<path> -> <task>" entries for every changed
+	// path that sits outside this task's owns but inside another task's owns
+	// while that task is in flight (issue #117): the lead's stray-file
+	// review can skip it, but it never counts toward OwnsOK's outside set.
+	Attributed []string
 	GatesOK    bool
 	OwnsOK     bool
 }
@@ -211,7 +216,7 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 		return GaugeResult{}, err
 	}
 	base := baselineFor(events, task)
-	var outside []string
+	var candidates []string
 	var baselined []string
 	for _, p := range changed {
 		if !ownsContains(owns, p) {
@@ -219,9 +224,10 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 				baselined = append(baselined, p)
 				continue
 			}
-			outside = append(outside, p)
+			candidates = append(candidates, p)
 		}
 	}
+	attributed, outside := attributeOutside(dir, task, events, candidates)
 	if snap := worktreesFor(events, task); snap != nil {
 		wtPaths := make([]string, 0, len(snap))
 		for p := range snap {
@@ -242,15 +248,70 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 		}
 	}
 	res.Outside = outside
+	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
-		Tree: tree, Outside: outside, Baselined: baselined, Persona: "supervisor",
+		Tree: tree, Outside: outside, Baselined: baselined, Attributed: attributed, Persona: "supervisor",
 	}); err != nil {
 		return GaugeResult{}, err
 	}
 	_, _ = WriteState(dir)
 	return res, nil
+}
+
+// inFlightOwners returns, sorted, every task id other than task whose derived
+// status (Derive) is dispatched, running or finished: still working, so a
+// path it owns is not blamed on task. landed, passed and rejected (and every
+// other status) are excluded.
+func inFlightOwners(events []Event, task string) []string {
+	st := Derive(events)
+	var owners []string
+	for _, ts := range st.Tasks {
+		if ts.ID == task {
+			continue
+		}
+		switch ts.Status {
+		case "dispatched", "running", "finished":
+			owners = append(owners, ts.ID)
+		}
+	}
+	sort.Strings(owners)
+	return owners
+}
+
+// attributeOutside splits changed paths already known to sit outside task's
+// own owns (and not excused by the baseline) into attributed entries, sorted
+// "<path> -> <task>", and the paths that remain outside because no in-flight
+// task's brief owns them (issue #117). Owners are tried in sorted order, so a
+// path two in-flight tasks both claim attributes to the alphabetically first.
+// A task whose brief cannot be read is skipped rather than erroring: an
+// unreadable brief is never treated as an owner.
+func attributeOutside(dir, task string, events []Event, candidates []string) (attributed, outside []string) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	owners := inFlightOwners(events, task)
+	for _, p := range candidates {
+		owner := ""
+		for _, other := range owners {
+			header, _, err := AttemptBrief(dir, events, other)
+			if err != nil {
+				continue
+			}
+			if ownsContains(header.Owns, p) {
+				owner = other
+				break
+			}
+		}
+		if owner == "" {
+			outside = append(outside, p)
+			continue
+		}
+		attributed = append(attributed, p+" -> "+owner)
+	}
+	sort.Strings(attributed)
+	return attributed, outside
 }
 
 // worktreesFor returns the first dispatched event's worktrees snapshot for

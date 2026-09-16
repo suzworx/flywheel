@@ -55,6 +55,37 @@ func TestAppendReadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAppendReadRoundTripAttributed checks the owns_checked event's
+// Attributed field round-trips through AppendEvent/ReadEvents and is written
+// to the log under the "attributed" key (issue #117).
+func TestAppendReadRoundTripAttributed(t *testing.T) {
+	dir := t.TempDir()
+	e := Event{
+		TS: "2026-09-12T00:00:00Z", Task: "A", Kind: "owns_checked",
+		Attempt: "r1", Tree: "deadbeef", Attributed: []string{"theirs.go -> B"},
+	}
+	if err := AppendEvent(dir, e); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("ReadEvents() = %d events, want 1", len(evs))
+	}
+	if got := evs[0].Attributed; len(got) != 1 || got[0] != "theirs.go -> B" {
+		t.Errorf("attributed = %v, want [theirs.go -> B]", got)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if !strings.Contains(string(b), `"attributed":["theirs.go -> B"]`) {
+		t.Errorf("events.jsonl = %q, want it to contain the attributed key", string(b))
+	}
+}
+
 func TestAppendSetsTimestampWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "", Task: "T1", Kind: "planned"}); err != nil {
