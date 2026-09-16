@@ -8,6 +8,7 @@
 #   bash scripts/demo.sh --part log-state  # only the log + state blocks
 #   bash scripts/demo.sh --part gauges     # validate -> inspect -> verify
 #   bash scripts/demo.sh --part factory    # the factory floor at a glance
+#   bash scripts/demo.sh --part stats      # the factory's own numbers
 set -euo pipefail
 
 part="all"
@@ -173,6 +174,33 @@ EOF
   cd ..
 }
 
+# run_stats shows the factory's own numbers: a landed task that passed on the
+# first attempt and a task that needed one correction before landing, so
+# first-pass rate, corrections per task, and cost per landed task are all
+# nonzero and reproducible.
+run_stats() {
+  mkdir -p demo/.flywheel
+  cd demo
+  cat > .flywheel/events.jsonl <<'EOF'
+{"ts":"2026-09-12T00:00:00Z","task":"landed","kind":"planned","brief":".flywheel/briefs/landed.txt","owns":["a.go"]}
+{"ts":"2026-09-12T00:00:00Z","task":"landed","kind":"dispatched","attempt":"r1","model":"openrouter/deepseek/deepseek-v4-flash-0731","adapter":"opencode"}
+{"ts":"2026-09-12T00:00:00Z","task":"landed","kind":"started","session":"w-landed"}
+{"ts":"2026-09-12T00:05:00Z","task":"landed","kind":"finished","attempt":"r1","session":"w-landed","rc":0,"reason":"stop","steps":3,"tokens":{"input":18000,"output":900,"reasoning":400},"cost":0.0016}
+{"ts":"2026-09-12T00:05:01Z","task":"landed","kind":"reviewed","verdict":"pass"}
+{"ts":"2026-09-12T00:05:02Z","task":"landed","kind":"landed","commit":"abc1234"}
+{"ts":"2026-09-12T00:00:00Z","task":"finished","kind":"planned","brief":".flywheel/briefs/finished.txt","owns":["c.go"]}
+{"ts":"2026-09-12T00:00:00Z","task":"finished","kind":"dispatched","attempt":"r1","model":"openrouter/deepseek/deepseek-v4-flash-0731","adapter":"opencode"}
+{"ts":"2026-09-12T00:00:00Z","task":"finished","kind":"started","session":"w-finished"}
+{"ts":"2026-09-12T00:06:00Z","task":"finished","kind":"finished","attempt":"r1","session":"w-finished","rc":0,"reason":"stop","steps":2,"tokens":{"input":12000,"output":600,"reasoning":300},"cost":0.0011}
+{"ts":"2026-09-12T00:06:01Z","task":"finished","kind":"reviewed","verdict":"correct","session":"i-finished"}
+{"ts":"2026-09-12T00:06:02Z","task":"finished","kind":"dispatched","attempt":"c1","model":"openrouter/deepseek/deepseek-v4-flash-0731","adapter":"opencode"}
+{"ts":"2026-09-12T00:10:00Z","task":"finished","kind":"finished","attempt":"c1","session":"w-finished-c1","rc":0,"reason":"stop","steps":1,"tokens":{"input":4000,"output":200,"reasoning":100},"cost":0.0004}
+EOF
+  say "flywheel stats"
+  "$fw" stats
+  cd ..
+}
+
 {
   cd "$proj"
   case "$part" in
@@ -186,5 +214,8 @@ EOF
   esac
   case "$part" in
     all|factory) run_factory ;;
+  esac
+  case "$part" in
+    all|stats) run_stats ;;
   esac
 } | mask

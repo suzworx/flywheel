@@ -4,12 +4,11 @@ description: >-
   Operate the flywheel framework from any role — human or agent. Use when you want to install
   flywheel into a repo, validate it is healthy, understand its state, or drive the loop
   (plan/brief/dispatch/review/correct-or-land) as an operator rather than as a worker. The CLI
-  implements init, config, log, state, run, validate, inspect, verify, factory, and staff:
-  scaffold a repo, read and set the config, record events, derive state, dispatch workers, run
-  the gauges, and register roles on the floor. Plan, retry, handoff, status, trace, and
-  artifacts are planned, not built — until they land, drive those steps manually with brief
-  files and the raw worker commands shown here; handoff is done by writing state files and
-  passing emitted session IDs by hand.
+  implements the whole loop except creating and resuming tasks: init, config, log, state, run
+  (through the opencode, claude or sim adapter), validate, inspect, verify, factory, staff, cost,
+  stats, next, status, handoff, trace, claim/release/claims, controller, goal, land and lint. Only
+  `flywheel plan`, `retry` and `artifacts` are still planned — until they land, create and resume
+  tasks with brief files and the raw worker commands shown here.
 license: MIT
 metadata:
   version: 0.8.0 # x-release-please-version
@@ -24,18 +23,19 @@ decide what runs, who runs it, and whether it landed. The command table below im
 
 ## What the CLI implements today
 
-Ten subcommands exist — init, version, config, log, state, run, validate, inspect, verify,
-factory. The rest of this skill is the manual workflow that runs on the same state files until the
-planned subcommands land — don't invoke commands that aren't built.
+The table below lists every command `flywheel help` prints, kept in sync with the registry (a doc
+test fails the build if a command is missing here). Only `flywheel plan`, `retry` and `artifacts`
+are not built yet; the rest of this skill's manual workflow explains what to do until those three
+land.
 
 | Command | Status | What it does |
 | --- | --- | --- |
-| `flywheel init` | **implemented** | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/briefs/`; refuses if either state file already exists unless `--force`. |
+| `flywheel init [--track\|--ignore] [--agents-md] [--hooks] [--force]` | **implemented** | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/events.jsonl` + `.flywheel/briefs/`; `--track` (default) keeps `flywheel.md` a committed file, `--ignore` adds it to the target's root `.gitignore` instead; `--agents-md` writes/refreshes an AGENTS.md block naming the installed skills; `--hooks` writes the Claude/OpenCode session-logging hooks; refuses an existing state file unless `--force`. |
 | `flywheel version` | **implemented** | Print the flywheel version. |
 | `flywheel config` | **implemented** | Read and validate `.flywheel/config.json`. |
 | `flywheel log --task <id> --kind planned --brief <path>` | **implemented** | Record a planned brief to the event log before dispatch. |
 | `flywheel state` | **implemented** | Derive and print state from the event log. |
-| `flywheel run <task>` | **implemented** | Canonical dispatch: attach the brief with `--file`, apply the deny policy, record every event. |
+| `flywheel run <task> [--worker NAME] [--stall-timeout D]` | **implemented** | Canonical dispatch: pick a worker from `.flywheel/config.json`, or `--worker NAME` to choose among several configured workers; attach the brief, apply the deny policy, record every event; `--stall-timeout` bounds a mid-stream gap (0 = the worker's configured `stall_timeout`, itself 600s). |
 | `flywheel validate <task> [--workdir]` | **implemented** | Run the brief header's `gate:` lines on the exact tree and check `owns`; exit 0, or 5 on a failing gate or a file outside owns. |
 | `flywheel lint <brief> [--dir DIR]` | **implemented** | Check a brief for problems: missing `owns:`, `gate:`, `# TASK` or `## Checks`, owns paths that don't exist; warnings for a missing write rule or `needs:` line (exit 0/1). |
 | `flywheel inspect <task> --verdict pass\|rework\|scrap\|escalate --session <own session>` | **implemented** | Record an inspection; refused with exit 6 for a bad verdict, a worker's session, or no passing readings for the tree as it is now. |
@@ -49,7 +49,9 @@ planned subcommands land — don't invoke commands that aren't built.
 | `flywheel next [--dir DIR] [--now RFC3339] [--json]` | **implemented** | Print the reconciler's next actions read-only: lost attempts, inspection requests, blocks, waits and dispatches; nothing executes them yet. |
 | `flywheel goal add "<title>" --id <id> [--accept CMD]... [--require TASK]...` | **implemented** | Record a factory goal; later add, list, show and set its status with `flywheel goal <add\|list\|show\|set>`. |
 | `flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]` | **implemented** | The controller loop: acquire `.flywheel/controller.lock`, tick (mark lost attempts, block tasks whose needs were scrapped), renew the lock each tick; `--once` runs one tick and releases the lock, a live lock held elsewhere exits 6. |
-| `flywheel plan`, `retry`, `handoff` | **planned** | Control plane: create tasks, resume, transfer between agents. |
+| `flywheel claim <task> [--session S] [--ttl D] [--note TEXT] [--force] [--dir DIR]` | **implemented** | Claim a task so a second lead sharing the tree knows it is driven; refuses a live claim held by another session with exit 6 unless `--force` takes it over. Advisory only — nothing yet refuses to run because of one. |
+| `flywheel release <task> [--session S] [--force] [--dir DIR]` | **implemented** | Release a claimed task; refuses to drop a live claim held by another session with exit 6 unless `--force`. Releasing an unclaimed task is a no-op (exit 0). |
+| `flywheel claims [--json] [--dir DIR]` | **implemented** | List every claim sorted by task: session, note, age, and live or expired; a malformed claim file is skipped, never fatal. |
 | `flywheel handoff [--dir DIR] [--stdout]` | **implemented** | Print the handoff summary for a new head — in-flight tasks (with session and model), blockers, next ready tasks and the default worker model; with `--stdout` to stdout, otherwise into `flywheel.md` between the handoff markers. |
 | `flywheel plan`, `retry` | **planned** | Control plane: create tasks, resume, transfer between agents. |
 | `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
@@ -187,13 +189,14 @@ A unit's gates may depend on machine state outside the repo — a database, a lo
 
 ## Control plane vs data plane
 
-| | Commands (all planned) | Purpose | Until they land |
+| | Commands | Purpose | Not yet built |
 | --- | --- | --- | --- |
-| **Control plane** | `flywheel plan`, `run`, `retry`, `handoff` | Move work forward: create tasks, dispatch, resume, transfer between agents. | Write brief files and run the raw `opencode` commands by hand (above). |
-| **Data plane** | `flywheel status`, `trace`, `artifacts` | Understand state: what's in flight, where each task sits, what each worker produced. | Read `flywheel.md`, `.flywheel/state.json`, and `.flywheel/briefs/` directly. |
+| **Control plane** | `flywheel run`, `handoff`, `claim`, `release`, `land`, `controller` (`plan`, `retry` still planned) | Move work forward: dispatch, resume, transfer, land. | `flywheel plan`/`retry`: write brief files and run the raw `opencode` commands by hand (above). |
+| **Data plane** | `flywheel status`, `trace`, `cost`, `stats`, `next` (`artifacts` still planned) | Understand state: what's in flight, where each task sits, what each worker produced. | `flywheel artifacts`: read `.flywheel/runs/` and `.flywheel/briefs/` directly. |
 
 Both are reachable by anyone (agent or human) — the judgment layer differs, the substrate
-doesn't. The CLI commands are planned; do not invoke them yet.
+doesn't. `flywheel plan`, `retry` and `artifacts` are still planned; everything else in this table
+is built and safe to invoke.
 
 ## Role economy
 

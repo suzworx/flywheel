@@ -124,8 +124,11 @@ to verify's T1, so validate no longer fails the stale gate.
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
 First choice: `flywheel log --task <id> --kind planned --brief <path>`, then `flywheel run <task>`
-(attaches the brief with `--file`, applies the deny policy, records every event). The hand-built
-**fresh run** below is the fallback (e.g. one increment of a brief): verify flags first
+(attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
+adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,
+or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
+hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
+verify flags first
 (`opencode run --help`), label with `--title`, auto-approve with `--auto`, emit JSON so you capture
 the session id, and add `--variant low` (the default reasoning variant spends 17-30 k reasoning
 tokens planning one step and caps with nothing written; `--variant low` keeps ~1 k per step). Every
