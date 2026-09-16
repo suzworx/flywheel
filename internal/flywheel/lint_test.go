@@ -130,6 +130,18 @@ func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
 	want(t, res, nil, nil)
 }
 
+func TestLintBriefLiveGateRepeatsGateAlone(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\ngate: true\nlive-gate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"live-gate 1 repeats gate 1; a live gate must run the real path, not the mocked one"}, nil)
+}
+
+func TestLintBriefDistinctLiveGatePasses(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\ngate: true\nlive-gate: exit 0\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
 func TestLintBriefUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	_, err := LintBrief(dir, filepath.Join(dir, "nope.txt"))

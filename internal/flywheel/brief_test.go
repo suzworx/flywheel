@@ -87,6 +87,44 @@ func TestParseBriefHeaderGatesInOrder(t *testing.T) {
 	}
 }
 
+func TestParseBriefHeaderLiveGatesInOrder(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\nlive-gate: go run ./cmd/real\n"+
+		"gate: go test ./...\nlive-gate: go run ./cmd/real2\n\n# TASK: live\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	wantGates := []string{"go build ./...", "go test ./..."}
+	if len(h.Gates) != len(wantGates) {
+		t.Fatalf("gates = %v, want %v", h.Gates, wantGates)
+	}
+	for i := range wantGates {
+		if h.Gates[i] != wantGates[i] {
+			t.Errorf("gates[%d] = %q, want %q", i, h.Gates[i], wantGates[i])
+		}
+	}
+	wantLive := []string{"go run ./cmd/real", "go run ./cmd/real2"}
+	if len(h.LiveGates) != len(wantLive) {
+		t.Fatalf("liveGates = %v, want %v", h.LiveGates, wantLive)
+	}
+	for i := range wantLive {
+		if h.LiveGates[i] != wantLive[i] {
+			t.Errorf("liveGates[%d] = %q, want %q", i, h.LiveGates[i], wantLive[i])
+		}
+	}
+}
+
+func TestParseBriefHeaderLiveGatesAbsentIsEmpty(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if len(h.LiveGates) != 0 {
+		t.Errorf("liveGates = %v, want empty", h.LiveGates)
+	}
+}
+
 func TestParseBriefHeaderExclusiveAndReview(t *testing.T) {
 	path := writeBrief(t, "owns: a.go\nexclusive: .pio/\nreview: lead\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)

@@ -28,6 +28,7 @@ type RunOptions struct {
 	Worker       string // worker name; empty selects the default worker
 	Model        string // override; empty uses the worker's model
 	Resume       bool
+	ForceModel   bool   // bypass the L-03 refusal when --resume --model names a model that is not an approved fallback
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
 	StartTimeout time.Duration
 	StallTimeout time.Duration
@@ -148,6 +149,25 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	adap, err := AdapterFor(worker.Adapter)
 	if err != nil {
 		return Result{}, err
+	}
+
+	// L-03: a resume that switches the worker's model onto one nobody
+	// approved is refused before any event is read or recorded, unless
+	// --force-model overrides it. A fresh run's model choice is unrestricted.
+	if o.Resume && model != worker.Model && !o.ForceModel {
+		approved := false
+		for _, f := range worker.Fallbacks {
+			if f.Model == model && f.Approved {
+				approved = true
+				break
+			}
+		}
+		if !approved {
+			return Result{}, &RuleRefusal{
+				Rule: "L-03",
+				Fix:  fmt.Sprintf("model %q is not an approved fallback for worker %q; add it to the worker's fallbacks with \"approved\": true in .flywheel/config.json, or pass --force-model", model, worker.Name),
+			}
+		}
 	}
 
 	// T1: dispatched needs a planned event carrying the brief path.

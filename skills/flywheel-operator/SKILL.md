@@ -33,6 +33,7 @@ land.
 | `flywheel init [--track\|--ignore] [--agents-md] [--hooks] [--force]` | **implemented** | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/events.jsonl` + `.flywheel/briefs/`; `--track` (default) keeps `flywheel.md` a committed file, `--ignore` adds it to the target's root `.gitignore` instead; `--agents-md` writes/refreshes an AGENTS.md block naming the installed skills; `--hooks` writes the Claude/OpenCode session-logging hooks; refuses an existing state file unless `--force`. |
 | `flywheel version` | **implemented** | Print the flywheel version. |
 | `flywheel config` | **implemented** | Read and validate `.flywheel/config.json`. |
+| `flywheel doctor [--dir DIR]` | **implemented** | Probe the configured worker's model, then its fallbacks, through the worker's own adapter and print one `<model>: <class>` line per probe; exit 0 when every probe is ok, 1 when any is not. |
 | `flywheel log --task <id> --kind planned --brief <path>` | **implemented** | Record a planned brief to the event log before dispatch. |
 | `flywheel state` | **implemented** | Derive and print state from the event log. |
 | `flywheel run <task> [--worker NAME] [--stall-timeout D]` | **implemented** | Canonical dispatch: pick a worker from `.flywheel/config.json`, or `--worker NAME` to choose among several configured workers; attach the brief, apply the deny policy, record every event; `--stall-timeout` bounds a mid-stream gap (0 = the worker's configured `stall_timeout`, itself 600s). |

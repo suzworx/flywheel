@@ -111,6 +111,13 @@ func requireReadings(dir, wd, task string, events []Event) (RuleRefusal, error) 
 			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for gate %s on tree %s after the latest finished event; run: flywheel validate %s", idx, tree, task)}, nil
 		}
 	}
+	for i := range header.LiveGates {
+		n := i + 1
+		idx := fmt.Sprintf("live%d", n)
+		if !hasPassingValidated(events, task, idx, tree, latest) {
+			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for live-gate %d on tree %s after the latest finished event; run: flywheel validate %s --live", n, tree, task)}, nil
+		}
+	}
 	if !hasCleanOwnsChecked(events, task, tree, latest) {
 		return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no clean owns_checked for tree %s after the latest finished event; run: flywheel validate %s", tree, task)}, nil
 	}

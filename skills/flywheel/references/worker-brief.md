@@ -36,6 +36,11 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   gates (`GOOS=linux go vet ./...`, `GOOS=darwin go vet ./...`): files behind a
   `//go:build !windows` constraint are never compiled on Windows, and a missing import there passed
   every local gate and failed CI.
+- **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
+  provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
+  lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
+  dispatch or an ordinary `flywheel validate <task>`. A `pass` verdict is refused (T3) until a
+  passing live reading exists on the same tree.
 - **Working directory** — the first body line names the absolute path the worker may touch: "Work
   only in <abs path>". The brief file lives inside that directory (`<workdir>/.flywheel/briefs/`),
   never in another checkout — a brief attached from a different checkout made a worker edit that

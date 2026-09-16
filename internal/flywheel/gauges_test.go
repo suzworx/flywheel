@@ -70,6 +70,142 @@ func initTask(t *testing.T, gates []string) (string, error) {
 	return dir, nil
 }
 
+// initTaskLive is initTask plus live-gate: lines in the brief header
+// (issue #152).
+func initTaskLive(t *testing.T, gates, liveGates []string) (string, error) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		return "", fmt.Errorf("Init() error = %w", err)
+	}
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write .gitignore: %w", err)
+	}
+	brief := "owns: a.go\nneeds: none\n"
+	for _, g := range gates {
+		brief = brief + "gate: " + g + "\n"
+	}
+	for _, g := range liveGates {
+		brief = brief + "live-gate: " + g + "\n"
+	}
+	brief = brief + "\n# TASK: live\n"
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+		return "", fmt.Errorf("write brief: %w", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		return "", fmt.Errorf("AppendEvent() error = %w", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "brief"})
+	return dir, nil
+}
+
+// TestValidateLiveGateNotRunWithoutFlag checks that with Live false a
+// declared live gate does not run and records no event, while LiveDeclared
+// still reports the count and a mocked pass stays a legitimate OK() on its
+// own (issue #152).
+func TestValidateLiveGateNotRunWithoutFlag(t *testing.T) {
+	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskLive() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.LiveDeclared != 1 {
+		t.Errorf("LiveDeclared = %d, want 1", res.LiveDeclared)
+	}
+	if res.LiveRun {
+		t.Error("LiveRun = true, want false")
+	}
+	for _, g := range res.Gates {
+		if g.Live {
+			t.Errorf("gates = %v, want no live entries when Live is false", res.Gates)
+		}
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "validated" && e.Gate == "live1" {
+			t.Error("a live1 validated event was recorded despite Live being false")
+		}
+	}
+	if !res.OK() {
+		t.Error("OK() = false, want true: the ordinary gate passes and a mocked pass stays legitimate on its own")
+	}
+}
+
+// TestValidateLiveGateRunsAndRecords checks that with Live true the declared
+// live gate runs through the same path as an ordinary gate: a validated
+// event with Gate "live1" and its own evidence log (issue #152).
+func TestValidateLiveGateRunsAndRecords(t *testing.T) {
+	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskLive() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Live: true})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.LiveRun {
+		t.Error("LiveRun = false, want true")
+	}
+	var live *GateOut
+	for i := range res.Gates {
+		if res.Gates[i].Live {
+			live = &res.Gates[i]
+		}
+	}
+	if live == nil {
+		t.Fatal("no live gate in res.Gates")
+	}
+	if live.Gate != "live1" || live.RC != 0 {
+		t.Errorf("live gate = %+v, want Gate live1 RC 0", live)
+	}
+	log := filepath.Join(dir, ".flywheel", "evidence", "T1", "r1", "gate-live-1.log")
+	if _, err := os.Stat(log); err != nil {
+		t.Errorf("live gate evidence log missing: %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" && e.Gate == "live1" {
+			found = true
+			if e.RC == nil || *e.RC != 0 {
+				t.Errorf("live1 event rc = %v, want 0", e.RC)
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded for live1")
+	}
+	if !res.OK() {
+		t.Error("OK() = false, want true")
+	}
+}
+
+// TestValidateLiveGateFailureFailsGatesOK checks a failing live gate sets
+// GatesOK false exactly as an ordinary gate does (issue #152).
+func TestValidateLiveGateFailureFailsGatesOK(t *testing.T) {
+	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 1"})
+	if err != nil {
+		t.Fatalf("initTaskLive() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Live: true})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.GatesOK || res.OK() {
+		t.Error("GatesOK = true, want false: the live gate failed")
+	}
+}
+
 func TestValidatePassingGates(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {

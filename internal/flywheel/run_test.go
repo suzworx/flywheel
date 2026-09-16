@@ -120,6 +120,82 @@ func normLF(b []byte) string {
 	return strings.ReplaceAll(string(b), "\r\n", "\n")
 }
 
+// writeDelta writes the default resume delta file for task under dir.
+func writeDelta(t *testing.T, dir, task string) {
+	t.Helper()
+	briefs := filepath.Join(dir, ".flywheel", "briefs")
+	if err := os.MkdirAll(briefs, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", briefs, err)
+	}
+	if err := os.WriteFile(filepath.Join(briefs, task+".delta.txt"), []byte("delta\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+}
+
+// TestRunResumeModelGateRefusesUnapproved checks L-03: a resume naming a
+// model that differs from the worker's model and is not an approved
+// fallback is refused before any event is read (issue #23).
+func TestRunResumeModelGateRefusesUnapproved(t *testing.T) {
+	dir := setupTask(t)
+	other := fixturePath("longcost.jsonl", t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	cfg.Workers[0].Fallbacks = []Fallback{{Model: other}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1", Resume: true, Model: other})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "L-03" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal L-03", err)
+	}
+}
+
+// TestRunResumeModelGateApprovedResumesNormally checks a resume onto an
+// approved fallback dispatches normally.
+func TestRunResumeModelGateApprovedResumesNormally(t *testing.T) {
+	dir := setupTask(t)
+	approved := fixturePath("longcost.jsonl", t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	cfg.Workers[0].Fallbacks = []Fallback{{Model: approved, Approved: true}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	res, err := Run(dir, RunOptions{Task: "T1", Resume: true, Model: approved})
+	if err != nil {
+		t.Fatalf("resume Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("resume result = %+v, want rc 0 reason stop", res)
+	}
+}
+
+// TestRunResumeModelGateForceModelBypasses checks --force-model dispatches a
+// resume onto a model that is not an approved fallback (or a fallback at
+// all).
+func TestRunResumeModelGateForceModelBypasses(t *testing.T) {
+	dir := setupTask(t)
+	other := fixturePath("longcost.jsonl", t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	res, err := Run(dir, RunOptions{Task: "T1", Resume: true, Model: other, ForceModel: true})
+	if err != nil {
+		t.Fatalf("resume Run() with --force-model error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("resume result = %+v, want rc 0 reason stop", res)
+	}
+}
+
 func TestRunSimClean(t *testing.T) {
 	dir := setupTask(t)
 	model := fixturePath("clean.jsonl", t)
