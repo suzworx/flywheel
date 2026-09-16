@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.11.0](https://github.com/suzworx/flywheel/compare/v0.10.0...v0.11.0) (2026-09-16)
+
+
+### Features
+
+* add live-gate:, a gate that runs only in the lead's verification pass ([#191](https://github.com/suzworx/flywheel/issues/191)) ([4861685](https://github.com/suzworx/flywheel/commit/4861685)), closes [#152](https://github.com/suzworx/flywheel/issues/152)
+* add flywheel doctor, and gate a resumed model switch on approved fallbacks ([#190](https://github.com/suzworx/flywheel/issues/190)) ([e2794ea](https://github.com/suzworx/flywheel/commit/e2794eaad0b379100171370529cef01a82c6811a)), closes [#23](https://github.com/suzworx/flywheel/issues/23)
+* add flywheel feedback: add, list, dismiss, and a generated learnings.md ([#195](https://github.com/suzworx/flywheel/issues/195)) ([dd7e1cd](https://github.com/suzworx/flywheel/commit/dd7e1cd54713c58247a7168a1164e7e2d62c6704))
+* record a reviewer's domain checklist on the reviewed event ([#184](https://github.com/suzworx/flywheel/issues/184)) ([c394358](https://github.com/suzworx/flywheel/commit/c3943580fe88e64d88f0cecd6df00e35f0c32250)), closes [#32](https://github.com/suzworx/flywheel/issues/32)
+
+
+### Bug Fixes
+
+* a failed claude run is not a clean stop, and --resume now resumes ([#194](https://github.com/suzworx/flywheel/issues/194)) ([d88b9f9](https://github.com/suzworx/flywheel/commit/d88b9f9bfd6bbb932aa72007807664bfc0e48d9a)), closes [#188](https://github.com/suzworx/flywheel/issues/188) [#189](https://github.com/suzworx/flywheel/issues/189)
+* count a claude worker's model turns, so the andon works on that adapter ([#199](https://github.com/suzworx/flywheel/issues/199)) ([05b8dcd](https://github.com/suzworx/flywheel/commit/05b8dcd6ad26f8ee5c6236972a40106edfba8ea9)), closes [#187](https://github.com/suzworx/flywheel/issues/187)
+* stop blaming another worktree's generated flywheel.md on a unit ([#193](https://github.com/suzworx/flywheel/issues/193)) ([fec4e50](https://github.com/suzworx/flywheel/commit/fec4e50ff79e1bd1078fcb42aa08d4764f853ecf)), closes [#186](https://github.com/suzworx/flywheel/issues/186)
+
 ## [0.10.0](https://github.com/suzworx/flywheel/compare/v0.9.0...v0.10.0) (2026-09-16)
 
 
