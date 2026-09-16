@@ -246,7 +246,7 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 | `flywheel claims` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | List every claim: task, session, note, age, live or expired. |
 | `flywheel explain`, `flywheel context` | planned ([#58](https://github.com/suzworx/flywheel/issues/58)) | A task's traveler; the factory state sized for a joining agent. |
 | `flywheel trace <session> [--dir DIR]` | available ([#62](https://github.com/suzworx/flywheel/issues/62)) | Everything one session did, across tasks. |
-| `flywheel feedback` | planned ([#37](https://github.com/suzworx/flywheel/issues/37)–[#40](https://github.com/suzworx/flywheel/issues/40)) | Turn signals into learnings; export and submit upstream. |
+| `flywheel feedback` | available (add/list/dismiss; export and submit land with [#40](https://github.com/suzworx/flywheel/issues/40)) | Turn signals into learnings: `add`, list, `dismiss`, and a generated `learnings.md`. |
 
 ## Skills
 
