@@ -167,6 +167,44 @@ func TestInspectMatchesValidateWorkdir(t *testing.T) {
 	}
 }
 
+// TestInspectPassRefusedWithoutLiveReading checks that a brief declaring a
+// live-gate is refused T3 on a pass verdict when only the ordinary gates
+// have a validated reading (issue #152).
+func TestInspectPassRefusedWithoutLiveReading(t *testing.T) {
+	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskLive() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass with no live reading")
+	}
+	if got := refusalRule(t, err); got != "T3" {
+		t.Errorf("rule = %q, want T3", got)
+	}
+}
+
+// TestInspectPassAcceptedWithLiveReading checks that the same brief passes
+// once a passing live reading exists on the same tree, from a single
+// Live: true validate pass (issue #152).
+func TestInspectPassAcceptedWithLiveReading(t *testing.T) {
+	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskLive() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Live: true}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+}
+
 // TestInspectReworkThenPassSameSession checks that an inspector session is
 // never mistaken for a worker session: after a rework, the same inspector can
 // pass with the same session once the readings hold.

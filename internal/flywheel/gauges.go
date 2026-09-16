@@ -27,6 +27,10 @@ type ValidateOptions struct {
 	// copied from Dir into Workdir before the gates run, satisfying the
 	// brief's declared needs-state: paths in an isolated Workdir (#136).
 	Carry []string
+	// Live runs the brief's declared live-gate: lines too, after the
+	// ordinary gates: the lead's verification pass, never a worker's own
+	// mocked run (issue #152).
+	Live bool
 }
 
 // GateOut reports one gate run.
@@ -45,6 +49,9 @@ type GateOut struct {
 	// because the rerun was blocked too, or the "blocked by <paths>" message
 	// when Inconclusive is true; empty otherwise.
 	Note string
+	// Live is true for a live-gate: entry (issue #152), false for an
+	// ordinary gate: entry.
+	Live bool
 }
 
 // GaugeResult reports a full validation pass: the tree hash, one entry per
@@ -62,6 +69,12 @@ type GaugeResult struct {
 	Attributed []string
 	GatesOK    bool
 	OwnsOK     bool
+	// LiveDeclared is how many live-gate: lines the brief declared, set
+	// whether or not this pass ran them (issue #152).
+	LiveDeclared int
+	// LiveRun is true when this pass ran the declared live gates (Live was
+	// set on ValidateOptions).
+	LiveRun bool
 	// Refused carries the needs-state refusal message (issue #136) when
 	// validation stopped before running any gate because a brief-declared
 	// needs-state: path was neither present in an isolated Workdir nor
@@ -169,59 +182,90 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
-		logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + n + ".log"
-		logPath := filepath.Join(o.Dir, logRel)
-		rc, dur, out, err := runGate(wd, gate)
+		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, header.Owns, n, n, gate, false)
 		if err != nil {
 			return GaugeResult{}, err
 		}
-		blocked := strings.Contains(string(out), hostBlocked)
-		if blocked {
-			rc2, dur2, out2, err2 := runGate(wd, gate)
-			if err2 != nil {
-				return GaugeResult{}, err2
-			}
-			rc, dur, out = rc2, dur2, out2
-			blocked = strings.Contains(string(out), hostBlocked)
-		}
-		if err := os.WriteFile(logPath, out, 0o644); err != nil {
-			return GaugeResult{}, fmt.Errorf("write %s: %w", logPath, err)
-		}
-		sum := sha256.Sum256(out)
-		rcPtr := new(int)
-		*rcPtr = rc
-		ev := Event{
-			TS: "", Task: task, Kind: "validated", Attempt: attempt,
-			Gate: n, Command: gate, Tree: tree, RC: rcPtr,
-			DurationMS: dur, SHA256: hex.EncodeToString(sum[:]), Path: logRel,
-			Persona: "supervisor",
-		}
-		var note string
-		inconclusive := false
-		if blocked {
-			ev.Reason = "host-blocked"
-			note = hostBlockNote(out)
-			ev.Note = note
-		} else if rc != 0 {
-			if paths := inconclusivePaths(wd, header.Owns, out); len(paths) > 0 {
-				inconclusive = true
-				note = inconclusiveNote(paths)
-				ev.Reason = "inconclusive"
-				ev.Note = note
-			}
-		}
-		if err := AppendEvent(o.Dir, ev); err != nil {
-			return GaugeResult{}, err
-		}
-		res.Gates = append(res.Gates, GateOut{
-			Gate: n, Command: gate, RC: rc, DurationMS: dur,
-			LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
-		})
-		if rc != 0 || blocked {
+		res.Gates = append(res.Gates, out)
+		if out.RC != 0 || out.HostBlocked {
 			res.GatesOK = false
 		}
 	}
+	res.LiveDeclared = len(header.LiveGates)
+	res.LiveRun = o.Live
+	if o.Live {
+		for i, gate := range header.LiveGates {
+			n := strconv.Itoa(i + 1)
+			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, header.Owns, "live"+n, "live-"+n, gate, true)
+			if err != nil {
+				return GaugeResult{}, err
+			}
+			res.Gates = append(res.Gates, out)
+			if out.RC != 0 || out.HostBlocked {
+				res.GatesOK = false
+			}
+		}
+	}
 	return finishValidate(o.Dir, wd, task, attempt, tree, header.Owns, header.NeedsState, events, res)
+}
+
+// runAndRecordGate runs one declared gate — ordinary or live — through the
+// path every gate shares: runGate, a rerun when the host blocks the first
+// attempt, the evidence log write at
+// ".flywheel/evidence/<task>/<attempt>/gate-<logSuffix>.log", and a
+// validated event carrying gateID as its Gate field. live sets GateOut.Live
+// (issue #152); the recorded reading is otherwise identical to an ordinary
+// gate's.
+func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID, logSuffix, gate string, live bool) (GateOut, error) {
+	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
+	logPath := filepath.Join(dir, logRel)
+	rc, dur, out, err := runGate(wd, gate)
+	if err != nil {
+		return GateOut{}, err
+	}
+	blocked := strings.Contains(string(out), hostBlocked)
+	if blocked {
+		rc2, dur2, out2, err2 := runGate(wd, gate)
+		if err2 != nil {
+			return GateOut{}, err2
+		}
+		rc, dur, out = rc2, dur2, out2
+		blocked = strings.Contains(string(out), hostBlocked)
+	}
+	if err := os.WriteFile(logPath, out, 0o644); err != nil {
+		return GateOut{}, fmt.Errorf("write %s: %w", logPath, err)
+	}
+	sum := sha256.Sum256(out)
+	rcPtr := new(int)
+	*rcPtr = rc
+	ev := Event{
+		TS: "", Task: task, Kind: "validated", Attempt: attempt,
+		Gate: gateID, Command: gate, Tree: tree, RC: rcPtr,
+		DurationMS: dur, SHA256: hex.EncodeToString(sum[:]), Path: logRel,
+		Persona: "supervisor",
+	}
+	var note string
+	inconclusive := false
+	if blocked {
+		ev.Reason = "host-blocked"
+		note = hostBlockNote(out)
+		ev.Note = note
+	} else if rc != 0 {
+		if paths := inconclusivePaths(wd, owns, out); len(paths) > 0 {
+			inconclusive = true
+			note = inconclusiveNote(paths)
+			ev.Reason = "inconclusive"
+			ev.Note = note
+		}
+	}
+	if err := AppendEvent(dir, ev); err != nil {
+		return GateOut{}, err
+	}
+	return GateOut{
+		Gate: gateID, Command: gate, RC: rc, DurationMS: dur,
+		LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
+		Live: live,
+	}, nil
 }
 
 // finishValidate runs the owns check, records owns_checked, refreshes derived

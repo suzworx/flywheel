@@ -36,6 +36,10 @@ You do:
   owns each; serialize on them otherwise.
 - Mark docs, audit and verification work orders as early-dispatch candidates, with a "planned,
   not found" addendum for what is not yet in the tree.
+- When an acceptance criterion says a feature works end to end, give at least ONE work order in
+  the plan a `live-gate:` that runs the real path, not a mock. Forty-two units of mocked green is
+  weaker evidence than one real turn — a unit whose deliverable is a provider-facing contract has
+  no failing gate available to it on a mock, only on the real thing.
 
 You never:
 - Dispatch. Dispatch is the foreman's call, and it needs the ready filter.
