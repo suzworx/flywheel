@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -185,7 +186,11 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // finishValidate runs the owns check, records owns_checked, refreshes derived
 // state, and returns the result. A changed path outside owns is excused when
 // it was in the dispatched baseline and its content is unchanged: the lead or
-// another worker left it dirty before this unit started.
+// another worker left it dirty before this unit started. When the task's
+// dispatched event carries a worktrees snapshot (issue #87), every other
+// worktree's current changed paths are compared against it too: a path that
+// is new or whose sha changed is always outside, listed as "<worktree
+// path>: <path>" — never excused by this task's own owns list.
 func finishValidate(dir, wd, task, attempt, tree string, owns []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
@@ -203,6 +208,25 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 			outside = append(outside, p)
 		}
 	}
+	if snap := worktreesFor(events, task); snap != nil {
+		wtPaths := make([]string, 0, len(snap))
+		for p := range snap {
+			wtPaths = append(wtPaths, p)
+		}
+		sort.Strings(wtPaths)
+		for _, wtPath := range wtPaths {
+			wtBase := snap[wtPath]
+			wtChanged, err := changedPaths(wtPath)
+			if err != nil {
+				continue
+			}
+			for _, p := range wtChanged {
+				if bh, ok := wtBase[p]; !ok || fileSHA(wtPath, p) != bh {
+					outside = append(outside, wtPath+": "+p)
+				}
+			}
+		}
+	}
 	res.Outside = outside
 	res.OwnsOK = len(outside) == 0
 	if err := AppendEvent(dir, Event{
@@ -213,6 +237,18 @@ func finishValidate(dir, wd, task, attempt, tree string, owns []string, events [
 	}
 	_, _ = WriteState(dir)
 	return res, nil
+}
+
+// worktreesFor returns the first dispatched event's worktrees snapshot for
+// the task, or nil when that event carries none. Mirrors baselineFor: a
+// later dispatched event's snapshot never widens or replaces the first.
+func worktreesFor(events []Event, task string) map[string]map[string]string {
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" {
+			return e.Worktrees
+		}
+	}
+	return nil
 }
 
 // treeHash returns the SHA-1 tree id of wd computed with a temporary index

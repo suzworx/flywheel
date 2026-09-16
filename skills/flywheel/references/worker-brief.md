@@ -145,7 +145,8 @@ matching rule wins** — with the catch-all last, nothing is denied (verified 20
 1.18.30). A `deny` blocks the command even under `--auto`, and OpenCode checks **each command in a
 chain**, so `cd . && git stash list` and `echo ok; git reset --soft HEAD` are denied too.
 `git -C .` slipped past a policy without a `git -C*` rule, which is why the policy below also
-denies `git -C*`, `git --work-tree*` and `git --git-dir*`.
+denies `git -C*`, `git --work-tree*` and `git --git-dir*`. `flywheel run` attaches the brief from
+inside the worktree and the worker policy denies external directories (issue #87).
 
 - `-m "$MODEL"` is the **approved default**. Never switch providers or models silently, and never
   assert a metered model is free. Cost is small but real: a one-line probe on the approved model on
