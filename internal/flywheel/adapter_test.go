@@ -249,6 +249,61 @@ func TestOpenCodeParseToolPathFallsBackToPathField(t *testing.T) {
 	}
 }
 
+// TestClaudeParseRealFixture parses testdata/claude-real.jsonl, five REAL
+// lines captured from `claude -p ... --output-format stream-json --verbose`
+// on this machine. The captured session failed to authenticate, so the
+// assistant line's text is an API error message and the result line carries
+// is_error: true; that is still real structure, asserted as captured, not as
+// a successful run would read.
+func TestClaudeParseRealFixture(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	lines := fixtureLines("claude-real.jsonl", t)
+	if len(lines) != 5 {
+		t.Fatalf("claude-real.jsonl has %d lines, want 5", len(lines))
+	}
+	for i, ln := range lines[:2] {
+		if _, ok := a.Parse([]byte(ln)); ok {
+			t.Errorf("hook line %d parsed, want skipped (hook_started/hook_response)", i)
+		}
+	}
+	obs, ok := a.Parse([]byte(lines[2]))
+	if !ok || obs.Kind != "start" || obs.Session != "e28e5e42-67d3-4524-b574-ced45f82b831" {
+		t.Errorf("init line = %v, %v, want start with the session", obs, ok)
+	}
+	obs, ok = a.Parse([]byte(lines[3]))
+	if !ok || obs.Kind != "text" || obs.Text != "Failed to authenticate: OAuth session expired and could not be refreshed" {
+		t.Errorf("assistant line = %v, %v, want the captured auth-error text", obs, ok)
+	}
+	obs, ok = a.Parse([]byte(lines[4]))
+	if !ok || obs.Kind != "step" || obs.Reason != "stop" || obs.Cost != 0 {
+		t.Errorf("result line = %v, %v, want step stop cost 0 (is_error:true does not override stop_reason:stop_sequence)", obs, ok)
+	}
+}
+
+// TestClaudeParseToolUseFixture parses testdata/claude-tool.jsonl, a
+// HAND-BUILT fixture (not captured bytes): an Edit tool_use (file_path), a
+// Grep tool_use (path, no file_path), and a result with stop_reason
+// max_tokens.
+func TestClaudeParseToolUseFixture(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	lines := fixtureLines("claude-tool.jsonl", t)
+	if len(lines) != 3 {
+		t.Fatalf("claude-tool.jsonl has %d lines, want 3", len(lines))
+	}
+	obs, ok := a.Parse([]byte(lines[0]))
+	if !ok || obs.Kind != "tool" || obs.Tool != "edit" || obs.Path != "internal/flywheel/adapter.go" {
+		t.Errorf("Edit tool_use = %v, %v, want tool edit with the file path", obs, ok)
+	}
+	obs, ok = a.Parse([]byte(lines[1]))
+	if !ok || obs.Kind != "tool" || obs.Tool != "grep" || obs.Path != "internal/flywheel" {
+		t.Errorf("Grep tool_use = %v, %v, want tool grep with the path", obs, ok)
+	}
+	obs, ok = a.Parse([]byte(lines[2]))
+	if !ok || obs.Kind != "step" || obs.Reason != "length" {
+		t.Errorf("max_tokens result = %v, %v, want step length", obs, ok)
+	}
+}
+
 func TestSimAdapter(t *testing.T) {
 	a, _ := AdapterFor("sim")
 	if a.Name() != "sim" {

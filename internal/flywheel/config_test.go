@@ -112,6 +112,25 @@ func TestConfigValidateCollectsProblems(t *testing.T) {
 	}
 }
 
+// TestConfigValidateAcceptsClaudeAdapter checks "claude" joins the valid
+// adapter names (issue #49) alongside opencode and sim.
+func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() error = %v, want nil for adapter \"claude\"", err)
+	}
+}
+
+// TestConfigValidateRejectsUnknownAdapter checks an adapter outside
+// opencode/sim/claude is still rejected.
+func TestConfigValidateRejectsUnknownAdapter(t *testing.T) {
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "nope", Model: "m"}}}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `adapter "nope"`) {
+		t.Errorf("Validate() = %v, want an error naming adapter \"nope\"", err)
+	}
+}
+
 func TestLoadConfigRejectsUnknownField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".flywheel", "config.json")

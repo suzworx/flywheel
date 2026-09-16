@@ -3,6 +3,8 @@ package flywheel
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 )
 
 // RunRequest is everything the adapter needs to build a dispatch command.
@@ -47,16 +49,18 @@ type Adapter interface {
 	Parse(line []byte) (Observation, bool)
 }
 
-// AdapterFor returns the adapter named name. Phase 1 ships opencode and the
-// offline sim adapter.
+// AdapterFor returns the adapter named name: opencode, the offline sim
+// adapter, or claude (issue #49).
 func AdapterFor(name string) (Adapter, error) {
 	switch name {
 	case "opencode":
 		return opencodeAdapter{}, nil
 	case "sim":
 		return simAdapter{}, nil
+	case "claude":
+		return claudeAdapter{}, nil
 	}
-	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\" or \"sim\"", name)
+	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\", \"sim\", or \"claude\"", name)
 }
 
 // opencodeAdapter parses OpenCode's --format json JSONL run stream.
@@ -287,6 +291,107 @@ func errorMessage(m map[string]json.RawMessage) (string, bool) {
 	return string(errRaw), true
 }
 
+// claudeAdapter runs Claude Code directly (issue #49): its own
+// --output-format stream-json JSONL stream, not OpenCode's.
+type claudeAdapter struct{}
+
+func (a claudeAdapter) Name() string {
+	return "claude"
+}
+
+// Command builds the dispatch arguments. Unlike opencodeAdapter's --file,
+// the Claude CLI's -p flag takes the prompt text itself, so the prompt file
+// is read here; a read failure yields an empty prompt rather than a panic,
+// surfacing downstream as a start-failed run like any other unreadable
+// brief. --permission-mode acceptEdits mirrors opencode's --auto: edits go
+// through without a prompt, nothing beyond that is granted.
+func (a claudeAdapter) Command(r RunRequest) (string, []string) {
+	prompt, _ := os.ReadFile(r.PromptFile)
+	return "claude", []string{
+		"-p", string(prompt),
+		"--output-format", "stream-json",
+		"--verbose",
+		"--max-turns", "200",
+		"--model", r.Model,
+		"--permission-mode", "acceptEdits",
+	}
+}
+
+// Parse decodes one line of `claude -p ... --output-format stream-json
+// --verbose`. system/init becomes "start" (session from session_id);
+// assistant becomes "tool" from the first tool_use content block, else
+// "text" from the first text block (message.usage supplies Tokens either
+// way); a "result" line, or any line carrying a top-level is_error, becomes
+// "step" (Reason from stop_reason/subtype, Cost from total_cost_usd).
+// Anything else — hook events, user echoes — returns false, and unparseable
+// JSON never panics.
+func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(line, &m); err != nil {
+		return Observation{}, false
+	}
+	typ := rawString(m, "type")
+	var obs Observation
+	switch {
+	case typ == "system" && rawString(m, "subtype") == "init":
+		obs.Kind = "start"
+	case typ == "assistant":
+		var ok bool
+		if obs, ok = claudeAssistantObs(m); !ok {
+			return Observation{}, false
+		}
+	case typ == "result" || hasKey(m, "is_error"):
+		obs.Kind = "step"
+		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"))
+		obs.Cost, _ = rawFloat(m, "total_cost_usd")
+	default:
+		return Observation{}, false
+	}
+	if s, ok := rawStringOK(m, "session_id"); ok {
+		obs.Session = s
+	}
+	return obs, true
+}
+
+// claudeAssistantObs decodes one assistant line's message.content: the first
+// tool_use block when present, else the first text block; both carry Tokens
+// from message.usage. False means content had neither.
+func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
+	msgRaw, ok := m["message"]
+	if !ok {
+		return Observation{}, false
+	}
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(msgRaw, &msg); err != nil {
+		return Observation{}, false
+	}
+	var content []map[string]json.RawMessage
+	if raw, ok := msg["content"]; ok {
+		_ = json.Unmarshal(raw, &content)
+	}
+	tok := claudeTokens(msg)
+	var textBlock map[string]json.RawMessage
+	for _, block := range content {
+		switch rawString(block, "type") {
+		case "tool_use":
+			return Observation{
+				Kind:   "tool",
+				Tool:   claudeToolName(rawString(block, "name")),
+				Path:   claudeToolPath(block),
+				Tokens: tok,
+			}, true
+		case "text":
+			if textBlock == nil {
+				textBlock = block
+			}
+		}
+	}
+	if textBlock != nil {
+		return Observation{Kind: "text", Text: rawString(textBlock, "text"), Tokens: tok}, true
+	}
+	return Observation{}, false
+}
+
 // simAdapter replays a recorded OpenCode run; the model string is the fixture
 // path and Command returns an empty bin so the runner never executes a
 // process.
@@ -304,4 +409,134 @@ func (a simAdapter) Command(r RunRequest) (string, []string) {
 func (a simAdapter) Parse(line []byte) (Observation, bool) {
 	oc := opencodeAdapter{}
 	return oc.Parse(line)
+}
+
+// claudeToolNames maps a Claude tool_use name to the lowercase Tool an
+// Observation carries; any other name is lowercased unchanged.
+var claudeToolNames = map[string]string{
+	"Read": "read", "Write": "write", "Edit": "edit", "Grep": "grep", "Glob": "glob",
+}
+
+func claudeToolName(name string) string {
+	if n, ok := claudeToolNames[name]; ok {
+		return n
+	}
+	return strings.ToLower(name)
+}
+
+// claudeToolPath returns a tool_use block's target: input.file_path, else
+// input.path, else "".
+func claudeToolPath(block map[string]json.RawMessage) string {
+	inputRaw, ok := block["input"]
+	if !ok {
+		return ""
+	}
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(inputRaw, &input); err != nil {
+		return ""
+	}
+	if p := rawString(input, "file_path"); p != "" {
+		return p
+	}
+	return rawString(input, "path")
+}
+
+// claudeTokens decodes message.usage into a Tokens pointer, or nil when
+// usage is absent. Reasoning is output_tokens_details.thinking_tokens when
+// present, else 0.
+func claudeTokens(msg map[string]json.RawMessage) *Tokens {
+	usageRaw, ok := msg["usage"]
+	if !ok {
+		return nil
+	}
+	var usage map[string]json.RawMessage
+	if err := json.Unmarshal(usageRaw, &usage); err != nil {
+		return nil
+	}
+	t := &Tokens{
+		Input:      rawInt(usage, "input_tokens"),
+		Output:     rawInt(usage, "output_tokens"),
+		CacheRead:  rawInt(usage, "cache_read_input_tokens"),
+		CacheWrite: rawInt(usage, "cache_creation_input_tokens"),
+	}
+	if detailsRaw, ok := usage["output_tokens_details"]; ok {
+		var details map[string]json.RawMessage
+		if json.Unmarshal(detailsRaw, &details) == nil {
+			t.Reasoning = rawInt(details, "thinking_tokens")
+		}
+	}
+	return t
+}
+
+// claudeReason maps a result line's stop_reason/subtype to a step Reason:
+// end_turn, stop_sequence, or subtype "success" wins first (issue #49's
+// captured transcript pairs stop_sequence with a top-level is_error from an
+// unrelated auth failure, and still reads as a clean stop); max_tokens is
+// "length"; anything else, including an unmatched is_error, is "error".
+func claudeReason(stopReason, subtype string) string {
+	switch {
+	case stopReason == "end_turn" || stopReason == "stop_sequence" || subtype == "success":
+		return "stop"
+	case stopReason == "max_tokens":
+		return "length"
+	default:
+		return "error"
+	}
+}
+
+// rawString returns the string value of key in m, or "" when absent or not
+// a string.
+func rawString(m map[string]json.RawMessage, key string) string {
+	raw, ok := m[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	_ = json.Unmarshal(raw, &s)
+	return s
+}
+
+// rawStringOK is rawString but also reports whether key was present and a
+// string.
+func rawStringOK(m map[string]json.RawMessage, key string) (string, bool) {
+	raw, ok := m[key]
+	if !ok {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// rawFloat returns the float64 value of key in m.
+func rawFloat(m map[string]json.RawMessage, key string) (float64, bool) {
+	raw, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	var v float64
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// rawInt returns the int value of key in m, or 0 when absent or not a
+// number.
+func rawInt(m map[string]json.RawMessage, key string) int {
+	raw, ok := m[key]
+	if !ok {
+		return 0
+	}
+	var v int
+	_ = json.Unmarshal(raw, &v)
+	return v
+}
+
+// hasKey reports whether m carries key at all, regardless of its value.
+func hasKey(m map[string]json.RawMessage, key string) bool {
+	_, ok := m[key]
+	return ok
 }

@@ -31,7 +31,7 @@ type Config struct {
 // Worker configures a single CLI worker.
 type Worker struct {
 	Name         string     `json:"name"`
-	Adapter      string     `json:"adapter"` // "opencode" or "sim" in phase 1
+	Adapter      string     `json:"adapter"` // "opencode", "sim", or "claude"
 	Model        string     `json:"model"`
 	Variant      string     `json:"variant,omitempty"`
 	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
@@ -212,8 +212,8 @@ func (c Config) Validate() error {
 			}
 			seen[w.Name] = true
 		}
-		if w.Adapter != "opencode" && w.Adapter != "sim" {
-			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\" or \"sim\"", where, w.Adapter))
+		if w.Adapter != "opencode" && w.Adapter != "sim" && w.Adapter != "claude" {
+			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", or \"claude\"", where, w.Adapter))
 		}
 		if w.Model == "" {
 			problems = append(problems, where+": model must not be empty")
