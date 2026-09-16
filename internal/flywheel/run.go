@@ -94,8 +94,10 @@ var commandHook func(RunRequest)
 
 // Run dispatches one task to the configured worker, streams the run into
 // .flywheel/runs/<task>.<attempt>.jsonl while parsing it, and records
-// dispatched, started, worker_plan, report and finished events. Every path
-// after the dispatched event records a finished event.
+// dispatched, started, worker_plan, no-plan, report and finished events.
+// no-plan is appended once, at the 20th completed step, when no PLAN text has
+// been seen yet; it never changes the run's outcome. Every path after the
+// dispatched event records a finished event.
 func Run(dir string, o RunOptions) (res Result, err error) {
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -389,6 +391,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	started := false
 	planRecorded := false
+	noPlanRecorded := false
 	lastText := ""
 	lastReason := ""
 	seenError := false
@@ -452,6 +455,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			lastText = obs.Text
 		case "step":
 			steps++
+			if steps == 20 && !planRecorded && !noPlanRecorded {
+				noPlanRecorded = true
+				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt}); err != nil {
+					return Result{}, err
+				}
+				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
+			}
 			if obs.Reason != "" {
 				lastReason = obs.Reason
 			}

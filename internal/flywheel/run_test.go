@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1073,5 +1074,106 @@ func TestLeaseRemainsWhenRunKilled(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run() did not finish in time")
+	}
+}
+
+// noPlanFixture writes a fixture of one step_start followed by n step_finish
+// events (all reason "stop"), with an optional PLAN text line inserted right
+// after the step_start, and returns its absolute path (issue #65).
+func noPlanFixture(t *testing.T, n int, withPlan bool) string {
+	t.Helper()
+	session := "ses_test_noplan_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	if withPlan {
+		fmt.Fprintf(&b, `{"type":"text","sessionID":%q,"part":{"type":"text","text":"PLAN files-to-read: a.go"}}`+"\n", session)
+	}
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, `{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop"}}`+"\n", session)
+	}
+	path := filepath.Join(t.TempDir(), "noplan.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+// TestRunNoPlanFlaggedAt20Steps checks a 22-step run with no PLAN text
+// records exactly one no-plan event, carrying the task and attempt, and
+// finishes normally (issue #65).
+func TestRunNoPlanFlaggedAt20Steps(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, false))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop (no-plan must not change the outcome)", res.RC, res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	var np Event
+	for _, e := range evs {
+		if e.Kind == "no-plan" {
+			count++
+			np = e
+		}
+	}
+	if count != 1 {
+		t.Fatalf("no-plan events = %d, want exactly 1", count)
+	}
+	if np.Task != "T1" || np.Attempt != "r1" {
+		t.Errorf("no-plan event = %v, want task T1 attempt r1", np)
+	}
+}
+
+// TestRunPlanRecordedNoNoPlan checks a 22-step run with a PLAN line records
+// no no-plan event (issue #65).
+func TestRunPlanRecordedNoNoPlan(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, true))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "no-plan" {
+			t.Errorf("events include a no-plan event when a PLAN was recorded: %v", e)
+		}
+	}
+}
+
+// TestRunShortRunNoNoPlan checks a run that never reaches step 20 records no
+// no-plan event even without a PLAN line (issue #65).
+func TestRunShortRunNoNoPlan(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 5, false))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "no-plan" {
+			t.Errorf("events include a no-plan event for a short (5-step) run: %v", e)
+		}
 	}
 }
