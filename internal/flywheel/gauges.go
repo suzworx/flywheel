@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ValidateOptions configures one validation pass.
@@ -30,8 +31,13 @@ type GateOut struct {
 	DurationMS  int64
 	LogPath     string
 	HostBlocked bool
+	// Inconclusive is true when the gate failed for a reason attributable
+	// entirely to a changed path outside the unit's owns (issue #162): another
+	// unit's half-written file, not this unit's own work.
+	Inconclusive bool
 	// Note carries the persistent-host-block message when HostBlocked is true
-	// because the rerun was blocked too; empty otherwise.
+	// because the rerun was blocked too, or the "blocked by <paths>" message
+	// when Inconclusive is true; empty otherwise.
 	Note string
 }
 
@@ -164,17 +170,25 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			Persona: "supervisor",
 		}
 		var note string
+		inconclusive := false
 		if blocked {
 			ev.Reason = "host-blocked"
 			note = hostBlockNote(out)
 			ev.Note = note
+		} else if rc != 0 {
+			if paths := inconclusivePaths(wd, header.Owns, out); len(paths) > 0 {
+				inconclusive = true
+				note = inconclusiveNote(paths)
+				ev.Reason = "inconclusive"
+				ev.Note = note
+			}
 		}
 		if err := AppendEvent(o.Dir, ev); err != nil {
 			return GaugeResult{}, err
 		}
 		res.Gates = append(res.Gates, GateOut{
 			Gate: n, Command: gate, RC: rc, DurationMS: dur,
-			LogPath: logRel, HostBlocked: blocked, Note: note,
+			LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
 		})
 		if rc != 0 || blocked {
 			res.GatesOK = false
@@ -470,4 +484,58 @@ func ownsContains(owns []string, p string) bool {
 		}
 	}
 	return false
+}
+
+// isPathDelim splits a gate's output into path tokens on whitespace or ':',
+// matching how compilers and test runners print "file.go:12: message".
+func isPathDelim(r rune) bool {
+	return r == ':' || unicode.IsSpace(r)
+}
+
+// inconclusivePaths scans a failing gate's combined output for repo-relative
+// path tokens naming a file that exists in wd, and returns the paths outside
+// owns that are also currently changed against HEAD (per changedPaths), in
+// first-seen order with duplicates removed. It returns nil the moment the
+// output names any path inside owns (issue #162): naming an owns path makes
+// the failure ordinary, however many outside paths it also names. It also
+// returns nil when no outside changed path is named, or changedPaths fails.
+func inconclusivePaths(wd string, owns []string, out []byte) []string {
+	changed, err := changedPaths(wd)
+	if err != nil {
+		return nil
+	}
+	changedSet := make(map[string]bool, len(changed))
+	for _, p := range changed {
+		changedSet[p] = true
+	}
+	seen := make(map[string]bool)
+	var outside []string
+	for _, tok := range strings.FieldsFunc(string(out), isPathDelim) {
+		p := filepath.ToSlash(tok)
+		if _, err := os.Stat(filepath.Join(wd, filepath.FromSlash(p))); err != nil {
+			continue
+		}
+		if ownsContains(owns, p) {
+			return nil
+		}
+		if changedSet[p] && !seen[p] {
+			seen[p] = true
+			outside = append(outside, p)
+		}
+	}
+	return outside
+}
+
+// inconclusiveNote builds the note for an inconclusive gate reading: "blocked
+// by <paths>", comma-joined, at most five paths, the whole note capped at 200
+// characters.
+func inconclusiveNote(paths []string) string {
+	if len(paths) > 5 {
+		paths = paths[:5]
+	}
+	note := "blocked by " + strings.Join(paths, ", ")
+	if len(note) > 200 {
+		note = note[:200]
+	}
+	return note
 }
