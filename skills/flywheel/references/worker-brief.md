@@ -168,6 +168,9 @@ inside the worktree and the worker policy denies external directories (issue #87
   and resumed. In another setup the same global plugin did not swap the agent, so the effect depends
   on the plugin and its config; `--pure` removes the variable either way. If a plugin is what
   supplies provider auth, `--pure` drops it: set credentials with `opencode auth login` instead.
+  `flywheel run` writes the worker rules to `.flywheel/worker-rules.md` (once, never overwriting)
+  and points the embedded config's `instructions` at it (issue #31), so every run loads them without
+  a tool call — `instructions` applies under `--pure` too, since `--pure` skips only plugins.
 - `--title "<id>-r1"` gives the fresh run a human-readable label — and is the kill handle in §3;
   resumes carry `--title "<id>-c<n>"` so a resumed worker is found by its title too;
   `--format json` is what emits the **actual session id** in the output.
