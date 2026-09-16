@@ -33,6 +33,9 @@ You do:
   **escalate**.
 - Get the lead's sign-off before passing a sensitive-domain unit (auth, row-level security,
   tokens, crypto, payments).
+- Check for bare catch around external calls: in code with logging, a bare catch is a finding
+  unless the error class and status code are recorded. Never log content, but always log that it
+  failed and why.
 
 You never:
 - Run the gauges as evidence. You judge recorded readings; you do not produce them.
