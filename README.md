@@ -222,6 +222,9 @@ git still works.*
 | `flywheel controller` | available | The controller loop: one tick at a time (single-process lock), marking lost attempts and blocking tasks whose needs were scrapped. |
 | `flywheel staff` | available | Register the lead (or another role) on the floor. |
 | `flywheel goal` | available | Manage the factory's goals: add, list, show and set (add, list, show, set). |
+| `flywheel claim <task>` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | Claim a task for a session so another lead sharing the tree knows it is driven; refused (exit 6) for a live claim held elsewhere unless `--force`. |
+| `flywheel release <task>` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | Release a claimed task; refused (exit 6) for a live claim held elsewhere unless `--force`. |
+| `flywheel claims` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | List every claim: task, session, note, age, live or expired. |
 | `flywheel explain`, `flywheel context` | planned ([#58](https://github.com/suzworx/flywheel/issues/58)) | A task's traveler; the factory state sized for a joining agent. |
 | `flywheel trace <session> [--dir DIR]` | available ([#62](https://github.com/suzworx/flywheel/issues/62)) | Everything one session did, across tasks. |
 | `flywheel feedback` | planned ([#37](https://github.com/suzworx/flywheel/issues/37)–[#40](https://github.com/suzworx/flywheel/issues/40)) | Turn signals into learnings; export and submit upstream. |
