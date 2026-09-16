@@ -68,6 +68,13 @@ and steward's).
   the unit whose `owns:` holds it. Fail only the unit responsible for its own files; if owned by
   another unit still in flight, escalate or await their reading.
 
+## Domain checklists
+
+Some units need judgement the gates cannot express: a migration, an auth or permission change,
+anything touching user data or money. For these, pass one `--check TEXT` per point you confirmed
+to `flywheel review` alongside `--verdict pass`; each is recorded on the `reviewed` event's note,
+not just spoken — a confirmation that only lived in your head is not evidence.
+
 ## Escalate when
 
 - The work order is ambiguous or the diff cannot be reconciled with it.

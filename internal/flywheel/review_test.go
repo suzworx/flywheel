@@ -133,6 +133,41 @@ func TestReviewSuccessRecordsPassAndDerivesStatus(t *testing.T) {
 	}
 }
 
+func TestReviewChecklistRecordsCountAndKeepsNote(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	res, err := ReviewTask(dir, "T1", ReviewOptions{
+		Dir: dir, Verdict: "pass", Session: "r1", Note: "looks good",
+		Checklist: []string{"migration is backward compatible", "no PII in new columns"},
+	})
+	if err != nil {
+		t.Fatalf("ReviewTask() error = %v", err)
+	}
+	if len(res.Checklist) != 2 {
+		t.Errorf("Checklist = %v, want 2 entries", res.Checklist)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "reviewed" {
+			found = true
+			want := "looks good; checklist: 2 confirmed"
+			if e.Note != want {
+				t.Errorf("note = %q, want %q", e.Note, want)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no reviewed event recorded")
+	}
+}
+
 func TestReviewRemovesTempWorktree(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {

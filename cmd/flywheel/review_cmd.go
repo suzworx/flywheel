@@ -11,16 +11,17 @@ import (
 
 func init() {
 	register("review", "re-run a task's gates and owns check in an isolated worktree", runReview)
-	registerHelp("review", "flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := reviewFlags(); return fs })
+	registerHelp("review", "flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := reviewFlags(); return fs })
 }
 
 // reviewOptions holds the parsed review flags.
 type reviewOptions struct {
-	dir     string
-	workdir string
-	verdict string
-	session string
-	note    string
+	dir       string
+	workdir   string
+	verdict   string
+	session   string
+	note      string
+	checklist repeatable
 }
 
 // reviewFlags defines review's flags once, so help and run share them.
@@ -33,12 +34,13 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.StringVar(&o.verdict, "verdict", "", "pass, correct, or reject")
 	fs.StringVar(&o.session, "session", "", "reviewer session, distinct from every worker session")
 	fs.StringVar(&o.note, "note", "", "optional review note")
+	fs.Var(&o.checklist, "check", "domain checklist confirmation line (repeatable)")
 	return fs, o
 }
 
 // reviewUsage prints the flywheel review usage line.
 func reviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--dir DIR] [--workdir PATH]")
+	fmt.Fprintln(w, "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]")
 }
 
 // runReview implements `flywheel review <task>`: re-run the task's declared
@@ -61,6 +63,7 @@ func runReview(args []string) {
 	task := pos[0]
 	res, err := flywheel.ReviewTask(o.dir, task, flywheel.ReviewOptions{
 		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Note: o.note,
+		Checklist: o.checklist,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
@@ -76,6 +79,11 @@ func runReview(args []string) {
 	fmt.Printf("%s finished: %s\n", task, reason)
 	if res.Report {
 		fmt.Printf("%s report: %s\n", task, res.ReportPath)
+	}
+	if o.verdict == "pass" && len(res.Checklist) > 0 {
+		for _, c := range res.Checklist {
+			fmt.Printf("checked: %s\n", c)
+		}
 	}
 	fmt.Printf("%s reviewed %s\n", task, o.verdict)
 }

@@ -10,22 +10,24 @@ import (
 
 // ReviewOptions configures one review.
 type ReviewOptions struct {
-	Dir     string // flywheel root; default "."
-	Workdir string // git working tree to review; default Dir
-	Verdict string
-	Session string
-	Note    string
+	Dir       string // flywheel root; default "."
+	Workdir   string // git working tree to review; default Dir
+	Verdict   string
+	Session   string
+	Note      string
+	Checklist []string // domain checklist lines the reviewer confirms; optional
 }
 
 // ReviewResult reports what a successful review found before recording the
-// reviewed event: the workdir's tree hash, and the task's latest finished
-// reason and report path, when either exists.
+// reviewed event: the workdir's tree hash, the task's latest finished reason
+// and report path, when either exists, and the checklist lines confirmed.
 type ReviewResult struct {
 	Tree           string
 	Finished       bool
 	FinishedReason string
 	Report         bool
 	ReportPath     string
+	Checklist      []string
 }
 
 // ReviewTask re-runs a task's declared gates and owns check on an isolated
@@ -93,7 +95,7 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 	if err != nil {
 		return ReviewResult{}, err
 	}
-	res := ReviewResult{Tree: tree}
+	res := ReviewResult{Tree: tree, Checklist: o.Checklist}
 	if reason, ok := latestFinishedReason(events, task); ok {
 		res.Finished = true
 		res.FinishedReason = reason
@@ -102,9 +104,18 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 		res.Report = true
 		res.ReportPath = path
 	}
+	note := o.Note
+	if len(o.Checklist) > 0 {
+		suffix := fmt.Sprintf("checklist: %d confirmed", len(o.Checklist))
+		if note != "" {
+			note = note + "; " + suffix
+		} else {
+			note = suffix
+		}
+	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "reviewed", Verdict: o.Verdict,
-		Tree: tree, Session: o.Session, Note: o.Note, Persona: "reviewer",
+		Tree: tree, Session: o.Session, Note: note, Persona: "reviewer",
 	}); err != nil {
 		return ReviewResult{}, err
 	}
