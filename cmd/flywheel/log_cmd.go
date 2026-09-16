@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"flywheel/internal/flywheel"
 )
@@ -128,6 +129,19 @@ func runLog(args []string) {
 	e.Brief = o.brief
 	e.Commit = o.commit
 	e.Note = o.note
+	if o.goal != "" {
+		if _, ok := findGoal(o.dir, o.goal); !ok {
+			fmt.Fprintf(os.Stderr, "flywheel log: unknown goal %q\n", o.goal)
+			if gs := knownGoals(o.dir); len(gs) > 0 {
+				ids := make([]string, len(gs))
+				for i, g := range gs {
+					ids[i] = g.ID
+				}
+				fmt.Fprintf(os.Stderr, "known goals: %s\n", strings.Join(ids, ", "))
+			}
+			os.Exit(1)
+		}
+	}
 	e.GoalID = o.goal
 	if o.rc != "" {
 		v, err := strconv.ParseInt(o.rc, 10, strconv.IntSize)
