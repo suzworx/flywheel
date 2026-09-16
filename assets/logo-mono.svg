@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="flywheel">
+  <title>flywheel</title>
+  <g fill="none" stroke="currentColor">
+    <circle cx="128" cy="128" r="94" stroke-width="20"/>
+    <g transform="rotate(14 128 128)">
+      <circle cx="128" cy="128" r="54" stroke-width="20" stroke-dasharray="34 22.55"/>
+    </g>
+  </g>
+  <circle cx="128" cy="128" r="16" fill="currentColor"/>
+</svg>

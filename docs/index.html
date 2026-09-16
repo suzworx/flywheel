@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flywheel — own the factory</title>
+<meta name="description" content="A dark factory for AI coding work. The factory is files you own; agents and models are rented and swapped at will. Cheap workers build, deterministic gauges check every claim.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<style>
+  :root{
+    --ink:#16202b; --body:#3d4c5a; --muted:#77848f; --accent:#c96c14;
+    --bg:#f7f5f1; --panel:#ffffff; --line:#e4dfd7; --code:#f1ede6;
+  }
+  :root:not([data-theme="light"]){ }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#eef2f6; --body:#b3c0cc; --muted:#8996a3; --accent:#e8933f;
+      --bg:#0f151c; --panel:#161e27; --line:#27323d; --code:#111921;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#eef2f6; --body:#b3c0cc; --muted:#8996a3; --accent:#e8933f;
+    --bg:#0f151c; --panel:#161e27; --line:#27323d; --code:#111921;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--body);
+    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:900px;margin:0 auto;padding-inline:20px;padding-block:0}
+  h1,h2,h3{color:var(--ink);line-height:1.25;margin:0}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em}
+  code{background:var(--code);padding:.15em .4em;border-radius:5px;color:var(--ink)}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;
+      padding:16px 18px;overflow-x:auto;margin:0}
+  pre code{background:none;padding:0}
+
+  header{padding-block:56px 40px;text-align:center}
+  header img{width:min(340px,80vw);height:auto}
+  .tag{font-size:1.15rem;color:var(--ink);font-weight:600;margin-top:22px}
+  .sub{margin-top:14px;max-width:620px;margin-inline:auto}
+  .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+  .badges img{height:20px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:28px}
+  .btn{display:inline-block;padding:11px 20px;border-radius:9px;font-weight:600;font-size:.94rem;
+       border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+  .btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .btn:hover{text-decoration:none;opacity:.9}
+
+  section{padding-block:38px;border-top:1px solid var(--line)}
+  h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);
+     font-weight:650;margin-bottom:18px}
+  .lede{font-size:1.06rem;color:var(--ink)}
+
+  .loop{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:8px}
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .step b{color:var(--ink);display:block;font-size:.95rem;margin-bottom:5px}
+  .step span{font-size:.88rem}
+  .step i{color:var(--accent);font-style:normal;font-weight:700;font-size:.78rem;
+          letter-spacing:.08em;display:block;margin-bottom:8px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .card h3{font-size:1rem;margin-bottom:7px}
+  .card p{margin:0;font-size:.92rem}
+
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
+  td code{white-space:nowrap}
+  .scroll{overflow-x:auto}
+
+  footer{padding-block:34px 56px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;
+         display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.svg">
+    <img src="assets/logo-lockup.svg" alt="flywheel — own the factory">
+  </picture>
+  <p class="tag">Own the factory. Rent the agents and the intelligence.</p>
+  <p class="sub">A dark factory for AI coding work. The factory — work orders, gauges, the event
+  log, its memory — is files you own. Agents and models are rented from any vendor and swapped at
+  will.</p>
+  <div class="badges">
+    <img src="https://github.com/suzworx/flywheel/actions/workflows/ci.yml/badge.svg" alt="CI status">
+    <img src="https://img.shields.io/github/v/release/suzworx/flywheel" alt="Latest release">
+    <img src="https://img.shields.io/github/license/suzworx/flywheel" alt="License">
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/suzworx/flywheel/releases/latest">Download a release</a>
+    <a class="btn" href="https://github.com/suzworx/flywheel">View on GitHub</a>
+  </div>
+</header>
+
+<section>
+  <h2>The idea</h2>
+  <p class="lede">Cheap, disposable agents do the building. Deterministic gauges check every claim
+  they make. One expensive frontier lead makes only the calls that need judgement.</p>
+  <p>A worker's word is never evidence. Every unit of work declares up front which files it owns
+  and which commands must pass; the CLI re-runs those commands itself, on the exact tree that was
+  produced, and records the reading in an append-only event log. A unit that cannot show a passing
+  reading cannot be accepted — not by convention, but because the tool refuses.</p>
+</section>
+
+<section>
+  <h2>The loop</h2>
+  <div class="loop">
+    <div class="step"><i>01 · LEAD</i><b>Plan</b><span>A brief declares <code>owns:</code>, <code>needs:</code> and one <code>gate:</code> per check. <code>flywheel lint</code> catches a bad one before anyone is dispatched.</span></div>
+    <div class="step"><i>02 · WORKER</i><b>Build</b><span><code>flywheel run</code> dispatches a rented agent into its own worktree and streams every tool call into the run log.</span></div>
+    <div class="step"><i>03 · GAUGES</i><b>Measure</b><span><code>flywheel validate</code> re-runs each gate and checks the owns boundary. The worker's own green is never trusted.</span></div>
+    <div class="step"><i>04 · LEAD</i><b>Land</b><span><code>flywheel inspect</code> applies the poka-yoke rules and refuses anything unproven. Only then does the work land.</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>What makes it different</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>Gates you cannot talk your way past</h3>
+      <p>A rule refusal exits <code>6</code>. A pass verdict without a matching passing reading on
+      the same tree hash is refused outright, so "it works on my machine" has nowhere to live.</p>
+    </div>
+    <div class="card">
+      <h3><code>live-gate:</code> — the mock cannot vouch for the contract</h3>
+      <p>A gate that runs only in the lead's verification pass, against the real provider. A unit
+      that declares one cannot be accepted on mocked gates alone.</p>
+    </div>
+    <div class="card">
+      <h3>An append-only ledger</h3>
+      <p>Every plan, dispatch, reading, verdict and landing is an event. <code>flywheel verify</code>
+      checks the whole chain; <code>flywheel trace</code> replays everything one session did.</p>
+    </div>
+    <div class="card">
+      <h3>Any vendor, swapped at will</h3>
+      <p>Adapters for OpenCode, Claude Code and an offline simulator. <code>flywheel doctor</code>
+      probes every configured model and tells you which ones are actually usable.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Install</h2>
+  <pre><code># download the asset for your platform from the latest release, then verify it
+gh release download --repo suzworx/flywheel --pattern '*checksums*' --pattern '*linux-amd64*'
+sha256sum -c --ignore-missing checksums.txt
+unzip flywheel-*-linux-amd64.zip &amp;&amp; sudo install flywheel-* /usr/local/bin/flywheel
+
+flywheel version
+flywheel init          # scaffold the factory into a repo
+flywheel doctor        # check every configured model is usable</code></pre>
+  <p style="margin-top:12px">Go 1.27, standard library only — no dependencies, one static binary.
+  Linux, macOS (Intel and Apple silicon) and Windows.</p>
+</section>
+
+<section>
+  <h2>A few commands</h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>flywheel init</code></td><td>Scaffold the factory state files into a repo.</td></tr>
+      <tr><td><code>flywheel lint</code></td><td>Check a brief for a missing owns, a missing gate, or a live-gate that only repeats a mocked one.</td></tr>
+      <tr><td><code>flywheel run</code></td><td>Dispatch a worker for a task and record everything it does.</td></tr>
+      <tr><td><code>flywheel validate</code></td><td>Re-run a task's gates and check its owns boundary. <code>--live</code> adds the real-path gates.</td></tr>
+      <tr><td><code>flywheel inspect</code></td><td>Apply the poka-yoke rules and record a verdict.</td></tr>
+      <tr><td><code>flywheel factory</code></td><td>Live dashboard of the floor, with an andon for units that have stalled or gone quiet.</td></tr>
+      <tr><td><code>flywheel doctor</code></td><td>Probe every configured model and classify its availability.</td></tr>
+      <tr><td><code>flywheel feedback</code></td><td>Curate signals into learnings, and regenerate <code>learnings.md</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>It builds itself</h2>
+  <p>flywheel is developed through its own loop: briefs are written, rented workers build, the CLI
+  measures, and the lead lands only what the gauges will vouch for. Pointing the factory at itself
+  is also how several of its own defects were found — including a worker path where a failed run
+  was being recorded as a clean success.</p>
+</section>
+
+<footer>
+  <span>Built by flywheel, by Sujeet.</span>
+  <span><a href="https://github.com/suzworx/flywheel">github.com/suzworx/flywheel</a></span>
+</footer>
+
+</div>
+</body>
+</html>
