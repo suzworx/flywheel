@@ -12,13 +12,14 @@ import (
 
 func init() {
 	register("validate", "run a task's gates and check owns", runValidate)
-	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
+	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]...", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
 }
 
 // validateOptions holds the parsed validate flags.
 type validateOptions struct {
 	dir     string
 	workdir string
+	carry   repeatable
 }
 
 // validateFlags defines validate's flags once, so help and run share them.
@@ -28,12 +29,13 @@ func validateFlags() (*flag.FlagSet, *validateOptions) {
 	o := &validateOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.workdir, "workdir", "", "git working tree the gates run in")
+	fs.Var(&o.carry, "carry", "repo-relative path to copy from dir into workdir before gates run (repeatable)")
 	return fs, o
 }
 
 // validateUsage prints the flywheel validate usage line.
 func validateUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel validate <task> [--dir DIR] [--workdir PATH]")
+	fmt.Fprintln(w, "usage: flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]...")
 }
 
 // runValidate implements `flywheel validate <task>`: run the task's declared
@@ -54,10 +56,14 @@ func runValidate(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
-	res, err := flywheel.ValidateTask(o.dir, task, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir})
+	res, err := flywheel.ValidateTask(o.dir, task, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir, Carry: o.carry})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
 		os.Exit(1)
+	}
+	if res.Refused != "" {
+		fmt.Printf("validate: %s\n", res.Refused)
+		os.Exit(5)
 	}
 	if len(res.BriefPaths) > 1 {
 		fmt.Printf("validate: brief %s + delta %s\n", res.BriefPaths[0], res.BriefPaths[1])

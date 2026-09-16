@@ -21,6 +21,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   worktree instead of statting a literal path, so a pattern that currently matches nothing is
   reported the same as a missing path. List every file a unit may create up front, in `owns:`,
   rather than inviting it to add one later.
+- **needs-state:** — machine state the gates need that the repo does not carry: a database, a
+  local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
+  directory), comma-separated or repeated across lines. `flywheel validate` refuses, before
+  running any gate, when a declared path is missing from an isolated `--workdir`; give it with
+  `--carry <path>` (repeatable) to copy that state from the repo into the workdir first. With no
+  `--workdir` the declaration is a no-op — the tree already is the repo.
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the

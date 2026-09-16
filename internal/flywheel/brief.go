@@ -8,14 +8,19 @@ import (
 )
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
-// the SHA-256 of the whole file. Keys: owns, needs, gate, exclusive, review.
+// the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
+// exclusive, review.
 type BriefHeader struct {
-	Owns      []string // comma-separated, annotations stripped
-	Needs     []string
-	Gates     []string // one shell command per line, order kept
-	Exclusive []string
-	Review    []string
-	SHA256    string
+	Owns  []string // comma-separated, annotations stripped
+	Needs []string
+	// NeedsState lists repo-relative paths or directories (a trailing '/' for
+	// a directory) that the gates need but an isolated --workdir will not
+	// have: a database, a stack, git-ignored env files (issue #136).
+	NeedsState []string // comma-separated, accumulated across repeated lines
+	Gates      []string // one shell command per line, order kept
+	Exclusive  []string
+	Review     []string
+	SHA256     string
 }
 
 // ParseBriefHeader reads the header block at the top of a brief: the lines
@@ -59,6 +64,12 @@ func ParseBriefHeader(path string) (BriefHeader, error) {
 			owns = append(owns, val)
 		case "needs":
 			h.Needs = append(h.Needs, val)
+		case "needs-state":
+			for _, entry := range strings.Split(val, ",") {
+				if e := strings.TrimSpace(entry); e != "" {
+					h.NeedsState = append(h.NeedsState, e)
+				}
+			}
 		case "gate":
 			h.Gates = append(h.Gates, val)
 		case "exclusive":

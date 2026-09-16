@@ -1027,6 +1027,164 @@ func TestValidateOwnPathNeverAttributed(t *testing.T) {
 	}
 }
 
+// initTaskNeedsState is initTask plus a needs-state: line in the brief header
+// (issue #136), so callers can exercise the isolated-workdir refusal.
+func initTaskNeedsState(t *testing.T, gates []string, needsState string) (string, error) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		return "", fmt.Errorf("Init() error = %w", err)
+	}
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write .gitignore: %w", err)
+	}
+	brief := "owns: a.go\nneeds: none\nneeds-state: " + needsState + "\n"
+	for _, g := range gates {
+		brief = brief + "gate: " + g + "\n"
+	}
+	brief = brief + "\n# TASK: needs-state\n"
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+		return "", fmt.Errorf("write brief: %w", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		return "", fmt.Errorf("AppendEvent() error = %w", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "brief"})
+	return dir, nil
+}
+
+// TestValidateNeedsStateMissingRefusesBeforeGates checks a declared
+// needs-state: path missing from an isolated --workdir refuses with exit-5
+// shaped output (Refused set, OK() false) before any gate runs, and names
+// the path (issue #136).
+func TestValidateNeedsStateMissingRefusesBeforeGates(t *testing.T) {
+	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "data/db.sqlite")
+	if err != nil {
+		t.Fatalf("initTaskNeedsState() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Workdir: wt})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OK() {
+		t.Error("OK() = true, want false: needs-state path is missing")
+	}
+	if len(res.Gates) != 0 {
+		t.Errorf("gates = %v, want none run", res.Gates)
+	}
+	if !strings.Contains(res.Refused, "needs-state") || !strings.Contains(res.Refused, "data/db.sqlite") {
+		t.Errorf("refused = %q, want it to name needs-state and data/db.sqlite", res.Refused)
+	}
+}
+
+// TestValidateNeedsStateCarriedFileRunsGates checks carrying a declared file
+// satisfies needs-state: the file is copied into the workdir and the gates
+// then run (issue #136).
+func TestValidateNeedsStateCarriedFileRunsGates(t *testing.T) {
+	dir, err := initTaskNeedsState(t, []string{"test -f data/db.sqlite"}, "data/db.sqlite")
+	if err != nil {
+		t.Fatalf("initTaskNeedsState() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatalf("mkdir data: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data", "db.sqlite"), []byte("data\n"), 0o644); err != nil {
+		t.Fatalf("write db.sqlite: %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Workdir: wt, Carry: []string{"data/db.sqlite"}})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Refused != "" {
+		t.Errorf("refused = %q, want empty (the path was carried)", res.Refused)
+	}
+	if len(res.Gates) != 1 || res.Gates[0].RC != 0 {
+		t.Errorf("gates = %v, want one passing gate", res.Gates)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK/OK = %v/%v, want true/true: a carried needs-state path is never outside owns; outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "data", "db.sqlite")); err != nil {
+		t.Errorf("carried file missing from workdir: %v", err)
+	}
+}
+
+// TestValidateNeedsStateCarriedDirectoryRunsGates checks carrying a declared
+// directory copies it recursively (issue #136).
+func TestValidateNeedsStateCarriedDirectoryRunsGates(t *testing.T) {
+	dir, err := initTaskNeedsState(t, []string{"test -f sub/nested/carried.txt"}, "sub/")
+	if err != nil {
+		t.Fatalf("initTaskNeedsState() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir sub/nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "nested", "carried.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write carried.txt: %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Workdir: wt, Carry: []string{"sub/"}})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Refused != "" {
+		t.Errorf("refused = %q, want empty (the directory was carried)", res.Refused)
+	}
+	if len(res.Gates) != 1 || res.Gates[0].RC != 0 {
+		t.Errorf("gates = %v, want one passing gate", res.Gates)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK/OK = %v/%v, want true/true: a carried needs-state directory is never outside owns; outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "sub", "nested", "carried.txt")); err != nil {
+		t.Errorf("carried directory contents missing from workdir: %v", err)
+	}
+}
+
+// TestValidateCarryMissingUnderDirErrors checks a --carry path that does not
+// exist under dir is an error naming it (issue #136).
+func TestValidateCarryMissingUnderDirErrors(t *testing.T) {
+	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "ghost.txt")
+	if err != nil {
+		t.Fatalf("initTaskNeedsState() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	_, err = ValidateTask(dir, "T1", ValidateOptions{Dir: dir, Workdir: wt, Carry: []string{"ghost.txt"}})
+	if err == nil {
+		t.Fatal("ValidateTask() accepted a --carry path missing under dir")
+	}
+	if !strings.Contains(err.Error(), "ghost.txt") {
+		t.Errorf("error = %v, want it to name ghost.txt", err)
+	}
+}
+
+// TestValidateNeedsStateNoWorkdirIsNoOp checks that with no --workdir the
+// tree is the repo, so needs-state: is satisfied by definition and nothing
+// is copied (issue #136).
+func TestValidateNeedsStateNoWorkdirIsNoOp(t *testing.T) {
+	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "never/there.txt")
+	if err != nil {
+		t.Fatalf("initTaskNeedsState() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.Refused != "" {
+		t.Errorf("refused = %q, want empty (no --workdir: needs-state is a no-op)", res.Refused)
+	}
+	if !res.OK() {
+		t.Errorf("OK() = false, want true: %+v", res)
+	}
+}
+
 // TestValidateBaselinedPathNotAttributed checks a baselined path is excused
 // by the baseline, not counted as attributed, even when another in-flight
 // task's brief would also own it.
