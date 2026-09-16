@@ -432,6 +432,59 @@ func TestRunSimCapped(t *testing.T) {
 	if !strings.Contains(plog, want) {
 		t.Errorf("progress missing %q; got:\n%s", want, plog)
 	}
+	if f := evs[len(evs)-1]; f.PeakReasoning != 50 {
+		t.Errorf("finished peak_reasoning = %d, want 50 (max of 50 then 5)", f.PeakReasoning)
+	}
+	hint := "T1 r1 hint: reason=length peak=50 reasoning tokens in one step; " +
+		"split files into named parts, use smaller increments, or try another variant"
+	if !strings.Contains(plog, hint) {
+		t.Errorf("progress missing hint %q; got:\n%s", hint, plog)
+	}
+}
+
+// TestRunCleanRecordsNoPeakOrHint checks a clean run (reason stop) with zero
+// per-step reasoning tokens omits peak_reasoning from the finished event and
+// prints no hint line (issue #84).
+func TestRunCleanRecordsNoPeakOrHint(t *testing.T) {
+	dir := setupTask(t)
+	session := "ses_test_zeroreason_001"
+	fixture := filepath.Join(t.TempDir(), "zeroreason.jsonl")
+	content := fmt.Sprintf(
+		`{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n"+
+			`{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop","tokens":{"input":50,"output":20,"reasoning":0}},"cost":0.001}`+"\n",
+		session, session)
+	if err := os.WriteFile(fixture, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := WriteConfig(dir, simConfig(fixture)); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stop" {
+		t.Errorf("reason = %q, want stop", res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	f := evs[len(evs)-1]
+	if f.Kind != "finished" || f.PeakReasoning != 0 {
+		t.Errorf("finished event = %v, want peak_reasoning 0", f)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if strings.Contains(string(b), "peak_reasoning") {
+		t.Errorf("events.jsonl carries peak_reasoning for a zero-reasoning run: %q", b)
+	}
+	if strings.Contains(buf.String(), "hint:") {
+		t.Errorf("progress carries a hint line for a clean run: %q", buf.String())
+	}
 }
 
 func TestRunSimProviderError(t *testing.T) {

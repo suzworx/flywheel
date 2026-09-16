@@ -403,6 +403,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	steps := 0
 	session := ""
 	var tok Tokens
+	peak := 0
 	cost := 0.0
 
 	firstLine := true
@@ -489,6 +490,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				tok.Reasoning += obs.Tokens.Reasoning
 				tok.CacheRead += obs.Tokens.CacheRead
 				tok.CacheWrite += obs.Tokens.CacheWrite
+				if obs.Tokens.Reasoning > peak {
+					peak = obs.Tokens.Reasoning
+				}
 			}
 			cost += obs.Cost
 		case "error":
@@ -596,10 +600,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
+		PeakReasoning: peak,
 	}); err != nil {
 		return Result{}, err
 	}
 	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s model=%s steps=%d tokens=%s cost=$%s", rc, reason, model, steps, tokensK(tok), costK(cost)))
+	if reason == "length" {
+		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
+	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
 	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost}, nil

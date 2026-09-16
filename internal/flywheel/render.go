@@ -149,7 +149,11 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 		taskWd, "TASK", stageW, "STAGE", attW, "ATT", sessW, "SESSION",
 		modelWd, "MODEL", stepsW, "STEPS", ageW, "AGE", runW, "RUN")
 	for _, u := range f.Units {
-		run := truncate(u.RunState, runW)
+		cell := u.RunState
+		if u.RunState == "capped" && u.Peak > 0 {
+			cell = "capped " + tokensK(Tokens{Reasoning: u.Peak})
+		}
+		run := truncate(cell, runW)
 		run = padLeft(run, runW)
 		run = paint(color, stateColor(u.RunState), run)
 		fmt.Fprintf(w, "  %-*s %-*s %-*s %-*s %-*s %*s %*s %s\n",
@@ -200,14 +204,15 @@ type jStaff struct {
 }
 
 type jUnit struct {
-	Task     string `json:"task"`
-	Stage    string `json:"stage"`
-	Attempt  string `json:"attempt"`
-	Session  string `json:"session"`
-	Model    string `json:"model"`
-	Steps    int    `json:"steps"`
-	LastAge  int    `json:"last_age"`
-	RunState string `json:"run_state"`
+	Task          string `json:"task"`
+	Stage         string `json:"stage"`
+	Attempt       string `json:"attempt"`
+	Session       string `json:"session"`
+	Model         string `json:"model"`
+	Steps         int    `json:"steps"`
+	LastAge       int    `json:"last_age"`
+	RunState      string `json:"run_state"`
+	PeakReasoning int    `json:"peak_reasoning"`
 }
 
 type jAndon struct {
@@ -247,7 +252,7 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = jStaff{Lead: f.Staffing.Lead}
 	for _, u := range f.Units {
-		j.Units = append(j.Units, jUnit{Task: u.Task, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState})
+		j.Units = append(j.Units, jUnit{Task: u.Task, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak})
 	}
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})

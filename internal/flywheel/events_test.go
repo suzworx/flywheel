@@ -482,6 +482,50 @@ func TestGoalRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPeakReasoningRoundTrips checks the finished event's peak_reasoning
+// round-trips and is omitted from the log when zero (issue #84).
+func TestPeakReasoningRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1",
+		Reason: "length", PeakReasoning: 50,
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-15T00:00:01Z", Task: "T2", Kind: "finished", Attempt: "r1", Reason: "stop",
+	}); err != nil {
+		t.Fatalf("AppendEvent() plain error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("ReadEvents() = %d events, want 2", len(evs))
+	}
+	if evs[0].PeakReasoning != 50 {
+		t.Errorf("peak_reasoning = %d, want 50", evs[0].PeakReasoning)
+	}
+	if evs[1].PeakReasoning != 0 {
+		t.Errorf("plain event peak_reasoning = %d, want 0", evs[1].PeakReasoning)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("events.jsonl = %d lines, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], `"peak_reasoning":50`) {
+		t.Errorf("line 0 = %q, want peak_reasoning:50", lines[0])
+	}
+	if strings.Contains(lines[1], "peak_reasoning") {
+		t.Errorf("line 1 = %q, want peak_reasoning omitted when zero", lines[1])
+	}
+}
+
 func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	e := Event{

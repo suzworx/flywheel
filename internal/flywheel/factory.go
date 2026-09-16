@@ -60,6 +60,20 @@ type Unit struct {
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
 	RunState string // silent, running, exploring, long-step, stalled, capped, provider-error, failed, done
+	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
+}
+
+// peakReasoningFor returns the task's latest finished event's peak_reasoning
+// for its current attempt, scanning the accumulated event log in order so the
+// last matching event wins (issue #84).
+func peakReasoningFor(events []Event, task, attempt string) int {
+	peak := 0
+	for _, e := range events {
+		if e.Kind == "finished" && e.Task == task && e.Attempt == attempt {
+			peak = e.PeakReasoning
+		}
+	}
+	return peak
 }
 
 // Andon is one stopped-line condition: a unit in silent, stalled, capped,
@@ -387,6 +401,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string) ([]Unit, map[st
 			}
 			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age)
 			u.Steps = w.runSteps[rel]
+			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 		}
 		if liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
