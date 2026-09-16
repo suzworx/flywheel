@@ -520,6 +520,92 @@ func TestValidateUnchangedOtherWorktreePasses(t *testing.T) {
 	}
 }
 
+// TestValidateOtherWorktreeFlywheelMDIsExcused checks that when the other
+// worktree's only change is its own flywheel.md board, OwnsOK is true and
+// Outside is empty (issue #186): flywheel.md there is the factory view's own
+// bookkeeping, not that worktree's unit's work.
+func TestValidateOtherWorktreeFlywheelMDIsExcused(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "flywheel.md"), []byte("board\n"), 0o644); err != nil {
+		t.Fatalf("write flywheel.md: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (flywheel.md in the other worktree is never that unit's work)", res.OwnsOK)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want none", res.Outside)
+	}
+}
+
+// TestValidateOtherWorktreeFlywheelMDAndRealFileOnlyRealFails checks that
+// when the other worktree changes both its flywheel.md board and a real
+// source file, only the real file appears in Outside (issue #186).
+func TestValidateOtherWorktreeFlywheelMDAndRealFileOnlyRealFails(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "flywheel.md"), []byte("board\n"), 0o644); err != nil {
+		t.Fatalf("write flywheel.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "note.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("write note.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (note.txt is a real outside change)", res.OwnsOK)
+	}
+	want := wt + ": note.txt"
+	if len(res.Outside) != 1 || res.Outside[0] != want {
+		t.Errorf("outside = %v, want [%s]", res.Outside, want)
+	}
+}
+
+// TestValidateOtherWorktreeDotFlywheelIsExcused checks that a path under the
+// other worktree's .flywheel/ is skipped the same way flywheel.md is (issue
+// #186).
+func TestValidateOtherWorktreeDotFlywheelIsExcused(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.MkdirAll(filepath.Join(wt, ".flywheel", "evidence"), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel/evidence: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".flywheel", "evidence", "log.txt"), []byte("log\n"), 0o644); err != nil {
+		t.Fatalf("write .flywheel/evidence/log.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (.flywheel/ in the other worktree is never that unit's work)", res.OwnsOK)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want none", res.Outside)
+	}
+}
+
 func TestValidateOutOfOwns(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
