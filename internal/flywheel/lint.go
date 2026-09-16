@@ -18,7 +18,11 @@ type LintResult struct {
 // a missing owns line, no gate line, no # TASK goal and no ## Checks report
 // contract, and owns paths that do not exist under dir. A (new) owns entry
 // skips the existence check; an entry ending in "/" must exist as a
-// directory. Warnings cover the missing write rule and a missing needs line.
+// directory. An entry containing '*', '?' or '[' is a pattern (the same
+// syntax ownsContains matches at validate time) and is checked with
+// filepath.Glob instead of os.Stat: no match is one problem, and a (new)
+// pattern skips the check like any other (new) entry. Warnings cover the
+// missing write rule and a missing needs line.
 func LintBrief(dir, path string) (LintResult, error) {
 	var res LintResult
 	b, err := os.ReadFile(path)
@@ -47,6 +51,13 @@ func LintBrief(dir, path string) (LintResult, error) {
 		if e.annotation == "new" {
 			continue
 		}
+		if isOwnsPattern(e.path) {
+			matches, err := filepath.Glob(filepath.Join(dir, e.path))
+			if err != nil || len(matches) == 0 {
+				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file", e.path))
+			}
+			continue
+		}
 		st, err := os.Stat(filepath.Join(dir, e.path))
 		if err != nil {
 			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s does not exist", e.path))
@@ -63,6 +74,14 @@ func LintBrief(dir, path string) (LintResult, error) {
 		res.Warnings = append(res.Warnings, `write rule "At most one write per response" is absent`)
 	}
 	return res, nil
+}
+
+// isOwnsPattern reports whether an owns entry is a shell pattern rather than
+// a literal path: it contains '*', '?' or '['. ownsContains (gauges.go)
+// already matches these with path.Match at validate time; lint checks them
+// with filepath.Glob against dir instead of os.Stat.
+func isOwnsPattern(p string) bool {
+	return strings.ContainsAny(p, "*?[")
 }
 
 // hasHeading reports whether content has a line starting with prefix, e.g. a

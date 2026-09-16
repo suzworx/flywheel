@@ -12,7 +12,13 @@ only what those cannot know. One task per brief. Each brief must state, in plain
 
 - **Goal** — the single outcome, stated as a verifiable result.
 - **owns:** / **needs:** — the files this task may write and the task ids that must land first
-  (rules live in §4).
+  (rules live in §4). An entry may be a literal path, a path ending in `/` (everything under that
+  directory), or a shell pattern containing `*`, `?` or `[` — for example `src/voice/*.test.ts`
+  for a file whose exact name is not known yet. `flywheel validate` matches all three forms the
+  same way at owns-check time, and `flywheel lint` checks a pattern by globbing it against the
+  worktree instead of statting a literal path, so a pattern that currently matches nothing is
+  reported the same as a missing path. List every file a unit may create up front, in `owns:`,
+  rather than inviting it to add one later.
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the
