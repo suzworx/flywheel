@@ -29,6 +29,9 @@ type GateOut struct {
 	DurationMS  int64
 	LogPath     string
 	HostBlocked bool
+	// Note carries the persistent-host-block message when HostBlocked is true
+	// because the rerun was blocked too; empty otherwise.
+	Note string
 }
 
 // GaugeResult reports a full validation pass: the tree hash, one entry per
@@ -53,6 +56,34 @@ func (r GaugeResult) OK() bool {
 // blocks a freshly built unsigned binary. It is a host problem, not a code
 // failure; the gate is rerun once before giving up.
 const hostBlocked = "An Application Control policy has blocked this file"
+
+// hostBlockNote builds the note recorded on a validated event and printed by
+// `flywheel validate` when a gate's rerun is blocked too: naming the file
+// Smart App Control rejected (empty when the output does not parse) and
+// pointing at the compile-then-run gate form or CI, never the security
+// setting, because rerunning again cannot help.
+func hostBlockNote(out []byte) string {
+	return "persistent host block: " + parseBlockedFile(out) +
+		"; compile then run (go test -c -o <dir>/x.test.exe <pkg> && <dir>/x.test.exe) or run the gate in CI"
+}
+
+// parseBlockedFile extracts the path named in a host-block message: the text
+// between "fork/exec " and ": An Application Control policy has blocked this
+// file" (first occurrence). Empty when it does not parse.
+func parseBlockedFile(out []byte) string {
+	s := string(out)
+	start := strings.Index(s, "fork/exec ")
+	if start < 0 {
+		return ""
+	}
+	start += len("fork/exec ")
+	suffix := ": " + hostBlocked
+	end := strings.Index(s[start:], suffix)
+	if end < 0 {
+		return ""
+	}
+	return s[start : start+end]
+}
 
 // ValidateTask loads the task's planned brief, hashes the exact tree with a
 // throwaway git index, runs each declared gate with bash (cmd /C on Windows,
@@ -131,15 +162,18 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			DurationMS: dur, SHA256: hex.EncodeToString(sum[:]), Path: logRel,
 			Persona: "supervisor",
 		}
+		var note string
 		if blocked {
 			ev.Reason = "host-blocked"
+			note = hostBlockNote(out)
+			ev.Note = note
 		}
 		if err := AppendEvent(o.Dir, ev); err != nil {
 			return GaugeResult{}, err
 		}
 		res.Gates = append(res.Gates, GateOut{
 			Gate: n, Command: gate, RC: rc, DurationMS: dur,
-			LogPath: logRel, HostBlocked: blocked,
+			LogPath: logRel, HostBlocked: blocked, Note: note,
 		})
 		if rc != 0 || blocked {
 			res.GatesOK = false
