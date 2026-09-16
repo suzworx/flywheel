@@ -16,13 +16,18 @@ var errNoPlannedBrief = errors.New("no planned event")
 // The base brief is the latest `planned` or `amended` event's `brief` for
 // task, whichever comes later; when neither exists, the error wraps
 // errNoPlannedBrief with the same message gauges.go gave before AttemptBrief
-// existed. The prompt is the `brief` of the latest `dispatched` event for
-// the task's current attempt (the last nonempty `attempt` seen, the way
-// gauges.go computed it before this). When the prompt names a file
-// different from the base brief, it is parsed too: gate: lines come from
-// the prompt when it declares any, otherwise from the base brief; owns is
+// existed. A fresh attempt (id `r<N>`, see events.go's attemptOK) always
+// uses the base brief alone, whatever path its dispatched event recorded:
+// `flywheel run` copies an external brief into .flywheel/briefs/<task>.txt
+// (#87), which differs in path but not content from the base brief, and
+// that copy is not a correction. Only a correction attempt (id `c<N>`) can
+// carry a delta: the `brief` of the latest `dispatched` event for that
+// attempt is parsed when its path differs from the base brief, and when its
+// content does too (compared by the parsed headers' SHA256 — a
+// byte-identical copy adds nothing). When it does, gate: lines come from
+// the delta when it declares any, otherwise from the base brief; owns is
 // the union of both, base first, without duplicates; needs stays the base
-// brief's. A prompt file that is missing or unreadable is an error naming
+// brief's. A delta file that is missing or unreadable is an error naming
 // it. Relative paths resolve against dir.
 func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []string, error) {
 	basePath, attempt := latestBaseBriefAndAttempt(events, task)
@@ -34,6 +39,10 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 		return BriefHeader{}, nil, fmt.Errorf("parse brief %s: %w", basePath, err)
 	}
 	paths := []string{basePath}
+
+	if attempt == "" || attempt[0] != 'c' {
+		return header, paths, nil
+	}
 
 	promptPath := ""
 	for _, e := range events {
@@ -48,6 +57,9 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 	prompt, err := ParseBriefHeader(resolveBriefPath(dir, promptPath))
 	if err != nil {
 		return BriefHeader{}, nil, fmt.Errorf("read prompt %s: %w", promptPath, err)
+	}
+	if prompt.SHA256 == header.SHA256 {
+		return header, paths, nil
 	}
 	paths = append(paths, promptPath)
 
