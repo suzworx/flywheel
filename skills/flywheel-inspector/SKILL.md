@@ -60,6 +60,9 @@ and steward's).
   inspector or to audit.
 - Independence: you are never the auditor's session; the auditor re-inspects your verdicts.
 - You do not implement the fix, ever. Independent validation is a check, not a fix.
+- Repo-wide gate failures are attributed by file before the unit is blamed: map each failing file to
+  the unit whose `owns:` holds it. Fail only the unit responsible for its own files; if owned by
+  another unit still in flight, escalate or await their reading.
 
 ## Escalate when
 
@@ -79,6 +82,10 @@ and steward's).
   `--session` or a session that is a worker session of the task — pass your own inspector session id;
   never a worker's session of the task; T3 no passing reading / clean owns check on the tree after the latest
   `finished` event — run `flywheel validate <task>` first, then re-inspect.
+- `flywheel inspect <task> --verdict pass|rework|scrap|escalate --session <your-session> --workdir
+  <tree>` — record an inspection on a specific git working tree you ran `validate --workdir <tree>`
+  against (T3 hashes the tree the gates ran in, so both must use the same tree for a passing reading
+  to be found).
 - `flywheel verify [<task>...|--all] [--json]` — cross-checks the event chain (T1/T3/T4/T5/T8;
   exit 0 or 6). Confirm the unit's readings are present and bound before you land a verdict.
 - `flywheel explain` / `flywheel context` — planned (#58); today: reconstruct the unit from the
