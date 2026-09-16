@@ -172,9 +172,17 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 
 ## Quickstart
 
-1. **Get the CLI.** Download **flywheel-v0.2.0-\<os\>-\<arch\>.zip** from the
-   [Releases page](https://github.com/suzworx/flywheel/releases) — Windows binaries ship as
-   `flywheel-v0.2.0-windows-amd64.exe.zip` — plus `checksums.txt`. Or build from source:
+New here? Start with the two pages that close the gap between "I have a binary" and "I have
+landed one unit through the loop": [**Quickstart**](docs/quickstart.md) walks you through it end
+to end, and [**Concepts**](docs/concepts.md) defines the vocabulary every command rests on —
+work orders, `owns:`, gates, the event log, and the poka-yoke rules.
+
+1. **Get the CLI.** Download **flywheel-\<version\>-\<os\>-\<arch\>.zip** from the
+   [latest release](https://github.com/suzworx/flywheel/releases/latest) — Windows binaries ship
+   as `flywheel-<version>-windows-amd64.exe.zip` — plus `checksums.txt`, and verify the SHA-256
+   before putting it on PATH. Once installed, `flywheel upgrade --check` tells you whether a
+   newer release exists and `flywheel upgrade` installs it, checksum-verified. Or build from
+   source:
 
    ```bash
    git clone https://github.com/suzworx/flywheel.git && cd flywheel
