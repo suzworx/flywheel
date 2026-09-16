@@ -278,7 +278,9 @@ func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID
 // When the task's dispatched event carries a worktrees snapshot (issue #87),
 // every other worktree's current changed paths are compared against it too:
 // a path that is new or whose sha changed is always outside, listed as
-// "<worktree path>: <path>" — never excused by this task's own owns list.
+// "<worktree path>: <path>" — never excused by this task's own owns list,
+// except flywheel's own bookkeeping (issue #186), which that worktree's
+// factory view rewrites on every state refresh and is never anyone's work.
 func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
@@ -310,6 +312,9 @@ func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []stri
 				continue
 			}
 			for _, p := range wtChanged {
+				if isFlywheelOwnPath(p) {
+					continue
+				}
 				if bh, ok := wtBase[p]; !ok || fileSHA(wtPath, p) != bh {
 					outside = append(outside, wtPath+": "+p)
 				}
@@ -589,16 +594,24 @@ func baselineFor(events []Event, task string) map[string]string {
 	return nil
 }
 
+// isFlywheelOwnPath reports whether p is one of flywheel's own bookkeeping
+// paths: flywheel.md at the root, or anything under .flywheel/. These are
+// never a unit's own work, in this worktree or any other (issue #186).
+func isFlywheelOwnPath(p string) bool {
+	p = filepath.ToSlash(p)
+	if p == "flywheel.md" {
+		return true
+	}
+	return p == ".flywheel" || strings.HasPrefix(p, ".flywheel/")
+}
+
 // ownsContains reports whether a changed path is inside the owns boundary.
 // flywheel's own files (flywheel.md at the root and anything under .flywheel/)
 // are never outside. A path is inside when it equals an owns entry, or starts
 // with an entry ending in '/', or matches an entry as a shell pattern.
 func ownsContains(owns []string, p string) bool {
 	p = filepath.ToSlash(p)
-	if p == "flywheel.md" {
-		return true
-	}
-	if p == ".flywheel" || strings.HasPrefix(p, ".flywheel/") {
+	if isFlywheelOwnPath(p) {
 		return true
 	}
 	for _, o := range owns {
