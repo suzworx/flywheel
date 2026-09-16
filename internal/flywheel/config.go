@@ -30,12 +30,25 @@ type Config struct {
 
 // Worker configures a single CLI worker.
 type Worker struct {
-	Name        string     `json:"name"`
-	Adapter     string     `json:"adapter"` // "opencode" or "sim" in phase 1
-	Model       string     `json:"model"`
-	Variant     string     `json:"variant,omitempty"`
-	MaxParallel int        `json:"max_parallel,omitempty"` // 0 means 1
-	Fallbacks   []Fallback `json:"fallbacks,omitempty"`
+	Name         string     `json:"name"`
+	Adapter      string     `json:"adapter"` // "opencode" or "sim" in phase 1
+	Model        string     `json:"model"`
+	Variant      string     `json:"variant,omitempty"`
+	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
+	StallTimeout int        `json:"stall_timeout,omitempty"` // whole seconds; 0 means the default 600
+	Fallbacks    []Fallback `json:"fallbacks,omitempty"`
+}
+
+// defaultStallTimeout applies when a worker's StallTimeout is unset (0).
+const defaultStallTimeout = 600 * time.Second
+
+// stallTimeoutDuration returns the worker's configured stall timeout, or the
+// default 600s when unset (issue #85).
+func (w Worker) stallTimeoutDuration() time.Duration {
+	if w.StallTimeout <= 0 {
+		return defaultStallTimeout
+	}
+	return time.Duration(w.StallTimeout) * time.Second
 }
 
 // Fallback is a model to fall back to when the worker's model is unavailable.
@@ -208,6 +221,9 @@ func (c Config) Validate() error {
 		if w.MaxParallel < 0 {
 			problems = append(problems, fmt.Sprintf("%s: max_parallel %d must be >= 0", where, w.MaxParallel))
 		}
+		if w.StallTimeout < 0 {
+			problems = append(problems, fmt.Sprintf("%s: stall_timeout %d must be >= 0", where, w.StallTimeout))
+		}
 		for j, f := range w.Fallbacks {
 			switch {
 			case f.Model == "":
@@ -335,6 +351,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return w.Adapter, true
 	case "max_parallel":
 		return strconv.Itoa(w.MaxParallel), true
+	case "stall_timeout":
+		return strconv.Itoa(w.StallTimeout), true
 	case "fallbacks":
 		return joinFallbacks(w.Fallbacks, true), true
 	case "fallbacks.all":
@@ -360,10 +378,10 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.per_host", "max_parallel", "model", "variant",
+		"feedback.upstream", "limits.per_host", "max_parallel", "model", "stall_timeout", "variant",
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "variant"} {
+		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}
@@ -374,8 +392,8 @@ func (c Config) validKeys() []string {
 // Set assigns value to the given configuration key. Bare worker keys apply to
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are model, variant, adapter,
-// max_parallel (worker), feedback.upstream, feedback.submit, and
-// limits.per_host. Integer keys parse with strconv.Atoi. fallbacks is not
+// max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
+// and limits.per_host. Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
 func (c *Config) Set(key, value string) error {
@@ -390,7 +408,7 @@ func (c *Config) Set(key, value string) error {
 		return c.settableErr(key)
 	}
 	switch key {
-	case "model", "variant", "adapter", "max_parallel":
+	case "model", "variant", "adapter", "max_parallel", "stall_timeout":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -429,8 +447,14 @@ func setWorkerValue(w *Worker, key, value string) error {
 			return fmt.Errorf("max_parallel: value %q must be an integer", value)
 		}
 		w.MaxParallel = n
+	case "stall_timeout":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("stall_timeout: value %q must be an integer", value)
+		}
+		w.StallTimeout = n
 	default:
-		return fmt.Errorf("unknown key %q; valid worker keys: model, variant, adapter, max_parallel", key)
+		return fmt.Errorf("unknown key %q; valid worker keys: model, variant, adapter, max_parallel, stall_timeout", key)
 	}
 	return nil
 }
@@ -444,10 +468,10 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.per_host",
-		"max_parallel", "model", "variant",
+		"max_parallel", "model", "stall_timeout", "variant",
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "max_parallel", "model", "variant"} {
+		for _, k := range []string{"adapter", "max_parallel", "model", "stall_timeout", "variant"} {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}

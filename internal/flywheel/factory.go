@@ -145,15 +145,18 @@ func liveRun(state string) bool {
 
 // classifyRun maps a run's observed signals to a run state. done is set when
 // the attempt's finished event exists; age is the seconds since the run file
-// last grew. Once done, lastReason (the caller overrides it with the
-// attempt's finished-event reason when one is recorded, since that is always
-// a complete line while the run file's own tail may not be) decides the run
-// state outright: "length" is capped, "error" is provider-error, "stop" or
-// empty is a clean done, and any other reason (start-failed, silent, ...) is
-// failed. Live (not done) classification still checks hasError and
-// lastReason=="length" before the other live signals, since a capped or
-// provider-error run in progress has not recorded a finished event yet.
-func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int) string {
+// last grew; stallTimeout is the default worker's configured stall_timeout in
+// seconds (issue #85), the same threshold flywheel run stops a live run at:
+// stalled is age > stallTimeout, long-step is age > stallTimeout/2. Once
+// done, lastReason (the caller overrides it with the attempt's finished-event
+// reason when one is recorded, since that is always a complete line while the
+// run file's own tail may not be) decides the run state outright: "length" is
+// capped, "error" is provider-error, "stop" or empty is a clean done, and any
+// other reason (start-failed, silent, stalled, ...) is failed. Live (not
+// done) classification still checks hasError and lastReason=="length" before
+// the other live signals, since a capped or provider-error run in progress
+// has not recorded a finished event yet.
+func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int) string {
 	if done {
 		switch lastReason {
 		case "length":
@@ -175,10 +178,10 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 	if size == 0 && age > 60 {
 		return "silent"
 	}
-	if age > 600 {
+	if age > stallTimeout {
 		return "stalled"
 	}
-	if age > 300 {
+	if age > stallTimeout/2 {
 		return "long-step"
 	}
 	if steps >= 10 && files >= 3 && edits == 0 {
@@ -228,7 +231,8 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 		return Floor{}, err
 	}
 	st := Derive(w.events)
-	units, byModel, uerr := buildUnits(w, st, now, dir)
+	stallTimeout := int(cfg.DefaultWorker().stallTimeoutDuration().Seconds())
+	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout)
 	if uerr != nil {
 		return Floor{}, uerr
 	}
@@ -374,8 +378,10 @@ func readRun(dir string, w *Watcher, rel string) (size int64, mtime time.Time, e
 }
 
 // buildUnits derives one Unit per task, reads the latest attempt's run file
-// for its run state, and tallies in-flight units by model.
-func buildUnits(w *Watcher, st State, now time.Time, dir string) ([]Unit, map[string]int, error) {
+// for its run state, and tallies in-flight units by model. stallTimeout is
+// the default worker's configured stall_timeout in seconds, passed through to
+// classifyRun (issue #85).
+func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int) ([]Unit, map[string]int, error) {
 	var units []Unit
 	byModel := map[string]int{}
 	for _, t := range st.Tasks {
@@ -399,7 +405,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string) ([]Unit, map[st
 			if done && t.Reason != "" {
 				reason = t.Reason
 			}
-			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age)
+			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout)
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 		}

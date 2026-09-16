@@ -418,6 +418,60 @@ func TestConfigControllerValidation(t *testing.T) {
 	}
 }
 
+// TestWorkerStallTimeoutDefault checks an unset (zero) stall_timeout resolves
+// to the 600s default, and a set value resolves to itself (issue #85).
+func TestWorkerStallTimeoutDefault(t *testing.T) {
+	if got := (Worker{}).stallTimeoutDuration(); got != 600*time.Second {
+		t.Errorf("stallTimeoutDuration() = %s, want 600s for an unset stall_timeout", got)
+	}
+	if got := (Worker{StallTimeout: 45}).stallTimeoutDuration(); got != 45*time.Second {
+		t.Errorf("stallTimeoutDuration() = %s, want 45s", got)
+	}
+}
+
+// TestConfigValidateRejectsNegativeStallTimeout checks a negative
+// stall_timeout is reported by Validate (issue #85).
+func TestConfigValidateRejectsNegativeStallTimeout(t *testing.T) {
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m", StallTimeout: -5}}}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "stall_timeout -5 must be >= 0") {
+		t.Errorf("Validate() = %v, want an error naming stall_timeout -5", err)
+	}
+}
+
+// TestConfigStallTimeoutGetSetRoundTrip checks stall_timeout parses via Set,
+// survives a get/set round trip through WriteConfig/LoadConfig for both the
+// bare and workers.<name> forms, and a valid (non-negative) value passes
+// Validate (issue #85).
+func TestConfigStallTimeoutGetSetRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if err := cfg.Set("stall_timeout", "45"); err != nil {
+		t.Fatalf("Set(stall_timeout, 45) error = %v", err)
+	}
+	if err := cfg.Set("workers.default.stall_timeout", "90"); err != nil {
+		t.Fatalf("Set(workers.default.stall_timeout, 90) error = %v", err)
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	got, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() after write error = %v", err)
+	}
+	for key, want := range map[string]string{
+		"stall_timeout":                 "90",
+		"workers.default.stall_timeout": "90",
+	} {
+		if v, err := got.Get(key); err != nil || v != want {
+			t.Errorf("Get(%q) = %q, %v; want %q", key, v, err, want)
+		}
+	}
+}
+
 func TestConfigWithoutLeaseRoundTripsUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m"}}}
