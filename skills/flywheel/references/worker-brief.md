@@ -93,17 +93,22 @@ brief, split it and run the pieces as separate, ordered tasks. For a large task,
 and STOP. Evidence: a worker's first edit moved from step 56 to step 2 once the task was split,
 and each increment's first edit came within three steps.
 
-## 2. Dispatch: canonical `flywheel run`, raw `opencode run` as fallback
+## 2. Dispatch: canonical `flywheel run`, the worker adapter's own CLI as fallback
 
 The first choice is `flywheel run <task>` after `flywheel log --task <id> --kind planned --brief
 <path>`: it attaches the brief with `--file`, applies the deny policy, and records every event
-(`flywheel run <task> -h` for its flags). Keep the hand-built `opencode run` command below as the
+(`flywheel run <task> -h` for its flags). Keep the worker adapter's own CLI as the hand-built
 fallback — e.g. dispatching one increment of a brief. Hand-built dispatches add `--variant low`:
 on large increments the default reasoning variant spent 17-30 k reasoning tokens planning in one
 step and hit the output cap with nothing written (3 of 3 attempts); `--variant low` did the same
 increment in 493 s with at most ~1 k reasoning tokens per step.
 
-Never trust flag names from memory. Before relying on raw `opencode run` options, run:
+> **OpenCode adapter note.** In phase 1 the worker adapter's CLI is OpenCode. Everything from here
+> to the end of §2 — the flags, `OPENCODE_CONFIG`, the run-file format — is OpenCode-specific. A
+> different worker adapter needs its own equivalents; look them up from that CLI's own help, never
+> from memory.
+
+Before relying on raw `opencode run` options, run:
 
 ```bash
 opencode run --help
