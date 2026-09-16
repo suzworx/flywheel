@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -693,35 +694,56 @@ func TestWorkerEnvAndPolicy(t *testing.T) {
 	if string(b) != workerPermissionPolicy {
 		t.Errorf("policy file = %q, want the embedded policy", b)
 	}
+	if !strings.Contains(string(b), `"external_directory": "deny"`) {
+		t.Error(`policy file missing "external_directory": "deny" (issue #87)`)
+	}
 	sum := sha256.Sum256(b)
 	if sha != hex.EncodeToString(sum[:]) {
 		t.Errorf("workerPolicySHA() = %q, want %q", sha, hex.EncodeToString(sum[:]))
 	}
 }
 
+// policyDoc is the shape both the embedded and canonical worker permission
+// policies parse into.
+type policyDoc struct {
+	Permission struct {
+		Bash              map[string]string `json:"bash"`
+		ExternalDirectory string            `json:"external_directory"`
+	} `json:"permission"`
+}
+
+// TestWorkerPolicyMatchesCanonicalFile checks the embedded policy's bash
+// rules stay identical to the canonical reference file, while the embedded
+// copy alone carries external_directory: deny and the canonical file stays
+// byte-identical without it (issue #87).
 func TestWorkerPolicyMatchesCanonicalFile(t *testing.T) {
 	b, err := os.ReadFile("../../skills/flywheel/references/worker-permissions.json")
 	if err != nil {
 		t.Fatalf("read canonical policy: %v", err)
 	}
 	content := strings.ReplaceAll(string(b), "\r\n", "\n")
-	if content != workerPermissionPolicy {
-		t.Error("embedded workerPermissionPolicy differs from skills/flywheel/references/worker-permissions.json")
+
+	var canon, embedded policyDoc
+	if err := json.Unmarshal([]byte(content), &canon); err != nil {
+		t.Fatalf("canonical policy is not valid JSON: %v", err)
 	}
-	var doc struct {
-		Schema     string `json:"$schema"`
-		Permission struct {
-			Bash map[string]string `json:"bash"`
-		} `json:"permission"`
+	if err := json.Unmarshal([]byte(workerPermissionPolicy), &embedded); err != nil {
+		t.Fatalf("embedded policy is not valid JSON: %v", err)
 	}
-	if err := json.Unmarshal([]byte(workerPermissionPolicy), &doc); err != nil {
-		t.Fatalf("policy is not valid JSON: %v", err)
+	if canon.Permission.ExternalDirectory != "" {
+		t.Errorf("canonical policy external_directory = %q, want it byte-identical (unchanged, no such key)", canon.Permission.ExternalDirectory)
 	}
-	if doc.Permission.Bash["*"] != "allow" {
-		t.Errorf(`permission.bash["*"] = %q, want allow`, doc.Permission.Bash["*"])
+	if embedded.Permission.ExternalDirectory != "deny" {
+		t.Errorf(`embedded policy external_directory = %q, want "deny"`, embedded.Permission.ExternalDirectory)
 	}
-	if doc.Permission.Bash["git stash*"] != "deny" {
-		t.Errorf(`permission.bash["git stash*"] = %q, want deny`, doc.Permission.Bash["git stash*"])
+	if !reflect.DeepEqual(canon.Permission.Bash, embedded.Permission.Bash) {
+		t.Errorf("embedded bash rules = %v, want the canonical rules %v", embedded.Permission.Bash, canon.Permission.Bash)
+	}
+	if embedded.Permission.Bash["*"] != "allow" {
+		t.Errorf(`permission.bash["*"] = %q, want allow`, embedded.Permission.Bash["*"])
+	}
+	if embedded.Permission.Bash["git stash*"] != "deny" {
+		t.Errorf(`permission.bash["git stash*"] = %q, want deny`, embedded.Permission.Bash["git stash*"])
 	}
 }
 
@@ -865,21 +887,81 @@ func TestWorkerEnvUsesAbsoluteConfigPath(t *testing.T) {
 	}
 }
 
-// TestRunDispatchedPreservesExternalBriefPath checks a planned brief outside
-// the repo keeps its absolute path in dispatched.Brief.
-func TestRunDispatchedPreservesExternalBriefPath(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Init(dir, false); err != nil {
-		t.Fatalf("Init() error = %v", err)
-	}
-	ext := t.TempDir()
-	briefPath := filepath.Join(ext, "external.txt")
-	if err := os.WriteFile(briefPath, []byte("external brief\n"), 0o644); err != nil {
-		t.Fatalf("write external brief: %v", err)
-	}
-	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: briefPath}); err != nil {
-		t.Fatalf("AppendEvent() error = %v", err)
-	}
+// TestRunCopiesExternalBriefIntoWorktree checks a planned brief outside the
+// worktree is copied into .flywheel/briefs/<task>.txt byte-for-byte and
+// dispatched.Brief records the in-worktree path with the sha256 unchanged
+// (issue #87); a brief already inside the workdir is attached as is, with no
+// copy made.
+func TestRunCopiesExternalBriefIntoWorktree(t *testing.T) {
+	t.Run("external brief is copied", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := Init(dir, false); err != nil {
+			t.Fatalf("Init() error = %v", err)
+		}
+		ext := t.TempDir()
+		briefPath := filepath.Join(ext, "external.txt")
+		briefBytes := []byte("external brief\n")
+		if err := os.WriteFile(briefPath, briefBytes, 0o644); err != nil {
+			t.Fatalf("write external brief: %v", err)
+		}
+		if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: briefPath}); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+		if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		var buf bytes.Buffer
+		if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		wantBrief := ".flywheel/briefs/T1.txt"
+		if d := evs[1]; d.Kind != "dispatched" || d.Brief != wantBrief || d.SHA256 != contentSHA(briefBytes) {
+			t.Errorf("dispatched = %v, want brief %q and sha256 %q (unchanged by the copy)", d, wantBrief, contentSHA(briefBytes))
+		}
+		copied, err := os.ReadFile(filepath.Join(dir, ".flywheel", "briefs", "T1.txt"))
+		if err != nil {
+			t.Fatalf("read copied brief: %v", err)
+		}
+		if string(copied) != string(briefBytes) {
+			t.Errorf("copied brief = %q, want %q byte-for-byte", copied, briefBytes)
+		}
+	})
+
+	t.Run("internal brief is not copied", func(t *testing.T) {
+		dir := setupTask(t)
+		if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		var buf bytes.Buffer
+		if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		if d := evs[1]; d.Brief != "b.txt" {
+			t.Errorf("dispatched brief = %q, want the original b.txt (no copy made)", d.Brief)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".flywheel", "briefs", "T1.txt")); !os.IsNotExist(err) {
+			t.Errorf(".flywheel/briefs/T1.txt should not exist for an internal brief")
+		}
+	})
+}
+
+// TestRunRecordsOtherWorktreesAtDispatch checks a dispatched event snapshots
+// another linked worktree of the same repo (git worktree list --porcelain,
+// issue #87): a freshly added worktree with no changes yet still appears,
+// with an empty file map.
+func TestRunRecordsOtherWorktreesAtDispatch(t *testing.T) {
+	dir := setupTask(t)
+	initRepo(t, dir)
+	wt := filepath.Join(t.TempDir(), "other")
+	git(t, dir, []string{"worktree", "add", "--detach", wt})
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
@@ -891,8 +973,20 @@ func TestRunDispatchedPreservesExternalBriefPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	if d := evs[1]; d.Kind != "dispatched" || d.Brief != briefPath {
-		t.Errorf("dispatched = %v, want the external brief %q preserved", d, briefPath)
+	d := evs[1]
+	if d.Kind != "dispatched" {
+		t.Fatalf("evs[1] kind = %q, want dispatched", d.Kind)
+	}
+	if len(d.Worktrees) != 1 {
+		t.Fatalf("worktrees = %v, want exactly the one other worktree", d.Worktrees)
+	}
+	for p, files := range d.Worktrees {
+		if !samePath(p, wt) {
+			t.Errorf("worktree path = %q, want %q", p, wt)
+		}
+		if len(files) != 0 {
+			t.Errorf("worktree files = %v, want none (freshly checked out clean)", files)
+		}
 	}
 }
 

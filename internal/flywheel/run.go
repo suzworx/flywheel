@@ -48,10 +48,14 @@ type Result struct {
 }
 
 // workerPermissionPolicy is the embedded OpenCode permission policy written to
-// .flywheel/opencode-worker.json when missing. It must stay byte-identical to
-// skills/flywheel/references/worker-permissions.json: the catch-all allow for
-// bash comes FIRST and the git denies follow, and OpenCode applies the last
-// matching rule. The user's own opencode.json is never touched.
+// .flywheel/opencode-worker.json when missing. Its bash rules stay
+// byte-identical to skills/flywheel/references/worker-permissions.json: the
+// catch-all allow for bash comes FIRST and the git denies follow, and
+// OpenCode applies the last matching rule. This embedded copy additionally
+// denies external_directory — OpenCode's documented permission for tool
+// calls (read, edit, glob, grep and bash) that touch paths outside the
+// working directory (issue #87) — a line the canonical reference file does
+// not carry. The user's own opencode.json is never touched.
 var workerPermissionPolicy = `{
   "permission": {
     "bash": {
@@ -71,7 +75,8 @@ var workerPermissionPolicy = `{
       "git -C*": "deny",
       "git --work-tree*": "deny",
       "git --git-dir*": "deny"
-    }
+    },
+    "external_directory": "deny"
   }
 }`
 
@@ -176,11 +181,32 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	promptBriefField := promptBrief(dir, promptSrc)
 	promptB, err := os.ReadFile(promptSrc)
 	if err != nil {
 		return Result{}, fmt.Errorf("read prompt %s: %w", promptSrc, err)
 	}
+	// A prompt outside the worktree (a brief attached from another checkout)
+	// is copied in byte-for-byte and attached from its in-worktree copy, so
+	// no path in the dispatch points outside the worktree (issue #87). The
+	// sha256 recorded on dispatched is unchanged: it hashes promptB, the same
+	// bytes either way. A prompt already inside the workdir is attached as
+	// is, with no copy made.
+	if isOutsideWorktree(dir, promptSrc) {
+		name := o.Task + ".txt"
+		if o.Resume || o.DeltaPath != "" {
+			name = o.Task + ".delta.txt"
+		}
+		briefsDir := filepath.Join(dir, ".flywheel", "briefs")
+		if err := os.MkdirAll(briefsDir, 0o755); err != nil {
+			return Result{}, fmt.Errorf("create %s: %w", briefsDir, err)
+		}
+		dest := filepath.Join(briefsDir, name)
+		if err := os.WriteFile(dest, promptB, 0o644); err != nil {
+			return Result{}, fmt.Errorf("write %s: %w", dest, err)
+		}
+		promptSrc = dest
+	}
+	promptBriefField := promptBrief(dir, promptSrc)
 	prompt := string(promptB)
 
 	// The run file the dispatched event points at.
@@ -206,11 +232,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(dir)
 
+	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
+	// other worktrees, record each one's changed paths and shas so validate
+	// can catch a worker that edited another checkout instead of staying in
+	// this one. Not a git repo, or no other worktrees: nil (omitted).
+	worktrees := otherWorktrees(dir)
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: "policy sha256=" + policySHA,
-		Baseline: baseline,
+		Baseline: baseline, Worktrees: worktrees,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -773,6 +805,85 @@ func isRootedPath(p string) bool {
 		return true
 	}
 	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
+}
+
+// otherWorktrees snapshots every OTHER worktree in the git repo containing
+// dir (git worktree list --porcelain, read-only): for each, its changed
+// paths and file shas, the same read-only changedPaths/fileSHA the baseline
+// uses (issue #87). Nil when dir is not inside a git repo, or the repo has
+// no other worktrees.
+func otherWorktrees(dir string) map[string]map[string]string {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil
+	}
+	rc, out, _, err := runCmdSplit(dir, gitArgs([]string{"worktree", "list", "--porcelain"}), nil)
+	if err != nil || rc != 0 {
+		return nil
+	}
+	var others []string
+	for _, line := range strings.Split(string(out), "\n") {
+		p, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue
+		}
+		p = strings.TrimSpace(p)
+		if p == "" || samePath(p, absDir) {
+			continue
+		}
+		others = append(others, p)
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	snap := map[string]map[string]string{}
+	for _, p := range others {
+		changed, err := changedPaths(p)
+		if err != nil {
+			continue
+		}
+		files := map[string]string{}
+		for _, cp := range changed {
+			files[cp] = fileSHA(p, cp)
+		}
+		snap[p] = files
+	}
+	if len(snap) == 0 {
+		return nil
+	}
+	return snap
+}
+
+// samePath reports whether a and b name the same location. Each is resolved
+// with resolvePath first, so a symlinked temp root — macOS's /var ->
+// /private/var, or an equivalent form a Windows CI runner reports — does not
+// read as a different worktree from the one git itself is rooted at (issue
+// #87); comparison is case-insensitive on Windows, the same way
+// isOutsideWorktree compares paths.
+func samePath(a, b string) bool {
+	a = resolvePath(a)
+	b = resolvePath(b)
+	if runtime.GOOS == "windows" {
+		a = strings.ToLower(a)
+		b = strings.ToLower(b)
+	}
+	return a == b
+}
+
+// resolvePath makes p absolute and, when possible, resolves symlinks in it
+// (filepath.EvalSymlinks); a path that cannot be resolved (for instance, one
+// that does not exist) falls back to its absolute form, and a path that
+// cannot even be made absolute is returned unchanged. The result is
+// normalised to forward slashes with any trailing slash trimmed, so it can be
+// compared directly.
+func resolvePath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	return strings.TrimSuffix(filepath.ToSlash(p), "/")
 }
 
 // clipNote trims s and caps it at 200 characters for a finished note.

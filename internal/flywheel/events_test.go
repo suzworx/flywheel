@@ -611,3 +611,56 @@ func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestWorktreesFieldRoundTrips checks a dispatched event's worktrees snapshot
+// (worktree path -> {path -> sha256}) round-trips through the event log and
+// is omitted when empty (issue #87).
+func TestWorktreesFieldRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	e := Event{
+		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1",
+		Worktrees: map[string]map[string]string{
+			"/d/other-wt": {"note.txt": "deadbeef"},
+		},
+	}
+	if err := AppendEvent(dir, e); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("ReadEvents() = %d events, want 2", len(evs))
+	}
+	got := evs[0].Worktrees
+	if len(got) != 1 {
+		t.Fatalf("worktrees = %v, want 1 entry", got)
+	}
+	files, ok := got["/d/other-wt"]
+	if !ok || len(files) != 1 || files["note.txt"] != "deadbeef" {
+		t.Errorf("worktrees[/d/other-wt] = %v, want {note.txt: deadbeef}", files)
+	}
+	if evs[1].Worktrees != nil {
+		t.Errorf("worktrees = %v, want nil when never set", evs[1].Worktrees)
+	}
+
+	b2, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b2), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("log lines = %d, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], `"worktrees":{"/d/other-wt":{"note.txt":"deadbeef"}}`) {
+		t.Errorf("line 0 = %q, want the worktrees snapshot inline", lines[0])
+	}
+	if strings.Contains(lines[1], "worktrees") {
+		t.Errorf("line 1 = %q, want worktrees omitted when unset", lines[1])
+	}
+}

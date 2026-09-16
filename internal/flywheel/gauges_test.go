@@ -311,6 +311,79 @@ func TestValidateBaselineIgnoresCorrectionBaseline(t *testing.T) {
 	})
 }
 
+// dispatchedWithWorktree appends a dispatched event whose Worktrees field
+// snapshots wtDir's current changed paths and shas, the way run.go records
+// one at dispatch when the repo has another worktree (issue #87).
+func dispatchedWithWorktree(t *testing.T, dir, wtDir string) {
+	t.Helper()
+	paths, err := changedPaths(wtDir)
+	if err != nil {
+		t.Fatalf("changedPaths() error = %v", err)
+	}
+	files := map[string]string{}
+	for _, p := range paths {
+		files[p] = fileSHA(wtDir, p)
+	}
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1",
+		Worktrees: map[string]map[string]string{wtDir: files},
+	}); err != nil {
+		t.Fatalf("AppendEvent() dispatched error = %v", err)
+	}
+}
+
+// TestValidateOtherWorktreeChangeIsOutside checks a new file appearing in
+// another worktree recorded at dispatch lands in Outside, formatted as
+// "<worktree path>: <path>", and fails OK() (issue #87).
+func TestValidateOtherWorktreeChangeIsOutside(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "note.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("write note.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (a new file appeared in the other worktree)", res.OwnsOK)
+	}
+	want := wt + ": note.txt"
+	found := false
+	for _, o := range res.Outside {
+		if o == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("outside = %v, want it to contain %q", res.Outside, want)
+	}
+}
+
+// TestValidateUnchangedOtherWorktreePasses checks a worktree recorded at
+// dispatch with no drift since is not reported outside.
+func TestValidateUnchangedOtherWorktreePasses(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	initRepo(t, wt)
+	dispatchedWithWorktree(t, dir, wt)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK = %v, want true (the other worktree is unchanged since dispatch)", res.OwnsOK)
+	}
+}
+
 func TestValidateOutOfOwns(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
