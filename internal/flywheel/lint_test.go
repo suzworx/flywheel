@@ -112,6 +112,24 @@ func TestLintBriefMissingNeedsIsWarning(t *testing.T) {
 	want(t, res, nil, []string{"no needs: line"})
 }
 
+func TestLintBriefOwnsPatternMatchPasses(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"src/", "src/a.test.ts"},
+		"owns: src/*.test.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
+func TestLintBriefOwnsPatternNoMatchAlone(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"owns pattern src/*.none.ts matches no file"}, nil)
+}
+
+func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/*.none.ts (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
 func TestLintBriefUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	_, err := LintBrief(dir, filepath.Join(dir, "nope.txt"))
