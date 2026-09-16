@@ -1,22 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="259" height="152" viewBox="0 0 259 152" role="img" aria-label="scaffold a project">
-  <rect x="0" y="0" width="259" height="152" rx="12" fill="#0d1117"/>
-  <rect x="0" y="0" width="259" height="36" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="544" height="292" viewBox="0 0 544 292" role="img" aria-label="flywheel init">
+  <rect x="0" y="0" width="544" height="292" rx="12" fill="#0d1117"/>
+  <rect x="0" y="0" width="544" height="36" fill="#0d1117"/>
   <circle cx="26" cy="18" r="6" fill="#ff5f57"/>
   <circle cx="48" cy="18" r="6" fill="#febc2e"/>
   <circle cx="70" cy="18" r="6" fill="#28c840"/>
-  <text x="129.5" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">scaffold a project</text>
+  <text x="272" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">flywheel init</text>
   <text x="20" y="69" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <rect x="17" y="52" width="157.20000000000002" height="14" rx="3" fill="#161b22"/>
     <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel version</tspan>
   </text>
   <text x="20" y="89" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">flywheel v0.2.0</tspan>
+    <tspan xml:space="preserve">flywheel v0.11.0</tspan>
   </text>
   <text x="20" y="109" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <rect x="17" y="92" width="224.4" height="14" rx="3" fill="#161b22"/>
     <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel init --dir demo</tspan>
   </text>
   <text x="20" y="129" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">~/demo</tspan>
+    <tspan xml:space="preserve">added: flywheel.md</tspan>
+  </text>
+  <text x="20" y="149" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/state.json</tspan>
+  </text>
+  <text x="20" y="169" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/events.jsonl</tspan>
+  </text>
+  <text x="20" y="189" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/config.json</tspan>
+  </text>
+  <text x="20" y="209" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/.gitignore</tspan>
+  </text>
+  <text x="20" y="229" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/.gitattributes</tspan>
+  </text>
+  <text x="20" y="249" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">added: .flywheel/briefs/</tspan>
+  </text>
+  <text x="20" y="269" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">next: flywheel log --task &lt;id&gt; --kind planned --brief &lt;path&gt;</tspan>
   </text>
 </svg>

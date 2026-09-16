@@ -24,8 +24,11 @@ proj="$(mktemp -d)"
 trap 'rm -rf "$build_dir" "$proj"' EXIT
 
 # Build the CLI from this tree, stamping the real version (git describe) into
-# it. Build chatter goes to stderr, never into the transcript.
-go build -o "$build_dir/flywheel" -ldflags "-X main.version=$(git describe --tags --abbrev=0 2>/dev/null || echo dev)" ./cmd/flywheel 1>&2
+# it. Build chatter goes to stderr, never into the transcript. The -buildid is
+# stamped unique per run because Windows Smart App Control blocks an unsigned
+# binary by content hash: an identical rebuild is blocked identically, so a
+# fresh id is what makes a retry meaningful.
+go build -o "$build_dir/flywheel"   -ldflags "-X main.version=$(git describe --tags --abbrev=0 2>/dev/null || echo dev) -buildid=demo$(date +%s%N)"   ./cmd/flywheel 1>&2
 if [ -f "$build_dir/flywheel.exe" ]; then
   fw="$build_dir/flywheel.exe"
 else

@@ -15,6 +15,9 @@ lead makes only the critical calls.
 [![CI](https://github.com/suzworx/flywheel/actions/workflows/ci.yml/badge.svg)](https://github.com/suzworx/flywheel/actions)
 [![Latest release](https://img.shields.io/github/v/release/suzworx/flywheel)](https://github.com/suzworx/flywheel/releases)
 [![License](https://img.shields.io/github/license/suzworx/flywheel)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-suzworx.github.io%2Fflywheel-1f6feb)](https://suzworx.github.io/flywheel/)
+
+**Docs and quickstart → [suzworx.github.io/flywheel](https://suzworx.github.io/flywheel/)**
 
 ## Built by flywheel
 

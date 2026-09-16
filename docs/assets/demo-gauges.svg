@@ -1,57 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="906" height="372" viewBox="0 0 906 372" role="img" aria-label="the gauges measure; the inspector cannot pass without readings">
-  <rect x="0" y="0" width="906" height="372" rx="12" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="906" height="412" viewBox="0 0 906 412" role="img" aria-label="flywheel validate + inspect + verify">
+  <rect x="0" y="0" width="906" height="412" rx="12" fill="#0d1117"/>
   <rect x="0" y="0" width="906" height="36" fill="#0d1117"/>
   <circle cx="26" cy="18" r="6" fill="#ff5f57"/>
   <circle cx="48" cy="18" r="6" fill="#febc2e"/>
   <circle cx="70" cy="18" r="6" fill="#28c840"/>
-  <text x="453" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">the gauges measure; the inspector cannot pass without readings</text>
+  <text x="453" y="22" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#8b949e">flywheel validate + inspect + verify</text>
   <text x="20" y="69" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <rect x="17" y="52" width="190.8" height="14" rx="3" fill="#161b22"/>
     <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel validate T1</tspan>
   </text>
   <text x="20" y="89" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">T1 gate 1: pass (12ms)</tspan>
+    <tspan xml:space="preserve">validate: brief .flywheel/briefs/T1.txt</tspan>
   </text>
   <text x="20" y="109" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">T1 gate 2: pass (12ms)</tspan>
+    <tspan xml:space="preserve">T1 gate 1: pass (12ms)</tspan>
   </text>
   <text x="20" y="129" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">T1 owns: ok</tspan>
+    <tspan xml:space="preserve">T1 gate 2: pass (12ms)</tspan>
   </text>
   <text x="20" y="149" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <rect x="17" y="132" width="417.6" height="14" rx="3" fill="#161b22"/>
-    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel inspect T1 --verdict pass --session w1</tspan>
+    <tspan xml:space="preserve">T1 file a.go: 8 lines</tspan>
   </text>
   <text x="20" y="169" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">flywheel inspect: T4: session &quot;w1&quot; is a worker session of task &quot;T1&quot;; use a distinct inspector --session</tspan>
+    <tspan xml:space="preserve">T1 owns: ok</tspan>
   </text>
   <text x="20" y="189" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">(exit 6)</tspan>
+    <rect x="17" y="172" width="417.6" height="14" rx="3" fill="#161b22"/>
+    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel inspect T1 --verdict pass --session w1</tspan>
   </text>
   <text x="20" y="209" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <rect x="17" y="192" width="417.6" height="14" rx="3" fill="#161b22"/>
-    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel inspect T1 --verdict pass --session i1</tspan>
+    <tspan xml:space="preserve">flywheel inspect: T4: session &quot;w1&quot; is a worker session of task &quot;T1&quot;; use a distinct inspector --session</tspan>
   </text>
   <text x="20" y="229" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">T1 inspected pass</tspan>
+    <tspan xml:space="preserve">(exit 6)</tspan>
   </text>
   <text x="20" y="249" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <rect x="17" y="232" width="174" height="14" rx="3" fill="#161b22"/>
-    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel verify T1</tspan>
+    <rect x="17" y="232" width="417.6" height="14" rx="3" fill="#161b22"/>
+    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel inspect T1 --verdict pass --session i1</tspan>
   </text>
   <text x="20" y="269" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">PASS T1 T1: every dispatched event matches its brief</tspan>
+    <tspan xml:space="preserve">T1 inspected pass</tspan>
   </text>
   <text x="20" y="289" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">PASS T1 T3: every inspected pass has readings</tspan>
+    <rect x="17" y="272" width="174" height="14" rx="3" fill="#161b22"/>
+    <tspan xml:space="preserve" fill="#3fb950">$ </tspan><tspan xml:space="preserve">flywheel verify T1</tspan>
   </text>
   <text x="20" y="309" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">PASS T1 T4: no inspected event from a worker session</tspan>
+    <tspan xml:space="preserve">PASS T1 T1: every dispatched event matches its brief</tspan>
   </text>
   <text x="20" y="329" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
-    <tspan xml:space="preserve">PASS T1 T5: no landed event without a prior inspected pass</tspan>
+    <tspan xml:space="preserve">PASS T1 T3: every inspected pass has readings</tspan>
   </text>
   <text x="20" y="349" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">PASS T1 T4: no inspected event from a worker session</tspan>
+  </text>
+  <text x="20" y="369" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
+    <tspan xml:space="preserve">PASS T1 T5: no landed event without a prior inspected pass</tspan>
+  </text>
+  <text x="20" y="389" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">
     <tspan xml:space="preserve">PASS T1 T8: personas are correct</tspan>
   </text>
 </svg>
