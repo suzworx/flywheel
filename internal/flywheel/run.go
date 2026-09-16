@@ -549,6 +549,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if !ok {
 			continue
 		}
+		if obs.EndsTurn {
+			steps++
+			if steps == 20 && !planRecorded && !noPlanRecorded {
+				noPlanRecorded = true
+				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt}); err != nil {
+					return Result{}, err
+				}
+				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
+			}
+		}
 		switch obs.Kind {
 		case "start":
 			if !started {
@@ -593,14 +603,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				wroteOrder = append(wroteOrder, obs.Path)
 			}
 		case "step":
-			steps++
-			if steps == 20 && !planRecorded && !noPlanRecorded {
-				noPlanRecorded = true
-				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt}); err != nil {
-					return Result{}, err
-				}
-				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
-			}
 			if obs.Reason != "" {
 				lastReason = obs.Reason
 			}
