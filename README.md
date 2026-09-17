@@ -194,7 +194,8 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 1. **Get the CLI.** Download **flywheel-\<version\>-\<os\>-\<arch\>.zip** from the
    [latest release](https://github.com/suzworx/flywheel/releases/latest) — Windows binaries ship
    as `flywheel-<version>-windows-amd64.exe.zip` — plus `checksums.txt`, and verify the SHA-256
-   before putting it on PATH. Once installed, `flywheel upgrade --check` tells you whether a
+   before putting it on PATH (the archive holds a single binary named after the release, which
+   you rename to `flywheel` on PATH). Once installed, `flywheel upgrade --check` tells you whether a
    newer release exists and `flywheel upgrade` installs it, checksum-verified. Or build from
    source:
 

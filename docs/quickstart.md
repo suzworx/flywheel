@@ -17,22 +17,42 @@ Download the release for your platform from the [Releases page](https://github.c
 a zip named `flywheel-v<version>-<os>-<arch>.zip` (Windows binaries ship as
 `flywheel-v<version>-windows-amd64.exe.zip`), plus the `checksums.txt` beside it.
 
-Verify the download before trusting it. On Linux or macOS:
+Verify the download before trusting it: the printed hash must match the matching line in
+`checksums.txt` exactly. If it does not, the download is corrupt or tampered with — re-download,
+never install it.
+
+On Linux or macOS, the release publishes four assets — `linux-amd64`, `linux-arm64`,
+`darwin-amd64`, `darwin-arm64` — so the block below derives the one for your machine from `uname`
+and uses it for both the checksum and the install:
 
 ```sh
-shasum -a 256 flywheel-v0.11.0-linux-amd64.zip
+# set V to the release you are installing
+V=v0.14.0
+case "$(uname -s)" in Linux) OS=linux;; Darwin) OS=darwin;; *) exit 1;; esac
+case "$(uname -m)" in x86_64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) exit 1;; esac
+BIN=flywheel-$V-$OS-$ARCH
+
+shasum -a 256 "$BIN.zip"   # compare with checksums.txt
+unzip -o "$BIN.zip"
+sudo install -m 0755 "$BIN" /usr/local/bin/flywheel
 ```
 
-On Windows (PowerShell):
+On Windows (PowerShell), the zip holds `flywheel-$V-windows-amd64.exe`. Extract it into
+`%USERPROFILE%\flywheel` and add that directory to your user PATH, so `flywheel` is callable
+from any directory:
 
 ```powershell
-Get-FileHash flywheel-v0.11.0-windows-amd64.exe.zip -Algorithm SHA256
+# set $V to the release you are installing
+$V = 'v0.14.0'
+Get-FileHash "flywheel-$V-windows-amd64.exe.zip" -Algorithm SHA256
+New-Item -ItemType Directory -Force "$env:USERPROFILE\flywheel" | Out-Null
+Expand-Archive "flywheel-$V-windows-amd64.exe.zip" -DestinationPath "$env:USERPROFILE\flywheel"
+Rename-Item "$env:USERPROFILE\flywheel\flywheel-$V-windows-amd64.exe" flywheel.exe
+[Environment]::SetEnvironmentVariable('Path', "$env:USERPROFILE\flywheel;" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')
+$env:Path = "$env:USERPROFILE\flywheel;$env:Path"
 ```
 
-Compare the printed hash with the matching line in `checksums.txt`. They must match exactly; if
-they do not, the download is corrupt or tampered with — re-download, never install it.
-
-Put the `flywheel` binary on your PATH and confirm it runs:
+Confirm it runs:
 
 ```sh
 flywheel version
