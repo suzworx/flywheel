@@ -1,7 +1,10 @@
 package flywheel
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -35,7 +38,7 @@ func landedEvents(t *testing.T, dir, task string) []Event {
 func TestLandTaskSuccess(t *testing.T) {
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
-	if err := LandTask(dir, "T1", "abc1234", "merged"); err != nil {
+	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
 		t.Fatalf("LandTask() error = %v", err)
 	}
 	landed := landedEvents(t, dir, "T1")
@@ -65,7 +68,7 @@ func TestLandTaskRefusedWithoutPass(t *testing.T) {
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
 	}
-	err := LandTask(dir, "T1", "abc1234", "")
+	err := LandTask(dir, "T1", "abc1234", "", false, "")
 	if !IsRuleRefusal(err) {
 		t.Fatalf("LandTask() error = %v, want a rule refusal", err)
 	}
@@ -82,7 +85,7 @@ func TestLandTaskBadCommit(t *testing.T) {
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	for _, commit := range []string{"", "abc12", "zzzzzzz", "abcdef1234567890abcdef1234567890abcdef12345678901"} {
-		if err := LandTask(dir, "T1", commit, ""); err == nil {
+		if err := LandTask(dir, "T1", commit, "", false, ""); err == nil {
 			t.Errorf("LandTask(commit %q) accepted, want an error", commit)
 		}
 	}
@@ -94,10 +97,10 @@ func TestLandTaskBadCommit(t *testing.T) {
 func TestLandTaskSameCommitNoOp(t *testing.T) {
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
-	if err := LandTask(dir, "T1", "abc1234", ""); err != nil {
+	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
 		t.Fatalf("first LandTask() error = %v", err)
 	}
-	err := LandTask(dir, "T1", "abc1234", "again")
+	err := LandTask(dir, "T1", "abc1234", "again", false, "")
 	if !errors.Is(err, ErrAlreadyLanded) {
 		t.Fatalf("second LandTask() error = %v, want ErrAlreadyLanded", err)
 	}
@@ -109,10 +112,10 @@ func TestLandTaskSameCommitNoOp(t *testing.T) {
 func TestLandTaskDifferentCommitRefused(t *testing.T) {
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
-	if err := LandTask(dir, "T1", "abc1234", ""); err != nil {
+	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
 		t.Fatalf("first LandTask() error = %v", err)
 	}
-	err := LandTask(dir, "T1", "def5678", "")
+	err := LandTask(dir, "T1", "def5678", "", false, "")
 	if !IsRuleRefusal(err) {
 		t.Fatalf("second LandTask() error = %v, want a rule refusal", err)
 	}
@@ -122,5 +125,78 @@ func TestLandTaskDifferentCommitRefused(t *testing.T) {
 	}
 	if len(landedEvents(t, dir, "T1")) != 1 {
 		t.Errorf("landed events = %d, want 1", len(landedEvents(t, dir, "T1")))
+	}
+}
+
+// TestLandTaskOrdinaryRecordsNoLeadFlag checks an ordinary landing's event
+// carries no lead_implemented field and its note is unchanged.
+func TestLandTaskOrdinaryRecordsNoLeadFlag(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	if landed[0].LeadImplemented {
+		t.Error("LeadImplemented = true, want false")
+	}
+	if landed[0].Note != "merged" {
+		t.Errorf("Note = %q, want %q", landed[0].Note, "merged")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if bytes.Contains(raw, []byte("lead_implemented")) {
+		t.Error("ordinary landing JSON carries a lead_implemented field")
+	}
+}
+
+// TestLandTaskLeadImplemented checks a --by-lead landing records the flag and
+// the reason, prefixed in the note.
+func TestLandTaskLeadImplemented(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := LandTask(dir, "T1", "abc1234", "", true, "40-line script fix, faster than a worker round-trip"); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	if !landed[0].LeadImplemented {
+		t.Error("LeadImplemented = false, want true")
+	}
+	want := "lead-implemented: 40-line script fix, faster than a worker round-trip"
+	if landed[0].Note != want {
+		t.Errorf("Note = %q, want %q", landed[0].Note, want)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"lead_implemented":true`)) {
+		t.Errorf("lead-implemented landing JSON missing %q:\n%s", `"lead_implemented":true`, raw)
+	}
+}
+
+// TestLandTaskLeadImplementedComposesNote checks an operator note stays first
+// and the reason is appended after "; ".
+func TestLandTaskLeadImplementedComposesNote(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := LandTask(dir, "T1", "abc1234", "merged", true, "script fix"); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	want := "merged; lead-implemented: script fix"
+	if landed[0].Note != want {
+		t.Errorf("Note = %q, want %q", landed[0].Note, want)
 	}
 }

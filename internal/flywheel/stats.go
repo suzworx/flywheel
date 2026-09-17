@@ -9,12 +9,14 @@ import (
 
 // StatsTasks counts the tasks by a subset of their derived status (see
 // status.go for the full set): total, and how many landed, passed or were
-// rejected.
+// rejected. LeadImplemented counts the landed tasks whose landing carried the
+// lead-implemented flag (issue #198).
 type StatsTasks struct {
-	Total    int `json:"total"`
-	Landed   int `json:"landed"`
-	Passed   int `json:"passed"`
-	Rejected int `json:"rejected"`
+	Total           int `json:"total"`
+	Landed          int `json:"landed"`
+	LeadImplemented int `json:"lead_implemented"`
+	Passed          int `json:"passed"`
+	Rejected        int `json:"rejected"`
 }
 
 // StatsReport is the factory's own numbers, computed once over the whole
@@ -58,6 +60,11 @@ func Stats(dir string) (StatsReport, error) {
 			rep.Tasks.Passed++
 		case "rejected":
 			rep.Tasks.Rejected++
+		}
+	}
+	for _, e := range events {
+		if e.Kind == "landed" && e.LeadImplemented {
+			rep.Tasks.LeadImplemented++
 		}
 	}
 

@@ -28,7 +28,12 @@ func CommitOK(s string) bool {
 // whose derived status is passed may land, and an already-landed task may only
 // repeat its recorded commit. On success the landed event is appended and the
 // derived state refreshed.
-func LandTask(dir, task, commit, note string) error {
+//
+// When leadImplemented is set, the landing is recorded as lead-implemented
+// (the flag on the landed event) and the reason is put in the event's note,
+// prefixed "lead-implemented: "; an operator-supplied note, when present, is
+// kept first and the reason appended after "; " (issue #198).
+func LandTask(dir, task, commit, note string, leadImplemented bool, reason string) error {
 	if dir == "" {
 		dir = "."
 	}
@@ -61,7 +66,15 @@ func LandTask(dir, task, commit, note string) error {
 	if status != "passed" {
 		return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s is not passed (status %q); land only after a passing inspection: flywheel inspect %s --verdict pass --session <session>", task, status, task)}
 	}
-	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Note: note}); err != nil {
+	if leadImplemented {
+		suffix := "lead-implemented: " + reason
+		if note != "" {
+			note = note + "; " + suffix
+		} else {
+			note = suffix
+		}
+	}
+	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Note: note, LeadImplemented: leadImplemented}); err != nil {
 		return fmt.Errorf("append landed for %s: %w", task, err)
 	}
 	if _, err := WriteState(dir); err != nil {
