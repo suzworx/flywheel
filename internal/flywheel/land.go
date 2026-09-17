@@ -3,6 +3,7 @@ package flywheel
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -75,16 +76,16 @@ func LandTask(dir, task, commit, note string, leadImplemented bool, reason strin
 			note = suffix
 		}
 	}
-	// Resolve the tree of the commit being landed, not of the working
-	// directory: the landed event is a claim about the commit, and git
-	// rev-parse is read-only so the shared index is never touched. A commit
-	// that is not in this repository cannot resolve; the landed event then
-	// records an empty tree rather than failing, because landing must not
-	// become refusable for a reporting field.
-	tree := ""
-	if out, err := gitRead(dir, []string{"rev-parse", commit + "^{tree}"}); err == nil {
-		tree = strings.TrimSpace(out)
-	}
+	// Resolve the tree of the commit being landed with the same
+	// normalisation treeHash applies to a worktree — flywheel's own
+	// bookkeeping (.flywheel/ and flywheel.md) removed — so the landed tree
+	// equals the tree a validate pass inspected for the same content. It is
+	// computed in a throwaway index seeded from the commit; the shared index
+	// is never touched. A commit that is not in this repository cannot
+	// resolve; the landed event then records an empty tree rather than
+	// failing, because landing must not become refusable for a reporting
+	// field.
+	tree := landedTree(dir, commit)
 	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}); err != nil {
 		return fmt.Errorf("append landed for %s: %w", task, err)
 	}
@@ -92,4 +93,34 @@ func LandTask(dir, task, commit, note string, leadImplemented bool, reason strin
 		return fmt.Errorf("refresh state for %s: %w", task, err)
 	}
 	return nil
+}
+
+// landedTree returns the tree id of commit with flywheel's own bookkeeping
+// (.flywheel/ and flywheel.md) removed, mirroring treeHash's normalisation so
+// the landed tree is comparable with the tree a validate pass measured. It is
+// computed in a temporary GIT_INDEX_FILE, the way treeHash creates and
+// disposes of it: git read-tree the commit, git rm --cached the bookkeeping,
+// git write-tree; the shared git index is never touched. A commit that cannot
+// be read into the index (not in this repository) yields "" rather than an
+// error: the landed event then records an empty tree.
+func landedTree(dir, commit string) string {
+	tmp, err := os.CreateTemp("", "fw-index-*")
+	if err != nil {
+		return ""
+	}
+	idx := tmp.Name()
+	tmp.Close()
+	os.Remove(idx)
+	defer os.Remove(idx)
+	if _, err := gitRun(dir, idx, []string{"read-tree", commit}); err != nil {
+		return ""
+	}
+	if _, err := gitRun(dir, idx, []string{"rm", "-r", "--cached", "--ignore-unmatch", "--", ".flywheel", "flywheel.md"}); err != nil {
+		return ""
+	}
+	out, err := gitRun(dir, idx, []string{"write-tree"})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }

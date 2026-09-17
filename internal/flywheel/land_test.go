@@ -86,6 +86,47 @@ func TestLandedTree(t *testing.T) {
 	}
 }
 
+// TestLandedTreeMatchesInspected is the comparison the landed tree field
+// exists for: a commit carrying flywheel's own bookkeeping (.flywheel/ and
+// flywheel.md) alongside a product file must land with the same normalised
+// tree treeHash measures, so "what shipped" equals "what was measured".
+func TestLandedTreeMatchesInspected(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel: %v", err)
+	}
+	log := `{"ts":"2026-09-14T10:00:00Z","task":"T1","kind":"planned"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), []byte(log), 0o644); err != nil {
+		t.Fatalf("write events.jsonl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "flywheel.md"), []byte("# T1\n"), 0o644); err != nil {
+		t.Fatalf("write flywheel.md: %v", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "work"})
+	commit := git(t, dir, []string{"rev-parse", "HEAD"})
+	raw := git(t, dir, []string{"rev-parse", commit + "^{tree}"})
+	appendPassed(t, dir, "T1")
+	want, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := LandTask(dir, "T1", commit, "merged", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	if landed[0].Tree != want {
+		t.Errorf("Tree = %q, want %q (treeHash of the same content)", landed[0].Tree, want)
+	}
+	if landed[0].Tree == raw {
+		t.Error("Tree = the unfiltered commit tree; the landed tree must exclude flywheel's own bookkeeping")
+	}
+}
+
 // TestLandTaskUnresolvableTree lands a commit that is not in any repository
 // here; the landed event still succeeds and records an empty tree.
 func TestLandTaskUnresolvableTree(t *testing.T) {

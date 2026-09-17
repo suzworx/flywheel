@@ -341,6 +341,12 @@ func AppendEvent(dir string, e Event) error {
 	if e.Kind == "staffed" && e.Persona == "" {
 		e.Persona = "lead"
 	}
+	// planned and amended events default to the planner persona, so every
+	// ingestion route — the JSON log path and the generic flag path included —
+	// records who decided. A value already set wins.
+	if (e.Kind == "planned" || e.Kind == "amended") && e.Persona == "" {
+		e.Persona = "planner"
+	}
 	if err := Validate(e); err != nil {
 		return err
 	}
