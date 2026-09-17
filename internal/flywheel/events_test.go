@@ -349,6 +349,90 @@ func TestOffCourseKindRoundTrips(t *testing.T) {
 	}
 }
 
+// TestSignalKindValidate checks the signal kind (issue #37): a signal event
+// requires a Signal from the exported Signals set and a task; an unknown value
+// is rejected with a message naming it and the allowed set; and no other kind
+// may carry a Signal.
+func TestSignalKindValidate(t *testing.T) {
+	for _, s := range []string{"no-plan", "off-course", "no-writes", "capped", "provider-error", "stalled", "silent", "failed-dirty"} {
+		if err := Validate(Event{Task: "T1", Kind: "signal", Signal: s}); err != nil {
+			t.Errorf("Validate() rejected signal/%s: %v", s, err)
+		}
+	}
+	if err := Validate(Event{Task: "T1", Kind: "signal"}); err == nil {
+		t.Error("Validate() accepted a signal event without a signal")
+	} else if !strings.Contains(err.Error(), "signal") {
+		t.Errorf("Validate() error = %v, want signal message", err)
+	}
+	if err := Validate(Event{Kind: "signal", Signal: "no-plan"}); err == nil {
+		t.Error("Validate() accepted a signal event without a task")
+	} else if !strings.Contains(err.Error(), "task") {
+		t.Errorf("Validate() error = %v, want task message", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "signal", Signal: "bogus"}); err == nil {
+		t.Error("Validate() accepted an unknown signal value")
+	} else if !strings.Contains(err.Error(), `"bogus"`) ||
+		!strings.Contains(err.Error(), "no-plan") || !strings.Contains(err.Error(), "failed-dirty") {
+		t.Errorf("Validate() error = %v, want it naming the value and the allowed set", err)
+	}
+	for _, k := range []string{"planned", "no-plan", "finished", "off-course"} {
+		if err := Validate(Event{Task: "T1", Kind: k, Signal: "no-plan"}); err == nil {
+			t.Errorf("Validate() accepted a signal on kind %s", k)
+		} else if !strings.Contains(err.Error(), "signal") {
+			t.Errorf("Validate() error = %v, want signal message", err)
+		}
+	}
+	if err := Validate(Event{Task: "T1", Kind: "bogus"}); err == nil {
+		t.Error("Validate() accepted unknown kind")
+	} else if !strings.Contains(err.Error(), "signal") {
+		t.Errorf("Validate() error = %v, want signal listed in the kind message", err)
+	}
+}
+
+// TestSignalFieldRoundTrips checks a signal event round-trips with the
+// condition under the "signal" key, which is omitted when empty (issue #37).
+func TestSignalFieldRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "signal", Signal: "capped",
+		Attempt: "r1", Session: "s1", Path: ".flywheel/runs/T1.r1.jsonl",
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:01Z", Task: "T2", Kind: "planned"}); err != nil {
+		t.Fatalf("AppendEvent() plain error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("ReadEvents() = %d events, want 2", len(evs))
+	}
+	got := evs[0]
+	if got.Kind != "signal" || got.Signal != "capped" || got.Attempt != "r1" ||
+		got.Session != "s1" || got.Path != ".flywheel/runs/T1.r1.jsonl" {
+		t.Errorf("signal round trip mismatch: %v", got)
+	}
+	if evs[1].Signal != "" {
+		t.Errorf("plain event signal = %q, want empty", evs[1].Signal)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("events.jsonl = %d lines, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], `"signal":"capped"`) {
+		t.Errorf("line 0 = %q, want signal:\"capped\"", lines[0])
+	}
+	if strings.Contains(lines[1], "signal") {
+		t.Errorf("line 1 = %q, want signal omitted when empty", lines[1])
+	}
+}
+
 func TestEventNewFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	toks := new(Tokens)

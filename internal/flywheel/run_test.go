@@ -566,7 +566,13 @@ func TestRunSimCapped(t *testing.T) {
 			t.Errorf("events include a report event for a capped run: %v", e)
 		}
 	}
-	if f := evs[len(evs)-1]; f.Kind != "finished" || f.Reason != "length" {
+	var f Event
+	for _, e := range evs {
+		if e.Kind == "finished" {
+			f = e
+		}
+	}
+	if f.Kind != "finished" || f.Reason != "length" {
 		t.Errorf("finished event = %v, want reason length", f)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "runs", "T1.r1.report.md")); !os.IsNotExist(err) {
@@ -584,13 +590,165 @@ func TestRunSimCapped(t *testing.T) {
 	if !strings.Contains(plog, want) {
 		t.Errorf("progress missing %q; got:\n%s", want, plog)
 	}
-	if f := evs[len(evs)-1]; f.PeakReasoning != 50 {
+	if f.PeakReasoning != 50 {
 		t.Errorf("finished peak_reasoning = %d, want 50 (max of 50 then 5)", f.PeakReasoning)
 	}
 	hint := "T1 r1 hint: reason=length peak=50 reasoning tokens in one step; " +
 		"split files into named parts, use smaller increments, or try another variant"
 	if !strings.Contains(plog, hint) {
 		t.Errorf("progress missing hint %q; got:\n%s", hint, plog)
+	}
+}
+
+// TestRunCappedSignalAfterFinished checks a run finishing reason length
+// records a capped signal AFTER its finished event, carrying the attempt and
+// the run file in Path (issue #37).
+func TestRunCappedSignalAfterFinished(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("capped.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "length" {
+		t.Fatalf("reason = %q, want length", res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var sig Event
+	sigIdx := -1
+	for i, e := range evs {
+		if e.Kind == "signal" {
+			sig = e
+			sigIdx = i
+		}
+	}
+	if sig.Kind != "signal" || sig.Signal != "capped" {
+		t.Fatalf("signal event = %v, want signal capped", sig)
+	}
+	if sig.Attempt != "r1" || sig.Path != ".flywheel/runs/T1.r1.jsonl" {
+		t.Errorf("capped signal = %v, want attempt r1 and the run file path", sig)
+	}
+	if sigIdx < 0 || evs[sigIdx-1].Kind != "finished" {
+		t.Errorf("capped signal at %d is not right after the finished event; events = %v", sigIdx, evs)
+	}
+}
+
+// TestRunProviderErrorSignalAfterFinished checks a run finishing reason error
+// records a provider-error signal after its finished event (issue #37).
+func TestRunProviderErrorSignalAfterFinished(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("provider-error.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "error" {
+		t.Fatalf("reason = %q, want error", res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var sig Event
+	sigIdx := -1
+	for i, e := range evs {
+		if e.Kind == "signal" {
+			sig = e
+			sigIdx = i
+		}
+	}
+	if sig.Kind != "signal" || sig.Signal != "provider-error" {
+		t.Fatalf("signal event = %v, want signal provider-error", sig)
+	}
+	if sig.Attempt != "r1" || sig.Path != ".flywheel/runs/T1.r1.jsonl" {
+		t.Errorf("provider-error signal = %v, want attempt r1 and the run file path", sig)
+	}
+	if sigIdx < 0 || evs[sigIdx-1].Kind != "finished" {
+		t.Errorf("provider-error signal at %d is not right after the finished event; events = %v", sigIdx, evs)
+	}
+}
+
+// TestRunCleanStopRecordsNoSignal checks a clean stop run records no signal
+// event at all (issue #37).
+func TestRunCleanStopRecordsNoSignal(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "signal" {
+			t.Errorf("events include a signal for a clean stop run: %v", e)
+		}
+	}
+}
+
+// TestRunNoDuplicateSignalForOneAttempt checks a run that crosses the plan
+// threshold AND finishes length records exactly one signal per condition,
+// never twice for the same condition and attempt (issue #37).
+func TestRunNoDuplicateSignalForOneAttempt(t *testing.T) {
+	dir := setupTask(t)
+	session := "ses_test_both_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	for i := 0; i < 22; i++ {
+		fmt.Fprintf(&b, `{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"length"}}`+"\n", session)
+	}
+	model := filepath.Join(t.TempDir(), "both.jsonl")
+	if err := os.WriteFile(model, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := WriteConfig(dir, simConfig(model)); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	res, err := Run(dir, RunOptions{Task: "T1"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "length" {
+		t.Fatalf("reason = %q, want length", res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	counts := map[string]int{}
+	noPlan := 0
+	for _, e := range evs {
+		if e.Kind == "signal" {
+			counts[e.Signal]++
+		}
+		if e.Kind == "no-plan" {
+			noPlan++
+		}
+	}
+	if noPlan != 1 {
+		t.Errorf("no-plan events = %d, want exactly 1", noPlan)
+	}
+	if counts["no-plan"] != 1 {
+		t.Errorf("no-plan signals = %d, want exactly 1", counts["no-plan"])
+	}
+	if counts["capped"] != 1 {
+		t.Errorf("capped signals = %d, want exactly 1", counts["capped"])
+	}
+	if len(counts) != 2 {
+		t.Errorf("signal conditions = %v, want exactly no-plan and capped", counts)
 	}
 }
 
@@ -659,7 +817,13 @@ func TestRunSimProviderError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	if f := evs[len(evs)-1]; f.Kind != "finished" || f.Reason != "error" {
+	var f Event
+	for _, e := range evs {
+		if e.Kind == "finished" {
+			f = e
+		}
+	}
+	if f.Kind != "finished" || f.Reason != "error" {
 		t.Errorf("finished event = %v, want reason error", f)
 	}
 }
@@ -696,7 +860,12 @@ func TestRunStartTimeoutSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	f := evs[len(evs)-1]
+	var f Event
+	for _, e := range evs {
+		if e.Kind == "finished" {
+			f = e
+		}
+	}
 	if f.Kind != "finished" || f.Reason != "silent" || f.Model != model || f.Note != "auth failed: bad api key" {
 		t.Errorf("finished event = %v, want reason silent, model %q, note from stderr", f, model)
 	}
@@ -766,7 +935,12 @@ func TestRunStalledMidStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	f := evs[len(evs)-1]
+	var f Event
+	for _, e := range evs {
+		if e.Kind == "finished" {
+			f = e
+		}
+	}
 	if f.Kind != "finished" || f.Reason != "stalled" || f.Steps != 1 || f.Model != model {
 		t.Errorf("finished event = %v, want reason stalled, steps 1, model %q", f, model)
 	}
@@ -1888,6 +2062,60 @@ func TestRunNoPlanAtExactly20Steps(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("no-plan events = %d, want exactly 1", count)
+	}
+}
+
+// TestRunNoPlanSignalRecordsBoth checks a run crossing the plan threshold
+// records BOTH its no-plan event and a signal event whose Signal is no-plan,
+// carrying the attempt, the session and the run file in Path (issue #37).
+func TestRunNoPlanSignalRecordsBoth(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, false))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop (a signal must not change the outcome)", res.RC, res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	noPlan := 0
+	signals := 0
+	var sig Event
+	for _, e := range evs {
+		if e.Kind == "no-plan" {
+			noPlan++
+		}
+		if e.Kind == "signal" {
+			signals++
+			sig = e
+		}
+	}
+	if noPlan != 1 {
+		t.Fatalf("no-plan events = %d, want exactly 1", noPlan)
+	}
+	if sig.Kind != "signal" || sig.Signal != "no-plan" {
+		t.Fatalf("signal event = %v, want signal no-plan", sig)
+	}
+	if sig.Task != "T1" || sig.Attempt != "r1" {
+		t.Errorf("signal = %v, want task T1 attempt r1", sig)
+	}
+	if sig.Path != ".flywheel/runs/T1.r1.jsonl" {
+		t.Errorf("signal path = %q, want the run file", sig.Path)
+	}
+	if sig.Session != "ses_test_noplan_001" {
+		t.Errorf("signal session = %q, want the run session", sig.Session)
+	}
+	// One condition, one signal: a clean stop run adds no finish signal, so
+	// exactly one signal records the whole run.
+	if signals != 1 {
+		t.Errorf("signal events = %d, want exactly 1 (no duplicate for one attempt)", signals)
 	}
 }
 
