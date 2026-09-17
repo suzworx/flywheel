@@ -24,14 +24,19 @@ type Tokens struct {
 // Event is one JSON object per line in .flywheel/events.jsonl. The event log
 // is the source of truth; state.json and flywheel.md are derived from it.
 type Event struct {
-	TS      string   `json:"ts"`
-	Task    string   `json:"task"`
-	Kind    string   `json:"kind"`
-	Session string   `json:"session,omitempty"`
-	Model   string   `json:"model,omitempty"`
-	Attempt string   `json:"attempt,omitempty"`
-	RC      *int     `json:"rc,omitempty"`
-	Reason  string   `json:"reason,omitempty"`
+	TS      string `json:"ts"`
+	Task    string `json:"task"`
+	Kind    string `json:"kind"`
+	Session string `json:"session,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Attempt string `json:"attempt,omitempty"`
+	RC      *int   `json:"rc,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	// Signal is a signal event's condition name (issue #37): a uniform record
+	// of a run condition already detected and recorded under its own kind,
+	// so the factory's troubles have one countable shape. Only the signal
+	// kind may carry it.
+	Signal  string   `json:"signal,omitempty"`
 	Verdict string   `json:"verdict,omitempty"`
 	Brief   string   `json:"brief,omitempty"`
 	Needs   []string `json:"needs,omitempty"`
@@ -109,6 +114,17 @@ var kinds = map[string]bool{
 	"goal":            true,
 	"learning":        true,
 	"dismissed":       true,
+	"signal":          true,
+}
+
+// Signals is the set of condition names a signal event may carry (issue #37):
+// no-plan, off-course, no-writes, capped, provider-error, stalled, silent and
+// failed-dirty. The last two and no-writes and failed-dirty are still derived
+// states in the factory view; run.go emits the others where it already
+// detects them.
+var Signals = map[string]bool{
+	"no-plan": true, "off-course": true, "no-writes": true, "capped": true,
+	"provider-error": true, "stalled": true, "silent": true, "failed-dirty": true,
 }
 
 // severities is the set of severities a learning event may carry.
@@ -172,10 +188,12 @@ func floorLevel(kind string) bool {
 }
 
 // Validate enforces the task pattern, the attempt pattern, the kind set and
-// the reviewed-requires-verdict rule. staffed, session_start, session_command
-// and session_end are floor-level events: they may carry an empty task (every
-// other kind requires one) but staffed and the two session-boundary kinds
-// must carry a session, and session_command must also carry a note.
+// the reviewed-requires-verdict rule. A signal event must carry a Signal from
+// the exported Signals set, and no other kind may carry one. staffed,
+// session_start, session_command and session_end are floor-level events: they
+// may carry an empty task (every other kind requires one) but staffed and the
+// two session-boundary kinds must carry a session, and session_command must
+// also carry a note.
 func Validate(e Event) error {
 	if !floorLevel(e.Kind) && !taskOK(e.Task) {
 		return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
@@ -212,7 +230,18 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal", e.Kind)
+	}
+	if e.Kind == "signal" {
+		if e.Signal == "" {
+			return fmt.Errorf("signal event must carry a signal")
+		}
+		if !Signals[e.Signal] {
+			return fmt.Errorf("signal %q is not one of no-plan, off-course, no-writes, capped, provider-error, stalled, silent, failed-dirty", e.Signal)
+		}
+	}
+	if e.Signal != "" && e.Kind != "signal" {
+		return fmt.Errorf("event kind %q cannot carry a signal", e.Kind)
 	}
 	if e.Kind == "learning" {
 		if !severities[e.Severity] {
