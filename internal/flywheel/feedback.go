@@ -86,6 +86,9 @@ type LearningsOwnership struct {
 
 // lstatFile is a test seam: identity is re-checked through it immediately
 // before a remove or rename, so a test can prove a replaced file is spared.
+// The unexported helpers take an lstat argument so a test can inject the seam
+// per operation; WriteLearningsFile consults this default so legacy tests
+// that reassign it keep working.
 var lstatFile = os.Lstat
 
 // checkDotLearningsOwned proves .flywheel/learnings.md is flywheel's (absent or
@@ -147,6 +150,13 @@ func CheckLearningsOwned(dir string) (*LearningsOwnership, error) {
 // .flywheel/learnings.md identity is re-checked immediately before the rename,
 // and an unreadable <dir>/learnings.md is treated as not ours and left alone.
 func WriteLearningsFile(dir string, views []LearningView) error {
+	return writeLearningsFile(dir, views, lstatFile)
+}
+
+// writeLearningsFile is WriteLearningsFile with the identity-check seam
+// injected per operation, so a test can interleave a replacement between the
+// temp write and the rename without touching a package global.
+func writeLearningsFile(dir string, views []LearningView, lstat func(string) (os.FileInfo, error)) error {
 	own, err := checkDotLearningsOwned(dir)
 	if err != nil {
 		return err
@@ -172,22 +182,25 @@ func WriteLearningsFile(dir string, views []LearningView) error {
 		}
 	}
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
-	if err := requireDotStillOwned(dot, own); err != nil {
+	// The ownership proof is re-checked inside the atomic write, immediately
+	// before the os.Rename, so nothing but the rename sits between the proof
+	// and the mutation. A two-syscall window between the Lstat and the rename
+	// is the best the standard library offers, and that is acceptable.
+	if err := atomicWriteChecked(filepath.Join(dir, ".flywheel"), "learnings.md", "learnings-*.md", []byte(b.String()), func() error {
+		return requireDotStillOwned(dot, own, lstat)
+	}); err != nil {
 		return err
 	}
-	if err := atomicWrite(filepath.Join(dir, ".flywheel"), "learnings.md", "learnings-*.md", []byte(b.String())); err != nil {
-		return err
-	}
-	return removeRootIfStillMarked(dir)
+	return removeRootIfStillMarked(dir, lstat)
 }
 
 // requireDotStillOwned re-checks .flywheel/learnings.md immediately before the
-// atomicWrite rename: the object must still be the one CheckLearningsOwned
-// proved, or — when no file existed at check time — must still be absent, or
-// now carry the marker. A file that appeared or was replaced in between belongs
-// to another writer and is never clobbered.
-func requireDotStillOwned(dot string, own *LearningsOwnership) error {
-	fi, err := lstatFile(dot)
+// rename: the object must still be the one CheckLearningsOwned proved, or —
+// when no file existed at check time — must still be absent, or now carry the
+// marker. A file that appeared or was replaced in between belongs to another
+// writer and is never clobbered. lstat is the identity-check seam.
+func requireDotStillOwned(dot string, own *LearningsOwnership, lstat func(string) (os.FileInfo, error)) error {
+	fi, err := lstat(dot)
 	if own.info == nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -222,8 +235,9 @@ func requireDotStillOwned(dot string, own *LearningsOwnership) error {
 // required against an Lstat taken immediately before the remove. A file
 // replaced in between belongs to another writer and is left alone (not an
 // error); a small window between the Lstat and the Remove is unavoidable with
-// the standard library. An unreadable file is treated as not ours.
-func removeRootIfStillMarked(dir string) error {
+// the standard library. An unreadable file is treated as not ours. lstat is
+// the identity-check seam.
+func removeRootIfStillMarked(dir string, lstat func(string) (os.FileInfo, error)) error {
 	old := filepath.Join(dir, "learnings.md")
 	f, err := os.Open(old)
 	if err != nil {
@@ -243,7 +257,7 @@ func removeRootIfStillMarked(dir string) error {
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", old, err)
 	}
-	now, err := lstatFile(old)
+	now, err := lstat(old)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // already gone; nothing to remove

@@ -159,25 +159,54 @@ func runFeedbackAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
-		Task: o.task, Kind: "learning", Severity: o.severity, Title: o.title,
-		Observed: o.observed, Evidence: o.evidence, Ask: o.ask, Signals: signals,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
+	id, title, aerr, rerr := addLearning(o.dir, o.task, o.severity, o.title, o.observed, o.evidence, o.ask, signals)
+	if aerr != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", aerr)
 		os.Exit(1)
 	}
-	events, err := flywheel.ReadEvents(o.dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(id, rerr))
 		os.Exit(1)
+	}
+	fmt.Printf("%s %s\n", id, title)
+}
+
+// addLearning appends a learning event and rewrites .flywheel/learnings.md,
+// returning the recorded learning's id and title. The append error and the
+// render error are returned separately: a render failure after a successful
+// append is not an append failure — the event is durable in the append-only
+// log and the artifact is derived from it, so the learning is not lost.
+func addLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
+	if err := flywheel.AppendEvent(dir, flywheel.Event{
+		Task: task, Kind: "learning", Severity: severity, Title: title,
+		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals,
+	}); err != nil {
+		return "", "", err, nil
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return "", "", err, nil
 	}
 	views := flywheel.Learnings(events)
-	if err := flywheel.WriteLearningsFile(o.dir, views); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
-		os.Exit(1)
-	}
 	last := views[len(views)-1]
-	fmt.Printf("%s %s\n", last.ID, last.Title)
+	if err := flywheel.WriteLearningsFile(dir, views); err != nil {
+		return last.ID, last.Title, nil, err
+	}
+	return last.ID, last.Title, nil, nil
+}
+
+// feedbackRenderFailure explains a render failure that happened after the
+// feedback event was appended to the log: it says plainly that the learning
+// was recorded and names its id so nobody re-adds it, names the artifact path
+// and the reason it could not be regenerated, and tells the operator what to
+// do — learnings.md is derived from the event log and the next successful
+// `flywheel feedback add` or `flywheel feedback dismiss` rewrites it from
+// scratch.
+func feedbackRenderFailure(id string, err error) string {
+	return fmt.Sprintf(
+		"learning %s was recorded, but .flywheel/learnings.md could not be regenerated: %v\n"+
+			"learnings.md is derived from the event log, so %s is safe; once the conflict is resolved, the next `flywheel feedback add` or `flywheel feedback dismiss` rewrites it from scratch — do not re-add it",
+		id, err, id)
 }
 
 // runFeedbackDismiss appends a dismissed event for an existing learning id
@@ -236,7 +265,7 @@ func runFeedbackDismiss(args []string) {
 		os.Exit(1)
 	}
 	if err := flywheel.WriteLearningsFile(o.dir, flywheel.Learnings(events)); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
+		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %s\n", feedbackRenderFailure(id, err))
 		os.Exit(1)
 	}
 	fmt.Printf("%s dismissed\n", id)
