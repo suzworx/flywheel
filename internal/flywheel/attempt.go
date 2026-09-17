@@ -68,6 +68,7 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 		merged.Gates = prompt.Gates
 	}
 	merged.Owns = unionStrings(header.Owns, prompt.Owns)
+	merged.Exclusive = unionStrings(header.Exclusive, prompt.Exclusive)
 	return merged, paths, nil
 }
 

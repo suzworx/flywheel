@@ -176,6 +176,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 
 	// T1: dispatched needs a planned event carrying the brief path.
+	// Dispatch lock (issue #242): the log is read, the collision checks are
+	// run and the dispatched event is appended under .flywheel/dispatch.lock,
+	// so two dispatches started at the same moment serialise instead of both
+	// reading a log in which neither has dispatched, both passing the checks
+	// and both dispatching — taking the same exclusive resource or writing
+	// the same owned file, the exact case the refusals exist to stop. The
+	// lock is released as soon as dispatched lands, before the worker starts.
+	releaseDispatchLock, err := acquireDispatchLock(dir)
+	if err != nil {
+		return Result{}, err
+	}
+	dispatchLockHeld := true
+	defer func() {
+		if dispatchLockHeld {
+			releaseDispatchLock()
+		}
+	}()
+
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return Result{}, err
@@ -341,6 +359,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+	// The dispatched event is recorded and every check that read the log is
+	// past: release the dispatch lock NOW, before the worker starts. A lock
+	// held for the run would serialise the entire factory, which is the
+	// opposite of what this repository is for.
+	releaseDispatchLock()
+	dispatchLockHeld = false
 	progress(o.Progress, o.Task+" "+attempt+" dispatched "+worker.Adapter+" "+model)
 
 	// The lease records that this run holds this attempt while the worker
@@ -865,6 +889,55 @@ type ownsCollision struct {
 	task   string
 	status string
 	paths  []string
+}
+
+// Dispatch lock (issue #242): Run holds .flywheel/dispatch.lock across "read
+// the log -> run the collision checks -> append dispatched". The lock is
+// created with O_EXCL, which fails atomically when the file exists on every
+// OS, so at most one dispatch holds it at a time. A file whose mtime is
+// older than dispatchLockStaleAfter is a crashed holder's and is cleared.
+const (
+	dispatchLockStaleAfter = 2 * time.Minute
+	dispatchLockWait       = 5 * time.Second
+	dispatchLockRetry      = 50 * time.Millisecond
+)
+
+// acquireDispatchLock takes the repository-scoped dispatch lock by creating
+// .flywheel/dispatch.lock with O_EXCL, writing the holder's pid and an
+// RFC3339 timestamp into it so a human can see who holds it. A short bounded
+// retry serialises two nearly-simultaneous dispatches instead of failing one
+// of them; on timeout the error names the file and tells the operator to
+// remove it when no dispatch is running — that is ordinary contention, not a
+// rule refusal. A lock file whose mtime is older than dispatchLockStaleAfter
+// is removed and the attempt retried, so a crashed lead never wedges the
+// repository. The returned release removes the file; the caller must call it
+// once the dispatched event is appended.
+func acquireDispatchLock(dir string) (release func(), err error) {
+	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return nil, fmt.Errorf("create %s: %w", filepath.Dir(p), err)
+	}
+	deadline := now().Add(dispatchLockWait)
+	for {
+		f, oerr := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if oerr == nil {
+			host, _ := os.Hostname()
+			_, _ = fmt.Fprintf(f, "pid %d host %s locked %s\n", os.Getpid(), host, now().UTC().Format(time.RFC3339))
+			_ = f.Close()
+			return func() { _ = os.Remove(p) }, nil
+		}
+		if !os.IsExist(oerr) {
+			return nil, fmt.Errorf("create %s: %w", p, oerr)
+		}
+		if info, serr := os.Stat(p); serr == nil && now().Sub(info.ModTime()) > dispatchLockStaleAfter {
+			_ = os.Remove(p)
+			continue
+		}
+		if now().After(deadline) {
+			return nil, fmt.Errorf("dispatch lock %s is held by another dispatch; if no dispatch is running, remove the file and retry", p)
+		}
+		time.Sleep(dispatchLockRetry)
+	}
 }
 
 // briefDrift is a dispatch-time finding that the brief on disk differs from
