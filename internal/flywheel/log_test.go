@@ -58,6 +58,30 @@ func TestRecordPlannedRecordsOwnsNeeds(t *testing.T) {
 	}
 }
 
+func TestPlannerIdentity(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nneeds: none\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	if err := RecordAmended(dir, "t", brief, "why"); err != nil {
+		t.Fatalf("RecordAmended() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(evs))
+	}
+	if evs[0].Kind != "planned" || evs[0].Persona != "planner" {
+		t.Errorf("planned event = kind %q persona %q, want persona planner", evs[0].Kind, evs[0].Persona)
+	}
+	if evs[1].Kind != "amended" || evs[1].Persona != "planner" {
+		t.Errorf("amended event = kind %q persona %q, want persona planner", evs[1].Kind, evs[1].Persona)
+	}
+}
+
 func TestRecordPlannedMissingBriefErrors(t *testing.T) {
 	dir := t.TempDir()
 	if err := RecordPlanned(dir, "t", filepath.Join(dir, "nope.txt")); err == nil {

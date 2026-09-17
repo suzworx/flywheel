@@ -63,6 +63,49 @@ func TestLandTaskSuccess(t *testing.T) {
 	}
 }
 
+// TestLandedTree records the tree of the landed commit, resolved from the
+// commit itself rather than the working directory.
+func TestLandedTree(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+	commit := git(t, dir, []string{"rev-parse", "HEAD"})
+	wantTree := git(t, dir, []string{"rev-parse", commit + "^{tree}"})
+	appendPassed(t, dir, "T1")
+	if err := LandTask(dir, "T1", commit, "merged", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	if landed[0].Commit != commit {
+		t.Errorf("Commit = %q, want %q", landed[0].Commit, commit)
+	}
+	if landed[0].Tree != wantTree {
+		t.Errorf("Tree = %q, want %q", landed[0].Tree, wantTree)
+	}
+}
+
+// TestLandTaskUnresolvableTree lands a commit that is not in any repository
+// here; the landed event still succeeds and records an empty tree.
+func TestLandTaskUnresolvableTree(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	landed := landedEvents(t, dir, "T1")
+	if len(landed) != 1 {
+		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+	if landed[0].Tree != "" {
+		t.Errorf("Tree = %q, want empty for an unresolvable commit", landed[0].Tree)
+	}
+	if landed[0].Commit != "abc1234" {
+		t.Errorf("Commit = %q, want abc1234", landed[0].Commit)
+	}
+}
+
 func TestLandTaskRefusedWithoutPass(t *testing.T) {
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {

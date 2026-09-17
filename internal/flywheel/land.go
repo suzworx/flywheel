@@ -3,6 +3,7 @@ package flywheel
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrAlreadyLanded is wrapped in the error LandTask returns when the task was
@@ -74,7 +75,17 @@ func LandTask(dir, task, commit, note string, leadImplemented bool, reason strin
 			note = suffix
 		}
 	}
-	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Note: note, LeadImplemented: leadImplemented}); err != nil {
+	// Resolve the tree of the commit being landed, not of the working
+	// directory: the landed event is a claim about the commit, and git
+	// rev-parse is read-only so the shared index is never touched. A commit
+	// that is not in this repository cannot resolve; the landed event then
+	// records an empty tree rather than failing, because landing must not
+	// become refusable for a reporting field.
+	tree := ""
+	if out, err := gitRead(dir, []string{"rev-parse", commit + "^{tree}"}); err == nil {
+		tree = strings.TrimSpace(out)
+	}
+	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}); err != nil {
 		return fmt.Errorf("append landed for %s: %w", task, err)
 	}
 	if _, err := WriteState(dir); err != nil {
