@@ -70,6 +70,109 @@ func NextLearningID(events []Event) string {
 	return fmt.Sprintf("L-%02d", n+1)
 }
 
+// AddLearning appends a learning event and rewrites .flywheel/learnings.md,
+// holding .flywheel/feedback.lock across the whole mutation — read, append,
+// reread, render — so two concurrent feedback commands serialise instead of
+// interleaving (issue #260). The critical section is short and contains no
+// worker run, so the lock is held for the entire mutation. The append error
+// and the render error are returned separately: a failure after a successful
+// append is not an append failure — the event is durable in the append-only
+// log and the artifact is derived from it, so the learning is not lost.
+// Because the mutation is serialised, the id computed from the events read
+// under the lock is the id the append actually writes.
+func AddLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
+	release, err := acquireRepoLock(dir, "feedback.lock")
+	if err != nil {
+		return "", "", err, nil
+	}
+	defer release()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return "", "", err, nil
+	}
+	id = NextLearningID(events)
+	if err := AppendEvent(dir, Event{
+		Task: task, Kind: "learning", Severity: severity, Title: title,
+		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals,
+	}); err != nil {
+		return "", "", err, nil
+	}
+	events, err = ReadEvents(dir)
+	if err != nil {
+		return id, "", nil, err
+	}
+	views := Learnings(events)
+	last := views[len(views)-1]
+	if err := WriteLearningsFile(dir, views); err != nil {
+		return last.ID, last.Title, nil, err
+	}
+	return last.ID, last.Title, nil, nil
+}
+
+// DismissLearning appends a dismissed event for an existing learning id and
+// rewrites .flywheel/learnings.md, holding the feedback lock across the whole
+// mutation exactly as AddLearning does (issue #260). An id the log does not
+// know records nothing and returns an error naming it.
+func DismissLearning(dir, id, reason string) (appendErr, renderErr error) {
+	release, err := acquireRepoLock(dir, "feedback.lock")
+	if err != nil {
+		return err, nil
+	}
+	defer release()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return err, nil
+	}
+	views := Learnings(events)
+	var task string
+	found := false
+	for _, l := range views {
+		if l.ID == id {
+			task = l.Task
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown learning %q", id), nil
+	}
+	if _, err := CheckLearningsOwned(dir); err != nil {
+		return err, nil
+	}
+	if err := AppendEvent(dir, Event{Task: task, Kind: "dismissed", ID: id, Note: reason}); err != nil {
+		return err, nil
+	}
+	events, err = ReadEvents(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteLearningsFile(dir, Learnings(events)); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// RegenLearnings rebuilds .flywheel/learnings.md from the event log,
+// appending nothing (issue #254): the artifact is derived from the log, so
+// when the log is right and the file is wrong — for instance after a render
+// failure — this reconciles them. The feedback lock is held across read and
+// rewrite, the same critical section AddLearning and DismissLearning protect,
+// so a regen never interleaves with a concurrent mutation. It succeeds when
+// the file already matches, and refuses a hand-maintained file exactly as
+// the other paths do.
+func RegenLearnings(dir string) error {
+	release, err := acquireRepoLock(dir, "feedback.lock")
+	if err != nil {
+		return err
+	}
+	defer release()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return err
+	}
+	return WriteLearningsFile(dir, Learnings(events))
+}
+
 // learningsMarker is the line that proves flywheel generated a learnings.md:
 // written immediately after the "# Learnings" title and matched on before any
 // overwrite or delete. The filename alone never proves ownership — the first

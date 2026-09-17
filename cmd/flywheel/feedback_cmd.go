@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	register("feedback", "curate signals into learnings\n    add       record a learning\n    dismiss   dismiss a learning by id\n    export    write a sanitised report of undismissed learnings\n    submit    send the report upstream (consent-first)", runFeedback)
+	register("feedback", "curate signals into learnings\n    add       record a learning\n    dismiss   dismiss a learning by id\n    regen     rebuild learnings.md from the log\n    export    write a sanitised report of undismissed learnings\n    submit    send the report upstream (consent-first)", runFeedback)
 	registerHelp("feedback", feedbackUsageLines(), func() *flag.FlagSet { fs, _ := feedbackFlags(); return fs })
 }
 
@@ -60,6 +60,7 @@ func feedbackUsageLines() string {
 		"flywheel feedback [--dir DIR]",
 		"       flywheel feedback add --task ID --severity P0|P1|P2 --title T --observed O --evidence E --ask A [--signals a,b] [--dir DIR]",
 		"       flywheel feedback dismiss L-NN --reason WHY [--dir DIR]",
+		"       flywheel feedback regen [--dir DIR]",
 		"       flywheel feedback export [--out PATH] [--dir DIR]",
 		"       flywheel feedback submit [--yes] [--dir DIR]",
 	}, "\n")
@@ -79,6 +80,9 @@ func runFeedback(args []string) {
 			return
 		case "dismiss":
 			runFeedbackDismiss(args[1:])
+			return
+		case "regen":
+			runFeedbackRegen(args[1:])
 			return
 		case "export":
 			runFeedbackExport(args[1:])
@@ -159,38 +163,18 @@ func runFeedbackAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	events, err := flywheel.ReadEvents(o.dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
+	id, title, appendErr, renderErr := flywheel.AddLearning(o.dir, o.task, o.severity, o.title, o.observed, o.evidence, o.ask, signals)
+	if appendErr != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", appendErr)
 		os.Exit(1)
 	}
-	// The id this append will take is fixed by the events read before
-	// appending, so a later failure can name it without depending on another
-	// read. A concurrent append between the two reads could make this id
-	// wrong; the real fix is serialising the mutation, which is filed as #260
-	// and is not this unit's job.
-	id := flywheel.NextLearningID(events)
-	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
-		Task: o.task, Kind: "learning", Severity: o.severity, Title: o.title,
-		Observed: o.observed, Evidence: o.evidence, Ask: o.ask, Signals: signals,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
-		os.Exit(1)
-	}
-	events, err = flywheel.ReadEvents(o.dir)
-	if err != nil {
+	if renderErr != nil {
 		// The learning was recorded the moment AppendEvent returned, so a
-		// read failure here must still say so, or a retry adds it twice.
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(id, err))
+		// render failure here must still say so, or a retry adds it twice.
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(id, renderErr))
 		os.Exit(1)
 	}
-	views := flywheel.Learnings(events)
-	last := views[len(views)-1]
-	if err := flywheel.WriteLearningsFile(o.dir, views); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(last.ID, err))
-		os.Exit(1)
-	}
-	fmt.Printf("%s %s\n", last.ID, last.Title)
+	fmt.Printf("%s %s\n", id, title)
 }
 
 // addLearning appends a learning event and rewrites .flywheel/learnings.md,
@@ -199,47 +183,21 @@ func runFeedbackAdd(args []string) {
 // is not an append failure — the event is durable in the append-only log and
 // the artifact is derived from it, so the learning is not lost. It is the
 // seam the command-layer tests drive, because runFeedbackAdd exits the
-// process.
+// process. The mutation itself, lock and all, is flywheel.AddLearning.
 func addLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
-	events, err := flywheel.ReadEvents(dir)
-	if err != nil {
-		return "", "", err, nil
-	}
-	// The id this append will take is fixed by the events read before
-	// appending, so a later failure can name it without depending on another
-	// read. A concurrent append between the two reads could make this id
-	// wrong; the real fix is serialising the mutation, which is filed as #260
-	// and is not this unit's job.
-	id = flywheel.NextLearningID(events)
-	if err := flywheel.AppendEvent(dir, flywheel.Event{
-		Task: task, Kind: "learning", Severity: severity, Title: title,
-		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals,
-	}); err != nil {
-		return "", "", err, nil
-	}
-	events, err = flywheel.ReadEvents(dir)
-	if err != nil {
-		return id, "", nil, err
-	}
-	views := flywheel.Learnings(events)
-	last := views[len(views)-1]
-	if err := flywheel.WriteLearningsFile(dir, views); err != nil {
-		return last.ID, last.Title, nil, err
-	}
-	return last.ID, last.Title, nil, nil
+	return flywheel.AddLearning(dir, task, severity, title, observed, evidence, ask, signals)
 }
 
 // feedbackRenderFailure explains a render failure that happened after the
 // feedback event was appended to the log: it says plainly that the learning
 // was recorded and names its id so nobody re-adds it, names the artifact path
 // and the reason it could not be regenerated, and tells the operator what to
-// do — learnings.md is derived from the event log and the next successful
-// `flywheel feedback add` or `flywheel feedback dismiss` rewrites it from
-// scratch.
+// do — learnings.md is derived from the event log and `flywheel feedback
+// regen` rebuilds it from scratch once the conflict is resolved.
 func feedbackRenderFailure(id string, err error) string {
 	return fmt.Sprintf(
 		"learning %s was recorded, but .flywheel/learnings.md could not be regenerated: %v\n"+
-			"learnings.md is derived from the event log, so %s is safe; once the conflict is resolved, the next `flywheel feedback add` or `flywheel feedback dismiss` rewrites it from scratch — do not re-add it",
+			"learnings.md is derived from the event log, so %s is safe; once the conflict is resolved, `flywheel feedback regen` rebuilds it from the log — do not re-add it",
 		id, err, id)
 }
 
@@ -264,47 +222,43 @@ func runFeedbackDismiss(args []string) {
 		os.Exit(2)
 	}
 	id := pos[0]
-	events, err := flywheel.ReadEvents(o.dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
+	appendErr, renderErr := flywheel.DismissLearning(o.dir, id, o.reason)
+	if appendErr != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", appendErr)
 		os.Exit(1)
 	}
-	views := flywheel.Learnings(events)
-	var task string
-	found := false
-	for _, l := range views {
-		if l.ID == id {
-			task = l.Task
-			found = true
-			break
-		}
-	}
-	if !found {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: unknown learning %q\n", id)
-		os.Exit(1)
-	}
-	if _, err := flywheel.CheckLearningsOwned(o.dir); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
-		os.Exit(1)
-	}
-	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
-		Task: task, Kind: "dismissed", ID: id, Note: o.reason,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
-		os.Exit(1)
-	}
-	events, err = flywheel.ReadEvents(o.dir)
-	if err != nil {
+	if renderErr != nil {
 		// The dismissal was recorded the moment AppendEvent returned, so a
-		// read failure here must still say so, or a retry marks it twice.
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %s\n", feedbackRenderFailure(id, err))
-		os.Exit(1)
-	}
-	if err := flywheel.WriteLearningsFile(o.dir, flywheel.Learnings(events)); err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %s\n", feedbackRenderFailure(id, err))
+		// render failure here must still say so, or a retry marks it twice.
+		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %s\n", feedbackRenderFailure(id, renderErr))
 		os.Exit(1)
 	}
 	fmt.Printf("%s dismissed\n", id)
+}
+
+// runFeedbackRegen rebuilds .flywheel/learnings.md from the event log,
+// appending nothing (issue #254): the log is the source of truth, so when it
+// is right and the artifact is wrong — for instance after a render failure —
+// this is the command that reconciles them. It exits 0 when the file already
+// matches, and refuses a hand-maintained file exactly as add and dismiss do.
+func runFeedbackRegen(args []string) {
+	fs, o := feedbackFlags()
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback regen: %v\n", err)
+		feedbackUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if len(pos) != 0 {
+		fmt.Fprintf(os.Stderr, "flywheel feedback regen: unexpected argument %q\n", pos[0])
+		feedbackUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if err := flywheel.RegenLearnings(o.dir); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback regen: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("learnings regenerated")
 }
 
 // runFeedbackExport prints a Markdown report of every undismissed learning
