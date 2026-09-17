@@ -54,13 +54,13 @@ func LintBrief(dir, path string) (LintResult, error) {
 		if isOwnsPattern(e.path) {
 			matches, err := filepath.Glob(filepath.Join(dir, e.path))
 			if err != nil || len(matches) == 0 {
-				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file", e.path))
+				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file; if the unit creates it, annotate it: %s (new)", e.path, e.path))
 			}
 			continue
 		}
 		st, err := os.Stat(filepath.Join(dir, e.path))
 		if err != nil {
-			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s does not exist", e.path))
+			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s does not exist; if the unit creates it, annotate it: %s (new)", e.path, e.path))
 			continue
 		}
 		if strings.HasSuffix(e.path, "/") && !st.IsDir() {

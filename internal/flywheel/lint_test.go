@@ -80,7 +80,18 @@ func TestLintBriefNoChecksAlone(t *testing.T) {
 func TestLintBriefOwnsMissingFileAlone(t *testing.T) {
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns path missing.go does not exist"}, nil)
+	want(t, res, []string{"owns path missing.go does not exist; if the unit creates it, annotate it: missing.go (new)"}, nil)
+}
+
+func TestLintBriefOwnsMissingFileNamesNewAnnotation(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	if len(res.Problems) != 1 {
+		t.Fatalf("problems = %v, want exactly one", res.Problems)
+	}
+	if !strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q does not name the (new) annotation", res.Problems[0])
+	}
 }
 
 func TestLintBriefSeveralErrorsTogether(t *testing.T) {
@@ -121,7 +132,30 @@ func TestLintBriefOwnsPatternMatchPasses(t *testing.T) {
 func TestLintBriefOwnsPatternNoMatchAlone(t *testing.T) {
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns pattern src/*.none.ts matches no file"}, nil)
+	want(t, res, []string{"owns pattern src/*.none.ts matches no file; if the unit creates it, annotate it: src/*.none.ts (new)"}, nil)
+}
+
+func TestLintBriefOwnsPatternNoMatchNamesNewAnnotation(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	if len(res.Problems) != 1 {
+		t.Fatalf("problems = %v, want exactly one", res.Problems)
+	}
+	if !strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q does not name the (new) annotation", res.Problems[0])
+	}
+}
+
+func TestLintBriefOwnsMissingFileNewSkipsCheck(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: missing.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
+func TestLintBriefOwnsExistingFileAnnotatedPasses(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go", "b.go"},
+		"owns: a.go, b.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
 }
 
 func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
