@@ -97,9 +97,9 @@ func TestWriteLearningsFile(t *testing.T) {
 	if err := WriteLearningsFile(dir, views); err != nil {
 		t.Fatalf("WriteLearningsFile() error = %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "learnings.md"))
+	got, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
 	if err != nil {
-		t.Fatalf("read learnings.md: %v", err)
+		t.Fatalf("read .flywheel/learnings.md: %v", err)
 	}
 	want := "# Learnings\n" +
 		"\n## L-01 — Terse\n" +
@@ -116,6 +116,54 @@ func TestWriteLearningsFile(t *testing.T) {
 		"ask: warm\n"
 	if string(got) != want {
 		t.Errorf("learnings.md =\n%s\nwant\n%s", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "learnings.md")); !os.IsNotExist(err) {
+		t.Errorf("repo-root learnings.md exists; want only .flywheel/learnings.md")
+	}
+}
+
+func TestWriteLearningsFileMigrationRemovesRootCopy(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "learnings.md")
+	if err := os.WriteFile(old, []byte("stale root copy"), 0o644); err != nil {
+		t.Fatalf("write old root copy: %v", err)
+	}
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	if err := WriteLearningsFile(dir, views); err != nil {
+		t.Fatalf("WriteLearningsFile() error = %v", err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("old root copy %s still exists after migration (stat err=%v)", old, err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
+	if err != nil {
+		t.Fatalf("read .flywheel/learnings.md: %v", err)
+	}
+	if !strings.Contains(string(got), "Terse") {
+		t.Errorf(".flywheel/learnings.md lost the learning:\n%s", got)
+	}
+}
+
+func TestWriteLearningsFileFailedWriteLeavesOldCopy(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "learnings.md")
+	oldContent := "old content"
+	if err := os.WriteFile(old, []byte(oldContent), 0o644); err != nil {
+		t.Fatalf("write old root copy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel"), []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("write .flywheel blocker: %v", err)
+	}
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	if err := WriteLearningsFile(dir, views); err == nil {
+		t.Fatal("WriteLearningsFile() succeeded, want a write failure")
+	}
+	b, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatalf("read old root copy: %v", err)
+	}
+	if string(b) != oldContent {
+		t.Errorf("old root copy changed to %q, want %q untouched", b, oldContent)
 	}
 }
 

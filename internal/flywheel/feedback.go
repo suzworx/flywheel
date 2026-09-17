@@ -69,11 +69,14 @@ func NextLearningID(events []Event) string {
 	return fmt.Sprintf("L-%02d", n+1)
 }
 
-// WriteLearningsFile rewrites <dir>/learnings.md atomically (temp file plus
+// WriteLearningsFile rewrites .flywheel/learnings.md atomically (temp file plus
 // rename) from views, in log order: a heading, then one section per learning
 // with its severity, observed, evidence, ask, signals (when given) and
 // dismissed reason (when dismissed). Every free-text field is sanitised
-// before it is written, so a path or token never leaks into the artifact.
+// before it is written, so a path or token never leaks into the artifact. The
+// file lives under .flywheel/ so a repo's existing .flywheel handling covers
+// it; a stale <dir>/learnings.md from an older version is removed only after
+// the new file is written, so a failed write never orphans the old copy.
 func WriteLearningsFile(dir string, views []LearningView) error {
 	var b strings.Builder
 	b.WriteString("# Learnings\n")
@@ -94,7 +97,18 @@ func WriteLearningsFile(dir string, views []LearningView) error {
 			fmt.Fprintf(&b, "dismissed: %s\n", Sanitise(v.Reason))
 		}
 	}
-	return atomicWrite(dir, "learnings.md", "learnings-*.md", []byte(b.String()))
+	if err := atomicWrite(filepath.Join(dir, ".flywheel"), "learnings.md", "learnings-*.md", []byte(b.String())); err != nil {
+		return err
+	}
+	old := filepath.Join(dir, "learnings.md")
+	if _, err := os.Stat(old); err == nil {
+		if err := os.Remove(old); err != nil {
+			return fmt.Errorf("remove %s: %w", old, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", old, err)
+	}
+	return nil
 }
 
 // sanitise regexes. Each rule is independent of the others; over-redacting a

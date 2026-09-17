@@ -125,7 +125,7 @@ func runFeedbackList(args []string) {
 	fmt.Println("untriaged signals: none")
 }
 
-// runFeedbackAdd appends a learning event and rewrites learnings.md.
+// runFeedbackAdd appends a learning event and rewrites .flywheel/learnings.md.
 func runFeedbackAdd(args []string) {
 	fs, o := feedbackFlags()
 	pos, err := parseArgs(fs, args)
@@ -177,7 +177,7 @@ func runFeedbackAdd(args []string) {
 }
 
 // runFeedbackDismiss appends a dismissed event for an existing learning id
-// and rewrites learnings.md.
+// and rewrites .flywheel/learnings.md.
 func runFeedbackDismiss(args []string) {
 	fs, o := feedbackFlags()
 	pos, err := parseArgs(fs, args)
