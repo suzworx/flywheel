@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +37,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"claim":      func() (*flag.FlagSet, any) { fs, o := claimFlags(); return fs, o },
 	"release":    func() (*flag.FlagSet, any) { fs, o := releaseFlags(); return fs, o },
 	"claims":     func() (*flag.FlagSet, any) { fs, o := claimsFlags(); return fs, o },
+	"claim-edit": func() (*flag.FlagSet, any) { fs, o := claimEditFlags(); return fs, o },
 	"review":     func() (*flag.FlagSet, any) { fs, o := reviewFlags(); return fs, o },
 	"doctor":     func() (*flag.FlagSet, any) { fs, o := doctorFlags(); return fs, o },
 	"feedback":   func() (*flag.FlagSet, any) { fs, o := feedbackFlags(); return fs, o },
@@ -76,6 +78,32 @@ func TestDirFlagsReachEveryRegistryCommand(t *testing.T) {
 		}
 		if got := optionDir(o); got != want {
 			t.Errorf("%s: --dir %s ignored by bound options (got %q)", name, want, got)
+		}
+	}
+}
+
+// TestClaimEditRefusesUnboundedPaths checks claim-edit's argument check
+// refuses any claim path that is not a literal file, with the message naming
+// the offending pattern: a wildcard or directory prefix would let ownsContains
+// exempt a whole tree, and a pattern cannot be bound to one content hash —
+// a claim must name the files actually edited (issue #258).
+func TestClaimEditRefusesUnboundedPaths(t *testing.T) {
+	for _, p := range []string{"*", "a/*.go", "dir/", "a?b", "[ab]c"} {
+		got := claimPathError(p)
+		if got == "" {
+			t.Errorf("claimPathError(%q) = empty, want a refusal naming the pattern", p)
+			continue
+		}
+		if !strings.Contains(got, p) {
+			t.Errorf("claimPathError(%q) = %q, want it to name the offending pattern", p, got)
+		}
+		if !strings.Contains(got, "files actually edited") {
+			t.Errorf("claimPathError(%q) = %q, want it to say claims must name the files actually edited", p, got)
+		}
+	}
+	for _, p := range []string{"README.md", "a/b.go", "docs/PROTOCOL.md"} {
+		if got := claimPathError(p); got != "" {
+			t.Errorf("claimPathError(%q) = %q, want empty (a literal path is claimable)", p, got)
 		}
 	}
 }
