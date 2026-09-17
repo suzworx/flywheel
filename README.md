@@ -235,7 +235,9 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
   with copies.
 - Commit `skills-lock.json`, or any tracked file the skills installer touched, before the next
   `flywheel validate`, because files the lead changes after a unit's dispatch count against that
-  unit's owns check.
+  unit's owns check. A lead-side edit made after dispatch can be declared afterwards with
+  `flywheel claim-edit --paths <p1,p2> --session <session>`, so the owns check attributes it
+  instead of refusing the unit.
 - Run `flywheel status` afterwards.
 
 ## CLI
@@ -272,6 +274,7 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 | `flywheel claim <task>` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | Claim a task for a session so another lead sharing the tree knows it is driven; refused (exit 6) for a live claim held elsewhere unless `--force`. |
 | `flywheel release <task>` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | Release a claimed task; refused (exit 6) for a live claim held elsewhere unless `--force`. |
 | `flywheel claims` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | List every claim: task, session, note, age, live or expired. |
+| `flywheel claim-edit` | available ([#228](https://github.com/suzworx/flywheel/issues/228)) | Declare a lead's own edit made after a unit's dispatch so the owns check attributes it instead of stranding the unit. |
 | `flywheel explain`, `flywheel context` | planned ([#58](https://github.com/suzworx/flywheel/issues/58)) | A task's traveler; the factory state sized for a joining agent. |
 | `flywheel trace <session> [--dir DIR]` | available ([#62](https://github.com/suzworx/flywheel/issues/62)) | Everything one session did, across tasks. |
 | `flywheel feedback` | available (add/list/dismiss/export/submit) | Turn signals into learnings: `add`, list, `dismiss`, and a generated `learnings.md`; `export [--out PATH]` writes a sanitised Markdown report of undismissed learnings; `submit [--yes]` sends it upstream as a gh issue — consent-first, with an offline outbox when gh fails. |

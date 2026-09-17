@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // git runs a git command in wd with a test identity and CRLF handling off, so
@@ -2069,5 +2070,174 @@ func TestValidateFilesSkipsUnreadable(t *testing.T) {
 	}
 	if len(res.Files) != 0 {
 		t.Errorf("files = %v, want nothing (gone.txt is deleted, cannot be read)", res.Files)
+	}
+}
+
+// TestValidateLeadEditClaimsLeadEdit is the regression guard for issue #228:
+// dispatch a unit, change a file the unit does not own, record a lead_edit
+// claiming it, then validate: the path is reported under attributed as
+// "lead <session>", outside is empty, and the reading is clean.
+func TestValidateLeadEditClaimsLeadEdit(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("lead's mid-wave edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}, Note: "recorded a learning while T1 ran"}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK/OK = %v/%v, want true/true; outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing", res.Outside)
+	}
+	if len(res.Attributed) != 1 || res.Attributed[0] != "b.txt -> lead lead-1" {
+		t.Errorf("attributed = %v, want [b.txt -> lead lead-1]", res.Attributed)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "owns_checked" {
+			if len(e.Attributed) != 1 || e.Attributed[0] != "b.txt -> lead lead-1" {
+				t.Errorf("owns_checked attributed = %v, want [b.txt -> lead lead-1]", e.Attributed)
+			}
+			if len(e.Outside) != 0 {
+				t.Errorf("owns_checked outside = %v, want nothing", e.Outside)
+			}
+		}
+	}
+}
+
+// TestValidateLeadEditWithoutClaimStillOutside checks the same path with no
+// lead_edit is still reported outside and fails the reading: the relaxation
+// must not move the existing behaviour (issue #228).
+func TestValidateLeadEditWithoutClaimStillOutside(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("lead's mid-wave edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (no lead_edit covers b.txt)", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "b.txt" {
+		t.Errorf("outside = %v, want [b.txt]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditWorkerSessionDoesNotExcuse checks a lead_edit recorded
+// by a worker session of the task being validated never excuses the path: it
+// stays outside, so a worker cannot excuse its own stray (issue #228).
+func TestValidateLeadEditWorkerSessionDoesNotExcuse(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:10:00Z", Task: "T1", Kind: "started", Session: "w1"}); err != nil {
+		t.Fatalf("AppendEvent() started error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "w1", Owns: []string{"b.txt"}}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (the claiming session is T1's worker session)", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "b.txt" {
+		t.Errorf("outside = %v, want [b.txt]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditAfterReadingDoesNotExcuse checks a lead_edit whose TS
+// is after the reading never excuses the path: a claim must not retroactively
+// bless a stray an earlier validation already reported (issue #228).
+func TestValidateLeadEditAfterReadingDoesNotExcuse(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	future := time.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	if err := AppendEvent(dir, Event{TS: future, Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (the claim postdates the reading)", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "b.txt" {
+		t.Errorf("outside = %v, want [b.txt]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditWrongPathDoesNotExcuse checks a lead_edit claiming
+// a/b.go never excuses a different changed path a/c.go: the matching rule is
+// ownsContains, not a prefix or directory claim (issue #228).
+func TestValidateLeadEditWrongPathDoesNotExcuse(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatalf("mkdir a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a", "c.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatalf("write a/c.go: %v", err)
+	}
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"a/b.go"}}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (a/c.go is not covered by the claim on a/b.go)", res.OwnsOK)
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "a/c.go" {
+		t.Errorf("outside = %v, want [a/c.go]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
 	}
 }

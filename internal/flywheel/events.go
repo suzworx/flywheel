@@ -107,6 +107,7 @@ var kinds = map[string]bool{
 	"lost":            true,
 	"landed":          true,
 	"amended":         true,
+	"lead_edit":       true,
 	"validated":       true,
 	"owns_checked":    true,
 	"inspected":       true,
@@ -178,12 +179,12 @@ func attemptOK(s string) bool {
 	return true
 }
 
-// floorLevel reports whether kind may carry an empty task: staffed and the
-// three session kinds describe the floor itself rather than a task, and goal
-// events are validated against Goal instead of Task.
+// floorLevel reports whether kind may carry an empty task: staffed, lead_edit
+// and the three session kinds describe the floor itself rather than a task,
+// and goal events are validated against Goal instead of Task.
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "goal", "session_start", "session_command", "session_end":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end":
 		return true
 	default:
 		return false
@@ -193,16 +194,19 @@ func floorLevel(kind string) bool {
 // Validate enforces the task pattern, the attempt pattern, the kind set and
 // the reviewed-requires-verdict rule. A signal event must carry a Signal from
 // the exported Signals set, and no other kind may carry one. staffed,
-// session_start, session_command and session_end are floor-level events: they
-// may carry an empty task (every other kind requires one) but staffed and the
-// two session-boundary kinds must carry a session, and session_command must
-// also carry a note.
+// lead_edit, session_start, session_command and session_end are floor-level
+// events: they may carry an empty task (every other kind requires one) but
+// staffed, lead_edit and the two session-boundary kinds must carry a session,
+// and session_command must also carry a note.
 func Validate(e Event) error {
 	if !floorLevel(e.Kind) && !taskOK(e.Task) {
 		return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
 	}
 	if e.Kind == "staffed" && e.Session == "" {
 		return fmt.Errorf("staffed event must carry a session")
+	}
+	if e.Kind == "lead_edit" && e.Session == "" {
+		return fmt.Errorf("lead_edit event must carry a session")
 	}
 	if (e.Kind == "session_start" || e.Kind == "session_end") && e.Session == "" {
 		return fmt.Errorf("%s event must carry a session", e.Kind)
@@ -233,7 +237,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal", e.Kind)
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {

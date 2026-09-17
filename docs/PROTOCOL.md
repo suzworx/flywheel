@@ -223,6 +223,23 @@ all.
 - Carries: `session` (required) and no `task`.
 - Effect: floor-level like `session_start`.
 
+### `lead_edit`
+- Written by: the lead, via `flywheel claim-edit --paths <p1,p2> --session <session> [--note ...]`,
+  to declare an edit it made itself after a unit's dispatch (issue #228).
+- Carries: `session` (the declaring session, required), `owns` (the claimed repo-relative paths,
+  reusing the field that means "these paths belong to this declaration"), `note`, and no `task`:
+  the claim is repository-wide, not per task.
+- Effect: no status change — `Derive` skips it like every other floor-level event. The owns check
+  (`attributeOutside` in `gauges.go`) attributes a changed path a claim covers as `"<path> -> lead
+  <session>"` instead of `outside`, so the reading stays clean; a path the claim does not cover is
+  still `outside`. It is a **declaration, not an exemption**: the path still appears in the ledger,
+  attributed to a named session.
+- Two guards a consumer can rely on. A `lead_edit` never covers a path when (1) the declaring
+  `session` is a worker session of the task being validated — one that wrote that task's `started`,
+  `finished`, `dispatched`, `report`, or `worker_plan` event, the same worker-event set T4 uses —
+  or (2) the claim's `ts` is not strictly before the reading being computed: a claim never
+  retroactively blesses a stray an earlier validation already reported.
+
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.
 - Carries: `goal` (a `GoalSpec`: `id`, `title`, `acceptance`, `required` tasks, `status` — one of
@@ -279,7 +296,7 @@ gates (exit 5) without touching the log's legality.
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, `allow_untriaged`, "by" attribution
-blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the twenty-one kinds in
+blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the twenty-five kinds in
 `events.go` exist at all — `Validate` rejects any other kind by name, so an event carrying
 `audited` or `signal` today is simply a validation error, not a recognized-but-unchecked record.
 Concretely, still design-only:
