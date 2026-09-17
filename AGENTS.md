@@ -5,7 +5,7 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
 
 ## What this is
 
-- flywheel: a Go CLI (module `flywheel`, Go 1.27, standard library only — never add a dependency)
+- flywheel: a Go CLI (module `github.com/suzworx/flywheel`, Go 1.27, standard library only — never add a dependency)
   plus agent skills (skills/) and design docs (docs/design/).
 - The factory loop: a lead plans, briefs and judges; cheap disposable OpenCode workers build;
   the CLI measures and enforces.

@@ -40,7 +40,7 @@ jobs:
       - name: go install and run the installed binary
         run: |
           set -euo pipefail
-          rm -rf "$GOMODCACHE" "$(go env GOPATH)/bin"
+          rm -rf "$(go env GOMODCACHE)" "$(go env GOPATH)/bin"
           go install ./cmd/flywheel
           "$(go env GOPATH)/bin/flywheel" version
 
