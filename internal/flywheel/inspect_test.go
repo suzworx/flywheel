@@ -365,6 +365,170 @@ func TestInspectPassRefusedSplitAcrossTrees(t *testing.T) {
 	}
 }
 
+// TestInspectRecordsTheMeasuredTree is the regression guard for issue #241: a
+// pass must record the tree the T3 readings were proved against, never a
+// second hash taken later. The hashTree seam (a package variable added for
+// this test and its siblings) lets the test mutate an owned file between the
+// readings check and the event write; the recorded tree must still be the
+// measured tree and flywheel verify must accept the pass.
+func TestInspectRecordsTheMeasuredTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	orig := hashTree
+	hashTree = func(wd string) (string, error) {
+		tree, err := orig(wd)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(wd, "a.go"), []byte("package x\nchanged after measurement\n"), 0o644); err != nil {
+			return "", err
+		}
+		return tree, nil
+	}
+	defer func() { hashTree = orig }()
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	hashTree = orig
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	got := ""
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			got = e.Tree
+		}
+	}
+	if got == "" {
+		t.Fatal("no inspected event recorded")
+	}
+	if got != measured {
+		t.Errorf("inspected tree = %q, want the measured tree %q", got, measured)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		t.Errorf("VerifyTasks() did not accept the pass: %+v", res.Items)
+	}
+}
+
+// TestInspectPassRecordsCurrentTree checks the golden behaviour: a plain pass
+// with no interleaving records the same tree as the one the readings were
+// proved against, exactly as before issue #241.
+func TestInspectPassRecordsCurrentTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "inspected" && e.Tree != tree {
+			t.Errorf("inspected tree = %q, want the current tree %q", e.Tree, tree)
+		}
+	}
+}
+
+// TestInspectPassFromOtherTreeRecordsCurrentTree checks that a pass granted
+// on a different tree T still records the current tree (the one inspected)
+// and still names T in the note.
+func TestInspectPassFromOtherTreeRecordsCurrentTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	current, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	want := "reading from tree " + measured + " (diff outside owns)"
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			if e.Tree != current {
+				t.Errorf("inspected tree = %q, want the current tree %q", e.Tree, current)
+			}
+			if !strings.Contains(e.Note, want) {
+				t.Errorf("inspected note = %q, want it to name the measured tree %s", e.Note, measured)
+			}
+		}
+	}
+}
+
+// TestInspectReworkRecordsCurrentTree checks that a rework needs no readings
+// and records the current tree, hashed once on its own path.
+func TestInspectReworkRecordsCurrentTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			if e.Tree != tree {
+				t.Errorf("inspected tree = %q, want the current tree %q", e.Tree, tree)
+			}
+			if e.Note != "" {
+				t.Errorf("inspected note = %q, want empty", e.Note)
+			}
+		}
+	}
+}
+
 // TestInspectPassRefusedByLaterFinished checks that a finished event after the
 // reading still invalidates it, exactly as before the issue #218 relaxation.
 func TestInspectPassRefusedByLaterFinished(t *testing.T) {
