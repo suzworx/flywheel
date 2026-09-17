@@ -204,15 +204,23 @@ func amendedBetween(events []Event, task, ts string) bool {
 // from the pass's tree lies entirely outside the unit's owns (issue #218),
 // sharing requireReadings' predicate so verify accepts exactly what inspect
 // does. Each inspection uses its own window, so a later correction attempt
-// does not invalidate an earlier legitimate pass.
+// does not invalidate an earlier legitimate pass. A pass is measured against
+// the brief header in force when it was recorded (issue #252): the header is
+// resolved from the events at or before the pass's TS, so a correction delta
+// that adds gates does not retroactively fail passes granted under the
+// earlier gate set.
 func ruleT3(dir, task string, events []Event) []VerifyItem {
-	header, err := briefHeaderFor(dir, task, events)
-	if err != nil {
+	if _, err := briefHeaderFor(dir, task, events); err != nil {
 		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}
 	}
 	var items []VerifyItem
 	for _, insp := range events {
 		if insp.Task != task || insp.Kind != "inspected" || insp.Verdict != "pass" {
+			continue
+		}
+		header, err := briefHeaderAt(dir, task, events, insp.TS)
+		if err != nil {
+			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false, Reason: err.Error()})
 			continue
 		}
 		latest := latestFinishedBefore(events, task, insp.TS)
@@ -266,6 +274,25 @@ func latestFinishedBefore(events []Event, task, ts string) time.Time {
 func briefHeaderFor(dir, task string, events []Event) (BriefHeader, error) {
 	header, _, err := AttemptBrief(dir, events, task)
 	return header, err
+}
+
+// briefHeaderAt resolves the brief header in force at the moment ts was
+// recorded (issue #252): AttemptBrief over the events whose TS is at or
+// before ts. An unparseable ts falls back to every event, the same no-window
+// reading latestFinishedBefore gives it; events whose own TS does not parse
+// are skipped, as the other rules skip them.
+func briefHeaderAt(dir, task string, events []Event, ts string) (BriefHeader, error) {
+	t0, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return briefHeaderFor(dir, task, events)
+	}
+	upTo := make([]Event, 0, len(events))
+	for _, e := range events {
+		if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil && !t.After(t0) {
+			upTo = append(upTo, e)
+		}
+	}
+	return briefHeaderFor(dir, task, upTo)
 }
 
 // ruleT4 checks that no inspected event comes from a worker session.
