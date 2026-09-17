@@ -208,9 +208,9 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
    mkdir -p bin && go build -o bin/flywheel ./cmd/flywheel
    ```
 
-   `go install github.com/suzworx/flywheel/cmd/flywheel@latest` is not supported yet: go.mod
-   declares the module as `flywheel`, not `github.com/suzworx/flywheel`, so there is no
-   installable module path ([#74](https://github.com/suzworx/flywheel/issues/74)).
+   Or install with `go install github.com/suzworx/flywheel/cmd/flywheel@latest`: go.mod declares
+   the module as `github.com/suzworx/flywheel`, so the path resolves through the Go proxy and the
+   resulting `flywheel` binary lands in `$(go env GOPATH)/bin`.
 
 2. **Install the skills** into your agent — one per skill folder below:
 

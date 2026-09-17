@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 // flagsAny is any command's flags builder keeping its options pointer.
