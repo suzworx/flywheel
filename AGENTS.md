@@ -55,7 +55,12 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
 ## Code conventions
 
 - Wrap errors with %w and name the file or command.
-- Exit codes: 0 ok, 1 error, 2 usage, 5 gauges failed, 6 rule refusal.
+- Exit codes: 0 ok, 1 error, 2 usage, 5 gauges failed, 6 rule refusal, 8 inconclusive (a check
+  that could not be established — `flywheel verify` on a pass whose tree no repository this
+  verifier can see resolves, distinct from 6 because no violation is established).
+- `flywheel run` adds its own outcome codes for the dispatch it measured: 3 silent (no output
+  within the start timeout), 4 failed (any other non-clean outcome), 7 stalled (the run file
+  stopped growing for the stall timeout).
 - Commands accept the task id before or after flags.
 - Never mutate the shared git index (use a temporary GIT_INDEX_FILE).
 - Write state files atomically (temp file + rename); the event log (.flywheel/events.jsonl) is

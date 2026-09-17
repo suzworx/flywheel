@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -826,6 +828,255 @@ func TestVerifyT3SameTimestampCorrectionBeforePassApplies(t *testing.T) {
 	}
 }
 
+// TestVerifyExternalWorkdirPassUnresolvableTree is the issue #244 guard: a
+// ledger whose pass was measured on a tree this repository does not have (an
+// external --workdir clone), with complete readings for every gate, reports
+// T3 passing. allReadings is pure event matching and needs no git, so an
+// unresolvable tree must never short-circuit a genuine pass.
+func TestVerifyExternalWorkdirPassUnresolvableTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external error = %v", err)
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(external, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	tree, err := treeHash(external)
+	if err != nil {
+		t.Fatalf("treeHash(external) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected %s %s: %s", item.Rule, map[bool]string{true: "INCONCLUSIVE", false: "FAIL"}[item.Inconclusive], item.Reason)
+			}
+		}
+	}
+}
+
+// TestVerifyExternalWorkdirMissingGateInconclusive is the issue #244 flip
+// side: the same unresolvable tree but with a gate reading missing cannot be
+// established as a violation — T3 reports inconclusive (Pass false,
+// Inconclusive true, the exit-7 path), never a violation (exit 6).
+func TestVerifyExternalWorkdirMissingGateInconclusive(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external error = %v", err)
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(external, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	tree, err := treeHash(external)
+	if err != nil {
+		t.Fatalf("treeHash(external) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" {
+			found = true
+			if item.Pass {
+				t.Errorf("T3 passed an unverifiable pass")
+			}
+			if !item.Inconclusive {
+				t.Errorf("T3 = %+v, want inconclusive (unresolvable tree must not be a violation)", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want an inconclusive T3", res.Items)
+	}
+	if res.Passed {
+		t.Error("VerifyTasks() passed a result containing an inconclusive check")
+	}
+}
+
+// TestVerifyExternalWorkdirViolationStillFails is the guard that inconclusive
+// never swallowed real failures: a genuine violation with a resolvable tree
+// still fails (Pass false, Inconclusive false — the exit-6 path).
+func TestVerifyExternalWorkdirViolationStillFails(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	passed, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: measured, RC: &rc}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: measured}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: passed}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want an established violation, not inconclusive", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3", res.Items)
+	}
+}
+
+// TestVerifyExternalWorkdirResolvedByFlag checks the --workdir path: a
+// verifier pointed at the repository that does have the tree resolves it and
+// verifies normally — a missing gate there is an established violation, not
+// inconclusive.
+func TestVerifyExternalWorkdirResolvedByFlag(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external error = %v", err)
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(external, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	tree, err := treeHash(external)
+	if err != nil {
+		t.Fatalf("treeHash(external) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}, Workdir: external})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want a resolvable violation, not inconclusive", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3 missing gate 2", res.Items)
+	}
+}
+
+// TestVerifyExternalWorkdirResolvedFromRecordedWorkdir checks the fallback:
+// when no --workdir is given, a workdir recorded on the task's own reading
+// events (validated, owns_checked, inspected) resolves the tree when it still
+// exists, and the pass verifies normally.
+func TestVerifyExternalWorkdirResolvedFromRecordedWorkdir(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external error = %v", err)
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(external, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	tree, err := treeHash(external)
+	if err != nil {
+		t.Fatalf("treeHash(external) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor", Workdir: external}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor", Workdir: external}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected %s %s: %s", item.Rule, map[bool]string{true: "INCONCLUSIVE", false: "FAIL"}[item.Inconclusive], item.Reason)
+			}
+		}
+	}
+}
+
 // TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch is the issue #259
 // correction's interaction guard: AttemptBrief now prefers a fresh attempt's
 // dispatched header, so ruleT3's historical pass must still be measured
@@ -914,5 +1165,313 @@ func TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch(t *testing.T) {
 				t.Errorf("unexpected FAIL %s: %s", item.Rule, item.Reason)
 			}
 		}
+	}
+}
+
+// TestVerifyT3EmptyTreeIsViolation is the correction guard: an inspected pass
+// whose tree is the empty string cannot name an object in any repository, so
+// it is a malformed record, not a check that could not be established. It is
+// reported a violation (exit 6), never inconclusive (exit 8) — a verifier that
+// under-reports a violation is worse than one that cannot run.
+func TestVerifyT3EmptyTreeIsViolation(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T03:00:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want an established violation, not inconclusive, for an empty tree", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3 for an empty inspected tree", res.Items)
+	}
+}
+
+// TestVerifyPerPassWorkdirResolvesEachPass is the correction guard: a task can
+// accumulate readings from several workdirs across attempts, so each inspected
+// pass must resolve its repository from that pass's own recorded workdirs,
+// preferring the one that actually contains the inspected tree. An early
+// rework inspection recorded in a different workdir must not pin this pass to
+// the wrong object database and degrade an established violation into
+// inconclusive.
+func TestVerifyPerPassWorkdirResolvesEachPass(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external1, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external1 error = %v", err)
+	}
+	external2, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external2 error = %v", err)
+	}
+	// Distinct trees: a file only each clone has, so its tree object is
+	// genuinely absent from dir and from the other clone's database.
+	if err := os.WriteFile(filepath.Join(external1, "one.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write one.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(external2, "two.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write two.go: %v", err)
+	}
+	tree1, err := treeHash(external1)
+	if err != nil {
+		t.Fatalf("treeHash(external1) error = %v", err)
+	}
+	tree2, err := treeHash(external2)
+	if err != nil {
+		t.Fatalf("treeHash(external2) error = %v", err)
+	}
+	// An early rework inspection measured in external1: it carries no T3
+	// readings, but its recorded workdir must not pin the later pass to
+	// external1's object database.
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "inspected", Verdict: "rework", Session: "i1", Persona: "inspector", Tree: tree1, Workdir: external1}); err != nil {
+		t.Fatalf("append inspected rework: %v", err)
+	}
+	rc := 0
+	// The second pass's readings live in external2 and are incomplete: gate 1
+	// validated only, gate 2 and owns_checked missing, so T3 must fail it.
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree2, RC: &rc, Persona: "supervisor", Workdir: external2}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:03Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree2}); err != nil {
+		t.Fatalf("append inspected pass: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want an established violation resolved against external2, not inconclusive", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3 for the external2 pass", res.Items)
+	}
+}
+
+// TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves is the correction
+// guard: a relative --workdir names a place against the process's current
+// directory, so a reading recorded with it must persist as an absolute,
+// canonical path — otherwise the same string later names a different place,
+// or nothing. The ledger read from another directory still resolves the
+// recorded repository.
+func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ledger")
+	ext := filepath.Join(base, "external")
+	for _, p := range []string{dir, ext} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		if _, err := Init(p, false); err != nil {
+			t.Fatalf("Init(%s) error = %v", p, err)
+		}
+		initRepo(t, p)
+		if err := os.WriteFile(filepath.Join(p, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+			t.Fatalf("write .gitignore: %v", err)
+		}
+		brief := "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: relative\n"
+		if err := os.WriteFile(filepath.Join(p, "brief.txt"), []byte(brief), 0o644); err != nil {
+			t.Fatalf("write brief: %v", err)
+		}
+		if err := AppendEvent(p, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+			t.Fatalf("AppendEvent planned: %v", err)
+		}
+		git(t, p, []string{"add", "-A"})
+		git(t, p, []string{"commit", "-m", "brief"})
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(ext, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	// Record a reading from base with relative paths; the recorded workdir
+	// must come out absolute.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatalf("Chdir(%s) error = %v", base, err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	}()
+	if err := AppendEvent("ledger", Event{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1"}); err != nil {
+		t.Fatalf("append finished: %v", err)
+	}
+	if err := InspectTask("ledger", "T1", InspectOptions{Dir: "ledger", Workdir: "external", Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() relative error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	recorded := ""
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			recorded = e.Workdir
+		}
+	}
+	// The recording normalises the workdir with absPath to canonical form:
+	// filepath.Abs, then filepath.EvalSymlinks (which follows symlinks on
+	// Unix and expands DOS 8.3 short names on Windows), then Clean. The
+	// expected path is canonicalised the same way, so the comparison is
+	// spelling-independent — no platform caveat needed.
+	want := absPath(ext)
+	if recorded != want {
+		t.Fatalf("recorded workdir = %q, want the canonical path %q", recorded, want)
+	}
+	// A complete pass measured in ext verifies from an unrelated directory:
+	// the recorded absolute path still resolves the tree.
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir(%s) error = %v", cwd, err)
+	}
+	tree, err := treeHash(ext)
+	if err != nil {
+		t.Fatalf("treeHash(ext) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor", Workdir: ext}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor", Workdir: ext}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:03Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected pass: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected %s %s: %s", item.Rule, map[bool]string{true: "INCONCLUSIVE", false: "FAIL"}[item.Inconclusive], item.Reason)
+			}
+		}
+	}
+}
+
+// TestVerifyAliasWorkdirRecordsNoWorkdir is the behavioural point of the
+// canonical workdir normalisation (issue #244): a --workdir spelled as an
+// alias of the repo dir — a symlink on Unix, the DOS 8.3 short name on
+// Windows — is the same directory, so it is not external and records no
+// workdir field. Before absPath resolved EvalSymlinks, an alias read as a
+// different path and leaked into the ledger as a fake external workdir.
+func TestVerifyAliasWorkdirRecordsNoWorkdir(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	alias := dirAlias(t, dir)
+	if alias == "" {
+		t.Skip("this host has no alias spelling of a directory (no symlink privilege, 8.3 names disabled)")
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Workdir: alias, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() alias error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "inspected" && e.Workdir != "" {
+			t.Errorf("inspected workdir = %q, want none recorded for an alias of the repo dir", e.Workdir)
+		}
+	}
+}
+
+// dirAlias returns a different spelling of dir that canonicalises to the
+// same directory: a symlink on Unix, the DOS 8.3 short name on Windows
+// (asked of cmd, since 8.3 expansion is the one canonicalisation the
+// standard library's path code cannot produce). "" when the host cannot
+// make one: no symlink privilege, or 8.3 names disabled for the volume.
+// The for item must not be quoted: cmd keeps a quoted item's quotes when
+// expanding %~sI, and the short name of a quoted string is meaningless.
+func dirAlias(t *testing.T, dir string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", `for %I in (`+dir+`) do @echo %~sI`).CombinedOutput()
+		if err != nil {
+			return ""
+		}
+		short := strings.TrimSpace(string(out))
+		if short == "" || strings.EqualFold(short, dir) {
+			return ""
+		}
+		return short
+	}
+	alias := filepath.Join(filepath.Dir(dir), "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		return ""
+	}
+	return alias
+}
+
+// TestVerifyInvalidWorkdirIsErrorNotInconclusive is the correction guard: an
+// operational git failure — a --workdir that is not a readable repository — is
+// an error naming the path, never an inconclusive verdict. A verifier that
+// cannot read the object database must not report "could not establish".
+func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	// A real directory that is not a git repository: the tree is present in
+	// dir, but --workdir points the verifier somewhere it cannot read.
+	notRepo := filepath.Join(t.TempDir(), "not-a-repo")
+	if err := os.MkdirAll(notRepo, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", notRepo, err)
+	}
+	_, err = VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}, Workdir: notRepo})
+	if err == nil {
+		t.Fatal("VerifyTasks() = nil error, want an error naming the invalid workdir")
+	}
+	// ruleT3 canonicalises the workdir with absPath before git runs and the
+	// error names that canonical form, so the expected spelling is
+	// canonicalised the same way: t.TempDir() may be an alias — an 8.3
+	// short name on Windows, a symlink like /var on macOS — and the raw
+	// spelling would not appear in the error on such a host (issue #244).
+	want := absPath(notRepo)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("VerifyTasks() error = %q, want it to name %s", err, want)
 	}
 }

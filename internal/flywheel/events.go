@@ -66,8 +66,14 @@ type Event struct {
 	// Wrote is a finished event's distinct paths written by edit/write tool
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
-	Wrote      []string          `json:"wrote,omitempty"`
-	Tree       string            `json:"tree,omitempty"`
+	Wrote []string `json:"wrote,omitempty"`
+	Tree  string   `json:"tree,omitempty"`
+	// Workdir is the git working tree a validated, owns_checked or inspected
+	// reading was taken in, recorded only when it differs from the flywheel
+	// root (issue #244): the ledger says where a reading happened, so verify
+	// can resolve the tree object in the right repository. Omitted on
+	// ordinary same-dir readings, so existing ledgers are unchanged.
+	Workdir    string            `json:"workdir,omitempty"`
 	Gate       string            `json:"gate,omitempty"`
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
@@ -286,6 +292,40 @@ func Validate(e Event) error {
 		return fmt.Errorf("validated event must carry gate and tree")
 	}
 	return nil
+}
+
+// workdirField returns the workdir a reading event should record, or "" when
+// the reading was taken in the flywheel root itself (issue #244): a
+// validated, owns_checked or inspected event records where its tree was
+// measured only when that differs from the repo dir, so ordinary ledgers stay
+// unchanged. Both paths are normalised to canonical absolute form before the
+// comparison and the recorded value, so a relative --workdir recorded from one
+// directory still resolves when the ledger is read from elsewhere: the
+// recorded provenance must not depend on the reader's working directory.
+func workdirField(wd, dir string) string {
+	if samePath(wd, dir) {
+		return ""
+	}
+	return absPath(wd)
+}
+
+// absPath returns p normalised to an absolute, canonical path: relative
+// inputs are resolved against the process working directory, symlinks are
+// followed, and DOS 8.3 short names are expanded — filepath.EvalSymlinks
+// does the last two on Windows and Unix alike, so two runs in the same
+// directory always record the same string (issue #244). A path that cannot
+// be resolved (for instance one that does not exist yet) falls back to its
+// absolute, cleaned form; the input is returned unchanged only when it
+// cannot even be made absolute.
+func absPath(p string) string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	return filepath.Clean(a)
 }
 
 // marshalEvent encodes e as one JSON line (no trailing newline) with HTML
