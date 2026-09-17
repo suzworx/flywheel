@@ -151,8 +151,12 @@ all.
 ### `validated`
 - Written by: the CLI only, via `flywheel validate <task>`, once per declared `gate:` line.
 - Carries: `task`, `attempt`, `gate` (1-based index, as a string), `command`, `tree` (git tree
-  hash), `rc`, `duration_ms`, `sha256` (of the gate's combined output), `path`
-  (`.flywheel/evidence/<task>/<attempt>/gate-<n>.log`), `persona` (always `"supervisor"`,
+  hash), `commit` (the repository HEAD at the moment **this** reading was taken, not at the start
+  of the pass — each gate resolves it independently, so two readings in one pass may carry
+  different commits and that is correct, not a bug; empty when the workdir is not a git repository
+  or HEAD cannot be read, so a consumer must treat `commit` as optional and never assume a
+  non-empty value, issue #240), `rc`, `duration_ms`, `sha256` (of the gate's combined output),
+  `path` (`.flywheel/evidence/<task>/<attempt>/gate-<n>.log`), `persona` (always `"supervisor"`,
   hardcoded — see §4), `reason`/`note` (`host-blocked` when Windows Smart App Control blocked the
   freshly built binary twice in a row).
 - Effect: no status change. `Validate` requires `gate` and `tree` to be non-empty. A `host-blocked`
@@ -165,10 +169,14 @@ all.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass.
-- Carries: `task`, `attempt`, `tree`, `outside` (changed paths not covered by `owns:`), `baselined`
-  (changed paths excused because they were already dirty at dispatch and are byte-identical now),
-  `attributed` (changed paths blamed on another in-flight task instead — see below), `persona`
-  (`"supervisor"`).
+- Carries: `task`, `attempt`, `tree`, `commit` (the repository HEAD at the moment the owns check
+  ran, resolved independently of the gates — each reading carries the HEAD at the time it was
+  taken, so it may differ from the gates' commits and that is correct, not a bug; empty when the
+  workdir is not a git repository or HEAD cannot be read, so a consumer must treat `commit` as
+  optional and never assume a non-empty value, issue #240), `outside` (changed paths not covered
+  by `owns:`), `baselined` (changed paths excused because they were already dirty at dispatch and
+  are byte-identical now), `attributed` (changed paths blamed on another in-flight task instead —
+  see below), `persona` (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside` on the same tree.
 - A changed path outside `owns:` and not baselined is **attributed** rather than outside when some
   other task's brief `owns:` it (`ownsContains`, the matching `flywheel validate` already uses) and
