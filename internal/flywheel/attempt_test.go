@@ -442,6 +442,33 @@ func TestLedgerHeaderCorrectionDeltaRecordedAndUsed(t *testing.T) {
 	}
 }
 
+// TestFreshDispatchHeaderAbsentFallsBackToBase pins the fresh-attempt
+// backward-compatibility guarantee (issue #259 correction): a dispatched
+// event with no recorded header — every pre-existing ledger — falls back to
+// the base planned/amended header, never to a re-read of the file on disk. The
+// base planned header records 2 gates; the file is edited to 3 after the
+// dispatch; the fallback must still return the recorded 2.
+func TestFreshDispatchHeaderAbsentFallsBackToBase(t *testing.T) {
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\n\n# TASK: w259\n")
+	base, err := ParseBriefHeader(filepath.Join(dir, "brief.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt", Header: &base},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+	}
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\ngate: exit 0\n\n# TASK: w259\n")
+	header, _, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(header.Gates) != 2 {
+		t.Errorf("gates = %v, want the base header's 2 gates, not the 3 on disk", header.Gates)
+	}
+}
+
 // TestAttemptBriefCorrectionDeltaMergesGatesOwnsExclusiveTogether checks the
 // exclusive union joins the existing merges without disturbing them: a delta
 // with its own gate still overrides, owns still unions base-first without

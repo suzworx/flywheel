@@ -323,8 +323,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// The dispatched event carries the parsed header of the prompt it
 	// actually sent (the planned brief on a fresh attempt, the delta on a
 	// correction), so a later reader measures the attempt against the ledger,
-	// not against whatever the file says now (issue #259).
-	promptHeader, err := ParseBriefHeader(promptSrc)
+	// not against whatever the file says now (issue #259). The header is
+	// parsed from promptB — the exact bytes attached — so the recorded SHA256
+	// and the recorded header always describe the same immutable content; a
+	// concurrent editor between the read and this parse can never make them
+	// disagree.
+	promptHeader, err := ParseBriefHeaderBytes(promptB)
 	if err != nil {
 		return Result{}, fmt.Errorf("parse prompt %s: %w", promptSrc, err)
 	}

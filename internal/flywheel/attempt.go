@@ -24,7 +24,14 @@ var errNoPlannedBrief = errors.New("no planned event")
 // events.go's attemptOK) always uses the base brief alone, whatever path its
 // `flywheel run` copies an external brief into .flywheel/briefs/<task>.txt
 // (#87), which differs in path but not content from the base brief, and
-// that copy is not a correction. Only a correction attempt (id `c<N>`) can
+// that copy is not a correction. When the fresh attempt's own `dispatched`
+// event records a `header`, that header is what a pass is measured against
+// (issue #259): it is the prompt the worker was actually given, so a brief
+// edited on disk after the dispatch — one `Run` tolerates as drift without
+// --strict-brief — cannot hide owns and gates the worker never saw. A
+// dispatched event with no header (every pre-existing ledger) falls back to
+// the base planned/amended header exactly as before. Only a correction
+// attempt (id `c<N>`) can
 // carry a delta: the `brief` of the latest `dispatched` event for that
 // attempt is parsed when its path differs from the base brief, and when its
 // content does too (compared by the parsed headers' SHA256 — a
@@ -45,6 +52,16 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 	paths := []string{basePath}
 
 	if attempt == "" || attempt[0] != 'c' {
+		// A fresh attempt (r*) is measured against the header its own
+		// dispatched event recorded when it carries one — the prompt actually
+		// sent, not the base planned/amended header — and against the base
+		// header only when the dispatched event has none (every ledger written
+		// before the header field existed).
+		if attempt != "" && attempt[0] == 'r' {
+			if h := freshDispatchedHeader(events, task, attempt); h != nil {
+				return *h, paths, nil
+			}
+		}
 		return header, paths, nil
 	}
 
@@ -109,6 +126,24 @@ func briefHeaderAt(dir, path string, ev *Event) (BriefHeader, error) {
 		return *ev.Header, nil
 	}
 	return ParseBriefHeader(resolveBriefPath(dir, path))
+}
+
+// freshDispatchedHeader returns the latest dispatched event's recorded header
+// for task's fresh attempt `attempt`, or nil when that attempt has none. A
+// task's attempt is dispatched at most once, so the latest matching event is
+// the one; matching on the attempt keeps a later correction's dispatch out of
+// a fresh attempt's resolution, and slicing the events to a prefix keeps a
+// later dispatch out of a historical pass's (ruleT3 passes the prefix
+// recorded up to and including the pass).
+func freshDispatchedHeader(events []Event, task, attempt string) *BriefHeader {
+	var h *BriefHeader
+	for i := range events {
+		e := &events[i]
+		if e.Task == task && e.Kind == "dispatched" && e.Attempt == attempt && e.Header != nil {
+			h = e.Header
+		}
+	}
+	return h
 }
 
 // resolveBriefPath joins a repo-relative brief path against dir, leaving an
