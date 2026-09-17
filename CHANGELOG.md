@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0](https://github.com/suzworx/flywheel/compare/v0.13.0...v0.14.0) (2026-09-17)
+
+
+### Features
+
+* record a lead-implemented unit as an event, not as a story ([#216](https://github.com/suzworx/flywheel/issues/216)) ([cc913b8](https://github.com/suzworx/flywheel/commit/cc913b8e22dc03d9eadf08c5a211729a86dfca53)), closes [#198](https://github.com/suzworx/flywheel/issues/198)
+* warn at dispatch when a brief has drifted from the hash last dispatched ([#215](https://github.com/suzworx/flywheel/issues/215)) ([469009e](https://github.com/suzworx/flywheel/commit/469009e260eddf1c4a584ecbe91a48af6289ebde)), closes [#135](https://github.com/suzworx/flywheel/issues/135)
+
+
+### Bug Fixes
+
+* give a claude worker the toolchain, without giving it git writes ([#214](https://github.com/suzworx/flywheel/issues/214)) ([e8af57f](https://github.com/suzworx/flywheel/commit/e8af57fec3b276932f3739fa623ed576b1198e64)), closes [#192](https://github.com/suzworx/flywheel/issues/192)
+
+
+### Documentation
+
+* link the quickstart from the site, which had no way into it ([#212](https://github.com/suzworx/flywheel/issues/212)) ([b6e38a1](https://github.com/suzworx/flywheel/commit/b6e38a10d28114fa3678c64cf0493281a1d76277))
+
 ## [0.13.0](https://github.com/suzworx/flywheel/compare/v0.12.0...v0.13.0) (2026-09-16)
 
 
