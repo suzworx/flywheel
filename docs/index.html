@@ -9,6 +9,7 @@
 <meta property="og:title" content="flywheel">
 <meta property="og:description" content="Own the factory. Rent the agents and the intelligence.">
 <meta property="og:type" content="website">
+<script>document.documentElement.classList.add('js')</script>
 <style>
 /* tokens */
 :root{
@@ -19,12 +20,18 @@
   --shadow:0 1px 2px rgba(22,32,43,.05), 0 12px 32px -12px rgba(22,32,43,.16);
 }
 @media (prefers-color-scheme:dark){
-  :root{
+  :root:not([data-theme="light"]){
     --ink:#f0f4f8; --body:#a9b6c2; --soft:#7d8b98; --line:#26313c; --hair:#1d262f;
     --bg:#0e141a; --panel:#141c24; --code:#111920;
     --accent:#e8933f; --accent-ink:#16202b; --term:#0b1015;
     --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px -16px rgba(0,0,0,.6);
   }
+}
+:root[data-theme="dark"]{
+  --ink:#f0f4f8; --body:#a9b6c2; --soft:#7d8b98; --line:#26313c; --hair:#1d262f;
+  --bg:#0e141a; --panel:#141c24; --code:#111920;
+  --accent:#e8933f; --accent-ink:#16202b; --term:#0b1015;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px -16px rgba(0,0,0,.6);
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -137,9 +144,9 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
 .foot-links{display:flex; gap:20px; flex-wrap:wrap}
 
 @media (prefers-reduced-motion:no-preference){
-  .rv{opacity:0; transform:translateY(14px);
-      transition:opacity .62s cubic-bezier(.16,1,.3,1), transform .62s cubic-bezier(.16,1,.3,1)}
-  .rv.in{opacity:1; transform:none}
+  .js .rv{transition:opacity .62s cubic-bezier(.16,1,.3,1), transform .62s cubic-bezier(.16,1,.3,1)}
+  .js .rv:not(.in){opacity:0; transform:translateY(14px)}
+  .js .rv.in{opacity:1; transform:none}
 }
 </style>
 </head>
@@ -262,10 +269,13 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
 <section><div class="wrap">
   <h2 class="rv">Install</h2>
   <div class="install">
-    <pre class="rv"><code><span class="cmt"># verify the checksum, then put it on PATH</span>
+    <pre class="rv"><code><span class="cmt"># verify the checksum, then unzip and install it</span>
 gh release download --repo suzworx/flywheel \
   --pattern '*checksums*' --pattern '*linux-amd64*'
 sha256sum -c --ignore-missing checksums.txt
+
+unzip -o 'flywheel-*-linux-amd64.zip'
+sudo install -m 0755 flywheel-*-linux-amd64 /usr/local/bin/flywheel
 
 flywheel init      <span class="cmt"># scaffold the factory</span>
 flywheel doctor    <span class="cmt"># is a model reachable?</span>
@@ -321,30 +331,33 @@ flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></p
 <script>
 // Reveal on enter. IntersectionObserver, never a scroll listener. The motion
 // stages the page on first read and collapses entirely under
-// prefers-reduced-motion, where the .rv rules are not applied at all.
+// prefers-reduced-motion, where the .rv rules are not applied at all. The nav
+// sentinel below is a state indicator, not motion, so it runs for everyone.
 (function () {
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var els = document.querySelectorAll('.rv');
   if (reduce || !('IntersectionObserver' in window)) {
     for (var i = 0; i < els.length; i++) els[i].classList.add('in');
-    return;
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    els.forEach(function (el) { io.observe(el); });
   }
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-    });
-  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-  els.forEach(function (el) { io.observe(el); });
 
   // Hairline under the nav only once the page has moved, so the resting state
   // is clean. Sentinel plus observer, not a scroll handler.
-  var nav = document.getElementById('nav');
-  var s = document.createElement('div');
-  s.style.cssText = 'position:absolute;top:0;height:1px;width:1px';
-  document.body.prepend(s);
-  new IntersectionObserver(function (e) {
-    nav.classList.toggle('stuck', !e[0].isIntersecting);
-  }).observe(s);
+  if ('IntersectionObserver' in window) {
+    var nav = document.getElementById('nav');
+    var s = document.createElement('div');
+    s.style.cssText = 'position:absolute;top:0;height:1px;width:1px';
+    document.body.prepend(s);
+    new IntersectionObserver(function (e) {
+      nav.classList.toggle('stuck', !e[0].isIntersecting);
+    }).observe(s);
+  }
 })();
 </script>
 </body>

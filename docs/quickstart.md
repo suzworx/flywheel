@@ -20,19 +20,34 @@ a zip named `flywheel-v<version>-<os>-<arch>.zip` (Windows binaries ship as
 Verify the download before trusting it. On Linux or macOS:
 
 ```sh
-shasum -a 256 flywheel-v0.11.0-linux-amd64.zip
+shasum -a 256 flywheel-v0.14.0-linux-amd64.zip
 ```
 
 On Windows (PowerShell):
 
 ```powershell
-Get-FileHash flywheel-v0.11.0-windows-amd64.exe.zip -Algorithm SHA256
+Get-FileHash flywheel-v0.14.0-windows-amd64.exe.zip -Algorithm SHA256
 ```
 
 Compare the printed hash with the matching line in `checksums.txt`. They must match exactly; if
 they do not, the download is corrupt or tampered with — re-download, never install it.
 
-Put the `flywheel` binary on your PATH and confirm it runs:
+The archive holds a single binary named after the release, so extract it and rename it to
+`flywheel` (or `flywheel.exe` on Windows) when putting it on PATH. On Linux or macOS:
+
+```sh
+unzip flywheel-v0.14.0-linux-amd64.zip
+sudo install -m 0755 flywheel-v0.14.0-linux-amd64 /usr/local/bin/flywheel
+```
+
+On Windows (PowerShell):
+
+```powershell
+Expand-Archive flywheel-v0.14.0-windows-amd64.exe.zip -DestinationPath .
+Move-Item flywheel-v0.14.0-windows-amd64.exe flywheel.exe
+```
+
+Confirm it runs:
 
 ```sh
 flywheel version
