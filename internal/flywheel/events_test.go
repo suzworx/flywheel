@@ -156,6 +156,39 @@ func TestStaffedDefaultsPersonaToLead(t *testing.T) {
 	}
 }
 
+// TestPlannedAndAmendedDefaultPersonaToPlanner checks every ingestion route
+// through AppendEvent — the JSON log path and the generic flag path included —
+// records the planner persona on planned and amended events, and that an
+// explicit persona wins.
+func TestPlannedAndAmendedDefaultPersonaToPlanner(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:00Z", Task: "T1", Kind: "planned"}); err != nil {
+		t.Fatalf("AppendEvent() planned error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:01Z", Task: "T1", Kind: "amended"}); err != nil {
+		t.Fatalf("AppendEvent() amended error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:02Z", Task: "T2", Kind: "planned", Persona: "foreman"}); err != nil {
+		t.Fatalf("AppendEvent() explicit persona error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 {
+		t.Fatalf("ReadEvents() = %d events, want 3", len(evs))
+	}
+	if evs[0].Persona != "planner" {
+		t.Errorf("planned persona = %q, want planner (default when empty)", evs[0].Persona)
+	}
+	if evs[1].Persona != "planner" {
+		t.Errorf("amended persona = %q, want planner (default when empty)", evs[1].Persona)
+	}
+	if evs[2].Persona != "foreman" {
+		t.Errorf("planned persona = %q, want foreman (a set value wins)", evs[2].Persona)
+	}
+}
+
 func TestValidateRejectsBadAttempt(t *testing.T) {
 	if err := Validate(Event{Task: "T1", Kind: "dispatched", Attempt: "x1"}); err == nil {
 		t.Error("Validate() accepted attempt x1")

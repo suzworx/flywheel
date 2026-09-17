@@ -119,7 +119,9 @@ gauge readings, inspections or audits — a worker never records those either.
 
 ## Commands
 
-- `flywheel plan` — planned; today: write `.flywheel/briefs/<id>.txt` by hand.
+- `flywheel plan` — planned; today: write `.flywheel/briefs/<id>.txt` by hand. Every `planned`
+  (and `amended`) event you record carries your persona, `planner`, so the ledger always says who
+  decided.
 - `flywheel status` — planned; today: read `flywheel.md` and `.flywheel/state.json`.
 - `flywheel explain` / `flywheel context` — planned (#58); today: read the briefs and run files
   directly.

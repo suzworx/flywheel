@@ -8,20 +8,22 @@ import (
 
 // RecordPlanned parses the brief header at brief (resolved against dir when
 // relative) and appends a planned event for task carrying the brief path
-// exactly as given, the whole parsed header, and the header's owns and needs
-// arrays (paths stored exactly as given in the header).
+// exactly as given, the whole parsed header, the header's owns and needs
+// arrays (paths stored exactly as given in the header), and the planner
+// persona.
 func RecordPlanned(dir, task, brief string) error {
 	header, err := ParseBriefHeader(resolveBriefPath(dir, brief))
 	if err != nil {
 		return fmt.Errorf("read brief %s: %w", brief, err)
 	}
 	return AppendEvent(dir, Event{
-		Task:   task,
-		Kind:   "planned",
-		Brief:  brief,
-		Owns:   header.Owns,
-		Needs:  header.Needs,
-		Header: &header,
+		Task:    task,
+		Kind:    "planned",
+		Brief:   brief,
+		Owns:    header.Owns,
+		Needs:   header.Needs,
+		Header:  &header,
+		Persona: "planner",
 	})
 }
 
@@ -32,7 +34,8 @@ func RecordPlanned(dir, task, brief string) error {
 // .flywheel/briefs/<task>.prev.brief.txt (atomic temp file + rename,
 // replacing an earlier copy), the previous brief text the amendment
 // replaces, then appends the amended event carrying the brief path, the
-// whole parsed header, the header's owns and needs, and note.
+// whole parsed header, the header's owns and needs, note, and the planner
+// persona.
 func RecordAmended(dir, task, brief, note string) error {
 	resolved := brief
 	if resolved == "" {
@@ -60,12 +63,13 @@ func RecordAmended(dir, task, brief, note string) error {
 		return fmt.Errorf("read brief %s: %w", resolved, err)
 	}
 	return AppendEvent(dir, Event{
-		Task:   task,
-		Kind:   "amended",
-		Brief:  resolved,
-		Owns:   header.Owns,
-		Needs:  header.Needs,
-		Note:   note,
-		Header: &header,
+		Task:    task,
+		Kind:    "amended",
+		Brief:   resolved,
+		Owns:    header.Owns,
+		Needs:   header.Needs,
+		Note:    note,
+		Header:  &header,
+		Persona: "planner",
 	})
 }
