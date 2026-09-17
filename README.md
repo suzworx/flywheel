@@ -273,7 +273,7 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 | `flywheel claims` | available ([#165](https://github.com/suzworx/flywheel/issues/165)) | List every claim: task, session, note, age, live or expired. |
 | `flywheel explain`, `flywheel context` | planned ([#58](https://github.com/suzworx/flywheel/issues/58)) | A task's traveler; the factory state sized for a joining agent. |
 | `flywheel trace <session> [--dir DIR]` | available ([#62](https://github.com/suzworx/flywheel/issues/62)) | Everything one session did, across tasks. |
-| `flywheel feedback` | available (add/list/dismiss; export and submit land with [#40](https://github.com/suzworx/flywheel/issues/40)) | Turn signals into learnings: `add`, list, `dismiss`, and a generated `learnings.md`. |
+| `flywheel feedback` | available (add/list/dismiss/export/submit) | Turn signals into learnings: `add`, list, `dismiss`, and a generated `learnings.md`; `export [--out PATH]` writes a sanitised Markdown report of undismissed learnings; `submit [--yes]` sends it upstream as a gh issue — consent-first, with an offline outbox when gh fails. |
 | `flywheel upgrade` | available ([#201](https://github.com/suzworx/flywheel/issues/201)) | Self-update to a release with checksum verification: `--check` prints current and latest and whether an upgrade is available; otherwise download, verify the SHA-256 and install atomically. |
 
 ## Skills
