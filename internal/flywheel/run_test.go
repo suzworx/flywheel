@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -2730,5 +2731,382 @@ func TestRunOwnsCollisionBeatsExclusiveClash(t *testing.T) {
 	var r *RuleRefusal
 	if !errors.As(err, &r) || r.Rule != "owns" {
 		t.Fatalf("Run() error = %v, want a RuleRefusal owns (owns is checked first)", err)
+	}
+}
+
+// concurrentOutcome pairs one concurrent Run's result and error.
+type concurrentOutcome struct {
+	res Result
+	err error
+}
+
+// TestRunConcurrentOwnsCollisionDispatchesOnce is the regression guard for
+// the dispatch race (issue #242): two Run calls started at the same moment
+// on tasks whose owns: overlaps must not both dispatch. Without the lock,
+// both read a log in which neither has dispatched, both pass the collision
+// checks and both dispatch — taking the same owned file. With the lock,
+// exactly one dispatched event lands and the other Run returns the owns
+// collision refusal. SimDelay keeps the winning run in flight (derived
+// status dispatched) while the losing run reads the log, so the collision
+// it must see is actually visible.
+func TestRunConcurrentOwnsCollisionDispatchesOnce(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planOnly(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "shared.go"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "shared.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	done := make(chan concurrentOutcome, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for _, task := range []string{"T1", "T2"} {
+		go func(task string) {
+			defer wg.Done()
+			res, err := Run(dir, RunOptions{Task: task, SimDelay: 500 * time.Millisecond})
+			done <- concurrentOutcome{res, err}
+		}(task)
+	}
+	wg.Wait()
+	close(done)
+	dispatched, refused := 0, 0
+	for o := range done {
+		if o.err == nil {
+			dispatched++
+			continue
+		}
+		var r *RuleRefusal
+		if !errors.As(o.err, &r) || r.Rule != "owns" {
+			t.Errorf("Run() error = %v, want the owns RuleRefusal", o.err)
+			continue
+		}
+		refused++
+	}
+	if dispatched != 1 || refused != 1 {
+		t.Errorf("concurrent overlapping dispatches: %d dispatched, %d refused; want exactly 1 and 1 (the dispatch lock must serialise them)", dispatched, refused)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("dispatched events = %d, want exactly 1", count)
+	}
+}
+
+// TestRunConcurrentExclusiveCollisionDispatchesOnce checks the same lock
+// serialises two concurrent dispatches whose exclusive: names the same
+// resource (issue #242): exactly one dispatched event lands, and the other
+// Run returns the exclusive collision refusal. Owns are disjoint so only the
+// exclusive check can refuse.
+func TestRunConcurrentExclusiveCollisionDispatchesOnce(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planOnly(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+	planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "b.go", "db"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	done := make(chan concurrentOutcome, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for _, task := range []string{"T1", "T2"} {
+		go func(task string) {
+			defer wg.Done()
+			res, err := Run(dir, RunOptions{Task: task, SimDelay: 500 * time.Millisecond})
+			done <- concurrentOutcome{res, err}
+		}(task)
+	}
+	wg.Wait()
+	close(done)
+	dispatched, refused := 0, 0
+	for o := range done {
+		if o.err == nil {
+			dispatched++
+			continue
+		}
+		var r *RuleRefusal
+		if !errors.As(o.err, &r) || r.Rule != "exclusive" {
+			t.Errorf("Run() error = %v, want the exclusive RuleRefusal", o.err)
+			continue
+		}
+		refused++
+	}
+	if dispatched != 1 || refused != 1 {
+		t.Errorf("concurrent exclusive dispatches: %d dispatched, %d refused; want exactly 1 and 1", dispatched, refused)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("dispatched events = %d, want exactly 1", count)
+	}
+}
+
+// TestRunConcurrentDisjointOwnsBothDispatch checks the dispatch lock does
+// not turn independent units into a queue that fails: two concurrent
+// dispatches with disjoint owns: and no shared exclusive both succeed
+// (issue #242).
+func TestRunConcurrentDisjointOwnsBothDispatch(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planOnly(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "a.go"))
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "b.go"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	done := make(chan concurrentOutcome, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for _, task := range []string{"T1", "T2"} {
+		go func(task string) {
+			defer wg.Done()
+			res, err := Run(dir, RunOptions{Task: task})
+			done <- concurrentOutcome{res, err}
+		}(task)
+	}
+	wg.Wait()
+	close(done)
+	ok := 0
+	for o := range done {
+		if o.err != nil {
+			t.Errorf("Run() error = %v, want a normal dispatch (owns disjoint)", o.err)
+			continue
+		}
+		if o.res.Attempt != "r1" || o.res.Reason != "stop" {
+			t.Errorf("result = %+v, want a clean r1 run", o.res)
+		}
+		ok++
+	}
+	if ok != 2 {
+		t.Errorf("successful dispatches = %d, want 2 (the lock must not fail disjoint units)", ok)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count := 0
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("dispatched events = %d, want 2", count)
+	}
+}
+
+// TestRunStaleDispatchLockCleared checks a dispatch.lock whose mtime is well
+// in the past — a crashed holder — is removed and the dispatch proceeds, so
+// a dead lead never wedges the repository (issue #242).
+func TestRunStaleDispatchLockCleared(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	lock := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	if err := os.WriteFile(lock, []byte("pid 999 locked stale\n"), 0o644); err != nil {
+		t.Fatalf("write dispatch.lock: %v", err)
+	}
+	past := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(lock, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch past a stale lock", err)
+	}
+	if res.Attempt != "r1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean r1 run", res)
+	}
+	if _, err := os.Stat(lock); !os.IsNotExist(err) {
+		t.Errorf("dispatch.lock still exists after the stale-lock recovery, want it removed")
+	}
+}
+
+// TestRunDispatchLockRemovedAfterRun checks the lock file never outlives the
+// locked window: after Run returns on the success path and on the refusal
+// path alike, .flywheel/dispatch.lock does not exist (issue #242).
+func TestRunDispatchLockRemovedAfterRun(t *testing.T) {
+	lockPath := func(dir string) string {
+		return filepath.Join(dir, ".flywheel", "dispatch.lock")
+	}
+	t.Run("success", func(t *testing.T) {
+		dir := setupTask(t)
+		if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		if _, err := os.Stat(lockPath(dir)); !os.IsNotExist(err) {
+			t.Errorf("dispatch.lock exists after a successful run, want it removed")
+		}
+	})
+	t.Run("refusal", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := Init(dir, false); err != nil {
+			t.Fatalf("Init() error = %v", err)
+		}
+		planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "shared.go"))
+		planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "shared.go"))
+		if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		_, err := Run(dir, RunOptions{Task: "T2"})
+		var r *RuleRefusal
+		if !errors.As(err, &r) || r.Rule != "owns" {
+			t.Fatalf("Run() error = %v, want the owns RuleRefusal", err)
+		}
+		if _, err := os.Stat(lockPath(dir)); !os.IsNotExist(err) {
+			t.Errorf("dispatch.lock exists after a refused run, want it removed")
+		}
+	})
+}
+
+// TestDispatchLockLiveHolderNotStolen is the regression guard for the stolen
+// live lock (issue #249): a holder whose lock mtime is forced far into the
+// past — simulating a critical section far longer than the stale window —
+// keeps the lock because its heartbeat refreshes the mtime, so a second
+// acquire waits out its deadline and fails rather than taking over. The
+// heartbeat interval and the acquire wait are shortened so the guard stays
+// fast; the relationship they test (heartbeat < staleAfter) is unchanged.
+func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
+	saveHeartbeat, saveWait := dispatchLockHeartbeat, dispatchLockWait
+	dispatchLockHeartbeat = 40 * time.Millisecond
+	dispatchLockWait = 400 * time.Millisecond
+	defer func() {
+		dispatchLockHeartbeat, dispatchLockWait = saveHeartbeat, saveWait
+	}()
+
+	dir := t.TempDir()
+	release, err := acquireDispatchLock(dir)
+	if err != nil {
+		t.Fatalf("acquireDispatchLock() error = %v", err)
+	}
+	defer release()
+	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	past := now().Add(-10 * time.Minute)
+	if err := os.Chtimes(p, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+	// Wait until the heartbeat has refreshed the mtime: a live holder.
+	deadline := now().Add(5 * time.Second)
+	for {
+		info, serr := os.Stat(p)
+		if serr == nil && info.ModTime().After(now().Add(-3*dispatchLockHeartbeat)) {
+			break
+		}
+		if now().After(deadline) {
+			t.Fatal("heartbeat never refreshed the lock mtime; a live holder would read as stale")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := acquireDispatchLock(dir); err == nil {
+		t.Fatal("second acquire succeeded, want it refused: a live holder must not be stolen")
+	}
+}
+
+// TestDispatchLockDeadHolderTakenOver checks the stale path (issue #249): a
+// lock file whose mtime is far past dispatchLockStaleAfter and that no
+// heartbeat keeps fresh — a crashed holder — is renamed aside atomically and
+// the acquire succeeds, leaving no .stale- residue behind.
+func TestDispatchLockDeadHolderTakenOver(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel: %v", err)
+	}
+	if err := os.WriteFile(p, []byte("deadbeef\npid 999 host dead locked 2026-09-01T00:00:00Z\n"), 0o644); err != nil {
+		t.Fatalf("write dispatch.lock: %v", err)
+	}
+	past := now().Add(-10 * time.Minute)
+	if err := os.Chtimes(p, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+	release, err := acquireDispatchLock(dir)
+	if err != nil {
+		t.Fatalf("acquireDispatchLock() past a dead lock error = %v, want a takeover", err)
+	}
+	defer release()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read dispatch.lock: %v", err)
+	}
+	line, _, _ := strings.Cut(string(b), "\n")
+	if line == "deadbeef" {
+		t.Error("dispatch.lock still carries the dead holder's token, want the new holder's")
+	}
+	stale, gerr := filepath.Glob(filepath.Join(dir, ".flywheel", "dispatch.lock.stale-*"))
+	if gerr != nil {
+		t.Fatalf("Glob() error = %v", gerr)
+	}
+	if len(stale) != 0 {
+		t.Errorf("stale lock residue = %v, want none (the rename target is removed)", stale)
+	}
+}
+
+// TestDispatchLockReleaseDoesNotDeleteSuccessor checks the ABA fix (issue
+// #249): after B takes the lock over from A, A's release reads the file,
+// sees B's token and leaves B's lock in place — A must never delete a lock
+// it no longer owns. A's heartbeat is parked so the aged mtime cannot be
+// refreshed between the Chtimes and B's takeover.
+func TestDispatchLockReleaseDoesNotDeleteSuccessor(t *testing.T) {
+	saveHeartbeat := dispatchLockHeartbeat
+	dispatchLockHeartbeat = time.Hour
+	defer func() { dispatchLockHeartbeat = saveHeartbeat }()
+
+	dir := t.TempDir()
+	releaseA, err := acquireDispatchLock(dir)
+	if err != nil {
+		t.Fatalf("acquire A error = %v", err)
+	}
+	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	past := now().Add(-10 * time.Minute)
+	if err := os.Chtimes(p, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+	releaseB, err := acquireDispatchLock(dir)
+	if err != nil {
+		t.Fatalf("acquire B (takeover) error = %v", err)
+	}
+	defer releaseB()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read B's lock: %v", err)
+	}
+	tokenB, _, _ := strings.Cut(string(b), "\n")
+
+	releaseA()
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("A's release removed B's lock file: %v", err)
+	}
+	b, err = os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read B's lock after A's release: %v", err)
+	}
+	line, _, _ := strings.Cut(string(b), "\n")
+	if line != tokenB {
+		t.Errorf("lock first line = %q after A's release, want B's token %q", line, tokenB)
 	}
 }

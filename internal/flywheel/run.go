@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"bufio"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -176,6 +177,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 
 	// T1: dispatched needs a planned event carrying the brief path.
+	// Dispatch lock (issue #242): the log is read, the collision checks are
+	// run and the dispatched event is appended under .flywheel/dispatch.lock,
+	// so two dispatches started at the same moment serialise instead of both
+	// reading a log in which neither has dispatched, both passing the checks
+	// and both dispatching — taking the same exclusive resource or writing
+	// the same owned file, the exact case the refusals exist to stop. The
+	// lock is released as soon as dispatched lands, before the worker starts.
+	releaseDispatchLock, err := acquireDispatchLock(dir)
+	if err != nil {
+		return Result{}, err
+	}
+	dispatchLockHeld := true
+	defer func() {
+		if dispatchLockHeld {
+			releaseDispatchLock()
+		}
+	}()
+
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return Result{}, err
@@ -341,6 +360,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+	// The dispatched event is recorded and every check that read the log is
+	// past: release the dispatch lock NOW, before the worker starts. A lock
+	// held for the run would serialise the entire factory, which is the
+	// opposite of what this repository is for.
+	releaseDispatchLock()
+	dispatchLockHeld = false
 	progress(o.Progress, o.Task+" "+attempt+" dispatched "+worker.Adapter+" "+model)
 
 	// The lease records that this run holds this attempt while the worker
@@ -865,6 +890,133 @@ type ownsCollision struct {
 	task   string
 	status string
 	paths  []string
+}
+
+// Dispatch lock (issue #242): Run holds .flywheel/dispatch.lock across "read
+// the log -> run the collision checks -> append dispatched". The lock is
+// created with O_EXCL, which fails atomically when the file exists on every
+// OS, so at most one dispatch holds it at a time. The holder writes a random
+// token as the file's first line and its release removes the file only while
+// that token still matches, so after a takeover the old holder can never
+// delete the successor's lock (issue #249). While the lock is held a
+// heartbeat refreshes the file's mtime every dispatchLockHeartbeat, so
+// liveness is judged from the last touch, never from the acquisition time:
+// dispatchLockStaleAfter is three heartbeat periods, so a file untouched that
+// long has missed three beats and its holder is genuinely dead, while a live
+// holder — however long its critical section runs — is never stolen. The
+// stale takeover renames the file aside before removing it, so of two racers
+// exactly one wins the rename and the other retries the O_EXCL create.
+var (
+	dispatchLockStaleAfter = 15 * time.Second
+	dispatchLockWait       = 5 * time.Second
+	dispatchLockRetry      = 50 * time.Millisecond
+	dispatchLockHeartbeat  = 5 * time.Second
+)
+
+// acquireDispatchLock takes the repository-scoped dispatch lock by creating
+// .flywheel/dispatch.lock with O_EXCL, writing a fresh random token and the
+// holder's pid and an RFC3339 timestamp into it so a human can see who holds
+// it and a release can prove ownership. A short bounded retry serialises two
+// nearly-simultaneous dispatches instead of failing one of them; on timeout
+// the error names the file and tells the operator to remove it when no
+// dispatch is running — that is ordinary contention, not a rule refusal. A
+// lock file whose mtime is older than dispatchLockStaleAfter and that no
+// heartbeat keeps fresh is renamed aside atomically (os.Rename; only one
+// racer wins it, the loser gets ErrNotExist and retries the create) and then
+// removed, so a crashed lead never wedges the repository and two racers can
+// never both clear the same lock. The returned release stops the heartbeat
+// and removes the file only while its token still matches; the caller must
+// call it once the dispatched event is appended.
+func acquireDispatchLock(dir string) (release func(), err error) {
+	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return nil, fmt.Errorf("create %s: %w", filepath.Dir(p), err)
+	}
+	token := dispatchLockToken()
+	deadline := now().Add(dispatchLockWait)
+	for {
+		f, oerr := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if oerr == nil {
+			host, _ := os.Hostname()
+			_, _ = fmt.Fprintf(f, "%s\npid %d host %s locked %s\n", token, os.Getpid(), host, now().UTC().Format(time.RFC3339))
+			_ = f.Close()
+			return dispatchLockRelease(p, token), nil
+		}
+		if !os.IsExist(oerr) {
+			return nil, fmt.Errorf("create %s: %w", p, oerr)
+		}
+		if info, serr := os.Stat(p); serr == nil && now().Sub(info.ModTime()) > dispatchLockStaleAfter {
+			stale := p + ".stale-" + token
+			if rerr := os.Rename(p, stale); rerr == nil {
+				_ = os.Remove(stale)
+				continue
+			} else if !os.IsNotExist(rerr) {
+				return nil, fmt.Errorf("clear stale dispatch lock %s: %w", p, rerr)
+			}
+		}
+		if now().After(deadline) {
+			return nil, fmt.Errorf("dispatch lock %s is held by another dispatch; if no dispatch is running, remove the file and retry", p)
+		}
+		time.Sleep(dispatchLockRetry)
+	}
+}
+
+// dispatchLockRelease returns the release for one acquisition: it stops the
+// heartbeat, waits for it to exit (so it can never touch the file after
+// release returns) and removes the lock file only while its first line still
+// carries this acquisition's token. A token mismatch means a successor owns
+// the path — leave it, without error. A missing file is fine too. The
+// returned function is idempotent.
+func dispatchLockRelease(p, token string) func() {
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		ticker := time.NewTicker(dispatchLockHeartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if ownDispatchLock(p, token) {
+					ts := now()
+					_ = os.Chtimes(p, ts, ts)
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(done)
+			<-exited
+			if ownDispatchLock(p, token) {
+				_ = os.Remove(p)
+			}
+		})
+	}
+}
+
+// ownDispatchLock reports whether the lock file at p still carries token on
+// its first line — that is, whether the file is still this acquisition's and
+// not a successor's. A missing or unreadable file is never ours.
+func ownDispatchLock(p, token string) bool {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	line, _, _ := strings.Cut(string(b), "\n")
+	return line == token
+}
+
+// dispatchLockToken returns a fresh random hex token for one lock
+// acquisition. crypto/rand.Read never returns an error, so none is
+// propagated; 16 bytes make a collision between two processes negligible.
+func dispatchLockToken() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // briefDrift is a dispatch-time finding that the brief on disk differs from
