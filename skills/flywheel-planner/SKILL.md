@@ -89,7 +89,9 @@ You never:
   and hides real tampering behind a plausible-looking edit. When the file a work order will
   create does not have a known name yet, list a pattern in `owns:` instead — `src/voice/*.test.ts`
   or a trailing-slash directory such as `src/voice/` — rather than leaving the entry to be added
-  later. Both forms are checked the same as a literal path at validate and lint time.
+  later. When the name is known and the file does not exist yet, list it with the `(new)`
+  annotation — `src/voice.ts (new)` — so lint does not report it as missing. Both forms are
+  checked the same as a literal path at validate and lint time.
 
 ## Inputs and outputs
 

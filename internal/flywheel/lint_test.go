@@ -80,7 +80,18 @@ func TestLintBriefNoChecksAlone(t *testing.T) {
 func TestLintBriefOwnsMissingFileAlone(t *testing.T) {
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns path missing.go does not exist"}, nil)
+	want(t, res, []string{"owns path missing.go does not exist; if the unit creates it, annotate it: missing.go (new)"}, nil)
+}
+
+func TestLintBriefOwnsMissingFileNamesNewAnnotation(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	if len(res.Problems) != 1 {
+		t.Fatalf("problems = %v, want exactly one", res.Problems)
+	}
+	if !strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q does not name the (new) annotation", res.Problems[0])
+	}
 }
 
 func TestLintBriefSeveralErrorsTogether(t *testing.T) {
@@ -121,13 +132,65 @@ func TestLintBriefOwnsPatternMatchPasses(t *testing.T) {
 func TestLintBriefOwnsPatternNoMatchAlone(t *testing.T) {
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns pattern src/*.none.ts matches no file"}, nil)
+	want(t, res, []string{"owns pattern src/*.none.ts matches no file; if the unit creates it, annotate it: src/*.none.ts (new)"}, nil)
+}
+
+func TestLintBriefOwnsPatternNoMatchNamesNewAnnotation(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	if len(res.Problems) != 1 {
+		t.Fatalf("problems = %v, want exactly one", res.Problems)
+	}
+	if !strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q does not name the (new) annotation", res.Problems[0])
+	}
+}
+
+// TestLintBriefOwnsPatternMalformedSyntax guards the malformed-pattern branch:
+// filepath.Glob rejects the pattern and ownsContains matches it with
+// path.Match ignoring its error, so it can never match a file. The (new)
+// remedy would make lint pass while ownership stayed broken, so the message
+// must not offer it.
+func TestLintBriefOwnsPatternMalformedSyntax(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/[.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"owns pattern src/[.go is invalid: syntax error in pattern; correct the pattern"}, nil)
+	if len(res.Problems) == 1 && strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q names the (new) annotation for a malformed pattern", res.Problems[0])
+	}
+}
+
+func TestLintBriefOwnsMissingFileNewSkipsCheck(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: missing.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
+func TestLintBriefOwnsExistingFileAnnotatedPasses(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go", "b.go"},
+		"owns: a.go, b.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
 }
 
 func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
+}
+
+// TestLintBriefOwnsPatternAnnotatedMalformedNewInvalid guards correction 2:
+// (new) excuses a path that does not exist yet, not a pattern that can never
+// match. ownsContains matches patterns with path.Match, which errors on a
+// malformed pattern, so an annotated malformed pattern would pass lint while
+// ownership stayed silently broken. The syntax check must run even when the
+// entry is annotated (new).
+func TestLintBriefOwnsPatternAnnotatedMalformedNewInvalid(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), nil,
+		"owns: src/[.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"owns pattern src/[.go is invalid: syntax error in pattern; correct the pattern"}, nil)
+	if len(res.Problems) == 1 && strings.Contains(res.Problems[0], "(new)") {
+		t.Errorf("problem %q names the (new) annotation for a malformed pattern", res.Problems[0])
+	}
 }
 
 func TestLintBriefLiveGateRepeatsGateAlone(t *testing.T) {
