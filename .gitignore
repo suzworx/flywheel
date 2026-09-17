@@ -3,3 +3,8 @@
 .omo/
 !internal/flywheel/testdata/**/.flywheel/
 flywheel.md
+/flywheel
+/flywheel.exe
+/bin/
+*.test
+*.test.exe
