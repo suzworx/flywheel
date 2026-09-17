@@ -3,269 +3,349 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>flywheel — own the factory</title>
-<meta name="description" content="A dark factory for AI coding work. The factory is files you own; agents and models are rented and swapped at will. Cheap workers build, deterministic gauges check every claim.">
+<title>flywheel - own the factory</title>
+<meta name="description" content="A dark factory for AI coding work. Cheap agents build, deterministic gauges re-run every claim, and nothing lands without a reading bound to the exact tree that produced it.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<meta property="og:title" content="flywheel">
+<meta property="og:description" content="Own the factory. Rent the agents and the intelligence.">
+<meta property="og:type" content="website">
 <style>
+/* tokens */
+:root{
+  --ink:#16202b; --body:#4a5a68; --soft:#78868f; --line:#e3ded5; --hair:#efebe3;
+  --bg:#faf8f5; --panel:#fff; --code:#f2eee7;
+  --accent:#c2650f; --accent-ink:#fff; --term:#16202b;
+  --r:14px; --r-sm:9px;
+  --shadow:0 1px 2px rgba(22,32,43,.05), 0 12px 32px -12px rgba(22,32,43,.16);
+}
+@media (prefers-color-scheme:dark){
   :root{
-    --ink:#16202b; --body:#3d4c5a; --muted:#77848f; --accent:#c96c14;
-    --bg:#f7f5f1; --panel:#ffffff; --line:#e4dfd7; --code:#f1ede6;
+    --ink:#f0f4f8; --body:#a9b6c2; --soft:#7d8b98; --line:#26313c; --hair:#1d262f;
+    --bg:#0e141a; --panel:#141c24; --code:#111920;
+    --accent:#e8933f; --accent-ink:#16202b; --term:#0b1015;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 16px 40px -16px rgba(0,0,0,.6);
   }
-  :root:not([data-theme="light"]){ }
-  @media (prefers-color-scheme: dark){
-    :root:not([data-theme="light"]){
-      --ink:#eef2f6; --body:#b3c0cc; --muted:#8996a3; --accent:#e8933f;
-      --bg:#0f151c; --panel:#161e27; --line:#27323d; --code:#111921;
-    }
-  }
-  :root[data-theme="dark"]{
-    --ink:#eef2f6; --body:#b3c0cc; --muted:#8996a3; --accent:#e8933f;
-    --bg:#0f151c; --panel:#161e27; --line:#27323d; --code:#111921;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--body);
-    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    -webkit-font-smoothing:antialiased;}
-  .wrap{max-width:900px;margin:0 auto;padding-inline:20px;padding-block:0}
-  h1,h2,h3{color:var(--ink);line-height:1.25;margin:0}
-  a{color:var(--accent);text-decoration:none}
-  a:hover{text-decoration:underline}
-  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em}
-  code{background:var(--code);padding:.15em .4em;border-radius:5px;color:var(--ink)}
-  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;
-      padding:16px 18px;overflow-x:auto;margin:0}
-  pre code{background:none;padding:0}
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--body);
+  font:400 16.5px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+h1,h2,h3{color:var(--ink); line-height:1.12; letter-spacing:-.022em; margin:0; font-weight:640}
+p{margin:0}
+a{color:inherit}
+code,kbd{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+code{font-size:.87em; background:var(--code); padding:.14em .4em; border-radius:5px; color:var(--ink)}
+img{max-width:100%; height:auto; display:block}
+.wrap{max-width:1140px; margin-inline:auto; padding-inline:24px}
+.rule{height:1px; background:var(--hair); border:0; margin:0}
 
-  header{padding-block:56px 40px;text-align:center}
-  header img{width:min(340px,80vw);height:auto}
-  .tag{font-size:1.15rem;color:var(--ink);font-weight:600;margin-top:22px}
-  .sub{margin-top:14px;max-width:620px;margin-inline:auto}
-  .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:22px}
-  .badges img{height:20px}
-  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:28px}
-  .btn{display:inline-block;padding:11px 20px;border-radius:9px;font-weight:600;font-size:.94rem;
-       border:1px solid var(--line);background:var(--panel);color:var(--ink)}
-  .btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-  .btn:hover{text-decoration:none;opacity:.9}
+/* nav */
+nav{position:sticky; top:0; z-index:20; background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:saturate(180%) blur(12px); border-bottom:1px solid transparent; transition:border-color .2s}
+nav.stuck{border-bottom-color:var(--hair)}
+.nav{display:flex; align-items:center; justify-content:space-between; height:68px; gap:24px}
+.nav a{text-decoration:none}
+.brand{display:flex; align-items:center; gap:10px; font-weight:650; color:var(--ink); letter-spacing:-.02em; font-size:17px}
+.brand svg{width:26px; height:26px; flex:none}
+.navlinks{display:flex; align-items:center; gap:26px; font-size:14.5px; color:var(--body); white-space:nowrap}
+.navlinks a:hover{color:var(--ink)}
+@media (max-width:720px){ .navlinks a[data-opt]{display:none} }
 
-  section{padding-block:38px;border-top:1px solid var(--line)}
-  h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);
-     font-weight:650;margin-bottom:18px}
-  .lede{font-size:1.06rem;color:var(--ink)}
+/* buttons */
+.btn{display:inline-flex; align-items:center; gap:8px; white-space:nowrap;
+  padding:11px 18px; border-radius:var(--r-sm); font-size:15px; font-weight:600;
+  text-decoration:none; border:1px solid var(--line); background:var(--panel); color:var(--ink);
+  transition:transform .12s cubic-bezier(.16,1,.3,1), border-color .2s, filter .2s}
+.btn:hover{border-color:var(--soft)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn svg{width:15px; height:15px}
 
-  .loop{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:8px}
-  .step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-  .step b{color:var(--ink);display:block;font-size:.95rem;margin-bottom:5px}
-  .step span{font-size:.88rem}
-  .step i{color:var(--accent);font-style:normal;font-weight:700;font-size:.78rem;
-          letter-spacing:.08em;display:block;margin-bottom:8px}
+/* hero */
+.hero{padding-block:clamp(56px,7vw,92px) clamp(52px,6vw,76px)}
+.hero-grid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); gap:clamp(32px,5vw,64px); align-items:center}
+@media (max-width:900px){ .hero-grid{grid-template-columns:1fr; gap:36px} }
+h1{font-size:clamp(38px,5.4vw,62px); font-weight:680; letter-spacing:-.035em; line-height:1.04}
+h1 .dim{color:var(--soft)}
+.lede{margin-top:20px; font-size:clamp(16.5px,1.5vw,18.5px); max-width:46ch}
+.cta{display:flex; gap:12px; margin-top:30px; flex-wrap:wrap}
+.shot{border-radius:var(--r); overflow:hidden; box-shadow:var(--shadow); background:var(--term); border:1px solid var(--line)}
+.shot img{width:100%}
 
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
-  .card h3{font-size:1rem;margin-bottom:7px}
-  .card h3 a{color:var(--ink)}
-  .card h3 a:hover{color:var(--accent)}
-  .card p{margin:0;font-size:.92rem}
+/* sections */
+section{padding-block:clamp(56px,7vw,84px)}
+.eyebrow{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin-bottom:16px}
+h2{font-size:clamp(26px,3.2vw,36px); letter-spacing:-.028em}
+h3{font-size:17.5px; letter-spacing:-.018em}
+.sub{margin-top:14px; max-width:62ch; font-size:17px}
+.lead{font-size:clamp(18px,2vw,21px); color:var(--ink); max-width:28ch; font-weight:500; letter-spacing:-.016em; line-height:1.35}
 
-  table{width:100%;border-collapse:collapse;font-size:.92rem}
-  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
-  td code{white-space:nowrap}
-  .scroll{overflow-x:auto}
-  ul{padding-left:20px;margin:10px 0}
-  li{margin-bottom:7px}
-  li strong{color:var(--ink)}
-  h3{font-weight:650}
+/* loop */
+.loop{display:grid; grid-template-columns:repeat(4,1fr); margin-top:44px; border-top:1px solid var(--line)}
+@media (max-width:860px){ .loop{grid-template-columns:1fr 1fr} }
+@media (max-width:520px){ .loop{grid-template-columns:1fr} }
+.step{padding:26px 24px 30px 0; border-right:1px solid var(--hair)}
+.step:last-child{border-right:0}
+@media (max-width:860px){ .step:nth-child(2n){border-right:0} }
+@media (max-width:520px){ .step{border-right:0; border-bottom:1px solid var(--hair); padding-right:0} .step:last-child{border-bottom:0} }
+.step .n{font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--accent);
+  letter-spacing:.1em; display:block; margin-bottom:14px}
+.step h3{margin-bottom:8px}
+.step p{font-size:14.8px}
 
-  footer{padding-block:34px 56px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem;
-         display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+/* asymmetric rows */
+.rows{margin-top:48px}
+.row{display:grid; grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr); gap:clamp(24px,5vw,72px);
+  padding-block:34px; border-top:1px solid var(--hair); align-items:start}
+.row:first-child{border-top:0; padding-top:0}
+@media (max-width:820px){ .row{grid-template-columns:1fr; gap:14px} }
+.row h3{font-size:19px}
+.row p{font-size:16px}
+
+/* tables */
+.scroll{overflow-x:auto; margin-top:34px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel)}
+table{width:100%; border-collapse:collapse; font-size:15.4px; min-width:520px}
+th,td{text-align:left; padding:14px 18px; border-bottom:1px solid var(--hair); vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{color:var(--soft); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.09em}
+td:first-child{color:var(--ink); font-weight:560; white-space:nowrap}
+td code{white-space:nowrap}
+
+.guarantee{margin-top:40px; display:grid; grid-template-columns:repeat(2,1fr); gap:0 clamp(28px,5vw,60px)}
+@media (max-width:760px){ .guarantee{grid-template-columns:1fr} }
+.guarantee div{padding:18px 0; border-top:1px solid var(--hair)}
+.guarantee strong{color:var(--ink); font-weight:620; display:block; margin-bottom:5px; font-size:15.6px; letter-spacing:-.012em}
+.guarantee p{font-size:14.8px}
+
+/* install */
+.install{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr); gap:clamp(28px,5vw,56px); align-items:center; margin-top:38px}
+@media (max-width:900px){ .install{grid-template-columns:1fr} }
+pre{background:var(--code); border:1px solid var(--line); border-radius:var(--r);
+  padding:20px 22px; overflow-x:auto; margin:0; font-size:14px; line-height:1.72}
+pre code{background:none; padding:0; font-size:14px; color:var(--ink)}
+.cmt{color:var(--soft)}
+
+.closing{background:var(--panel); border-top:1px solid var(--hair); border-bottom:1px solid var(--hair)}
+footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
+.foot{display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap}
+.foot a{text-decoration:none} .foot a:hover{color:var(--ink)}
+.foot-links{display:flex; gap:20px; flex-wrap:wrap}
+
+@media (prefers-reduced-motion:no-preference){
+  .rv{opacity:0; transform:translateY(14px);
+      transition:opacity .62s cubic-bezier(.16,1,.3,1), transform .62s cubic-bezier(.16,1,.3,1)}
+  .rv.in{opacity:1; transform:none}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
 
-<header>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.svg">
-    <img src="assets/logo-lockup.svg" alt="flywheel — own the factory">
-  </picture>
-  <p class="tag">Own the factory. Rent the agents and the intelligence.</p>
-  <p class="sub">A dark factory for AI coding work. The factory — work orders, gauges, the event
-  log, its memory — is files you own. Agents and models are rented from any vendor and swapped at
-  will.</p>
-  <div class="badges">
-    <img src="https://github.com/suzworx/flywheel/actions/workflows/ci.yml/badge.svg" alt="CI status">
-    <img src="https://img.shields.io/github/v/release/suzworx/flywheel" alt="Latest release">
-    <img src="https://img.shields.io/github/license/suzworx/flywheel" alt="License">
+<nav id="nav"><div class="wrap nav">
+  <a class="brand" href="#top">
+    <svg viewBox="0 0 256 256" aria-hidden="true">
+      <circle cx="128" cy="128" r="94" fill="none" stroke="currentColor" stroke-width="20"/>
+      <g transform="rotate(14 128 128)"><circle cx="128" cy="128" r="54" fill="none" stroke="#c2650f" stroke-width="20" stroke-dasharray="34 22.55"/></g>
+      <circle cx="128" cy="128" r="16" fill="currentColor"/>
+    </svg>
+    flywheel
+  </a>
+  <div class="navlinks">
+    <a data-opt href="#loop">The loop</a>
+    <a data-opt href="#guarantees">Guarantees</a>
+    <a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a>
+    <a href="https://github.com/suzworx/flywheel">GitHub</a>
   </div>
-  <div class="cta">
-    <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Start with the quickstart</a>
-    <a class="btn" href="https://github.com/suzworx/flywheel/releases/latest">Download a release</a>
-    <a class="btn" href="https://github.com/suzworx/flywheel">View on GitHub</a>
-  </div>
-</header>
+</div></nav>
 
-<section>
-  <h2>The idea</h2>
-  <p class="lede">Cheap, disposable agents do the building. Deterministic gauges check every claim
-  they make. One expensive frontier lead makes only the calls that need judgement.</p>
-  <p>A worker's word is never evidence. Every unit of work declares up front which files it owns
-  and which commands must pass; the CLI re-runs those commands itself, on the exact tree that was
-  produced, and records the reading in an append-only event log. A unit that cannot show a passing
-  reading cannot be accepted — not by convention, but because the tool refuses.</p>
-</section>
+<main id="top">
 
-<section>
-  <h2>Start here</h2>
-  <div class="cards">
-    <div class="card">
-      <h3><a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart →</a></h3>
-      <p>From "I have a binary" to "I have landed one unit through the loop", with the real output
-      of every command along the way. Ends with the exit codes and the three refusals a beginner
-      actually hits — and what each one is telling you.</p>
-    </div>
-    <div class="card">
-      <h3><a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts →</a></h3>
-      <p>The vocabulary everything else rests on: the work order, <code>owns:</code>,
-      <code>gate:</code> and <code>live-gate:</code>, the event log, the poka-yoke rules and who
-      does what — and why each one exists, not only what it is.</p>
+<section class="hero"><div class="wrap hero-grid">
+  <div>
+    <h1>Rent the agents.<br><span class="dim">Own the factory.</span></h1>
+    <p class="lede">Cheap agents build. Deterministic gauges re-run every claim they make. One expensive lead makes only the calls that need judgement.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">
+        Start the quickstart
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+      </a>
+      <a class="btn" href="https://github.com/suzworx/flywheel/releases/latest">Download</a>
     </div>
   </div>
-</section>
+  <div class="shot rv"><img src="assets/demo-factory.svg" width="872" height="512"
+       alt="The flywheel factory view: a table of units with stage, attempt, session, model, steps and age, an andon list, and an output line with landed count, first-pass rate and cost."></div>
+</div></section>
 
-<section>
-  <h2>The loop</h2>
-  <div class="loop">
-    <div class="step"><i>01 · LEAD</i><b>Plan</b><span>A brief declares <code>owns:</code>, <code>needs:</code> and one <code>gate:</code> per check. <code>flywheel lint</code> catches a bad one before anyone is dispatched.</span></div>
-    <div class="step"><i>02 · WORKER</i><b>Build</b><span><code>flywheel run</code> dispatches a rented agent into its own worktree and streams every tool call into the run log.</span></div>
-    <div class="step"><i>03 · GAUGES</i><b>Measure</b><span><code>flywheel validate</code> re-runs each gate and checks the owns boundary. The worker's own green is never trusted.</span></div>
-    <div class="step"><i>04 · LEAD</i><b>Land</b><span><code>flywheel inspect</code> applies the poka-yoke rules and refuses anything unproven. Only then does the work land.</span></div>
+<hr class="rule">
+
+<section id="loop"><div class="wrap">
+  <p class="lead rv">A worker's word is never evidence. The tool re-runs the commands itself, on the exact tree that was produced.</p>
+  <div class="loop rv">
+    <div class="step"><span class="n">01 LEAD</span><h3>Plan</h3>
+      <p>A work order declares which files it owns and which commands must pass. <code>flywheel lint</code> catches a bad one before anyone is dispatched.</p></div>
+    <div class="step"><span class="n">02 WORKER</span><h3>Build</h3>
+      <p>A rented agent runs in its own worktree. Every tool call it makes is streamed into an append-only run log.</p></div>
+    <div class="step"><span class="n">03 GAUGES</span><h3>Measure</h3>
+      <p>The lead re-runs each gate and checks the owns boundary. A reading is bound to the tree hash it was taken on.</p></div>
+    <div class="step"><span class="n">04 LEAD</span><h3>Land</h3>
+      <p>The poka-yoke rules refuse anything unproven. Only then does the work land, against a recorded commit.</p></div>
   </div>
-</section>
+</div></section>
 
-<section>
-  <h2>What makes it different</h2>
-  <div class="cards">
-    <div class="card">
+<hr class="rule">
+
+<section><div class="wrap">
+  <h2 class="rv">What the gauges actually do</h2>
+  <p class="sub rv">Every gate is re-run by the lead and recorded, with its output kept as evidence. The inspector then refuses a pass that has no reading behind it.</p>
+  <div class="shot rv" style="margin-top:34px"><img src="assets/demo-gauges.svg" width="906" height="412"
+       alt="Terminal output: flywheel validate runs each gate and reports pass with timings, then the owns check; flywheel inspect refuses a pass with a rule refusal; flywheel verify reports the task against the rules."></div>
+</div></section>
+
+<hr class="rule">
+
+<section><div class="wrap">
+  <h2 class="rv">Four things a checklist cannot do</h2>
+  <div class="rows">
+    <div class="row rv">
       <h3>Gates you cannot talk your way past</h3>
-      <p>A rule refusal exits <code>6</code>. A pass verdict without a matching passing reading on
-      the same tree hash is refused outright, so "it works on my machine" has nowhere to live.</p>
+      <p>A rule refusal exits <code>6</code>. A pass verdict with no matching reading on the same tree hash is refused outright, so "it works on my machine" has nowhere to live.</p>
     </div>
-    <div class="card">
-      <h3><code>live-gate:</code> — the mock cannot vouch for the contract</h3>
-      <p>A gate that runs only in the lead's verification pass, against the real provider. A unit
-      that declares one cannot be accepted on mocked gates alone.</p>
+    <div class="row rv">
+      <h3>A gate for the real path</h3>
+      <p><code>live-gate:</code> runs only in the lead's verification pass, against the real provider. A unit that declares one cannot be accepted on mocked gates alone. It exists because a feature once shipped across 42 units with every gate green, and failed on the first real call.</p>
     </div>
-    <div class="card">
+    <div class="row rv">
       <h3>An append-only ledger</h3>
-      <p>Every plan, dispatch, reading, verdict and landing is an event. <code>flywheel verify</code>
-      checks the whole chain; <code>flywheel trace</code> replays everything one session did.</p>
+      <p>Every plan, dispatch, reading, verdict and landing is an event. State is derived from the log and never edited. <code>flywheel verify</code> checks the chain; <code>flywheel trace</code> replays everything one session did.</p>
     </div>
-    <div class="card">
+    <div class="row rv">
       <h3>Any vendor, swapped at will</h3>
-      <p>Adapters for OpenCode, Claude Code and an offline simulator. <code>flywheel doctor</code>
-      probes every configured model and tells you which ones are actually usable.</p>
+      <p>Adapters for OpenCode, Claude Code and an offline simulator. <code>flywheel doctor</code> probes every configured model and says which are actually reachable, before you dispatch anything.</p>
     </div>
   </div>
-</section>
+</div></section>
 
-<section>
-  <h2>Install</h2>
-  <pre><code># download the asset for your platform from the latest release, then verify it
-gh release download --repo suzworx/flywheel --pattern '*checksums*' --pattern '*linux-amd64*'
+<hr class="rule">
+
+<section id="guarantees"><div class="wrap">
+  <p class="eyebrow rv">The claim underneath</p>
+  <h2 class="rv">What is deterministic, and what is not</h2>
+  <p class="sub rv">flywheel does not try to make the model reproducible. It makes non-determinism irrelevant to the accept or reject decision. Everything the agent does is unpredictable. Everything that decides whether the work may land is not.</p>
+  <div class="scroll rv">
+    <table>
+      <thead><tr><th>Mechanism</th><th>Why it is deterministic</th></tr></thead>
+      <tbody>
+        <tr><td>Tree hash</td><td>A git tree SHA computed with a throwaway index. Same tree, same hash, always.</td></tr>
+        <tr><td>Gates</td><td>Shell commands with real exit codes, re-run by the lead, never the worker's claim.</td></tr>
+        <tr><td><code>owns:</code> check</td><td>A set comparison of the paths actually changed against the declared list.</td></tr>
+        <tr><td>Brief hash</td><td>SHA-256 stamped at dispatch, so a work order edited afterwards is detectable.</td></tr>
+        <tr><td>Event log</td><td>Append-only. Derived state is a fold over it and is never hand-edited.</td></tr>
+        <tr><td>Rules T1 to T10</td><td>Pure functions over that log. Same log, same verdict.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="guarantee rv">
+    <div><strong>No unit lands unmeasured</strong><p>Not "the tests passed somewhere". The reading is bound to the exact tree that landed. Change one byte and it no longer applies.</p></div>
+    <div><strong>No silent boundary crossing</strong><p>A changed path outside the unit's declared list is reported, and attributed to whichever in-flight unit does own it.</p></div>
+    <div><strong>The inspector is never the builder</strong><p>A session cannot pass work it wrote, so the two independent checks stay two.</p></div>
+    <div><strong>The record cannot be quietly rewritten</strong><p>Append-only, derived state, and a verify pass that re-checks the whole chain.</p></div>
+  </div>
+  <p class="sub rv" style="margin-top:34px"><strong style="color:var(--ink)">What it does not guarantee:</strong> it guarantees the gates ran, not that they were the right gates. That is where every real failure has come from, and it is why <code>live-gate:</code> and structural document readings exist. flywheel moves the trust boundary from "trust the agent" to "trust a small, auditable set of checks, plus the quality of the gates you wrote".</p>
+</div></section>
+
+<hr class="rule">
+
+<section><div class="wrap">
+  <h2 class="rv">Install</h2>
+  <div class="install">
+    <pre class="rv"><code><span class="cmt"># verify the checksum, then put it on PATH</span>
+gh release download --repo suzworx/flywheel \
+  --pattern '*checksums*' --pattern '*linux-amd64*'
 sha256sum -c --ignore-missing checksums.txt
-unzip flywheel-*-linux-amd64.zip &amp;&amp; sudo install flywheel-* /usr/local/bin/flywheel
 
-flywheel version
-flywheel init          # scaffold the factory into a repo
-flywheel doctor        # check every configured model is usable</code></pre>
-  <p style="margin-top:12px">Go 1.27, standard library only — no dependencies, one static binary.
-  Linux, macOS (Intel and Apple silicon) and Windows.</p>
-</section>
-
-<section>
-  <h2>A few commands</h2>
-  <div class="scroll">
-  <table>
-    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
-    <tbody>
-      <tr><td><code>flywheel init</code></td><td>Scaffold the factory state files into a repo.</td></tr>
-      <tr><td><code>flywheel lint</code></td><td>Check a brief for a missing owns, a missing gate, or a live-gate that only repeats a mocked one.</td></tr>
-      <tr><td><code>flywheel run</code></td><td>Dispatch a worker for a task and record everything it does.</td></tr>
-      <tr><td><code>flywheel validate</code></td><td>Re-run a task's gates and check its owns boundary. <code>--live</code> adds the real-path gates.</td></tr>
-      <tr><td><code>flywheel inspect</code></td><td>Apply the poka-yoke rules and record a verdict.</td></tr>
-      <tr><td><code>flywheel factory</code></td><td>Live dashboard of the floor, with an andon for units that have stalled or gone quiet.</td></tr>
-      <tr><td><code>flywheel doctor</code></td><td>Probe every configured model and classify its availability.</td></tr>
-      <tr><td><code>flywheel feedback</code></td><td>Curate signals into learnings, and regenerate <code>learnings.md</code>.</td></tr>
-    </tbody>
-  </table>
+flywheel init      <span class="cmt"># scaffold the factory</span>
+flywheel doctor    <span class="cmt"># is a model reachable?</span>
+flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></pre>
+    <div class="shot rv"><img src="assets/demo-init.svg" width="544" height="292"
+         alt="Terminal output of flywheel version followed by flywheel init, listing each state file it creates."></div>
   </div>
-</section>
+  <p class="sub rv" style="margin-top:28px">Go 1.27, standard library only. One static binary with no dependencies, for Linux, macOS on Intel and Apple silicon, and Windows.</p>
+</div></section>
 
-<section>
-  <h2>What is deterministic, and what is not</h2>
-  <p class="lede">flywheel does not try to make the model reproducible. It makes non-determinism
-  irrelevant to the accept/reject decision.</p>
-  <p><strong>Non-deterministic — everything the agent does.</strong> Which files it reads, how many
-  steps it takes, what code it writes, how it words its report, whether it finishes at all, which
-  model was even available. Run the same work order twice and you get two different diffs.</p>
-  <p><strong>Deterministic — everything that decides whether the work may land:</strong></p>
-  <div class="scroll">
-  <table>
-    <thead><tr><th>Mechanism</th><th>Why it is deterministic</th></tr></thead>
-    <tbody>
-      <tr><td>Tree hash</td><td>A git tree SHA computed with a throwaway index. Same tree, same hash, always.</td></tr>
-      <tr><td>Gates</td><td>Shell commands with real exit codes, re-run by the lead — never the worker's claim.</td></tr>
-      <tr><td><code>owns:</code> check</td><td>A set comparison of the paths actually changed against the declared list.</td></tr>
-      <tr><td>Brief hash</td><td>SHA-256 stamped at dispatch, so a work order edited afterwards is detectable.</td></tr>
-      <tr><td>Event log</td><td>Append-only. Derived state is a fold over it and is never hand-edited.</td></tr>
-      <tr><td>Rules T1–T10</td><td>Pure functions over that log. Same log, same verdict.</td></tr>
-    </tbody>
-  </table>
+<hr class="rule">
+
+<section><div class="wrap">
+  <h2 class="rv">The commands you will use</h2>
+  <div class="scroll rv">
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>flywheel init</code></td><td>Scaffold the factory state files into a repo.</td></tr>
+        <tr><td><code>flywheel lint</code></td><td>Catch a missing owns, a missing gate, or a live-gate that only repeats a mocked one.</td></tr>
+        <tr><td><code>flywheel run</code></td><td>Dispatch a worker and record everything it does.</td></tr>
+        <tr><td><code>flywheel validate</code></td><td>Re-run a task's gates and check its owns boundary. <code>--live</code> adds the real-path gates.</td></tr>
+        <tr><td><code>flywheel inspect</code></td><td>Apply the poka-yoke rules and record a verdict.</td></tr>
+        <tr><td><code>flywheel factory</code></td><td>The floor at a glance, with an andon for units that stalled or went quiet.</td></tr>
+        <tr><td><code>flywheel doctor</code></td><td>Probe every configured model and classify its availability.</td></tr>
+        <tr><td><code>flywheel feedback</code></td><td>Curate signals into learnings, and export them without leaking paths or tokens.</td></tr>
+      </tbody>
+    </table>
   </div>
+</div></section>
 
-  <h3 style="font-size:1rem;margin:26px 0 8px">What that guarantees</h3>
-  <p>Narrow claims, each mechanically checkable — which is the point:</p>
-  <ul>
-    <li><strong>No unit lands without a passing reading on the exact tree that landed.</strong> Not
-    "the tests passed somewhere": the CLI ran the gates itself, and the reading is bound to that
-    tree hash. Change one byte and the reading no longer applies.</li>
-    <li><strong>No unit silently changes files outside its declared boundary.</strong></li>
-    <li><strong>The session that inspects is never the session that built.</strong></li>
-    <li><strong>The record cannot be quietly rewritten</strong> — append-only, derived state, and
-    <code>flywheel verify</code> re-checks the chain.</li>
-  </ul>
-  <p>An agent can be as erratic as it likes; it cannot talk its way past a gate, because nothing
-  it <em>says</em> is an input to the decision.</p>
+<section class="closing"><div class="wrap">
+  <p class="lead rv">It builds itself.</p>
+  <p class="sub rv">Work orders are written, rented workers build, the CLI measures, and the lead lands only what the gauges will vouch for. Pointing the factory at itself is also how several of its own defects were found, including a worker path where a failed run was being recorded as a clean success.</p>
+  <div class="cta rv">
+    <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Start the quickstart</a>
+    <a class="btn" href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Read the concepts</a>
+  </div>
+</div></section>
 
-  <h3 style="font-size:1rem;margin:26px 0 8px">What it does not guarantee</h3>
-  <p>It guarantees the gates ran. It cannot guarantee the gates were the <em>right</em> gates — and
-  that is where every real failure has come from. A feature shipped across 42 units, every gate
-  green, and broke on the first call against the real provider, because every test mocked the
-  provider: the gate proved the mock. A UI suite of 316 green tests while the app's navigation was
-  unreachable by a human, because the tests asserted the defect as the specification. A truncated
-  document that satisfied a keyword gate, because the keywords survived in the tail.</p>
-  <p>So the honest claim is this: flywheel moves the trust boundary from <em>trust the agent</em> to
-  <em>trust a small, auditable set of deterministic checks, plus the quality of the gates you
-  wrote</em>. It shrinks what you must reason about from a model's entire behaviour to one
-  reviewable list per unit. It does not remove human judgement; it concentrates it where judgement
-  is cheap and auditable. <code>live-gate:</code> exists because of the first failure above, and
-  structural document readings because of the third.</p>
-</section>
+</main>
 
-<section>
-  <h2>It builds itself</h2>
-  <p>flywheel is developed through its own loop: briefs are written, rented workers build, the CLI
-  measures, and the lead lands only what the gauges will vouch for. Pointing the factory at itself
-  is also how several of its own defects were found — including a worker path where a failed run
-  was being recorded as a clean success.</p>
-</section>
-
-<footer>
+<footer><div class="wrap foot">
   <span>Built by flywheel, by Sujeet.</span>
-  <span><a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a> · <a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts</a> · <a href="https://github.com/suzworx/flywheel">github.com/suzworx/flywheel</a></span>
-</footer>
+  <span class="foot-links">
+    <a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a>
+    <a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts</a>
+    <a href="https://github.com/suzworx/flywheel/releases">Releases</a>
+    <a href="https://github.com/suzworx/flywheel">GitHub</a>
+  </span>
+</div></footer>
 
-</div>
+<script>
+// Reveal on enter. IntersectionObserver, never a scroll listener. The motion
+// stages the page on first read and collapses entirely under
+// prefers-reduced-motion, where the .rv rules are not applied at all.
+(function () {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var els = document.querySelectorAll('.rv');
+  if (reduce || !('IntersectionObserver' in window)) {
+    for (var i = 0; i < els.length; i++) els[i].classList.add('in');
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+  els.forEach(function (el) { io.observe(el); });
+
+  // Hairline under the nav only once the page has moved, so the resting state
+  // is clean. Sentinel plus observer, not a scroll handler.
+  var nav = document.getElementById('nav');
+  var s = document.createElement('div');
+  s.style.cssText = 'position:absolute;top:0;height:1px;width:1px';
+  document.body.prepend(s);
+  new IntersectionObserver(function (e) {
+    nav.classList.toggle('stuck', !e[0].isIntersecting);
+  }).observe(s);
+})();
+</script>
 </body>
 </html>
