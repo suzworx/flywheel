@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -581,5 +582,303 @@ func TestFeedbackSubmitSendsViaGH(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "feedback", "outbox")); !os.IsNotExist(err) {
 		t.Error("outbox was created on a successful send")
+	}
+}
+
+// TestFeedbackAddConcurrentSerialisesMutations is the concurrency guard for
+// issue #260: two concurrent add mutations must not interleave. Each reports
+// its own learning id and title — the id the append actually wrote — and the
+// final artifact contains both learnings. A third writer runs the generic log
+// path: a raw learning imported through AppendLearningEvents, the same
+// transaction `flywheel log --json` uses for a batch carrying a learning
+// event. All three serialise under the same feedback lock, so the artifact
+// stays consistent with the log and every writer's learning is present. Run
+// it with -count=20; -race is unavailable on this host (no C compiler, so
+// go test -race refuses).
+func TestFeedbackAddConcurrentSerialisesMutations(t *testing.T) {
+	dir := t.TempDir()
+	type result struct {
+		id, title  string
+		aerr, rerr error
+	}
+	results := make([]result, 2)
+	var wg sync.WaitGroup
+	for i, title := range []string{"Alpha", "Beta"} {
+		wg.Add(1)
+		go func(i int, title string) {
+			defer wg.Done()
+			id, out, aerr, rerr := AddLearning(dir, "t1", "P1", title, "slow", "e1", "repeat", nil)
+			results[i] = result{id: id, title: out, aerr: aerr, rerr: rerr}
+		}(i, title)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := AppendLearningEvents(dir, []Event{
+			{Task: "t1", Kind: "learning", Severity: "P2", Title: "Gamma", Observed: "slow", Evidence: "e1", Ask: "repeat"},
+		}); err != nil {
+			t.Errorf("AppendLearningEvents() error = %v, want the raw learning recorded", err)
+		}
+	}()
+	wg.Wait()
+	for i, r := range results {
+		if r.aerr != nil {
+			t.Errorf("AddLearning() %d append error = %v, want the learning recorded", i, r.aerr)
+		}
+		if r.rerr != nil {
+			t.Errorf("AddLearning() %d render error = %v", i, r.rerr)
+		}
+		if r.id == "" || r.title == "" {
+			t.Errorf("AddLearning() %d = (%q, %q), want a reported id and title", i, r.id, r.title)
+		}
+	}
+	if results[0].id == results[1].id {
+		t.Errorf("both concurrent adds reported the same id %q, want distinct L-01 and L-02", results[0].id)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	byID := map[string]string{}
+	for _, l := range Learnings(events) {
+		byID[l.ID] = l.Title
+	}
+	if len(byID) != 3 {
+		t.Fatalf("learnings = %v, want exactly 3 (two adds and one raw import)", byID)
+	}
+	for i, r := range results {
+		if byID[r.id] != r.title {
+			t.Errorf("AddLearning() %d reported id %q with title %q, but the log has %q for that id", i, r.id, r.title, byID[r.id])
+		}
+	}
+	if _, ok := byID["L-01"]; !ok {
+		t.Errorf("no learning landed at L-01: ids = %v", byID)
+	}
+	if byID["L-01"] == byID["L-02"] || byID["L-02"] == byID["L-03"] || byID["L-01"] == byID["L-03"] {
+		t.Errorf("duplicate titles across ids: %v", byID)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "feedback.lock")); !os.IsNotExist(err) {
+		t.Errorf("feedback.lock still present after all releases (stat err=%v)", err)
+	}
+	if got := renderLearnings(t, events); got != learningsFileOf(t, dir) {
+		t.Errorf("learnings.md is not consistent with the log:\n%s", got)
+	}
+}
+
+// renderLearnings renders the artifact WriteLearningsFile would produce for
+// events by writing the same events into a fresh directory and reading the
+// file back — the exact-consistency oracle for the lock tests.
+func renderLearnings(t *testing.T, events []Event) string {
+	t.Helper()
+	d := t.TempDir()
+	for _, e := range events {
+		if err := AppendEvent(d, e); err != nil {
+			t.Fatalf("AppendEvent() oracle error = %v", err)
+		}
+	}
+	evs, err := ReadEvents(d)
+	if err != nil {
+		t.Fatalf("ReadEvents() oracle error = %v", err)
+	}
+	if err := WriteLearningsFile(d, Learnings(evs)); err != nil {
+		t.Fatalf("WriteLearningsFile() oracle error = %v", err)
+	}
+	return learningsFileOf(t, d)
+}
+
+func learningsFileOf(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
+	if err != nil {
+		t.Fatalf("read learnings.md: %v", err)
+	}
+	return string(b)
+}
+
+// TestAppendLearningEventsBatchAppendsAllAndRebuildsOnce checks the generic
+// log path's batch semantics (issue #260): a batch import of several
+// learnings appends them all in one transaction — the artifact is rebuilt
+// once, after the whole batch landed, and matches the log exactly.
+func TestAppendLearningEventsBatchAppendsAllAndRebuildsOnce(t *testing.T) {
+	dir := t.TempDir()
+	batch := []Event{
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
+		{Task: "t1", Kind: "learning", Severity: "P2", Title: "Cache", Observed: "misses", Evidence: "e2", Ask: "a2"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Gates", Observed: "rot", Evidence: "e3", Ask: "a3"},
+	}
+	if err := AppendLearningEvents(dir, batch); err != nil {
+		t.Fatalf("AppendLearningEvents() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	views := Learnings(events)
+	if len(views) != 3 {
+		t.Fatalf("Learnings() = %d views, want all 3 imported", len(views))
+	}
+	for i, want := range []struct {
+		id, title string
+	}{{"L-01", "Terse"}, {"L-02", "Cache"}, {"L-03", "Gates"}} {
+		if views[i].ID != want.id || views[i].Title != want.title {
+			t.Errorf("Learnings()[%d] = %s %s, want %s %s", i, views[i].ID, views[i].Title, want.id, want.title)
+		}
+	}
+	if got := learningsFileOf(t, dir); got != renderLearnings(t, events) {
+		t.Errorf("learnings.md is not consistent with the log after the batch import:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "feedback.lock")); !os.IsNotExist(err) {
+		t.Errorf("feedback.lock still present after the batch import (stat err=%v)", err)
+	}
+}
+
+// TestAppendLearningEventsMixedBatchKeepsBatchSemantics checks a batch
+// carrying a learning event imports the whole batch — learning and plain
+// events together — under one lock acquisition, and the artifact is rebuilt
+// from the full log.
+func TestAppendLearningEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
+	dir := t.TempDir()
+	batch := []Event{
+		{Task: "t1", Kind: "planned", Brief: "b.txt"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
+		{Task: "t1", Kind: "dismissed", ID: "L-02", Note: "fixed"},
+	}
+	if err := AppendLearningEvents(dir, batch); err != nil {
+		t.Fatalf("AppendLearningEvents() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want all 3 of the batch appended", len(events))
+	}
+	if got := learningsFileOf(t, dir); got != renderLearnings(t, events) {
+		t.Errorf("learnings.md is not consistent with the log after the mixed batch import:\n%s", got)
+	}
+}
+
+// TestAppendLearningEventsValidatesBatchBeforeAppending checks a malformed
+// line records nothing: the whole batch is validated before the first append,
+// so a bad event can never leave a partial import in the log.
+func TestAppendLearningEventsValidatesBatchBeforeAppending(t *testing.T) {
+	dir := t.TempDir()
+	batch := []Event{
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
+		{Task: "t1", Kind: "learning", Severity: "P0"}, // missing title, observed, evidence, ask
+	}
+	if err := AppendLearningEvents(dir, batch); err == nil {
+		t.Fatal("AppendLearningEvents() succeeded, want a validation error")
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("events = %+v, want none appended: a malformed batch must record nothing", events)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "feedback.lock")); !os.IsNotExist(err) {
+		t.Errorf("feedback.lock still present after the refused batch (stat err=%v)", err)
+	}
+}
+
+// TestRegenLearningsRebuildsDeletedArtifact checks regen rebuilds a deleted
+// .flywheel/learnings.md from the event log and appends no event: the event
+// count is unchanged (issue #254).
+func TestRegenLearningsRebuildsDeletedArtifact(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	dot := filepath.Join(dir, ".flywheel", "learnings.md")
+	if _, err := os.Stat(dot); !os.IsNotExist(err) {
+		t.Fatal("learnings.md exists before regen, want it absent")
+	}
+	if err := RegenLearnings(dir); err != nil {
+		t.Fatalf("RegenLearnings() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != "learning" {
+		t.Errorf("events = %+v, want the single learning unchanged (regen appends nothing)", events)
+	}
+	got, err := os.ReadFile(dot)
+	if err != nil {
+		t.Fatalf("read learnings.md: %v", err)
+	}
+	if !strings.Contains(string(got), "Terse") {
+		t.Errorf("learnings.md lacks the learning:\n%s", got)
+	}
+}
+
+// TestRegenLearningsUpToDateChangesNothing checks regen on an artifact that
+// already matches the log exits 0 (no error) and leaves the file
+// byte-identical, appending nothing.
+func TestRegenLearningsUpToDateChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if err := WriteLearningsFile(dir, Learnings(events)); err != nil {
+		t.Fatalf("WriteLearningsFile() error = %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
+	if err != nil {
+		t.Fatalf("read learnings.md: %v", err)
+	}
+	if err := RegenLearnings(dir); err != nil {
+		t.Fatalf("RegenLearnings() error = %v, want exit 0 on an up-to-date artifact", err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
+	if err != nil {
+		t.Fatalf("read learnings.md: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("learnings.md changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	events, err = ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("events = %d, want 1 (regen appends nothing)", len(events))
+	}
+}
+
+// TestRegenLearningsRefusesHandMaintainedFile checks regen refuses a
+// hand-maintained (unmarked) .flywheel/learnings.md exactly as the other
+// paths do, leaving it byte-for-byte untouched.
+func TestRegenLearningsRefusesHandMaintainedFile(t *testing.T) {
+	dir := t.TempDir()
+	dot := filepath.Join(dir, ".flywheel", "learnings.md")
+	curated := []byte("# Learnings\n\n## Hand written, precious\ndo not lose me\n")
+	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel: %v", err)
+	}
+	if err := os.WriteFile(dot, curated, 0o644); err != nil {
+		t.Fatalf("write curated file: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	err := RegenLearnings(dir)
+	if err == nil {
+		t.Fatal("RegenLearnings() succeeded, want a refusal on a hand-maintained file")
+	}
+	if !strings.Contains(err.Error(), ".flywheel") {
+		t.Errorf("refusal %q does not name the .flywheel path", err)
+	}
+	got, rerr := os.ReadFile(dot)
+	if rerr != nil {
+		t.Fatalf("read curated file: %v", rerr)
+	}
+	if string(got) != string(curated) {
+		t.Errorf("curated file changed to %q, want %q byte-for-byte", got, curated)
 	}
 }

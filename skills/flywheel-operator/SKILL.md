@@ -59,7 +59,7 @@ land.
 | `flywheel plan`, `retry` | **planned** | Control plane: create tasks, resume, transfer between agents. |
 | `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
 | `flywheel artifacts` | **planned** | Data plane: worker outputs. |
-| `flywheel feedback [--dir DIR]` | **implemented** | List learnings, one line per learning in log order, then the untriaged-signals line; `add --task ID --severity P0\|P1\|P2 --title T --observed O --evidence E --ask A [--signals a,b]` records a learning and rewrites `.flywheel/learnings.md`; `dismiss L-NN --reason WHY` dismisses one by id without renumbering; `export [--out PATH]` writes a sanitised Markdown report of every undismissed learning (absolute paths and tokens redacted) to stdout or a file; `submit [--yes]` sends the report upstream as a gh issue — without `--yes` it shows the exact text and refuses, and when gh is missing or fails the report is parked in `.flywheel/feedback/outbox/` and the command still exits 0. |
+| `flywheel feedback [--dir DIR]` | **implemented** | List learnings, one line per learning in log order, then the untriaged-signals line; `add --task ID --severity P0\|P1\|P2 --title T --observed O --evidence E --ask A [--signals a,b]` records a learning and rewrites `.flywheel/learnings.md`; `dismiss L-NN --reason WHY` dismisses one by id without renumbering; `regen` rebuilds `.flywheel/learnings.md` from the event log without appending anything (exit 0 when the file already matches); `export [--out PATH]` writes a sanitised Markdown report of every undismissed learning (absolute paths and tokens redacted) to stdout or a file; `submit [--yes]` sends the report upstream as a gh issue — without `--yes` it shows the exact text and refuses, and when gh is missing or fails the report is parked in `.flywheel/feedback/outbox/` and the command still exits 0. |
 | `flywheel upgrade [--check] [--to VERSION] [--repo REPO]` | **implemented** | Self-update to a release with checksum verification: `--check` prints `current:`/`latest:` then `upgrade available` or `up to date` (exit 0 either way); otherwise download the host's zip, verify its SHA-256 against `checksums.txt` and install it atomically over the running binary. |
 
 ## Install
@@ -97,7 +97,7 @@ Everything is files — no database.
 | `.flywheel/state.json` | Machine-precise state: `version`, `status`, `tasks[]`. |
 | `.flywheel/briefs/` | One file per task brief (`<id>.txt`) and per correction (`<id>.delta.txt`). |
 | `.flywheel/runs/` | Raw dispatch output (JSONL) per attempt — `<id>.r1.jsonl` fresh run, `<id>.c<n>.jsonl` corrections. |
-| `.flywheel/learnings.md` | Dogfood log — friction becomes spec; generated (regenerated from the event log on every `add` and `dismiss`, so do not hand-edit it). |
+| `.flywheel/learnings.md` | Dogfood log — friction becomes spec; generated (regenerated from the event log on every `add`, `dismiss`, and `log --json` import carrying a learning or dismissed event, so do not hand-edit it). |
 
 **Repo is the session.** State lives in files, not in any vendor CLI session. That is what makes
 handoff free: a new head reads the same files and continues. Helper scripts and notes must live in

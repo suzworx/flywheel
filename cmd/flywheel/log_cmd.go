@@ -58,15 +58,38 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	return fs, o
 }
 
-// appendEvents appends each event and then derives state unless noState.
+// appendEvents appends each event and then derives state unless noState. A
+// batch carrying a learning or dismissed event participates in the feedback
+// transaction: flywheel.AppendLearningEvents holds feedback.lock across the
+// whole batch — append every event, rebuild learnings.md, release — so the
+// generic JSON log path serialises against the feedback commands exactly as
+// they serialise against each other (issue #260). A batch with no learning or
+// dismissed event takes no feedback lock at all: logging a planned event must
+// never wait on a feedback command.
 func appendEvents(dir string, events []flywheel.Event, noState bool) {
-	for _, e := range events {
-		if err := flywheel.AppendEvent(dir, e); err != nil {
-			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
-			os.Exit(1)
+	var err error
+	if batchHasLearning(events) {
+		err = flywheel.AppendLearningEvents(dir, events)
+	} else {
+		for _, e := range events {
+			if err = flywheel.AppendEvent(dir, e); err != nil {
+				break
+			}
 		}
 	}
-	finishLog(dir, nil, noState)
+	finishLog(dir, err, noState)
+}
+
+// batchHasLearning reports whether any event in the batch is a learning or
+// dismissed event — the two kinds that change Learnings(events) and therefore
+// must be appended under the feedback lock.
+func batchHasLearning(events []flywheel.Event) bool {
+	for _, e := range events {
+		if e.Kind == "learning" || e.Kind == "dismissed" {
+			return true
+		}
+	}
+	return false
 }
 
 // finishLog reports a non-nil err and exits 1; otherwise it derives state
