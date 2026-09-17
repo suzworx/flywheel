@@ -169,7 +169,11 @@ func readingsForPass(wd string, events []Event, header BriefHeader, task, tree s
 	if allReadings(events, header, task, tree, after) {
 		return "", true, nil
 	}
-	if !treeExists(wd, tree) {
+	exists, err := treeExists(wd, tree)
+	if err != nil {
+		return "", false, err
+	}
+	if !exists {
 		return "", false, nil
 	}
 	return relaxedReadingTree(wd, events, header, task, tree, after)
@@ -249,7 +253,11 @@ func relaxedReadingTree(wd string, events []Event, header BriefHeader, task, tre
 		if !allReadings(events, header, task, c.tree, after) {
 			continue
 		}
-		if !treeExists(wd, c.tree) {
+		exists, err := treeExists(wd, c.tree)
+		if err != nil {
+			return "", false, err
+		}
+		if !exists {
 			continue
 		}
 		ok, err := diffOutsideOwns(wd, c.tree, tree, header.Owns)
@@ -280,11 +288,30 @@ func diffOutsideOwns(wd, from, to string, owns []string) (bool, error) {
 }
 
 // treeExists reports whether the named git object exists in the repository at
-// wd. A tree an old reading names may have been garbage-collected; a reading on
-// a tree that cannot be examined never qualifies (issue #218).
-func treeExists(wd, tree string) bool {
-	_, err := gitRead(wd, []string{"cat-file", "-e", tree})
-	return err == nil
+// wd, distinguishing a successful lookup that reports the object absent (ok
+// false, nil) from an operational git failure — an invalid workdir or an
+// unreadable repository — which is an error naming the path, never a verdict
+// (issue #244). A tree an old reading names may have been garbage-collected; a
+// reading on a tree that cannot be examined never qualifies (issue #218).
+func treeExists(wd, tree string) (bool, error) {
+	rc, _, stderr, err := runCmdSplit(wd, gitArgs([]string{"cat-file", "-e", tree}), nil)
+	if err != nil {
+		return false, fmt.Errorf("check tree %s in %s: %w", tree, wd, err)
+	}
+	if rc == 0 {
+		return true, nil
+	}
+	// rc 1 is git's "object not found" for a well-formed object name, and a
+	// short or malformed name reports rc 128 with "Not a valid object name".
+	// Both mean the lookup ran but the object is not here. Anything else —
+	// "not a git repository", an unresolvable workdir — is an operational
+	// failure: the check could not be established at all, so it is an error,
+	// not a verdict (issue #244).
+	msg := strings.TrimSpace(string(stderr))
+	if rc == 1 || strings.Contains(msg, "Not a valid object name") {
+		return false, nil
+	}
+	return false, fmt.Errorf("check tree %s in %s: git cat-file -e failed (rc=%d): %s", tree, wd, rc, msg)
 }
 
 // latestFinished returns the latest finished event's timestamp for task, or

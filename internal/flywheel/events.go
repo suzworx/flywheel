@@ -298,12 +298,25 @@ func Validate(e Event) error {
 // the reading was taken in the flywheel root itself (issue #244): a
 // validated, owns_checked or inspected event records where its tree was
 // measured only when that differs from the repo dir, so ordinary ledgers stay
-// unchanged.
+// unchanged. Both paths are normalised to absolute, cleaned form before the
+// comparison and the recorded value, so a relative --workdir recorded from one
+// directory still resolves when the ledger is read from elsewhere: the
+// recorded provenance must not depend on the reader's working directory.
 func workdirField(wd, dir string) string {
-	if wd == dir {
+	if samePath(wd, dir) {
 		return ""
 	}
-	return wd
+	return absPath(wd)
+}
+
+// absPath returns p normalised to an absolute, cleaned path; the input
+// unchanged when it cannot be resolved.
+func absPath(p string) string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return filepath.Clean(a)
 }
 
 // marshalEvent encodes e as one JSON line (no trailing newline) with HTML

@@ -1165,3 +1165,241 @@ func TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyT3EmptyTreeIsViolation is the correction guard: an inspected pass
+// whose tree is the empty string cannot name an object in any repository, so
+// it is a malformed record, not a check that could not be established. It is
+// reported a violation (exit 6), never inconclusive (exit 8) — a verifier that
+// under-reports a violation is worse than one that cannot run.
+func TestVerifyT3EmptyTreeIsViolation(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T03:00:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want an established violation, not inconclusive, for an empty tree", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3 for an empty inspected tree", res.Items)
+	}
+}
+
+// TestVerifyPerPassWorkdirResolvesEachPass is the correction guard: a task can
+// accumulate readings from several workdirs across attempts, so each inspected
+// pass must resolve its repository from that pass's own recorded workdirs,
+// preferring the one that actually contains the inspected tree. An early
+// rework inspection recorded in a different workdir must not pin this pass to
+// the wrong object database and degrade an established violation into
+// inconclusive.
+func TestVerifyPerPassWorkdirResolvesEachPass(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	external1, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external1 error = %v", err)
+	}
+	external2, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external2 error = %v", err)
+	}
+	// Distinct trees: a file only each clone has, so its tree object is
+	// genuinely absent from dir and from the other clone's database.
+	if err := os.WriteFile(filepath.Join(external1, "one.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write one.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(external2, "two.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write two.go: %v", err)
+	}
+	tree1, err := treeHash(external1)
+	if err != nil {
+		t.Fatalf("treeHash(external1) error = %v", err)
+	}
+	tree2, err := treeHash(external2)
+	if err != nil {
+		t.Fatalf("treeHash(external2) error = %v", err)
+	}
+	// An early rework inspection measured in external1: it carries no T3
+	// readings, but its recorded workdir must not pin the later pass to
+	// external1's object database.
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "inspected", Verdict: "rework", Session: "i1", Persona: "inspector", Tree: tree1, Workdir: external1}); err != nil {
+		t.Fatalf("append inspected rework: %v", err)
+	}
+	rc := 0
+	// The second pass's readings live in external2 and are incomplete: gate 1
+	// validated only, gate 2 and owns_checked missing, so T3 must fail it.
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree2, RC: &rc, Persona: "supervisor", Workdir: external2}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:03Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree2}); err != nil {
+		t.Fatalf("append inspected pass: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if item.Inconclusive {
+				t.Errorf("T3 = %+v, want an established violation resolved against external2, not inconclusive", item)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3 for the external2 pass", res.Items)
+	}
+}
+
+// TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves is the correction
+// guard: a relative --workdir names a place against the process's current
+// directory, so a reading recorded with it must persist as an absolute path —
+// otherwise the same string later names a different place, or nothing. The
+// ledger read from another directory still resolves the recorded repository.
+func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "ledger")
+	ext := filepath.Join(base, "external")
+	for _, p := range []string{dir, ext} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
+		}
+		if _, err := Init(p, false); err != nil {
+			t.Fatalf("Init(%s) error = %v", p, err)
+		}
+		initRepo(t, p)
+		if err := os.WriteFile(filepath.Join(p, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+			t.Fatalf("write .gitignore: %v", err)
+		}
+		brief := "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: relative\n"
+		if err := os.WriteFile(filepath.Join(p, "brief.txt"), []byte(brief), 0o644); err != nil {
+			t.Fatalf("write brief: %v", err)
+		}
+		if err := AppendEvent(p, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+			t.Fatalf("AppendEvent planned: %v", err)
+		}
+		git(t, p, []string{"add", "-A"})
+		git(t, p, []string{"commit", "-m", "brief"})
+	}
+	// A file only the external clone has, so its tree object is genuinely
+	// absent from dir's object database.
+	if err := os.WriteFile(filepath.Join(ext, "extra.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write extra.go: %v", err)
+	}
+	// Record a reading from base with relative paths; the recorded workdir
+	// must come out absolute.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(base); err != nil {
+		t.Fatalf("Chdir(%s) error = %v", base, err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	}()
+	if err := AppendEvent("ledger", Event{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1"}); err != nil {
+		t.Fatalf("append finished: %v", err)
+	}
+	if err := InspectTask("ledger", "T1", InspectOptions{Dir: "ledger", Workdir: "external", Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() relative error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	recorded := ""
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			recorded = e.Workdir
+		}
+	}
+	if recorded != ext {
+		t.Fatalf("recorded workdir = %q, want the absolute path %q", recorded, ext)
+	}
+	// A complete pass measured in ext verifies from an unrelated directory:
+	// the recorded absolute path still resolves the tree.
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir(%s) error = %v", cwd, err)
+	}
+	tree, err := treeHash(ext)
+	if err != nil {
+		t.Fatalf("treeHash(ext) error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor", Workdir: ext}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "owns_checked", Tree: tree, Persona: "supervisor", Workdir: ext}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:03Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected pass: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected %s %s: %s", item.Rule, map[bool]string{true: "INCONCLUSIVE", false: "FAIL"}[item.Inconclusive], item.Reason)
+			}
+		}
+	}
+}
+
+// TestVerifyInvalidWorkdirIsErrorNotInconclusive is the correction guard: an
+// operational git failure — a --workdir that is not a readable repository — is
+// an error naming the path, never an inconclusive verdict. A verifier that
+// cannot read the object database must not report "could not establish".
+func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	// A real directory that is not a git repository: the tree is present in
+	// dir, but --workdir points the verifier somewhere it cannot read.
+	notRepo := filepath.Join(t.TempDir(), "not-a-repo")
+	if err := os.MkdirAll(notRepo, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", notRepo, err)
+	}
+	_, err = VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}, Workdir: notRepo})
+	if err == nil {
+		t.Fatal("VerifyTasks() = nil error, want an error naming the invalid workdir")
+	}
+	if !strings.Contains(err.Error(), notRepo) {
+		t.Errorf("VerifyTasks() error = %q, want it to name %s", err, notRepo)
+	}
+}

@@ -67,7 +67,11 @@ func VerifyTasks(dir string, o VerifyOptions) (VerifyResult, error) {
 	}
 	res := VerifyResult{Passed: true}
 	for _, task := range tasks {
-		for _, item := range verifyTask(o.Dir, task, o.Workdir, events) {
+		items, err := verifyTask(o.Dir, task, o.Workdir, events)
+		if err != nil {
+			return VerifyResult{}, err
+		}
+		for _, item := range items {
 			if !item.Pass {
 				res.Passed = false
 			}
@@ -91,43 +95,58 @@ func allTasks(events []Event) []string {
 }
 
 // verifyTask runs every rule for one task and returns the per-rule items.
-// workdir is the explicit --workdir; when empty, a workdir recorded on the
-// task's own reading events is used when it still exists, else the flywheel
-// root (issue #244).
-func verifyTask(dir, task, workdir string, events []Event) []VerifyItem {
-	wd := workdir
-	if wd == "" {
-		wd = recordedWorkdir(events, task)
-	}
-	if wd == "" {
-		wd = dir
-	}
+// workdir is the explicit --workdir for T3's tree resolution; when empty, each
+// inspected pass resolves its own repository from that pass's recorded
+// workdirs (issue #244). An operational git failure — the resolved workdir is
+// not a readable repository — is an error, never a verdict.
+func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 	var items []VerifyItem
 	items = append(items, ruleT1(dir, task, events)...)
-	items = append(items, ruleT3(dir, task, wd, events)...)
+	t3, err := ruleT3(dir, task, workdir, events)
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, t3...)
 	items = append(items, ruleT4(task, events)...)
 	items = append(items, ruleT5(task, events)...)
 	items = append(items, ruleT8(task, events)...)
-	return items
+	return items, nil
 }
 
-// recordedWorkdir returns the first workdir recorded on task's own reading
-// events (validated, owns_checked, inspected) that still exists on disk, or ""
-// when none is recorded or none survives (issue #244): the provenance a
-// ledger can offer a verifier that was not given --workdir.
-func recordedWorkdir(events []Event, task string) string {
-	for _, e := range events {
+// passWorkdir resolves the repository to check one inspected pass's tree in
+// (issue #244): the pass's own reading events (validated, owns_checked,
+// inspected) up to and including it supply the candidates, preferring a path
+// whose repository actually contains the inspected tree, then the first
+// recorded path that still exists on disk, then the flywheel root. An early
+// rework inspection's workdir must never pin a later pass to the wrong object
+// database: each pass resolves against its own readings.
+func passWorkdir(dir, task string, events []Event, i int, tree string) string {
+	var recorded []string
+	seen := map[string]bool{}
+	for j := 0; j <= i; j++ {
+		e := events[j]
 		if e.Task != task || e.Workdir == "" {
 			continue
 		}
 		switch e.Kind {
 		case "validated", "owns_checked", "inspected":
-			if info, err := os.Stat(e.Workdir); err == nil && info.IsDir() {
-				return e.Workdir
+			if !seen[e.Workdir] {
+				seen[e.Workdir] = true
+				recorded = append(recorded, e.Workdir)
 			}
 		}
 	}
-	return ""
+	for _, w := range recorded {
+		if exists, err := treeExists(w, tree); err == nil && exists {
+			return w
+		}
+	}
+	for _, w := range recorded {
+		if info, err := os.Stat(w); err == nil && info.IsDir() {
+			return w
+		}
+	}
+	return dir
 }
 
 // ruleT1 checks that each dispatched event's sha256 matches the prompt it was
@@ -255,10 +274,13 @@ func amendedBetween(events []Event, task, ts string) bool {
 // --workdir this repo never had, say), a complete reading still passes on the
 // ledger's own evidence, and an incomplete one is reported inconclusive — a
 // verifier that cannot see the tree must not claim a violation it has not
-// established (issue #244).
-func ruleT3(dir, task, wd string, events []Event) []VerifyItem {
+// established (issue #244). workdir is the explicit --workdir, or "" to resolve
+// each inspected pass's repository from that pass's own recorded workdirs
+// (issue #244). An operational git failure while examining the tree is an
+// error naming the path, never a verdict.
+func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 	if _, err := briefHeaderFor(dir, task, events); err != nil {
-		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}
+		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}, nil
 	}
 	var items []VerifyItem
 	for i, insp := range events {
@@ -280,10 +302,13 @@ func ruleT3(dir, task, wd string, events []Event) []VerifyItem {
 			continue
 		}
 		latest := latestFinishedBefore(events, task, insp.TS)
-		outcome, err := readingsOutcomeFor(wd, events, header, task, insp.Tree, latest)
+		wd := workdir
+		if wd == "" {
+			wd = passWorkdir(dir, task, events, i, insp.Tree)
+		}
+		outcome, err := readingsOutcomeFor(absPath(wd), events, header, task, insp.Tree, latest)
 		if err != nil {
-			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false, Reason: err.Error()})
-			continue
+			return nil, fmt.Errorf("verify T3 pass %s: %w", short(insp.Tree), err)
 		}
 		switch outcome {
 		case readingsOK:
@@ -311,9 +336,9 @@ func ruleT3(dir, task, wd string, events []Event) []VerifyItem {
 		}
 	}
 	if len(items) == 0 {
-		return []VerifyItem{{Task: task, Rule: "T3", Pass: true, Reason: "every inspected pass has readings"}}
+		return []VerifyItem{{Task: task, Rule: "T3", Pass: true, Reason: "every inspected pass has readings"}}, nil
 	}
-	return items
+	return items, nil
 }
 
 // readingsOutcome is how a T3 readings check for one inspected pass ended.
@@ -332,17 +357,30 @@ const (
 	readingsInconclusive
 )
 
-// readingsOutcomeFor classifies one pass's T3 check. The strict check runs
-// first and needs no git: a complete reading on the ledger's own evidence is
-// readingsOK even when the tree is gone (issue #244). Only when the strict
-// check fails and the tree cannot be resolved is the result readingsInconclusive;
-// an unresolvable tree must never be reported as a violation, and a violation
-// must never be downgraded to inconclusive when the tree is there to check.
+// readingsOutcomeFor classifies one pass's T3 check. An empty tree cannot name
+// an object in any repository: it is a malformed record, so it is classified a
+// violation before the strict readings check and before any repository lookup —
+// an inconclusive result reported as a failure is a bug, and a violation
+// quietly downgraded to inconclusive is worse. The strict check runs next and
+// needs no git: a complete reading on the ledger's own evidence is readingsOK
+// even when the tree is gone (issue #244). Only when the strict check fails and
+// the tree cannot be resolved is the result readingsInconclusive; an
+// unresolvable tree must never be reported as a violation, and a violation
+// must never be downgraded to inconclusive when the tree is there to check. An
+// operational git failure — an invalid workdir or an unreadable repository — is
+// an error, not a verdict (issue #244).
 func readingsOutcomeFor(wd string, events []Event, header BriefHeader, task, tree string, after time.Time) (readingsOutcome, error) {
+	if tree == "" {
+		return readingsViolation, nil
+	}
 	if allReadings(events, header, task, tree, after) {
 		return readingsOK, nil
 	}
-	if !treeExists(wd, tree) {
+	exists, err := treeExists(wd, tree)
+	if err != nil {
+		return readingsViolation, err
+	}
+	if !exists {
 		return readingsInconclusive, nil
 	}
 	_, ok, err := relaxedReadingTree(wd, events, header, task, tree, after)
