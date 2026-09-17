@@ -153,6 +153,11 @@ all.
 - Effect: `Derive` updates only `brief`/`needs`/`owns` on the task, never its status. Verify's T1
   treats a `dispatched` hash mismatch as explained when an `amended` event for the task falls
   between that dispatch and now.
+- Limit: an amendment cannot change the gates of an attempt that has already been dispatched — the
+  dispatched header is what a pass is measured against, so the command refuses (exit 6) an
+  amendment that would change the gate set instead of recording one that changes nothing. Change
+  the gates of a dispatched attempt with a correction delta: `flywheel run <task> --delta <file>`.
+  An amendment that does not change the gates (widening `owns:`, fixing prose) is still allowed.
 
 Because `planned`, `amended` and `dispatched` events carry the parsed `header`, the log is
 self-contained: a pass is measured against the header recorded in it, so a brief edited on disk

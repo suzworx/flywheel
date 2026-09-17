@@ -92,12 +92,17 @@ func batchHasLearning(events []flywheel.Event) bool {
 	return false
 }
 
-// finishLog reports a non-nil err and exits 1; otherwise it derives state
-// unless noState. Shared by appendEvents and the planned/amended fast paths
-// so every flywheel log invocation refreshes state the same way.
+// finishLog reports a non-nil err and exits 6 for a RuleRefusal (the
+// amended command refuses an amendment that would change a dispatched
+// attempt's gates), 1 otherwise; then it derives state unless noState.
+// Shared by appendEvents and the planned/amended fast paths so every
+// flywheel log invocation refreshes state the same way.
 func finishLog(dir string, err error, noState bool) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
 		os.Exit(1)
 	}
 	if noState {

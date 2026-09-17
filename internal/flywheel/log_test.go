@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,5 +177,112 @@ func TestRecordAmendedWithoutRecordedBriefErrors(t *testing.T) {
 	dir := t.TempDir()
 	if err := RecordAmended(dir, "t", "", "why"); err == nil {
 		t.Fatal("RecordAmended() error = nil, want error when no brief path is recorded")
+	}
+}
+
+// dispatchBrief records a dispatched event for task's fresh attempt r1
+// carrying the header of the brief at path, as flywheel run does (issue
+// #259): the header a pass is measured against.
+func dispatchBrief(t *testing.T, dir, task, path string) {
+	t.Helper()
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{Task: task, Kind: "dispatched", Attempt: "r1", Brief: path, Header: &h}); err != nil {
+		t.Fatalf("dispatched error = %v", err)
+	}
+}
+
+// TestRecordAmendedRefusesInertGateChangeAfterDispatch is the guard: a task
+// whose attempt was already dispatched with gate A cannot be amended to
+// declare gate B, because validation measures the dispatched header. The
+// refusal names the correction-delta alternative, appends nothing, and
+// carries the RuleRefusal shape the CLI maps to exit 6 (issue #272).
+func TestRecordAmendedRefusesInertGateChangeAfterDispatch(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n")
+	err := RecordAmended(dir, "t", brief, "fix gate")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("RecordAmended() error = %v, want a RuleRefusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) {
+		t.Fatalf("error %v is not a *RuleRefusal", err)
+	}
+	if r.Rule == "" || r.Fix == "" {
+		t.Errorf("RuleRefusal = rule %q fix %q, want both non-empty", r.Rule, r.Fix)
+	}
+	if !strings.Contains(r.Fix, "flywheel run t --delta") {
+		t.Errorf("RuleRefusal fix = %q, want it naming the correction delta command", r.Fix)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Errorf("events = %d, want 2 (the refusal appends nothing)", len(evs))
+	}
+}
+
+// TestRecordAmendedUndispatchedStillRecordsNewGates is the common case: a
+// brief that has not been dispatched yet is amended to declare new gates
+// exactly as before.
+func TestRecordAmendedUndispatchedStillRecordsNewGates(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n")
+	if err := RecordAmended(dir, "t", brief, "fix gate"); err != nil {
+		t.Fatalf("RecordAmended() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 || evs[1].Kind != "amended" {
+		t.Fatalf("events = %+v, want the amended event appended", evs)
+	}
+	a := evs[1]
+	if a.Header == nil || len(a.Header.Gates) != 1 || a.Header.Gates[0] != "go test ./..." {
+		t.Errorf("amended header gates = %+v, want [go test ./...]", a.Header)
+	}
+}
+
+// TestRecordAmendedDispatchedWithoutGateChangeSucceeds is the legitimate
+// amendment the refusal must keep working: the attempt is dispatched but the
+// gates are unchanged — only owns: is widened — so the amendment is read from
+// the base brief and is not inert.
+func TestRecordAmendedDispatchedWithoutGateChangeSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	if err := RecordAmended(dir, "t", brief, "widen owns"); err != nil {
+		t.Fatalf("RecordAmended() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 || evs[2].Kind != "amended" {
+		t.Fatalf("events = %+v, want the amended event appended", evs)
+	}
+	a := evs[2]
+	if strings.Join(a.Owns, ",") != "a.go,b.go" {
+		t.Errorf("amended owns = %v, want [a.go b.go]", a.Owns)
+	}
+	if a.Header == nil || len(a.Header.Gates) != 1 || a.Header.Gates[0] != "go build ./..." {
+		t.Errorf("amended header gates = %+v, want the unchanged gate", a.Header)
 	}
 }
