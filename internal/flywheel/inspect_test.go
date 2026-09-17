@@ -192,14 +192,20 @@ func TestInspectRecordsWorkdirWhenExternal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
+	// The recording normalises the workdir with absPath to canonical form
+	// (filepath.Abs, then EvalSymlinks — on Windows it expands DOS 8.3 short
+	// names, on Unix it follows symlinks), so the expected path is
+	// canonicalised the same way: the match and the count are
+	// spelling-independent on any host (issue #244).
+	want := absPath(wd)
 	count, withWorkdir := 0, 0
 	for _, e := range evs {
 		if e.Kind == "inspected" {
 			count++
-			if e.Workdir == wd {
+			if e.Workdir == want {
 				withWorkdir++
 			} else if e.Workdir != "" {
-				t.Errorf("inspected workdir = %q, want %q", e.Workdir, wd)
+				t.Errorf("inspected workdir = %q, want the canonical path %q", e.Workdir, want)
 			}
 		}
 	}

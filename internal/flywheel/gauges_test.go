@@ -2425,18 +2425,24 @@ func TestValidateRecordsWorkdirOnlyWhenExternal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
+	// The recording normalises the workdir with absPath to canonical form
+	// (filepath.Abs, then EvalSymlinks — on Windows it expands DOS 8.3 short
+	// names, on Unix it follows symlinks), so the expected path is
+	// canonicalised the same way: the comparison is spelling-independent on
+	// any host (issue #244).
+	want := absPath(dir)
 	validated, ownsChecked := 0, 0
 	for _, e := range evs {
 		switch e.Kind {
 		case "validated":
 			validated++
-			if e.Workdir != dir {
-				t.Errorf("validated workdir = %q, want %q", e.Workdir, dir)
+			if e.Workdir != want {
+				t.Errorf("validated workdir = %q, want the canonical path %q", e.Workdir, want)
 			}
 		case "owns_checked":
 			ownsChecked++
-			if e.Workdir != dir {
-				t.Errorf("owns_checked workdir = %q, want %q", e.Workdir, dir)
+			if e.Workdir != want {
+				t.Errorf("owns_checked workdir = %q, want the canonical path %q", e.Workdir, want)
 			}
 		}
 	}

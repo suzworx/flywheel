@@ -1465,7 +1465,13 @@ func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
 	if err == nil {
 		t.Fatal("VerifyTasks() = nil error, want an error naming the invalid workdir")
 	}
-	if !strings.Contains(err.Error(), notRepo) {
-		t.Errorf("VerifyTasks() error = %q, want it to name %s", err, notRepo)
+	// ruleT3 canonicalises the workdir with absPath before git runs and the
+	// error names that canonical form, so the expected spelling is
+	// canonicalised the same way: t.TempDir() may be an alias — an 8.3
+	// short name on Windows, a symlink like /var on macOS — and the raw
+	// spelling would not appear in the error on such a host (issue #244).
+	want := absPath(notRepo)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("VerifyTasks() error = %q, want it to name %s", err, want)
 	}
 }
