@@ -8,7 +8,7 @@ import (
 	"os"
 	"slices"
 
-	"flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 func init() {

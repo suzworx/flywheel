@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 // TestAppendEventsPlannedTakesNoFeedbackLock checks a batch with no learning

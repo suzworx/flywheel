@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 // TestFindGoalResolvesRecordedGoal checks findGoal returns the goal view for

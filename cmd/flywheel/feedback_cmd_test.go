@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 // TestFeedbackAddRenderFailureRecordedNotLost checks that when the artifact
