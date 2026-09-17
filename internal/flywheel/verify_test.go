@@ -1333,8 +1333,16 @@ func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
 			recorded = e.Workdir
 		}
 	}
-	if recorded != ext {
-		t.Fatalf("recorded workdir = %q, want the absolute path %q", recorded, ext)
+	// The recording normalises the workdir with absPath (filepath.Abs):
+	// the resolution comes from the process working directory, which the
+	// kernel already reports resolved (macOS /var -> /private/var); resolve
+	// the expected value likewise, making the comparison spelling-independent.
+	want := ext
+	if resolved, err := filepath.EvalSymlinks(ext); err == nil {
+		want = resolved
+	}
+	if recorded != want {
+		t.Fatalf("recorded workdir = %q, want the absolute path %q", recorded, want)
 	}
 	// A complete pass measured in ext verifies from an unrelated directory:
 	// the recorded absolute path still resolves the tree.
