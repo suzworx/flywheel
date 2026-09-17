@@ -63,6 +63,8 @@
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
   .card h3{font-size:1rem;margin-bottom:7px}
+  .card h3 a{color:var(--ink)}
+  .card h3 a:hover{color:var(--accent)}
   .card p{margin:0;font-size:.92rem}
 
   table{width:100%;border-collapse:collapse;font-size:.92rem}
@@ -97,7 +99,8 @@
     <img src="https://img.shields.io/github/license/suzworx/flywheel" alt="License">
   </div>
   <div class="cta">
-    <a class="btn primary" href="https://github.com/suzworx/flywheel/releases/latest">Download a release</a>
+    <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Start with the quickstart</a>
+    <a class="btn" href="https://github.com/suzworx/flywheel/releases/latest">Download a release</a>
     <a class="btn" href="https://github.com/suzworx/flywheel">View on GitHub</a>
   </div>
 </header>
@@ -110,6 +113,24 @@
   and which commands must pass; the CLI re-runs those commands itself, on the exact tree that was
   produced, and records the reading in an append-only event log. A unit that cannot show a passing
   reading cannot be accepted — not by convention, but because the tool refuses.</p>
+</section>
+
+<section>
+  <h2>Start here</h2>
+  <div class="cards">
+    <div class="card">
+      <h3><a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart →</a></h3>
+      <p>From "I have a binary" to "I have landed one unit through the loop", with the real output
+      of every command along the way. Ends with the exit codes and the three refusals a beginner
+      actually hits — and what each one is telling you.</p>
+    </div>
+    <div class="card">
+      <h3><a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts →</a></h3>
+      <p>The vocabulary everything else rests on: the work order, <code>owns:</code>,
+      <code>gate:</code> and <code>live-gate:</code>, the event log, the poka-yoke rules and who
+      does what — and why each one exists, not only what it is.</p>
+    </div>
+  </div>
 </section>
 
 <section>
@@ -242,7 +263,7 @@ flywheel doctor        # check every configured model is usable</code></pre>
 
 <footer>
   <span>Built by flywheel, by Sujeet.</span>
-  <span><a href="https://github.com/suzworx/flywheel">github.com/suzworx/flywheel</a></span>
+  <span><a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a> · <a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts</a> · <a href="https://github.com/suzworx/flywheel">github.com/suzworx/flywheel</a></span>
 </footer>
 
 </div>

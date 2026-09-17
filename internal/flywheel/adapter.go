@@ -17,6 +17,12 @@ type RunRequest struct {
 	Session    string
 	Title      string
 	Resume     bool
+	// AllowedTools and DisallowedTools are the worker's resolved claude tool
+	// patterns (worker.allowedTools()/worker.disallowedTools(), populated by
+	// Run). The claude adapter passes them as --allowedTools/--disallowedTools;
+	// an empty list appends no flag (issue #192).
+	AllowedTools    []string
+	DisallowedTools []string
 }
 
 // The message placed on the command line before --file. Brief text itself is
@@ -305,10 +311,17 @@ func (a claudeAdapter) Name() string {
 // the Claude CLI's -p flag takes the prompt text itself, so the prompt file
 // is read here; a read failure yields an empty prompt rather than a panic,
 // surfacing downstream as a start-failed run like any other unreadable
-// brief. --permission-mode acceptEdits mirrors opencode's --auto: edits go
-// through without a prompt, nothing beyond that is granted. A resume (r.Resume
-// with a non-empty r.Session) leads the prompt with resumeMessage instead of
-// freshMessage and adds --resume <session>, mirroring opencodeAdapter.Command.
+// brief. --permission-mode acceptEdits grants file edits without a prompt
+// and nothing else — notably NOT Bash, so a worker running under it alone
+// could not run its own gates (issue #192). The dispatch therefore also
+// passes the worker's resolved tool policy: --allowedTools (r.AllowedTools,
+// by default "Bash") so the worker can run its gate lines, and
+// --disallowedTools (r.DisallowedTools, by default the git-write family) so
+// the worker permission policy ("workers never commit, stash, reset,
+// checkout or push") is enforced by the permission layer. An empty list
+// appends no flag. A resume (r.Resume with a non-empty r.Session) leads the
+// prompt with resumeMessage instead of freshMessage and adds
+// --resume <session>, mirroring opencodeAdapter.Command.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	prompt, _ := os.ReadFile(r.PromptFile)
 	msg := freshMessage
@@ -323,6 +336,14 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		"--max-turns", "200",
 		"--model", r.Model,
 		"--permission-mode", "acceptEdits",
+	}
+	if len(r.AllowedTools) > 0 {
+		args = append(args, "--allowedTools")
+		args = append(args, r.AllowedTools...)
+	}
+	if len(r.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools")
+		args = append(args, r.DisallowedTools...)
 	}
 	if resuming {
 		args = append(args, "--resume", r.Session)
