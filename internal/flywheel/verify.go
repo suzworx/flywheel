@@ -200,8 +200,11 @@ func amendedBetween(events []Event, task, ts string) bool {
 // ruleT3 checks that every inspected pass has passing supervisor validated
 // events for all declared gates on the same tree, and a clean owns_checked for
 // that tree, recorded after the latest finished event that precedes that
-// inspection. Each inspection uses its own window, so a later correction
-// attempt does not invalidate an earlier legitimate pass.
+// inspection. A pass may instead rely on readings on another tree T whose diff
+// from the pass's tree lies entirely outside the unit's owns (issue #218),
+// sharing requireReadings' predicate so verify accepts exactly what inspect
+// does. Each inspection uses its own window, so a later correction attempt
+// does not invalidate an earlier legitimate pass.
 func ruleT3(dir, task string, events []Event) []VerifyItem {
 	header, err := briefHeaderFor(dir, task, events)
 	if err != nil {
@@ -213,6 +216,9 @@ func ruleT3(dir, task string, events []Event) []VerifyItem {
 			continue
 		}
 		latest := latestFinishedBefore(events, task, insp.TS)
+		if _, ok, _ := readingsForPass(dir, events, header, task, insp.Tree, latest); ok {
+			continue
+		}
 		missing := ""
 		for i := range header.Gates {
 			idx := fmt.Sprintf("%d", i+1)
@@ -224,10 +230,11 @@ func ruleT3(dir, task string, events []Event) []VerifyItem {
 		if missing == "" && !hasCleanOwnsChecked(events, task, insp.Tree, latest) {
 			missing = "clean owns_checked"
 		}
-		if missing != "" {
-			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false,
-				Reason: fmt.Sprintf("inspected pass on tree %s lacks %s after the latest finished event before it", short(insp.Tree), missing)})
+		if missing == "" {
+			missing = "an examinable tree"
 		}
+		items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false,
+			Reason: fmt.Sprintf("inspected pass on tree %s lacks %s after the latest finished event before it", short(insp.Tree), missing)})
 	}
 	if len(items) == 0 {
 		return []VerifyItem{{Task: task, Rule: "T3", Pass: true, Reason: "every inspected pass has readings"}}

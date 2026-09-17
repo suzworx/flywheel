@@ -3,6 +3,7 @@ package flywheel
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -409,5 +410,167 @@ func TestVerifyT1AmendmentDoesNotWaiveCorrectionTamper(t *testing.T) {
 	fails := verifyAll(t, dir, "T1")
 	if !fails["T1"] {
 		t.Error("verify let an amendment waive a tampered correction delta (T1)")
+	}
+}
+
+// TestVerifyT3PassRelaxedOutsideOwns checks the issue #218 relaxation on the
+// audit side: an inspected pass whose readings are on another tree, with the
+// diff entirely outside owns, reports T3 passing. verify re-checks the diff
+// itself, never trusting the note.
+func TestVerifyT3PassRelaxedOutsideOwns(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	passed, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: measured, RC: &rc}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: measured}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: passed}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	fails := verifyAll(t, dir, "T1")
+	if fails["T3"] {
+		t.Error("T3 flagged a relaxed pass whose diff from the measured tree is outside owns")
+	}
+}
+
+// TestVerifyT3PassRefusedWhenOwnedFileChanged is the regression guard for the
+// issue #218 relaxation on the audit side: a relaxed pass whose diff touches an
+// owned file must report T3 failing with today's reason string.
+func TestVerifyT3PassRefusedWhenOwnedFileChanged(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	passed, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: measured, RC: &rc}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: measured}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: passed}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	want := fmt.Sprintf("inspected pass on tree %s lacks gate 1 after the latest finished event before it", short(passed))
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" {
+			found = true
+			if item.Pass {
+				t.Errorf("T3 passed a relaxed pass whose diff touches an owned file")
+			}
+			if item.Reason != want {
+				t.Errorf("T3 reason = %q, want today's string %q", item.Reason, want)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("VerifyTasks() items = %v, want a failing T3", res.Items)
+	}
+}
+
+// TestVerifyT3PassOnOwnTree checks that a pass with readings on its own tree
+// still passes exactly as before the issue #218 relaxation.
+func TestVerifyT3PassOnOwnTree(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	fails := verifyAll(t, dir, "T1")
+	if fails["T3"] {
+		t.Error("T3 flagged a pass whose readings are on its own tree")
+	}
+}
+
+// TestVerifyT3PassSplitAcrossTrees checks that readings split across two
+// different trees do not qualify on the audit side either.
+func TestVerifyT3PassSplitAcrossTrees(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\none\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	ta, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	tb, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	passed, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: ta, RC: &rc}); err != nil {
+		t.Fatalf("append validated: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tb}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: passed}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	fails := verifyAll(t, dir, "T1")
+	if !fails["T3"] {
+		t.Error("T3 accepted readings split across two different trees")
 	}
 }
