@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/suzworx/flywheel/compare/v0.16.0...v0.17.0) (2026-09-17)
+
+
+### Features
+
+* record the planner on planned, and the tree on landed ([#269](https://github.com/suzworx/flywheel/issues/269)) ([56067de](https://github.com/suzworx/flywheel/commit/56067de477ac77b1824db9fbcedb65c306a42c70))
+* warn at dispatch when in-flight units share a gate ([#268](https://github.com/suzworx/flywheel/issues/268)) ([54339df](https://github.com/suzworx/flywheel/commit/54339df1c9cbf147a5a580a8c61175f7debb3a3e))
+
+
+### Bug Fixes
+
+* lint says how to declare an owns: path the unit creates ([#266](https://github.com/suzworx/flywheel/issues/266)) ([d7834ec](https://github.com/suzworx/flywheel/commit/d7834ec642f2669ca22429bc4d6d7ee690a02a7f))
+
 ## [0.16.0](https://github.com/suzworx/flywheel/compare/v0.15.0...v0.16.0) (2026-09-17)
 
 
