@@ -55,29 +55,33 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	if r := sessionClash(task, events, o.Session); r != "" {
 		return &RuleRefusal{Rule: "T4", Fix: r}
 	}
-	var e RuleRefusal
+	var tree string
 	note := o.Note
 	if o.Verdict == "pass" {
-		var reading string
-		e, reading, err = requireReadings(o.Dir, wd(o.Workdir, o.Dir), task, events)
-		if err != nil {
-			return err
+		res := requireReadings(o.Dir, wd(o.Workdir, o.Dir), task, events)
+		if res.err != nil {
+			return res.err
 		}
-		if e.Rule != "" {
-			return &e
+		if res.refusal.Rule != "" {
+			return &res.refusal
 		}
-		if reading != "" {
-			suffix := fmt.Sprintf("reading from tree %s (diff outside owns)", reading)
+		// Record exactly the tree the T3 check measured, never a second hash
+		// taken later: the worktree could have changed in between, and the
+		// ledger must not bless a tree no gate ever measured (issue #241).
+		tree = res.currentTree
+		if res.readingTree != "" {
+			suffix := fmt.Sprintf("reading from tree %s (diff outside owns)", res.readingTree)
 			if note != "" {
 				note = note + "; " + suffix
 			} else {
 				note = suffix
 			}
 		}
-	}
-	tree, err := treeHash(wd(o.Workdir, o.Dir))
-	if err != nil {
-		return err
+	} else {
+		tree, err = hashTree(wd(o.Workdir, o.Dir))
+		if err != nil {
+			return err
+		}
 	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
@@ -97,38 +101,56 @@ func wd(workdir, dir string) string {
 	return workdir
 }
 
-// requireReadings enforces T3 for a pass verdict. Today's path is unchanged:
-// the tree computed in wd must have a passing validated reading for every gate
-// in the brief header, all recorded after the task's latest finished event,
-// and a clean owns_checked for that tree. When the current tree has no such
-// reading, T3 is relaxed (issue #218): the reading may be taken on another
-// tree whose diff from the current tree lies entirely outside the unit's owns.
-// The accepted tree is returned as the second value so the inspected event's
-// note can name it. A non-empty rule on the returned value is a refusal.
-func requireReadings(dir, wd, task string, events []Event) (RuleRefusal, string, error) {
+// readingsResult is the outcome of a T3 readings check. currentTree is the
+// tree the check actually measured — the tree the inspected event must
+// record. readingTree is the tree the accepted reading came from when it
+// differs from currentTree (issue #218 relaxation), or "" when currentTree
+// itself qualified. refusal is the T3 refusal (Rule non-empty) when the check
+// failed; err is a real failure rather than a refusal.
+type readingsResult struct {
+	currentTree string
+	readingTree string
+	refusal     RuleRefusal
+	err         error
+}
+
+// hashTree measures the working tree. It is a package variable so a test can
+// rebind it and interleave a worktree change between the readings check and
+// the inspected event (issue #241); production code never rebinds it.
+var hashTree = treeHash
+
+// requireReadings enforces T3 for a pass verdict. The path is unchanged
+// except that the tree measured for the check is returned in currentTree so
+// the caller records exactly that tree: a second hash taken later could name
+// a tree no gate ever measured (issue #241). When the current tree has no
+// complete reading, T3 is relaxed (issue #218): the reading may be taken on
+// another tree whose diff from the current tree lies entirely outside the
+// unit's owns. The accepted tree is returned in readingTree so the inspected
+// event's note can name it. A non-empty refusal.Rule is a refusal.
+func requireReadings(dir, wd, task string, events []Event) readingsResult {
 	header, _, err := AttemptBrief(dir, events, task)
 	if err != nil {
 		if errors.Is(err, errNoPlannedBrief) {
-			return RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}, "", nil
+			return readingsResult{refusal: RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}}
 		}
-		return RuleRefusal{}, "", err
+		return readingsResult{err: err}
 	}
 	if len(header.Gates) == 0 {
-		return RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}, "", nil
+		return readingsResult{refusal: RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}}
 	}
-	tree, err := treeHash(wd)
+	tree, err := hashTree(wd)
 	if err != nil {
-		return RuleRefusal{}, "", err
+		return readingsResult{err: err}
 	}
 	latest := latestFinished(events, task)
 	t, ok, err := readingsForPass(wd, events, header, task, tree, latest)
 	if err != nil {
-		return RuleRefusal{}, "", err
+		return readingsResult{err: err}
 	}
 	if ok {
-		return RuleRefusal{}, t, nil
+		return readingsResult{currentTree: tree, readingTree: t}
 	}
-	return readingsRefusal(events, header, task, tree, latest), "", nil
+	return readingsResult{currentTree: tree, refusal: readingsRefusal(events, header, task, tree, latest)}
 }
 
 // readingsForPass reports the tree a pass on tree may rely on after the
