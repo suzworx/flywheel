@@ -155,7 +155,7 @@ func runFeedbackAdd(args []string) {
 			signals = append(signals, strings.TrimSpace(s))
 		}
 	}
-	if err := flywheel.CheckLearningsOwned(o.dir); err != nil {
+	if _, err := flywheel.CheckLearningsOwned(o.dir); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
@@ -220,7 +220,7 @@ func runFeedbackDismiss(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: unknown learning %q\n", id)
 		os.Exit(1)
 	}
-	if err := flywheel.CheckLearningsOwned(o.dir); err != nil {
+	if _, err := flywheel.CheckLearningsOwned(o.dir); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
 		os.Exit(1)
 	}

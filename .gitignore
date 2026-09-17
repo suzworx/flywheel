@@ -2,3 +2,4 @@
 .flywheel/
 .omo/
 !internal/flywheel/testdata/**/.flywheel/
+flywheel.md
