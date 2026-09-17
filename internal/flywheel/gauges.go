@@ -188,7 +188,6 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if err != nil {
 		return GaugeResult{}, err
 	}
-	commit := headCommit(wd)
 	evDir := filepath.Join(o.Dir, ".flywheel", "evidence", task, attempt)
 	if err := os.MkdirAll(evDir, 0o755); err != nil {
 		return GaugeResult{}, fmt.Errorf("create %s: %w", evDir, err)
@@ -202,6 +201,11 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
+		// HEAD is resolved per reading, not hoisted above the loop: a gate can
+		// take minutes and another process can move HEAD meanwhile, so
+		// resolving once per pass would record a history position no reading
+		// was taken at (issue #240).
+		commit := headCommit(wd)
 		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false)
 		if err != nil {
 			return GaugeResult{}, err
@@ -216,6 +220,11 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if o.Live {
 		for i, gate := range header.LiveGates {
 			n := strconv.Itoa(i + 1)
+			// same per-reading resolution as the ordinary gates: HEAD moves
+			// between readings, so each live gate carries the commit current
+			// at the moment it ran, never one hoisted from the pass start
+			// (issue #240).
+			commit := headCommit(wd)
 			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true)
 			if err != nil {
 				return GaugeResult{}, err
@@ -226,6 +235,11 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			}
 		}
 	}
+	// resolved right before the owns check, at the moment THIS reading is
+	// taken, for the same reason the gates resolve per reading: the check runs
+	// after every gate, so hoisting the resolution to the pass start would
+	// record a history position no reading was taken at (issue #240).
+	commit := headCommit(wd)
 	return finishValidate(o.Dir, wd, task, attempt, tree, commit, header.Owns, header.NeedsState, events, res)
 }
 

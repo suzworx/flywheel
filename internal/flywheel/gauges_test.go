@@ -371,6 +371,158 @@ func TestValidateHeadCommitUnresolvable(t *testing.T) {
 	}
 }
 
+// commitGate is a gate command that moves HEAD: an empty commit on the
+// branch, with the test identity, so a pass whose first gate commits records
+// its later readings at a different HEAD (issue #240).
+const commitGate = "git -c user.name=test -c user.email=test@example.com commit --allow-empty -m gate-commit"
+
+// TestValidateCommitPerReadingTracksMovingHead is the regression guard for
+// issue #240: a pass whose first gate commits on the branch records gate 1's
+// validated event at the pre-commit HEAD and gate 2's at the new one. HEAD is
+// resolved immediately before each reading, never hoisted to the pass start.
+func TestValidateCommitPerReadingTracksMovingHead(t *testing.T) {
+	dir, err := initTask(t, []string{commitGate, "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	head0 := git(t, dir, []string{"rev-parse", "HEAD"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("OK() = false, want true: %+v", res)
+	}
+	head1 := git(t, dir, []string{"rev-parse", "HEAD"})
+	if head0 == head1 {
+		t.Fatalf("the gate did not move HEAD: %s == %s", head0, head1)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	byGate := map[string]string{}
+	ownsCommit := ""
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			byGate[e.Gate] = e.Commit
+		case "owns_checked":
+			ownsCommit = e.Commit
+		}
+	}
+	if byGate["1"] != head0 {
+		t.Errorf("gate 1 validated commit = %q, want %q (pre-commit HEAD)", byGate["1"], head0)
+	}
+	if byGate["2"] != head1 {
+		t.Errorf("gate 2 validated commit = %q, want %q (the new HEAD)", byGate["2"], head1)
+	}
+	if byGate["1"] == byGate["2"] {
+		t.Error("gate 1 and gate 2 carry the same commit; each reading must resolve HEAD independently")
+	}
+	if ownsCommit != head1 {
+		t.Errorf("owns_checked commit = %q, want %q (HEAD at the owns check)", ownsCommit, head1)
+	}
+}
+
+// TestValidateOwnsCheckedCommitTracksCurrentHead checks the owns_checked
+// reading carries the HEAD current at the owns check — after every gate ran —
+// never the pass's starting HEAD: the last gate commits, so the owns check
+// resolves a different commit than gate 1 did (issue #240).
+func TestValidateOwnsCheckedCommitTracksCurrentHead(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", commitGate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	head0 := git(t, dir, []string{"rev-parse", "HEAD"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("OK() = false, want true: %+v", res)
+	}
+	head1 := git(t, dir, []string{"rev-parse", "HEAD"})
+	if head0 == head1 {
+		t.Fatalf("the gate did not move HEAD: %s == %s", head0, head1)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	gate1Commit := ""
+	ownsCommit := ""
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			if e.Gate == "1" {
+				gate1Commit = e.Commit
+			}
+		case "owns_checked":
+			ownsCommit = e.Commit
+		}
+	}
+	if gate1Commit != head0 {
+		t.Errorf("gate 1 validated commit = %q, want %q (the pass's starting HEAD)", gate1Commit, head0)
+	}
+	if ownsCommit != head1 {
+		t.Errorf("owns_checked commit = %q, want %q (HEAD current at the owns check, not the pass's starting HEAD)", ownsCommit, head1)
+	}
+}
+
+// TestValidateCommitEmptyInNonRepoWorkdir checks the empty-string fallback on
+// every reading: a workdir whose HEAD cannot be resolved — a non-repo, or git
+// failing — records commit "" on each validated event and on owns_checked and
+// the pass does not error (issue #240, #196). A literal non-repo workdir
+// cannot reach the commit recording at all — treeHash fails first and the
+// whole pass errors — so the per-reading fallback is exercised the way the
+// existing unresolvable-HEAD test does, with a shim git whose rev-parse
+// fails, and headCommit's contract on a literal non-repo directory is pinned
+// directly.
+func TestValidateCommitEmptyInNonRepoWorkdir(t *testing.T) {
+	if got := headCommit(t.TempDir()); got != "" {
+		t.Errorf("headCommit(non-repo dir) = %q, want empty", got)
+	}
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	shimGitOnlyRevParseFails(t)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("OK() = false, want true: an unresolvable HEAD must not fail the pass; %+v", res)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	validated := 0
+	ownsChecked := false
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			validated++
+			if e.Commit != "" {
+				t.Errorf("validated event commit = %q, want empty when HEAD cannot be resolved", e.Commit)
+			}
+		case "owns_checked":
+			ownsChecked = true
+			if e.Commit != "" {
+				t.Errorf("owns_checked commit = %q, want empty when HEAD cannot be resolved", e.Commit)
+			}
+		}
+	}
+	if validated != 2 {
+		t.Errorf("validated events = %d, want 2", validated)
+	}
+	if !ownsChecked {
+		t.Error("no owns_checked event recorded")
+	}
+}
+
 func TestValidateFailingGate(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0", "exit 1"})
 	if err != nil {
