@@ -435,7 +435,8 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	req := RunRequest{
 		Task: o.Task, Attempt: attempt, PromptFile: promptSrc, Model: model,
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
-		Resume: o.Resume,
+		Resume:       o.Resume,
+		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
 	}
 	if commandHook != nil {
 		commandHook(req)

@@ -169,6 +169,17 @@ records the finish. That run did not get past authentication in the environment 
 was tried, so a productive run — tool calls, file edits, token and cost accounting — is
 still unverified. Try one real run in your own environment before depending on it.
 
+On the `claude` adapter, a worker's only way to run its own gate lines is its Bash tool, and
+`--permission-mode acceptEdits` alone grants file edits — not commands. Each worker in
+`.flywheel/config.json` can therefore set `allowed_tools` and `disallowed_tools` (Claude Code
+tool patterns) to shape the dispatch's `--allowedTools`/`--disallowedTools`. Unset, a worker
+defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-write family
+(`Bash(git commit:*)`, `Bash(git push:*)`, `Bash(git stash:*)`, `Bash(git reset:*)`,
+`Bash(git checkout:*)`, `Bash(git rebase:*)`, `Bash(git merge:*)`): the worker can run its own
+gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
+policy is enforced by the permission layer, not by asking nicely. An explicitly configured list
+replaces its default; it is not merged with it, so an operator can widen or narrow deliberately.
+
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).

@@ -37,6 +37,18 @@ type Worker struct {
 	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
 	StallTimeout int        `json:"stall_timeout,omitempty"` // whole seconds; 0 means the default 600
 	Fallbacks    []Fallback `json:"fallbacks,omitempty"`
+	// AllowedTools lists the claude adapter's --allowedTools patterns. When
+	// empty, allowedTools() resolves to ["Bash"] so a worker can run its own
+	// gates (issue #192). An explicitly configured list REPLACES that default;
+	// it is not merged with it.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// DisallowedTools lists the claude adapter's --disallowedTools patterns.
+	// When empty, disallowedTools() resolves to the git-write family
+	// ("Bash(git commit:*)", "Bash(git push:*)", ...), enforcing the worker
+	// permission policy ("workers never commit, stash, reset, checkout or
+	// push") at the permission layer (issue #192). An explicitly configured
+	// list REPLACES that default; it is not merged with it.
+	DisallowedTools []string `json:"disallowed_tools,omitempty"`
 }
 
 // defaultStallTimeout applies when a worker's StallTimeout is unset (0).
@@ -49,6 +61,37 @@ func (w Worker) stallTimeoutDuration() time.Duration {
 		return defaultStallTimeout
 	}
 	return time.Duration(w.StallTimeout) * time.Second
+}
+
+// defaultAllowedTools lets a worker run its own gate lines out of the box.
+var defaultAllowedTools = []string{"Bash"}
+
+// defaultDisallowedTools implements the worker permission policy at the
+// dispatch's permission layer: workers never commit, stash, reset, checkout,
+// rebase or merge, whatever the brief says.
+var defaultDisallowedTools = []string{
+	"Bash(git commit:*)", "Bash(git push:*)", "Bash(git stash:*)",
+	"Bash(git reset:*)", "Bash(git checkout:*)", "Bash(git rebase:*)", "Bash(git merge:*)",
+}
+
+// allowedTools returns the worker's allowed tool patterns, or the default
+// ["Bash"] when unset; an explicitly configured list replaces, never merges
+// (issue #192).
+func (w Worker) allowedTools() []string {
+	if len(w.AllowedTools) == 0 {
+		return defaultAllowedTools
+	}
+	return w.AllowedTools
+}
+
+// disallowedTools returns the worker's disallowed tool patterns, or the
+// default git-write family when unset; an explicitly configured list
+// replaces, never merges (issue #192).
+func (w Worker) disallowedTools() []string {
+	if len(w.DisallowedTools) == 0 {
+		return defaultDisallowedTools
+	}
+	return w.DisallowedTools
 }
 
 // Fallback is a model to fall back to when the worker's model is unavailable.
