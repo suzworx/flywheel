@@ -523,3 +523,61 @@ func TestConfigWithoutLeaseRoundTripsUnchanged(t *testing.T) {
 		t.Errorf("loaded config Lease = %+v, want nil", got.Lease)
 	}
 }
+
+// TestWorkerToolDefaults checks an unset worker resolves to the documented
+// allowed/disallowed defaults, and an explicitly set list replaces rather
+// than merges with them (issue #192).
+func TestWorkerToolDefaults(t *testing.T) {
+	if got := (Worker{}).allowedTools(); !reflect.DeepEqual(got, defaultAllowedTools) {
+		t.Errorf("allowedTools() = %v, want the default %v", got, defaultAllowedTools)
+	}
+	if got := (Worker{}).disallowedTools(); !reflect.DeepEqual(got, defaultDisallowedTools) {
+		t.Errorf("disallowedTools() = %v, want the default %v", got, defaultDisallowedTools)
+	}
+	w := Worker{
+		AllowedTools:    []string{"Bash(go:*)", "Edit"},
+		DisallowedTools: []string{"Bash(git commit:*)"},
+	}
+	if got := w.allowedTools(); !reflect.DeepEqual(got, []string{"Bash(go:*)", "Edit"}) {
+		t.Errorf("allowedTools() = %v, want the explicit list to replace the default", got)
+	}
+	if got := w.disallowedTools(); !reflect.DeepEqual(got, []string{"Bash(git commit:*)"}) {
+		t.Errorf("disallowedTools() = %v, want the explicit list to replace the default", got)
+	}
+}
+
+// TestConfigToolListsJSONRoundTrip checks allowed_tools/disallowed_tools
+// survive a WriteConfig/LoadConfig round trip under their JSON field names
+// (issue #192).
+func TestConfigToolListsJSONRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Version: 1, Workers: []Worker{{
+		Name:            "claude",
+		Adapter:         "claude",
+		Model:           "m",
+		AllowedTools:    []string{"Bash"},
+		DisallowedTools: []string{"Bash(git commit:*)", "Bash(git push:*)"},
+	}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "config.json"))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	for _, want := range []string{`"allowed_tools"`, `"disallowed_tools"`, `"Bash(git commit:*)"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("config.json missing %s; got:\n%s", want, b)
+		}
+	}
+	got, exists, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("LoadConfig() exists = false, want true")
+	}
+	if !reflect.DeepEqual(got, cfg) {
+		t.Errorf("LoadConfig() = %+v, want %+v", got, cfg)
+	}
+}

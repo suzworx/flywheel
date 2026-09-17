@@ -3,6 +3,7 @@ package flywheel
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -485,5 +486,83 @@ func TestClaudeParseEndsTurn(t *testing.T) {
 				t.Errorf("%s: EndsTurn = %v, want %v", tc.name, obs.EndsTurn, tc.wantEnds)
 			}
 		})
+	}
+}
+
+// flagValues returns the values following flag in args, stopping at the next
+// argument that begins with "--" (the next flag).
+func flagValues(args []string, flag string) []string {
+	for i := 0; i < len(args); i++ {
+		if args[i] != flag {
+			continue
+		}
+		var vals []string
+		for j := i + 1; j < len(args) && !strings.HasPrefix(args[j], "--"); j++ {
+			vals = append(vals, args[j])
+		}
+		return vals
+	}
+	return nil
+}
+
+// TestClaudeCommandToolPolicy checks a claude dispatch carries the worker's
+// resolved tool policy: the default allowed list ("Bash") via --allowedTools
+// and the git-write family via --disallowedTools; a worker with explicit
+// lists produces exactly those instead; an empty list appends no flag
+// (issue #192).
+func TestClaudeCommandToolPolicy(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	base := RunRequest{Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath}
+
+	_, args := a.Command(RunRequest{
+		Task: base.Task, Attempt: base.Attempt, Title: base.Title, Model: base.Model, PromptFile: base.PromptFile,
+		AllowedTools: (Worker{}).allowedTools(), DisallowedTools: (Worker{}).disallowedTools(),
+	})
+	if got := flagValues(args, "--allowedTools"); !reflect.DeepEqual(got, []string{"Bash"}) {
+		t.Errorf("--allowedTools = %v, want the default [Bash]", got)
+	}
+	if got := flagValues(args, "--disallowedTools"); !reflect.DeepEqual(got, defaultDisallowedTools) {
+		t.Errorf("--disallowedTools = %v, want the default git-write family %v", got, defaultDisallowedTools)
+	}
+
+	_, args = a.Command(RunRequest{
+		Task: base.Task, Attempt: base.Attempt, Title: base.Title, Model: base.Model, PromptFile: base.PromptFile,
+		AllowedTools:    []string{"Bash(go:*)", "Edit"},
+		DisallowedTools: []string{"Bash(git commit:*)"},
+	})
+	if got := flagValues(args, "--allowedTools"); !reflect.DeepEqual(got, []string{"Bash(go:*)", "Edit"}) {
+		t.Errorf("--allowedTools = %v, want the explicit list, not the default", got)
+	}
+	if got := flagValues(args, "--disallowedTools"); !reflect.DeepEqual(got, []string{"Bash(git commit:*)"}) {
+		t.Errorf("--disallowedTools = %v, want the explicit list, not the default", got)
+	}
+
+	_, args = a.Command(base)
+	if got := flagValues(args, "--allowedTools"); got != nil {
+		t.Errorf("empty allowed list appended %v, want no --allowedTools", got)
+	}
+	if got := flagValues(args, "--disallowedTools"); got != nil {
+		t.Errorf("empty disallowed list appended %v, want no --disallowedTools", got)
+	}
+}
+
+// TestOpenCodeCommandUnchangedByToolPolicy checks the opencode adapter's argv
+// ignores the tool lists entirely: the same RunRequest that gives a claude
+// dispatch its --allowedTools/--disallowedTools leaves the opencode dispatch
+// exactly as it was (issue #192).
+func TestOpenCodeCommandUnchangedByToolPolicy(t *testing.T) {
+	a, _ := AdapterFor("opencode")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	bin, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath,
+		AllowedTools: (Worker{}).allowedTools(), DisallowedTools: (Worker{}).disallowedTools(),
+	})
+	if bin != "opencode" {
+		t.Errorf("bin = %q, want opencode", bin)
+	}
+	want := []string{"run", "--pure", "-m", "m1", "--auto", "--format", "json", "--title", "T1-r1", freshMessage, "--file", briefPath}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("opencode args changed by the tool policy:\n got %v\nwant %v", args, want)
 	}
 }
