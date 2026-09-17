@@ -204,15 +204,33 @@ func amendedBetween(events []Event, task, ts string) bool {
 // from the pass's tree lies entirely outside the unit's owns (issue #218),
 // sharing requireReadings' predicate so verify accepts exactly what inspect
 // does. Each inspection uses its own window, so a later correction attempt
-// does not invalidate an earlier legitimate pass.
+// does not invalidate an earlier legitimate pass. A pass is measured against
+// the brief header in force when it was recorded (issue #252): the header is
+// resolved positionally from the events recorded up to and including the pass
+// (the log is append-only, so slice order is causal order), so a correction
+// delta that adds gates does not retroactively fail passes granted under the
+// earlier gate set.
 func ruleT3(dir, task string, events []Event) []VerifyItem {
-	header, err := briefHeaderFor(dir, task, events)
-	if err != nil {
+	if _, err := briefHeaderFor(dir, task, events); err != nil {
 		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}
 	}
 	var items []VerifyItem
-	for _, insp := range events {
+	for i, insp := range events {
 		if insp.Task != task || insp.Kind != "inspected" || insp.Verdict != "pass" {
+			continue
+		}
+		// The header in force for this pass is what AttemptBrief saw over the
+		// events recorded up to and including it: events[:i+1]. Slice position
+		// is the causal order here, because the log is append-only and
+		// RFC3339Nano timestamps can repeat (imported or replayed logs); a
+		// timestamp filter would drag a later correction sharing the pass's TS
+		// into its header. latestFinishedBefore below deliberately stays
+		// timestamp-based: that is a chronological question ("what was the last
+		// finished event before this moment"), where timestamps are the right
+		// tool.
+		header, err := briefHeaderFor(dir, task, events[:i+1])
+		if err != nil {
+			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false, Reason: err.Error()})
 			continue
 		}
 		latest := latestFinishedBefore(events, task, insp.TS)
@@ -243,7 +261,11 @@ func ruleT3(dir, task string, events []Event) []VerifyItem {
 }
 
 // latestFinishedBefore returns the latest finished event's timestamp for task
-// that is strictly before ts, or the zero time when there is none.
+// that is strictly before ts, or the zero time when there is none. This stays
+// timestamp-based on purpose, unlike ruleT3's header resolution: it answers a
+// chronological question ("what was the last finished event before this
+// moment"), while which events had been recorded by a pass is a positional
+// question answered by the slice prefix.
 func latestFinishedBefore(events []Event, task, ts string) time.Time {
 	t0, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
