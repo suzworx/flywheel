@@ -298,7 +298,7 @@ func Validate(e Event) error {
 // the reading was taken in the flywheel root itself (issue #244): a
 // validated, owns_checked or inspected event records where its tree was
 // measured only when that differs from the repo dir, so ordinary ledgers stay
-// unchanged. Both paths are normalised to absolute, cleaned form before the
+// unchanged. Both paths are normalised to canonical absolute form before the
 // comparison and the recorded value, so a relative --workdir recorded from one
 // directory still resolves when the ledger is read from elsewhere: the
 // recorded provenance must not depend on the reader's working directory.
@@ -309,12 +309,21 @@ func workdirField(wd, dir string) string {
 	return absPath(wd)
 }
 
-// absPath returns p normalised to an absolute, cleaned path; the input
-// unchanged when it cannot be resolved.
+// absPath returns p normalised to an absolute, canonical path: relative
+// inputs are resolved against the process working directory, symlinks are
+// followed, and DOS 8.3 short names are expanded — filepath.EvalSymlinks
+// does the last two on Windows and Unix alike, so two runs in the same
+// directory always record the same string (issue #244). A path that cannot
+// be resolved (for instance one that does not exist yet) falls back to its
+// absolute, cleaned form; the input is returned unchanged only when it
+// cannot even be made absolute.
 func absPath(p string) string {
 	a, err := filepath.Abs(p)
 	if err != nil {
 		return p
+	}
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
 	}
 	return filepath.Clean(a)
 }

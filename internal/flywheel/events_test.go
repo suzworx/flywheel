@@ -872,6 +872,30 @@ func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAbsPathFallbackWhenMissing checks absPath's fallback contract (issue
+// #244): a path that cannot be resolved — one that does not exist yet, the
+// legitimate case EvalSymlinks fails on — is still normalised to its
+// absolute, cleaned form without erroring, and a relative input always comes
+// out absolute.
+func TestAbsPathFallbackWhenMissing(t *testing.T) {
+	base := t.TempDir()
+	missing := filepath.Join(base, "a") + string(filepath.Separator) + ".." + string(filepath.Separator) + "does-not-exist"
+	got := absPath(missing)
+	want := filepath.Join(base, "does-not-exist")
+	if got != want {
+		t.Errorf("absPath(%q) = %q, want the cleaned fallback %q", missing, got, want)
+	}
+	rel := filepath.Join("missing-relative", "x")
+	got = absPath(rel)
+	want, err := filepath.Abs(rel)
+	if err != nil {
+		t.Fatalf("filepath.Abs(%q) error = %v", rel, err)
+	}
+	if got != want {
+		t.Errorf("absPath(%q) = %q, want the absolute fallback %q", rel, got, want)
+	}
+}
+
 // TestWorktreesFieldRoundTrips checks a dispatched event's worktrees snapshot
 // (worktree path -> {path -> sha256}) round-trips through the event log and
 // is omitted when empty (issue #87).

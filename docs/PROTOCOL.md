@@ -168,9 +168,11 @@ working exactly as before.
   of the pass — each gate resolves it independently, so two readings in one pass may carry
   different commits and that is correct, not a bug; empty when the workdir is not a git repository
   or HEAD cannot be read, so a consumer must treat `commit` as optional and never assume a
-  non-empty value, issue #240), `workdir` (the git working tree the reading was taken in, only
-  when it differs from the flywheel root — an external `--workdir` clone — so a verifier can
-  resolve the tree object in the right repository, issue #244; omitted on same-dir readings),
+  non-empty value, issue #240), `workdir` (the git working tree the reading was taken in,
+  recorded in canonical absolute form — symlinks resolved, DOS 8.3 short names expanded — and
+  only when it differs from the flywheel root: an external `--workdir` clone, so a verifier can
+  resolve the tree object in the right repository, issue #244; omitted on same-dir readings,
+  including aliases of the root),
   `rc`, `duration_ms`, `sha256` (of the gate's combined output),
   `path` (`.flywheel/evidence/<task>/<attempt>/gate-<n>.log`), `persona` (always `"supervisor"`,
   hardcoded — see §4), `reason`/`note` (`host-blocked` when Windows Smart App Control blocked the
@@ -190,7 +192,8 @@ working exactly as before.
   taken, so it may differ from the gates' commits and that is correct, not a bug; empty when the
   workdir is not a git repository or HEAD cannot be read, so a consumer must treat `commit` as
   optional and never assume a non-empty value, issue #240), `workdir` (as on `validated` — where
-  the reading was taken, recorded only when it differs from the flywheel root, issue #244),
+  the reading was taken, canonical absolute form, recorded only when it differs from the flywheel
+  root, issue #244),
   `outside` (changed paths not covered
   by `owns:`), `baselined` (changed paths excused because they were already dirty at dispatch and
   are byte-identical now), `attributed` (changed paths blamed on another in-flight task instead —
@@ -208,9 +211,9 @@ working exactly as before.
 ### `inspected`
 - Written by: the CLI only, via `flywheel inspect <task> --verdict ... --session ...`.
 - Carries: `task`, `verdict` (`pass`, `rework`, `scrap`, or `escalate`), `tree`, `session`, `note`,
-  `workdir` (the git working tree inspected, recorded only when it differs from the flywheel root,
-  issue #244), `persona` (always `"inspector"`, hardcoded by `InspectTask` — see §4 for the only
-  way a `"lead"` ever appears there).
+  `workdir` (the git working tree inspected, canonical absolute form, recorded only when it
+  differs from the flywheel root, issue #244), `persona` (always `"inspector"`, hardcoded by
+  `InspectTask` — see §4 for the only way a `"lead"` ever appears there).
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.

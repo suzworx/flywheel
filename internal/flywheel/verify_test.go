@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -1270,9 +1272,10 @@ func TestVerifyPerPassWorkdirResolvesEachPass(t *testing.T) {
 
 // TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves is the correction
 // guard: a relative --workdir names a place against the process's current
-// directory, so a reading recorded with it must persist as an absolute path —
-// otherwise the same string later names a different place, or nothing. The
-// ledger read from another directory still resolves the recorded repository.
+// directory, so a reading recorded with it must persist as an absolute,
+// canonical path — otherwise the same string later names a different place,
+// or nothing. The ledger read from another directory still resolves the
+// recorded repository.
 func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "ledger")
@@ -1333,16 +1336,14 @@ func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
 			recorded = e.Workdir
 		}
 	}
-	// The recording normalises the workdir with absPath (filepath.Abs):
-	// the resolution comes from the process working directory, which the
-	// kernel already reports resolved (macOS /var -> /private/var); resolve
-	// the expected value likewise, making the comparison spelling-independent.
-	want := ext
-	if resolved, err := filepath.EvalSymlinks(ext); err == nil {
-		want = resolved
-	}
+	// The recording normalises the workdir with absPath to canonical form:
+	// filepath.Abs, then filepath.EvalSymlinks (which follows symlinks on
+	// Unix and expands DOS 8.3 short names on Windows), then Clean. The
+	// expected path is canonicalised the same way, so the comparison is
+	// spelling-independent — no platform caveat needed.
+	want := absPath(ext)
 	if recorded != want {
-		t.Fatalf("recorded workdir = %q, want the absolute path %q", recorded, want)
+		t.Fatalf("recorded workdir = %q, want the canonical path %q", recorded, want)
 	}
 	// A complete pass measured in ext verifies from an unrelated directory:
 	// the recorded absolute path still resolves the tree.
@@ -1374,6 +1375,63 @@ func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestVerifyAliasWorkdirRecordsNoWorkdir is the behavioural point of the
+// canonical workdir normalisation (issue #244): a --workdir spelled as an
+// alias of the repo dir — a symlink on Unix, the DOS 8.3 short name on
+// Windows — is the same directory, so it is not external and records no
+// workdir field. Before absPath resolved EvalSymlinks, an alias read as a
+// different path and leaked into the ledger as a fake external workdir.
+func TestVerifyAliasWorkdirRecordsNoWorkdir(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	alias := dirAlias(t, dir)
+	if alias == "" {
+		t.Skip("this host has no alias spelling of a directory (no symlink privilege, 8.3 names disabled)")
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Workdir: alias, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() alias error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "inspected" && e.Workdir != "" {
+			t.Errorf("inspected workdir = %q, want none recorded for an alias of the repo dir", e.Workdir)
+		}
+	}
+}
+
+// dirAlias returns a different spelling of dir that canonicalises to the
+// same directory: a symlink on Unix, the DOS 8.3 short name on Windows
+// (asked of cmd, since 8.3 expansion is the one canonicalisation the
+// standard library's path code cannot produce). "" when the host cannot
+// make one: no symlink privilege, or 8.3 names disabled for the volume.
+// The for item must not be quoted: cmd keeps a quoted item's quotes when
+// expanding %~sI, and the short name of a quoted string is meaningless.
+func dirAlias(t *testing.T, dir string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", `for %I in (`+dir+`) do @echo %~sI`).CombinedOutput()
+		if err != nil {
+			return ""
+		}
+		short := strings.TrimSpace(string(out))
+		if short == "" || strings.EqualFold(short, dir) {
+			return ""
+		}
+		return short
+	}
+	alias := filepath.Join(filepath.Dir(dir), "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		return ""
+	}
+	return alias
 }
 
 // TestVerifyInvalidWorkdirIsErrorNotInconclusive is the correction guard: an
