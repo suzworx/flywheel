@@ -1393,6 +1393,197 @@ func TestRunResumeWithDelta(t *testing.T) {
 	}
 }
 
+// lastDispatched returns the last dispatched event for a task, or zero.
+func lastDispatched(t *testing.T, dir, task string) Event {
+	t.Helper()
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Task == task && e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	return d
+}
+
+// TestRunBriefDriftWarns checks a brief edited after its dispatch is caught
+// at the next dispatch: the drift line is printed, the run still dispatches,
+// and the newly recorded dispatched hash is the brief's CURRENT content
+// (issue #135).
+func TestRunBriefDriftWarns(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+	if d := lastDispatched(t, dir, "T1"); d.Attempt != "r1" {
+		t.Fatalf("first dispatched attempt = %q, want r1", d.Attempt)
+	}
+
+	edited := []byte("one line brief\nedited after dispatch\n")
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), edited, 0o644); err != nil {
+		t.Fatalf("write edited brief: %v", err)
+	}
+	buf.Reset()
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() second error = %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "brief-drift") {
+		t.Errorf("second run output = %q, want a brief-drift line", out)
+	}
+	d := lastDispatched(t, dir, "T1")
+	if d.Attempt != "r2" {
+		t.Errorf("last dispatched attempt = %q, want r2", d.Attempt)
+	}
+	if d.SHA256 != contentSHA(edited) {
+		t.Errorf("last dispatched sha256 = %q, want the edited brief's %q", d.SHA256, contentSHA(edited))
+	}
+}
+
+// TestRunBriefDriftStrictRefuses checks --strict-brief turns drift into a T1
+// RuleRefusal with no event appended: a strict refusal never half-dispatches
+// (issue #135).
+func TestRunBriefDriftStrictRefuses(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+	before, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("one line brief\nedited after dispatch\n"), 0o644); err != nil {
+		t.Fatalf("write edited brief: %v", err)
+	}
+	_, err = Run(dir, RunOptions{Task: "T1", StrictBrief: true, Progress: &buf})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T1" {
+		t.Fatalf("Run() error = %v, want a T1 RuleRefusal", err)
+	}
+	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind planned --brief b.txt") {
+		t.Errorf("RuleRefusal fix = %q, want it naming the re-record fix", r.Fix)
+	}
+	after, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("events grew from %d to %d after a strict refusal, want none appended", len(before), len(after))
+	}
+}
+
+// TestRunBriefDriftQuietAfterReplan checks the lead-correction path: after a
+// drift, recording a fresh planned event with the edited brief and
+// dispatching again warns nothing (issue #135).
+func TestRunBriefDriftQuietAfterReplan(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+
+	edited := []byte("one line brief\nedited after dispatch\n")
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), edited, 0o644); err != nil {
+		t.Fatalf("write edited brief: %v", err)
+	}
+	if err := RecordPlanned(dir, "T1", "b.txt"); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	buf.Reset()
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() after re-plan error = %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "brief-drift") {
+		t.Errorf("run after re-plan output = %q, want no brief-drift line", out)
+	}
+	d := lastDispatched(t, dir, "T1")
+	if d.SHA256 != contentSHA(edited) {
+		t.Errorf("dispatched sha256 = %q, want the re-planned brief's %q", d.SHA256, contentSHA(edited))
+	}
+}
+
+// TestRunFirstDispatchNeverWarnsBriefDrift checks a task with no previous
+// dispatch cannot drift and warns nothing (issue #135).
+func TestRunFirstDispatchNeverWarnsBriefDrift(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "brief-drift") {
+		t.Errorf("first run output = %q, want no brief-drift line", out)
+	}
+}
+
+// TestRunUnchangedBriefNeverWarnsBriefDrift checks an unchanged brief never
+// warns, no matter how often it is dispatched (issue #135).
+func TestRunUnchangedBriefNeverWarnsBriefDrift(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	for i := 0; i < 2; i++ {
+		buf.Reset()
+		if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+			t.Fatalf("Run() #%d error = %v", i+1, err)
+		}
+		if out := buf.String(); strings.Contains(out, "brief-drift") {
+			t.Errorf("run #%d output = %q, want no brief-drift line", i+1, out)
+		}
+	}
+}
+
+// TestRunBriefDriftWarnsOnResume mirrors the CLI acceptance path: a brief
+// edited after a fresh dispatch, then resumed with a delta, warns and still
+// dispatches the correction (issue #135).
+func TestRunBriefDriftWarnsOnResume(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("one line brief\nedited after dispatch\n"), 0o644); err != nil {
+		t.Fatalf("write edited brief: %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	buf.Reset()
+	res, err := Run(dir, RunOptions{Task: "T1", Resume: true, Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() resume error = %v", err)
+	}
+	if res.Attempt != "c1" {
+		t.Errorf("resume attempt = %q, want c1", res.Attempt)
+	}
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("resume result = %+v, want rc 0 reason stop", res)
+	}
+	if out := buf.String(); !strings.Contains(out, "brief-drift") {
+		t.Errorf("resume output = %q, want a brief-drift line", out)
+	}
+}
+
 // leaseFor returns the lease of one attempt from .flywheel/leases.
 func leaseFor(t *testing.T, dir, task, attempt string) (Lease, bool) {
 	t.Helper()

@@ -12,7 +12,7 @@ import (
 
 func init() {
 	register("run", "dispatch a worker for a task", runRun)
-	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--start-timeout DURATION] [--stall-timeout DURATION]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
+	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--start-timeout DURATION] [--stall-timeout DURATION]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
 }
 
 // runOptions holds the parsed `flywheel run` flags.
@@ -24,13 +24,14 @@ type runOptions struct {
 	forceModel   bool
 	delta        string
 	allowOverlap bool
+	strictBrief  bool
 	startTimeout time.Duration
 	stallTimeout time.Duration
 }
 
 // runUsage prints the flywheel run usage line.
 func runUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--start-timeout DURATION] [--stall-timeout DURATION]")
+	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--start-timeout DURATION] [--stall-timeout DURATION]")
 }
 
 // runFlags defines run's flags once, so help and run share them.
@@ -45,6 +46,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.BoolVar(&o.forceModel, "force-model", false, "bypass the L-03 refusal when --resume --model names a model that isn't an approved fallback")
 	fs.StringVar(&o.delta, "delta", "", "delta brief file; always sent as the prompt and dispatched as a correction c<N>; without --resume a fresh session is started")
 	fs.BoolVar(&o.allowOverlap, "allow-overlap", false, "skip the owns-collision refusal at dispatch; the dispatched event's note records the overlap")
+	fs.BoolVar(&o.strictBrief, "strict-brief", false, "refuse a dispatch whose brief has drifted from the hash its last dispatch recorded (RuleRefusal T1, exit 6) instead of warning")
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
 	return fs, o
@@ -74,7 +76,7 @@ func runRun(args []string) {
 	task := pos[0]
 	res, err := flywheel.Run(o.dir, flywheel.RunOptions{
 		Task: task, Worker: o.worker, Model: o.model, Resume: o.resume, ForceModel: o.forceModel,
-		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
+		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
 		Progress: os.Stdout, Stderr: os.Stderr,
 	})
 	if err != nil {
