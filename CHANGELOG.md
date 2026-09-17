@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/suzworx/flywheel/compare/v0.15.0...v0.16.0) (2026-09-17)
+
+
+### Features
+
+* serialise the feedback mutation, and add flywheel feedback regen ([#264](https://github.com/suzworx/flywheel/issues/264)) ([52d98af](https://github.com/suzworx/flywheel/commit/52d98af92d69ffb2a5060754f77db70227b772fc))
+
+
+### Bug Fixes
+
+* record the parsed brief header in the ledger ([#263](https://github.com/suzworx/flywheel/issues/263)) ([f8b6eb2](https://github.com/suzworx/flywheel/commit/f8b6eb211c1a035006c3a1a95bae6e489f193457))
+
 ## [0.15.0](https://github.com/suzworx/flywheel/compare/v0.14.0...v0.15.0) (2026-09-17)
 
 
