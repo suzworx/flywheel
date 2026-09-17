@@ -84,13 +84,6 @@ type LearningsOwnership struct {
 	info os.FileInfo
 }
 
-// lstatFile is a test seam: identity is re-checked through it immediately
-// before a remove or rename, so a test can prove a replaced file is spared.
-// The unexported helpers take an lstat argument so a test can inject the seam
-// per operation; WriteLearningsFile consults this default so legacy tests
-// that reassign it keep working.
-var lstatFile = os.Lstat
-
 // checkDotLearningsOwned proves .flywheel/learnings.md is flywheel's (absent or
 // marked) and returns the identity of the object the marker was read from,
 // taken from the same open handle the bytes came from.
@@ -150,7 +143,7 @@ func CheckLearningsOwned(dir string) (*LearningsOwnership, error) {
 // .flywheel/learnings.md identity is re-checked immediately before the rename,
 // and an unreadable <dir>/learnings.md is treated as not ours and left alone.
 func WriteLearningsFile(dir string, views []LearningView) error {
-	return writeLearningsFile(dir, views, lstatFile)
+	return writeLearningsFile(dir, views, os.Lstat)
 }
 
 // writeLearningsFile is WriteLearningsFile with the identity-check seam

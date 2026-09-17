@@ -54,3 +54,39 @@ func TestFeedbackAddRenderFailureRecordedNotLost(t *testing.T) {
 		}
 	}
 }
+
+// TestFeedbackAddReadFailureRecordedNotLost checks that when the reread of
+// the log fails after the learning event was appended, the learning is still
+// durably in the log and the failure names the recorded id: the append is
+// durable the moment it returns, so a later read failure must never invite a
+// re-add either.
+func TestFeedbackAddReadFailureRecordedNotLost(t *testing.T) {
+	dir := t.TempDir()
+	// A title larger than the log parser's 16 MiB line budget makes the
+	// post-append reread fail ("token too long") while the append itself
+	// succeeds, deterministically and on every platform.
+	huge := strings.Repeat("x", 17*1024*1024)
+	id, _, aerr, rerr := addLearning(dir, "t1", "P1", huge, "slow", "e1", "repeat", nil)
+	if aerr != nil {
+		t.Fatalf("addLearning() append error = %v, want the learning recorded", aerr)
+	}
+	if rerr == nil {
+		t.Fatal("addLearning() succeeded, want a read failure on the reread")
+	}
+	if id != "L-01" {
+		t.Errorf("addLearning() id = %q, want L-01", id)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if !strings.Contains(string(b), huge) {
+		t.Error("learning not durably in the log: the appended line is missing")
+	}
+	msg := feedbackRenderFailure(id, rerr)
+	for _, want := range []string{"was recorded", "L-01", "derived from the event log", "do not re-add it"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("failure message %q does not contain %q", msg, want)
+		}
+	}
+}

@@ -255,17 +255,15 @@ func TestWriteLearningsFileLeavesReplacedRootFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat replacement: %v", err)
 	}
-	orig := lstatFile
-	lstatFile = func(path string) (os.FileInfo, error) {
+	lstat := func(path string) (os.FileInfo, error) {
 		if path == old {
 			return rfi, nil
 		}
 		return os.Lstat(path)
 	}
-	defer func() { lstatFile = orig }()
 	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
-	if err := WriteLearningsFile(dir, views); err != nil {
-		t.Fatalf("WriteLearningsFile() error = %v", err)
+	if err := writeLearningsFile(dir, views, lstat); err != nil {
+		t.Fatalf("writeLearningsFile() error = %v", err)
 	}
 	got, err := os.ReadFile(old)
 	if err != nil {
@@ -320,11 +318,9 @@ func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat other file: %v", err)
 	}
-	orig := lstatFile
-	lstatFile = func(path string) (os.FileInfo, error) { return ofi, nil }
-	defer func() { lstatFile = orig }()
+	lstat := func(path string) (os.FileInfo, error) { return ofi, nil }
 	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
-	err = WriteLearningsFile(dir, views)
+	err = writeLearningsFile(dir, views, lstat)
 	if err == nil {
 		t.Fatal("WriteLearningsFile() succeeded, want a refusal when the .flywheel file changed")
 	} else if !strings.Contains(err.Error(), "another writer") {

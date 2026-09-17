@@ -159,33 +159,67 @@ func runFeedbackAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	id, title, aerr, rerr := addLearning(o.dir, o.task, o.severity, o.title, o.observed, o.evidence, o.ask, signals)
-	if aerr != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", aerr)
+	events, err := flywheel.ReadEvents(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	if rerr != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(id, rerr))
+	// The id this append will take is fixed by the events read before
+	// appending, so a later failure can name it without depending on another
+	// read. A concurrent append between the two reads could make this id
+	// wrong; the real fix is serialising the mutation, which is filed as #260
+	// and is not this unit's job.
+	id := flywheel.NextLearningID(events)
+	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
+		Task: o.task, Kind: "learning", Severity: o.severity, Title: o.title,
+		Observed: o.observed, Evidence: o.evidence, Ask: o.ask, Signals: signals,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%s %s\n", id, title)
+	events, err = flywheel.ReadEvents(o.dir)
+	if err != nil {
+		// The learning was recorded the moment AppendEvent returned, so a
+		// read failure here must still say so, or a retry adds it twice.
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(id, err))
+		os.Exit(1)
+	}
+	views := flywheel.Learnings(events)
+	last := views[len(views)-1]
+	if err := flywheel.WriteLearningsFile(o.dir, views); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %s\n", feedbackRenderFailure(last.ID, err))
+		os.Exit(1)
+	}
+	fmt.Printf("%s %s\n", last.ID, last.Title)
 }
 
 // addLearning appends a learning event and rewrites .flywheel/learnings.md,
 // returning the recorded learning's id and title. The append error and the
-// render error are returned separately: a render failure after a successful
-// append is not an append failure — the event is durable in the append-only
-// log and the artifact is derived from it, so the learning is not lost.
+// render error are returned separately: a failure after a successful append
+// is not an append failure — the event is durable in the append-only log and
+// the artifact is derived from it, so the learning is not lost. It is the
+// seam the command-layer tests drive, because runFeedbackAdd exits the
+// process.
 func addLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return "", "", err, nil
+	}
+	// The id this append will take is fixed by the events read before
+	// appending, so a later failure can name it without depending on another
+	// read. A concurrent append between the two reads could make this id
+	// wrong; the real fix is serialising the mutation, which is filed as #260
+	// and is not this unit's job.
+	id = flywheel.NextLearningID(events)
 	if err := flywheel.AppendEvent(dir, flywheel.Event{
 		Task: task, Kind: "learning", Severity: severity, Title: title,
 		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals,
 	}); err != nil {
 		return "", "", err, nil
 	}
-	events, err := flywheel.ReadEvents(dir)
+	events, err = flywheel.ReadEvents(dir)
 	if err != nil {
-		return "", "", err, nil
+		return id, "", nil, err
 	}
 	views := flywheel.Learnings(events)
 	last := views[len(views)-1]
@@ -261,7 +295,9 @@ func runFeedbackDismiss(args []string) {
 	}
 	events, err = flywheel.ReadEvents(o.dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
+		// The dismissal was recorded the moment AppendEvent returned, so a
+		// read failure here must still say so, or a retry marks it twice.
+		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %s\n", feedbackRenderFailure(id, err))
 		os.Exit(1)
 	}
 	if err := flywheel.WriteLearningsFile(o.dir, flywheel.Learnings(events)); err != nil {
