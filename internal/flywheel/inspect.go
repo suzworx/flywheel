@@ -3,6 +3,8 @@ package flywheel
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -54,13 +56,23 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		return &RuleRefusal{Rule: "T4", Fix: r}
 	}
 	var e RuleRefusal
+	note := o.Note
 	if o.Verdict == "pass" {
-		e, err = requireReadings(o.Dir, wd(o.Workdir, o.Dir), task, events)
+		var reading string
+		e, reading, err = requireReadings(o.Dir, wd(o.Workdir, o.Dir), task, events)
 		if err != nil {
 			return err
 		}
 		if e.Rule != "" {
 			return &e
+		}
+		if reading != "" {
+			suffix := fmt.Sprintf("reading from tree %s (diff outside owns)", reading)
+			if note != "" {
+				note = note + "; " + suffix
+			} else {
+				note = suffix
+			}
 		}
 	}
 	tree, err := treeHash(wd(o.Workdir, o.Dir))
@@ -69,7 +81,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
-		Tree: tree, Session: o.Session, Note: o.Note, Persona: "inspector",
+		Tree: tree, Session: o.Session, Note: note, Persona: "inspector",
 	}); err != nil {
 		return err
 	}
@@ -85,43 +97,168 @@ func wd(workdir, dir string) string {
 	return workdir
 }
 
-// requireReadings enforces T3 for a pass verdict: the tree computed in wd must
-// have a passing validated reading for every gate in the brief header, all
-// recorded after the task's latest finished event, and a clean owns_checked
-// for that tree. A non-empty rule on the returned value is a refusal.
-func requireReadings(dir, wd, task string, events []Event) (RuleRefusal, error) {
+// requireReadings enforces T3 for a pass verdict. Today's path is unchanged:
+// the tree computed in wd must have a passing validated reading for every gate
+// in the brief header, all recorded after the task's latest finished event,
+// and a clean owns_checked for that tree. When the current tree has no such
+// reading, T3 is relaxed (issue #218): the reading may be taken on another
+// tree whose diff from the current tree lies entirely outside the unit's owns.
+// The accepted tree is returned as the second value so the inspected event's
+// note can name it. A non-empty rule on the returned value is a refusal.
+func requireReadings(dir, wd, task string, events []Event) (RuleRefusal, string, error) {
 	header, _, err := AttemptBrief(dir, events, task)
 	if err != nil {
 		if errors.Is(err, errNoPlannedBrief) {
-			return RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}, nil
+			return RuleRefusal{Rule: "T3", Fix: "task has no planned brief"}, "", nil
 		}
-		return RuleRefusal{}, err
+		return RuleRefusal{}, "", err
 	}
 	if len(header.Gates) == 0 {
-		return RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}, nil
+		return RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}, "", nil
 	}
 	tree, err := treeHash(wd)
 	if err != nil {
-		return RuleRefusal{}, err
+		return RuleRefusal{}, "", err
 	}
 	latest := latestFinished(events, task)
+	t, ok, err := readingsForPass(wd, events, header, task, tree, latest)
+	if err != nil {
+		return RuleRefusal{}, "", err
+	}
+	if ok {
+		return RuleRefusal{}, t, nil
+	}
+	return readingsRefusal(events, header, task, tree, latest), "", nil
+}
+
+// readingsForPass reports the tree a pass on tree may rely on after the
+// boundary: "" with ok when tree itself has a complete reading (today's rule),
+// another tree T with ok when the issue #218 relaxation qualifies it, or
+// ok=false when no reading qualifies. The relaxation re-checks the diff
+// against the repository — the note on an inspected event is never trusted.
+// A tree that no longer exists in the repository cannot be examined, so a pass
+// on it never qualifies. requireReadings and ruleT3 share this predicate, so
+// inspect and verify accept exactly the same set of passes.
+func readingsForPass(wd string, events []Event, header BriefHeader, task, tree string, after time.Time) (string, bool, error) {
+	if !treeExists(wd, tree) {
+		return "", false, nil
+	}
+	if allReadings(events, header, task, tree, after) {
+		return "", true, nil
+	}
+	return relaxedReadingTree(wd, events, header, task, tree, after)
+}
+
+// allReadings reports whether task has, after after, a passing validated
+// reading on tree for every gate and live gate the brief header declares, and
+// a clean owns_checked on the same tree.
+func allReadings(events []Event, header BriefHeader, task, tree string, after time.Time) bool {
 	for i := range header.Gates {
 		idx := fmt.Sprintf("%d", i+1)
-		if !hasPassingValidated(events, task, idx, tree, latest) {
-			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for gate %s on tree %s after the latest finished event; run: flywheel validate %s", idx, tree, task)}, nil
+		if !hasPassingValidated(events, task, idx, tree, after) {
+			return false
 		}
 	}
 	for i := range header.LiveGates {
 		n := i + 1
 		idx := fmt.Sprintf("live%d", n)
-		if !hasPassingValidated(events, task, idx, tree, latest) {
-			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for live-gate %d on tree %s after the latest finished event; run: flywheel validate %s --live", n, tree, task)}, nil
+		if !hasPassingValidated(events, task, idx, tree, after) {
+			return false
 		}
 	}
-	if !hasCleanOwnsChecked(events, task, tree, latest) {
-		return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no clean owns_checked for tree %s after the latest finished event; run: flywheel validate %s", tree, task)}, nil
+	return hasCleanOwnsChecked(events, task, tree, after)
+}
+
+// readingsRefusal is today's T3 refusal for a pass with no complete reading on
+// tree: the first gate, live-gate or owns_checked that is missing. It is
+// returned unchanged when no other tree qualifies for the issue #218
+// relaxation.
+func readingsRefusal(events []Event, header BriefHeader, task, tree string, after time.Time) RuleRefusal {
+	for i := range header.Gates {
+		idx := fmt.Sprintf("%d", i+1)
+		if !hasPassingValidated(events, task, idx, tree, after) {
+			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for gate %s on tree %s after the latest finished event; run: flywheel validate %s", idx, tree, task)}
+		}
 	}
-	return RuleRefusal{}, nil
+	for i := range header.LiveGates {
+		n := i + 1
+		idx := fmt.Sprintf("live%d", n)
+		if !hasPassingValidated(events, task, idx, tree, after) {
+			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for live-gate %d on tree %s after the latest finished event; run: flywheel validate %s --live", n, tree, task)}
+		}
+	}
+	return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no clean owns_checked for tree %s after the latest finished event; run: flywheel validate %s", tree, task)}
+}
+
+// relaxedReadingTree implements the issue #218 relaxation: when the current
+// tree has no complete reading, accept the most recent passing reading on some
+// other tree T whose diff from the current tree lies entirely outside the
+// unit's owns. All of a task's accepted readings must come from the same T.
+func relaxedReadingTree(wd string, events []Event, header BriefHeader, task, tree string, after time.Time) (string, bool, error) {
+	cands := map[string]time.Time{}
+	for _, e := range events {
+		if e.Task != task || e.Tree == "" || e.Tree == tree {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, e.TS)
+		if err != nil || !t.After(after) {
+			continue
+		}
+		qualifies := e.Kind == "validated" && e.Reason != "host-blocked" && e.RC != nil && *e.RC == 0 ||
+			e.Kind == "owns_checked" && len(e.Outside) == 0
+		if qualifies && t.After(cands[e.Tree]) {
+			cands[e.Tree] = t
+		}
+	}
+	type cand struct {
+		tree string
+		at   time.Time
+	}
+	order := make([]cand, 0, len(cands))
+	for tr, at := range cands {
+		order = append(order, cand{tr, at})
+	}
+	sort.SliceStable(order, func(i, j int) bool { return order[i].at.After(order[j].at) })
+	for _, c := range order {
+		if !allReadings(events, header, task, c.tree, after) {
+			continue
+		}
+		if !treeExists(wd, c.tree) {
+			continue
+		}
+		ok, err := diffOutsideOwns(wd, c.tree, tree, header.Owns)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			return c.tree, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// diffOutsideOwns reports whether every path that differs between the two tree
+// ids lies outside owns. The comparison is a read-only git diff --name-only
+// between two tree ids; the shared git index is never touched (issue #218).
+func diffOutsideOwns(wd, from, to string, owns []string) (bool, error) {
+	out, err := gitRead(wd, []string{"diff", "--name-only", from, to})
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if p := strings.TrimSpace(line); p != "" && ownsContains(owns, p) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// treeExists reports whether the named git object exists in the repository at
+// wd. A tree an old reading names may have been garbage-collected; a reading on
+// a tree that cannot be examined never qualifies (issue #218).
+func treeExists(wd, tree string) bool {
+	_, err := gitRead(wd, []string{"cat-file", "-e", tree})
+	return err == nil
 }
 
 // latestFinished returns the latest finished event's timestamp for task, or

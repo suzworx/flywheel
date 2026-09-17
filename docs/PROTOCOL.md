@@ -238,7 +238,17 @@ gates (exit 5) without touching the log's legality.
   pass` inspection) needs, for the *same git tree hash* the unit actually built: a passing
   `validated` event from the supervisor for **every** gate the current attempt's prompt declares,
   and a clean (`outside`-empty) `owns_checked` — both recorded after the latest `finished` event
-  that precedes the check. "The current attempt's prompt" is `AttemptBrief`'s result (issue #133):
+  that precedes the check. On a shared working tree the hash can move between `validate` and
+  `inspect` because other units keep writing, so the rule is relaxed (issue #218): when no reading
+  exists on the current tree, the reading may be taken on another tree `T` whose difference from
+  the current tree lies entirely **outside the unit**'s `owns:` — every one of the task's readings
+  must come from that same `T`, and the recorded `inspected` event's note then names `T` (`; reading
+  from tree <T> (diff outside owns)`). This is sound because every file the unit owns is
+  byte-identical between the measured tree and the inspected one, so the unit's own work *was*
+  measured; it costs a little because a gate broader than the owned files could be broken by a
+  neighbour's later change, and T3 accepts that risk deliberately — the alternative is that correct
+  work cannot land at all. That is not a licence to put whole-workspace gates on narrow units. "The
+  current attempt's prompt" is `AttemptBrief`'s result (issue #133):
   the base brief plus, when the current attempt dispatched a different file (a correction delta),
   that file's `gate:` lines replacing the base's and its `owns:` unioned with the base's — an
   `amended` event replaces which brief counts as the base outright. `owns:` entries are matched as

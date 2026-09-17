@@ -2,8 +2,10 @@ package flywheel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -222,5 +224,167 @@ func TestInspectReworkThenPassSameSession(t *testing.T) {
 	}
 	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
 		t.Fatalf("InspectTask() pass with the same inspector session refused: %v", err)
+	}
+}
+
+// TestInspectPassOnOtherTreeOutsideOwns checks the issue #218 relaxation: a
+// reading on tree T, then a change to a file the unit does not own — the pass
+// is accepted and the inspected note names T.
+func TestInspectPassOnOtherTreeOutsideOwns(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	measured, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	want := "reading from tree " + measured + " (diff outside owns)"
+	for _, e := range evs {
+		if e.Kind == "inspected" && !strings.Contains(e.Note, want) {
+			t.Errorf("inspected note = %q, want it to name the measured tree %s", e.Note, measured)
+		}
+	}
+}
+
+// TestInspectPassRefusedWhenOwnedFileChanged is the regression guard for the
+// issue #218 relaxation: a change to a file the unit does own must be refused
+// with today's T3 message, never excused.
+func TestInspectPassRefusedWhenOwnedFileChanged(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	current, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass after an owned file changed")
+	}
+	if got := refusalRule(t, err); got != "T3" {
+		t.Errorf("rule = %q, want T3", got)
+	}
+	want := fmt.Sprintf("no passing supervisor validated reading for gate 1 on tree %s after the latest finished event; run: flywheel validate T1", current)
+	var r *RuleRefusal
+	if !errors.As(err, &r) {
+		t.Fatalf("error %v is not a RuleRefusal", err)
+	}
+	if got := r.Fix; got != want {
+		t.Errorf("T3 fix = %q, want today's message %q", got, want)
+	}
+}
+
+// TestInspectCurrentTreeNoteKeepsOperatorNote checks that a reading on the
+// current tree still passes with no relaxation suffix: the note is exactly the
+// operator's.
+func TestInspectCurrentTreeNoteKeepsOperatorNote(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1", Note: "looks good"}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "inspected" && e.Note != "looks good" {
+			t.Errorf("inspected note = %q, want %q with no relaxation suffix", e.Note, "looks good")
+		}
+	}
+}
+
+// TestInspectPassRefusedSplitAcrossTrees checks that readings split across two
+// different trees are refused: no single tree holds every gate and the clean
+// owns_checked, so neither can be the tree the pass is evidence about.
+func TestInspectPassRefusedSplitAcrossTrees(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\none\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	ta, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	tb, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: ta, RC: &rc}); err != nil {
+		t.Fatalf("AppendEvent() validated error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tb}); err != nil {
+		t.Fatalf("AppendEvent() owns_checked error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass with readings split across two trees")
+	}
+	if got := refusalRule(t, err); got != "T3" {
+		t.Errorf("rule = %q, want T3", got)
+	}
+}
+
+// TestInspectPassRefusedByLaterFinished checks that a finished event after the
+// reading still invalidates it, exactly as before the issue #218 relaxation.
+func TestInspectPassRefusedByLaterFinished(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-30T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r2", Session: "w1", RC: &rc}); err != nil {
+		t.Fatalf("AppendEvent() finished error = %v", err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass after a later finished event")
+	}
+	if got := refusalRule(t, err); got != "T3" {
+		t.Errorf("rule = %q, want T3", got)
 	}
 }
