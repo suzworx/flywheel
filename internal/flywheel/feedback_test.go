@@ -239,6 +239,105 @@ func TestWriteLearningsFileRegeneratesMarkedDotFile(t *testing.T) {
 	}
 }
 
+func TestWriteLearningsFileLeavesReplacedRootFile(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "learnings.md")
+	marked := []byte("# Learnings\n" + learningsMarker + "\nstale generated copy\n")
+	if err := os.WriteFile(old, marked, 0o644); err != nil {
+		t.Fatalf("write marked root copy: %v", err)
+	}
+	replacement := filepath.Join(dir, "replacement.md")
+	if err := os.WriteFile(replacement, []byte("hand-maintained notes\n"), 0o644); err != nil {
+		t.Fatalf("write replacement: %v", err)
+	}
+	rfi, err := os.Stat(replacement)
+	if err != nil {
+		t.Fatalf("stat replacement: %v", err)
+	}
+	orig := lstatFile
+	lstatFile = func(path string) (os.FileInfo, error) {
+		if path == old {
+			return rfi, nil
+		}
+		return os.Lstat(path)
+	}
+	defer func() { lstatFile = orig }()
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	if err := WriteLearningsFile(dir, views); err != nil {
+		t.Fatalf("WriteLearningsFile() error = %v", err)
+	}
+	got, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatalf("read root copy: %v", err)
+	}
+	if string(got) != string(marked) {
+		t.Errorf("replaced root copy was deleted or changed to %q, want %q left alone", got, marked)
+	}
+}
+
+func TestWriteLearningsFileSucceedsWithUnreadableRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "learnings.md")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root learnings path: %v", err)
+	}
+	if _, err := CheckLearningsOwned(dir); err == nil {
+		t.Fatal("CheckLearningsOwned() succeeded, want a refusal on an unreadable root file")
+	}
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	if err := WriteLearningsFile(dir, views); err != nil {
+		t.Fatalf("WriteLearningsFile() error = %v, want success with an unreadable root file", err)
+	}
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		t.Errorf("root path %s was disturbed (stat err=%v)", root, err)
+	}
+	dot := filepath.Join(dir, ".flywheel", "learnings.md")
+	got, err := os.ReadFile(dot)
+	if err != nil {
+		t.Fatalf("read .flywheel/learnings.md: %v", err)
+	}
+	if !strings.Contains(string(got), "Terse") {
+		t.Errorf(".flywheel/learnings.md lost the learning:\n%s", got)
+	}
+}
+
+func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
+	dir := t.TempDir()
+	dot := filepath.Join(dir, ".flywheel", "learnings.md")
+	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel: %v", err)
+	}
+	marked := []byte("# Learnings\n" + learningsMarker + "\nstale\n")
+	if err := os.WriteFile(dot, marked, 0o644); err != nil {
+		t.Fatalf("write marked dot file: %v", err)
+	}
+	other := filepath.Join(dir, "other.md")
+	if err := os.WriteFile(other, []byte("another writer's file\n"), 0o644); err != nil {
+		t.Fatalf("write other file: %v", err)
+	}
+	ofi, err := os.Stat(other)
+	if err != nil {
+		t.Fatalf("stat other file: %v", err)
+	}
+	orig := lstatFile
+	lstatFile = func(path string) (os.FileInfo, error) { return ofi, nil }
+	defer func() { lstatFile = orig }()
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	err = WriteLearningsFile(dir, views)
+	if err == nil {
+		t.Fatal("WriteLearningsFile() succeeded, want a refusal when the .flywheel file changed")
+	} else if !strings.Contains(err.Error(), "another writer") {
+		t.Errorf("refusal %q does not say the file changed hands", err)
+	}
+	got, rerr := os.ReadFile(dot)
+	if rerr != nil {
+		t.Fatalf("read dot file: %v", rerr)
+	}
+	if string(got) != string(marked) {
+		t.Errorf("dot file changed to %q, want %q byte-for-byte", got, marked)
+	}
+}
+
 func TestSanitise(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`run D:\secret-co\proj\scripts\validate.sh now`, "run <path> now"},
