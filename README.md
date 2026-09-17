@@ -93,7 +93,11 @@ no tokens, and everything replays from the log after any crash.
 
 Frontier-quality results at a fraction of frontier cost — measured, not promised: the field run
 behind the skills used **99 worker runs across 44 tasks, up to 7 workers in parallel, and about
-90 % of all worker input across the field run served from the model cache**.
+90 % of all worker input across the field run served from the model cache**. `max_parallel` caps
+concurrent *workers*, not concurrent *gates*: units whose `gate:` lines name the same expensive
+command serialise on it, and the contention manufactures false findings (phantom timeouts) that
+read as code defects — `flywheel run` prints a shared-gate warning at dispatch whenever an
+in-flight unit declares the same gate line.
 
 The goal is to ship with no human in the loop. That is only safe if every step is **recorded** (an
 append-only event log), **measured** by the machine (gauges run by the CLI, never self-reported by

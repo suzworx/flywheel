@@ -332,6 +332,25 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, fmt.Errorf("parse prompt %s: %w", promptSrc, err)
 	}
 
+	// Shared gate (issue #223): a gate line this dispatch will run that an
+	// in-flight task's brief declares byte-identically means those units will
+	// run that command at once — max_parallel caps concurrent workers, not
+	// concurrent gates. A warning, never a refusal: sharing a gate is
+	// legitimate and often unavoidable, and the operator needs to know the
+	// real concurrency limit, not be stopped. The gates compared are the
+	// prompt about to be sent — promptHeader, the exact bytes attached, the
+	// same header recorded on the dispatched event — not AttemptBrief's
+	// resolution of the previous attempt, which has no dispatched event for
+	// this invocation yet and would describe a different prompt: a
+	// correction's delta replaces the base gates when it declares any, and a
+	// fresh dispatch sends the base brief as it is on disk now, edited or
+	// not. Recorded on the dispatched note below and printed as a progress
+	// line.
+	gates := gateContentions(dir, events, o.Task, dispatchGates(dir, events, o.Task, o.DeltaPath != "" || o.Resume, promptHeader))
+	for _, g := range gates {
+		progress(o.Progress, o.Task+" "+attempt+" "+gateContentionLine(g))
+	}
+
 	// The run file the dispatched event points at.
 	runsDir := filepath.Join(dir, ".flywheel", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -367,7 +386,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
-		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl),
+		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
 	}); err != nil {
 		return Result{}, err
@@ -895,6 +914,93 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost}, nil
 }
 
+// gateContention describes one shared-gate finding at dispatch: this task's
+// gate-th gate line is byte-identical to one declared by an in-flight task,
+// so that unit and this one will run it at once and contend on it (issue
+// #223).
+type gateContention struct {
+	gate  int // 1-based index of this task's gate line
+	units int // number of in-flight tasks declaring the identical line
+}
+
+// dispatchGates returns the gate lines the dispatch about to start will run,
+// for the shared-gate comparison (issue #223): the prompt header's gates on a
+// fresh dispatch — the base brief's own, edited or not, since that is the
+// prompt sent — and on a correction the delta's gates when the delta declares
+// any, otherwise the base brief's. The last branch matches AttemptBrief's
+// merge rule exactly: a delta's gates replace the base gates when it declares
+// any, and the base gates stand when it declares none. The base brief is
+// resolved the same way AttemptBrief resolves it, from the latest
+// planned-or-amended event's recorded header when it carries one, the file at
+// its path otherwise (issue #259). Deriving the set from the prompt about to
+// be sent rather than from AttemptBrief's resolution of the previous attempt
+// keeps the warning about the command the worker will actually run.
+func dispatchGates(dir string, events []Event, task string, correction bool, prompt BriefHeader) []string {
+	if !correction || len(prompt.Gates) > 0 {
+		return prompt.Gates
+	}
+	basePath, _, baseEv := latestBaseBriefAndAttempt(events, task)
+	if basePath == "" {
+		return nil
+	}
+	base, err := briefHeaderAt(dir, basePath, baseEv)
+	if err != nil {
+		return nil
+	}
+	return base.Gates
+}
+
+// gateContentions returns one entry per gate line this task declares that an
+// in-flight task's brief declares byte-identically, in gate order, or nil.
+// In-flight means a derived status of dispatched or running, the same window
+// the owns and exclusive checks guard: that worker is still executing, so it
+// is still running the gate. A task whose brief cannot be read contributes
+// nothing, exactly as it does for owns. The comparison is deliberately
+// byte-identical: normalising or parsing the shell command to detect
+// "similar" gates is a guess, and a wrong warning is worse than none.
+func gateContentions(dir string, events []Event, task string, gates []string) []gateContention {
+	if len(gates) == 0 {
+		return nil
+	}
+	st := Derive(events)
+	status := make(map[string]string, len(st.Tasks))
+	for _, ts := range st.Tasks {
+		status[ts.ID] = ts.Status
+	}
+	var out []gateContention
+	for i, gate := range gates {
+		units := 0
+		for _, other := range inFlightOwners(events, task) {
+			switch status[other] {
+			case "dispatched", "running":
+			default:
+				continue
+			}
+			header, _, err := AttemptBrief(dir, events, other)
+			if err != nil {
+				continue
+			}
+			for _, g := range header.Gates {
+				if g == gate {
+					units++
+					break
+				}
+			}
+		}
+		if units > 0 {
+			out = append(out, gateContention{gate: i + 1, units: units})
+		}
+	}
+	return out
+}
+
+// gateContentionLine renders one shared-gate warning the way the operator
+// must read it: which gate line, and how many in-flight units will run it at
+// once (issue #223).
+func gateContentionLine(g gateContention) string {
+	return fmt.Sprintf("gate %d is shared with %d in-flight units; they will contend", g.gate, g.units)
+}
+
 // ownsCollision describes one owns: overlap between the task being dispatched
 // and an in-flight task: the other task, its derived status, and the
 // colliding paths.
@@ -1072,14 +1178,19 @@ func exclusiveCollisionWith(dir string, events []Event, task string, names []str
 // and the owns-overlap record when --allow-overlap crossed an in-flight task's
 // owns: so a deliberate overlap stays visible in the ledger (issue #164). An
 // exclusive resource crossed under --allow-overlap is recorded the same way
-// (issue #220).
-func dispatchedNote(policySHA string, overlap *ownsCollision, excl *exclusiveCollision) string {
+// (issue #220), and every shared gate (issue #223) is recorded the same way
+// too: the operator must see in the ledger which gates the dispatched unit
+// will contend on, even though the dispatch is never refused for them.
+func dispatchedNote(policySHA string, overlap *ownsCollision, excl *exclusiveCollision, gates []gateContention) string {
 	note := "policy sha256=" + policySHA
 	if overlap != nil {
 		note += "; owns-overlap: " + strings.Join(overlap.paths, ", ") + " with " + overlap.task
 	}
 	if excl != nil {
 		note += "; exclusive-overlap: " + excl.name + " with " + excl.task
+	}
+	for _, g := range gates {
+		note += "; shared-gate: " + gateContentionLine(g)
 	}
 	return note
 }

@@ -58,6 +58,10 @@ You never record gauge readings, inspections or audits (a worker never records t
   `--auto`, `--format json`, closed stdin, one run file per attempt. Never dispatch with stdin
   open.
 - Ready filter before every dispatch: `needs:` landed, `owns:` disjoint, no shared choke point.
+  `max_parallel` caps concurrent workers, not concurrent gates: units whose `gate:` lines name the
+  same expensive command serialise on it, so treat `flywheel run`'s shared-gate warning as the real
+  concurrency limit — the contention manufactures false findings (phantom timeouts) that look like
+  code defects.
 - A silent run is not a stall until stdin, then the opencode log, are checked.
 - Never kill opencode processes by name; on Windows that can kill OpenCode Desktop. Stop your own
   dispatch by its `--title` PID only, and only when classified as a read loop or off-course.
