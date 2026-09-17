@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,6 +78,32 @@ func TestDirFlagsReachEveryRegistryCommand(t *testing.T) {
 		}
 		if got := optionDir(o); got != want {
 			t.Errorf("%s: --dir %s ignored by bound options (got %q)", name, want, got)
+		}
+	}
+}
+
+// TestClaimEditRefusesUnboundedPaths checks claim-edit's argument check
+// refuses any claim path that is not a literal file, with the message naming
+// the offending pattern: a wildcard or directory prefix would let ownsContains
+// exempt a whole tree, and a pattern cannot be bound to one content hash —
+// a claim must name the files actually edited (issue #258).
+func TestClaimEditRefusesUnboundedPaths(t *testing.T) {
+	for _, p := range []string{"*", "a/*.go", "dir/", "a?b", "[ab]c"} {
+		got := claimPathError(p)
+		if got == "" {
+			t.Errorf("claimPathError(%q) = empty, want a refusal naming the pattern", p)
+			continue
+		}
+		if !strings.Contains(got, p) {
+			t.Errorf("claimPathError(%q) = %q, want it to name the offending pattern", p, got)
+		}
+		if !strings.Contains(got, "files actually edited") {
+			t.Errorf("claimPathError(%q) = %q, want it to say claims must name the files actually edited", p, got)
+		}
+	}
+	for _, p := range []string{"README.md", "a/b.go", "docs/PROTOCOL.md"} {
+		if got := claimPathError(p); got != "" {
+			t.Errorf("claimPathError(%q) = %q, want empty (a literal path is claimable)", p, got)
 		}
 	}
 }

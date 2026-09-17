@@ -554,6 +554,18 @@ func shaOf(path string, t *testing.T) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// claimBaselineOf returns path -> fileSHA(dir, path) for each claimed path:
+// the content binding claim-edit records on a lead_edit event, so the owns
+// check can verify the claim against the current content (issue #258).
+func claimBaselineOf(t *testing.T, dir string, paths ...string) map[string]string {
+	t.Helper()
+	base := map[string]string{}
+	for _, p := range paths {
+		base[p] = fileSHA(dir, p)
+	}
+	return base
+}
+
 // dispatchedWithBaseline appends a dispatched event carrying a baseline of
 // every currently dirty path, the way run.go records one at dispatch.
 func dispatchedWithBaseline(t *testing.T, dir string) {
@@ -2086,7 +2098,7 @@ func TestValidateLeadEditClaimsLeadEdit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("lead's mid-wave edit\n"), 0o644); err != nil {
 		t.Fatalf("write b.txt: %v", err)
 	}
-	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}, Note: "recorded a learning while T1 ran"}); err != nil {
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}, Baseline: claimBaselineOf(t, dir, "b.txt"), Note: "recorded a learning while T1 ran"}); err != nil {
 		t.Fatalf("AppendEvent() lead_edit error = %v", err)
 	}
 	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
@@ -2160,7 +2172,7 @@ func TestValidateLeadEditWorkerSessionDoesNotExcuse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("edit\n"), 0o644); err != nil {
 		t.Fatalf("write b.txt: %v", err)
 	}
-	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "w1", Owns: []string{"b.txt"}}); err != nil {
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "w1", Owns: []string{"b.txt"}, Baseline: claimBaselineOf(t, dir, "b.txt")}); err != nil {
 		t.Fatalf("AppendEvent() lead_edit error = %v", err)
 	}
 	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
@@ -2191,7 +2203,7 @@ func TestValidateLeadEditAfterReadingDoesNotExcuse(t *testing.T) {
 		t.Fatalf("write b.txt: %v", err)
 	}
 	future := time.Now().Add(time.Hour).Format(time.RFC3339Nano)
-	if err := AppendEvent(dir, Event{TS: future, Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}}); err != nil {
+	if err := AppendEvent(dir, Event{TS: future, Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}, Baseline: claimBaselineOf(t, dir, "b.txt")}); err != nil {
 		t.Fatalf("AppendEvent() lead_edit error = %v", err)
 	}
 	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
@@ -2224,7 +2236,7 @@ func TestValidateLeadEditWrongPathDoesNotExcuse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a", "c.go"), []byte("package a\n"), 0o644); err != nil {
 		t.Fatalf("write a/c.go: %v", err)
 	}
-	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"a/b.go"}}); err != nil {
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"a/b.go"}, Baseline: claimBaselineOf(t, dir, "a/b.go")}); err != nil {
 		t.Fatalf("AppendEvent() lead_edit error = %v", err)
 	}
 	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
@@ -2239,5 +2251,135 @@ func TestValidateLeadEditWrongPathDoesNotExcuse(t *testing.T) {
 	}
 	if len(res.Attributed) != 0 {
 		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditClaimStopsWhenContentChanged is the regression guard
+// for issue #258: a claim covers a path only while the path's current content
+// still hashes to the value the claim recorded. The first reading is clean;
+// the path then changes again, and a second reading reports it outside — the
+// lead declared one edit, never a permanent exemption for the path.
+func TestValidateLeadEditClaimStopsWhenContentChanged(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("lead's mid-wave edit\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"b.txt"}, Baseline: claimBaselineOf(t, dir, "b.txt")}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Fatalf("first reading OwnsOK/OK = %v/%v, want true/true; outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if len(res.Attributed) != 1 || res.Attributed[0] != "b.txt -> lead lead-1" {
+		t.Fatalf("first reading attributed = %v, want [b.txt -> lead lead-1]", res.Attributed)
+	}
+	// Someone edits b.txt again: the claim was bound to the content declared
+	// at claim time, so it must no longer cover the path.
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("someone else's later edit\n"), 0o644); err != nil {
+		t.Fatalf("rewrite b.txt: %v", err)
+	}
+	res, err = ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() second reading error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("second reading OwnsOK/OK = %v/%v, want false/false (the content changed after the claim)", res.OwnsOK, res.OK())
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "b.txt" {
+		t.Errorf("second reading outside = %v, want [b.txt]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("second reading attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditDeletionMarkerExcusesAbsentPath checks a claim that
+// records a deletion marker ("deleted") excuses a path while it is still
+// absent, and stops excusing it once the file reappears: "I deleted this
+// file" is an edit like any other, bound to the state it declared (issue
+// #258).
+func TestValidateLeadEditDeletionMarkerExcusesAbsentPath(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gone.txt"), []byte("committed\n"), 0o644); err != nil {
+		t.Fatalf("write gone.txt: %v", err)
+	}
+	git(t, dir, []string{"add", "gone.txt"})
+	git(t, dir, []string{"commit", "-m", "add gone.txt"})
+	dispatchedWithBaseline(t, dir)
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatalf("remove gone.txt: %v", err)
+	}
+	if err := AppendEvent(dir, Event{Kind: "lead_edit", Session: "lead-1", Owns: []string{"gone.txt"}, Baseline: claimBaselineOf(t, dir, "gone.txt")}); err != nil {
+		t.Fatalf("AppendEvent() lead_edit error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Fatalf("OwnsOK/OK = %v/%v, want true/true (the deletion is claimed); outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if len(res.Attributed) != 1 || res.Attributed[0] != "gone.txt -> lead lead-1" {
+		t.Errorf("attributed = %v, want [gone.txt -> lead lead-1]", res.Attributed)
+	}
+	// The file reappears: the deletion marker no longer covers it.
+	if err := os.WriteFile(filepath.Join(dir, "gone.txt"), []byte("back again\n"), 0o644); err != nil {
+		t.Fatalf("recreate gone.txt: %v", err)
+	}
+	res, err = ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() second reading error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("second reading OwnsOK/OK = %v/%v, want false/false (the file reappeared)", res.OwnsOK, res.OK())
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "gone.txt" {
+		t.Errorf("second reading outside = %v, want [gone.txt]", res.Outside)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("second reading attributed = %v, want nothing", res.Attributed)
+	}
+}
+
+// TestValidateLeadEditAppendedDuringPassIsHonored checks the owns check
+// re-reads the event log immediately before attributing: a lead_edit appended
+// while the gates ran — after ValidateTask's initial read — still covers the
+// path for this reading (issue #258).
+func TestValidateLeadEditAppendedDuringPassIsHonored(t *testing.T) {
+	content := "lead's mid-wave edit\n"
+	sum := sha256.Sum256([]byte(content))
+	claim := fmt.Sprintf(`{"kind":"lead_edit","session":"lead-1","ts":"2026-09-12T01:30:00Z","owns":["b.txt"],"baseline":{"b.txt":"%s"}}`, hex.EncodeToString(sum[:]))
+	gate := fmt.Sprintf(`printf '%%s\n' '%s' >> .flywheel/events.jsonl`, claim)
+	dir, err := initTask(t, []string{gate})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	dispatchedWithBaseline(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK || !res.OK() {
+		t.Errorf("OwnsOK/OK = %v/%v, want true/true (the mid-pass claim must cover this reading); outside = %v", res.OwnsOK, res.OK(), res.Outside)
+	}
+	if len(res.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing", res.Outside)
+	}
+	if len(res.Attributed) != 1 || res.Attributed[0] != "b.txt -> lead lead-1" {
+		t.Errorf("attributed = %v, want [b.txt -> lead lead-1]", res.Attributed)
 	}
 }

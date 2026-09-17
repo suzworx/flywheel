@@ -81,7 +81,9 @@ type GaugeResult struct {
 	// "<worktree path>: <path> -> <task>" (issue #200): the lead's
 	// stray-file review can skip it, but it never counts toward OwnsOK's
 	// outside set. A path no in-flight task owns but a lead_edit event covers
-	// is attributed "<path> -> lead <session>" instead (issue #228).
+	// is attributed "<path> -> lead <session>" instead (issue #228), and the
+	// claim covers it only while the path's content still hashes to the value
+	// the claim recorded (issue #258).
 	Attributed []string
 	// Files lists the measured shape of every changed path inside the unit's
 	// owns, sorted by path; paths outside owns and flywheel's own bookkeeping
@@ -321,7 +323,10 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 // <task>" instead. A candidate path no in-flight task owns is attributed
 // "<path> -> lead <session>" when a lead_edit event declared for it by a
 // non-worker session before this reading covers it (issue #228): the lead's
-// own mid-wave edit, declared after the fact, never a worker's stray.
+// own mid-wave edit, declared after the fact, never a worker's stray. A
+// claim covers p only while p's current content still hashes to the value
+// recorded on the event (or the path is still absent, for a deletion
+// marker): the lead declared that edit, not the file forever (issue #258).
 func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
@@ -339,7 +344,16 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 			candidates = append(candidates, p)
 		}
 	}
-	attributed, outside := attributeOutside(dir, task, events, candidates, time.Now())
+	// Re-read the log here, immediately before the attribution: gates take
+	// minutes, and a lead_edit appended while they ran must qualify for this
+	// reading (issue #258). The fresh slice feeds the claim lookup only; the
+	// snapshot passed in stays authoritative for the attempt and brief
+	// resolution above, which must be stable across the pass.
+	fresh, err := ReadEvents(dir)
+	if err != nil {
+		return GaugeResult{}, fmt.Errorf("re-read %s before owns check: %w", dir, err)
+	}
+	attributed, outside := attributeOutside(dir, task, wd, events, fresh, candidates, now())
 	if snap := worktreesFor(events, task); snap != nil {
 		wtPaths := make([]string, 0, len(snap))
 		for p := range snap {
@@ -411,9 +425,12 @@ func inFlightOwners(events []Event, task string) []string {
 // #228). Owners are tried in sorted order, so a path two in-flight tasks both
 // claim attributes to the alphabetically first. A task whose brief cannot be
 // read is skipped rather than erroring: an unreadable brief is never treated
-// as an owner. reading is the moment this owns check runs: a lead_edit only
-// covers readings taken strictly after it.
-func attributeOutside(dir, task string, events []Event, candidates []string, reading time.Time) (attributed, outside []string) {
+// as an owner. events is the pass's snapshot, kept stable for the owner and
+// brief resolution; fresh is the log re-read right before this reading, used
+// for the lead_edit claim lookup only, so a claim appended while the gates
+// ran still qualifies (issue #258). reading is the moment this owns check
+// runs: a lead_edit only covers readings taken strictly after it.
+func attributeOutside(dir, task, wd string, events, fresh []Event, candidates []string, reading time.Time) (attributed, outside []string) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -431,7 +448,7 @@ func attributeOutside(dir, task string, events []Event, candidates []string, rea
 			}
 		}
 		if owner == "" {
-			if lead := leadClaimingSession(events, task, p, reading); lead != "" {
+			if lead := leadClaimingSession(wd, fresh, task, p, reading); lead != "" {
 				owner = "lead " + lead
 			}
 		}
@@ -446,18 +463,27 @@ func attributeOutside(dir, task string, events []Event, candidates []string, rea
 }
 
 // leadClaimingSession returns the session of the lead_edit event covering
-// path p for this reading, or "" when no claim does. Two guards, both
-// required (issue #228): the claiming session must not be a worker session of
-// the task being validated (workerSessionOf, the same worker-event set
-// sessionClash uses for T4), and the claim's TS must be strictly before the
+// path p for this reading, or "" when no claim does. Three guards, all
+// required (issues #228, #258): the declaring session must not be a worker
+// session of the task being validated (workerSessionOf, the same worker-event
+// set sessionClash uses for T4); the claim's TS must be strictly before the
 // reading's own time — a claim never retroactively blesses a stray an earlier
-// validation already reported. Matching reuses ownsContains, the same rule
-// the sibling-task attribution uses. When several claims cover p, the most
-// recent one wins.
-func leadClaimingSession(events []Event, task, p string, reading time.Time) string {
+// validation already reported; and the claim must still be bound to the
+// path's content — e.Baseline[p] records the sha256 claim-edit read at claim
+// time (or "deleted" when the path was absent then), and p is covered only
+// while fileSHA(wd, p) still equals it. A claim with no recorded hash for p
+// binds nothing and is ignored: the lead declared one edit, not a permanent
+// exemption for the path (issue #258). Matching reuses ownsContains, the same
+// rule the sibling-task attribution uses. When several claims cover p, the
+// most recent one wins.
+func leadClaimingSession(wd string, events []Event, task, p string, reading time.Time) string {
 	sess := ""
 	for _, e := range events {
 		if e.Kind != "lead_edit" || !ownsContains(e.Owns, p) {
+			continue
+		}
+		want, ok := e.Baseline[p]
+		if !ok || fileSHA(wd, p) != want {
 			continue
 		}
 		if workerSessionOf(task, events, e.Session) {
