@@ -28,18 +28,26 @@ type BriefHeader struct {
 	SHA256    string
 }
 
-// ParseBriefHeader reads the header block at the top of a brief: the lines
-// before the first blank line that is followed by a '#' heading, or the first
-// 40 lines, whichever comes first. owns values are comma-separated and may
-// continue on indented following lines; a trailing parenthesised annotation
-// such as "(new)" is stripped from each entry. gate lines are one command per
-// line and keep their order. The returned header carries the SHA-256 of the
-// whole brief file.
+// ParseBriefHeader reads the file at path and parses its header block; it is
+// ParseBriefHeaderBytes after the read, the one parsing implementation.
 func ParseBriefHeader(path string) (BriefHeader, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return BriefHeader{}, err
 	}
+	return ParseBriefHeaderBytes(b)
+}
+
+// ParseBriefHeaderBytes parses the header block at the top of a brief's bytes:
+// the lines before the first blank line that is followed by a '#' heading, or
+// the first 40 lines, whichever comes first. owns values are comma-separated
+// and may continue on indented following lines; a trailing parenthesised
+// annotation such as "(new)" is stripped from each entry. gate lines are one
+// command per line and keep their order. The returned header carries the
+// SHA-256 of the whole bytes, so a caller that already holds the exact bytes
+// it sent (a dispatch hashing its prompt) gets a header and a hash describing
+// the same immutable content.
+func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 	sum := sha256.Sum256(b)
 	h := BriefHeader{SHA256: hex.EncodeToString(sum[:])}
 	raw := strings.Split(string(b), "\n")

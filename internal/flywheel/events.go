@@ -41,6 +41,13 @@ type Event struct {
 	Brief   string   `json:"brief,omitempty"`
 	Needs   []string `json:"needs,omitempty"`
 	Owns    []string `json:"owns,omitempty"`
+	// Header is the parsed brief header (owns, needs, needs-state, gates,
+	// live-gates, exclusive, review, sha256) carried by planned, amended and
+	// dispatched events (issue #259): the gate set a pass is measured against
+	// lives in the append-only log, not in a mutable file on disk. It is
+	// authoritative over the brief file when present; Owns and Needs above
+	// remain as a summary for consumers that read them.
+	Header *BriefHeader `json:"header,omitempty"`
 	// Commit is a landed event's commit id (flywheel land --commit) and the
 	// HEAD commit of the workdir a validated/owns_checked reading was taken
 	// at (issue #196): "which commit" has one name in the ledger.

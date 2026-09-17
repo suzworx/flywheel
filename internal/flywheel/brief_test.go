@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -209,5 +210,27 @@ func TestParseBriefHeaderSHA256(t *testing.T) {
 func TestParseBriefHeaderMissingFile(t *testing.T) {
 	if _, err := ParseBriefHeader(filepath.Join(t.TempDir(), "nope.txt")); err == nil {
 		t.Error("ParseBriefHeader() accepted a missing file")
+	}
+}
+
+// TestParseBriefHeaderBytesMatchesFileParse checks the bytes-based parser is
+// the one implementation: ParseBriefHeaderBytes on a file's exact bytes
+// returns the same header — fields and SHA256 — as ParseBriefHeader on the
+// file itself, so a caller that already holds the bytes (a dispatch hashing
+// the prompt it sent) records a header and a hash describing the same content
+// (issue #259 correction).
+func TestParseBriefHeaderBytesMatchesFileParse(t *testing.T) {
+	content := "owns: a.go, shared.go (new)\nneeds: none\ngate: go build ./...\ngate: go test ./...\n\n# TASK: w259\n"
+	path := writeBrief(t, content)
+	fromFile, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	fromBytes, err := ParseBriefHeaderBytes([]byte(content))
+	if err != nil {
+		t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+	}
+	if !reflect.DeepEqual(fromFile, fromBytes) {
+		t.Errorf("ParseBriefHeaderBytes = %+v, want the file parse %+v", fromBytes, fromFile)
 	}
 }

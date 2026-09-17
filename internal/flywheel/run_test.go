@@ -133,6 +133,68 @@ func writeDelta(t *testing.T, dir, task string) {
 	}
 }
 
+// TestRunDispatchedCarriesPromptHeader checks the dispatched event records
+// the parsed header of the exact prompt it sent: the planned brief on a
+// fresh attempt, the delta on a correction (issue #259), so a later reader
+// measures the attempt against the ledger rather than the mutable file.
+func TestRunDispatchedCarriesPromptHeader(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	briefHeader, err := ParseBriefHeader(filepath.Join(dir, "b.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d1 Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d1 = e
+		}
+	}
+	if d1.Attempt != "r1" || d1.Header == nil {
+		t.Fatalf("dispatched r1 event = %+v, want a recorded header", d1)
+	}
+	if !reflect.DeepEqual(*d1.Header, briefHeader) {
+		t.Errorf("dispatched r1 header = %+v, want the brief's parsed header %+v", *d1.Header, briefHeader)
+	}
+	delta := filepath.Join(dir, "d.txt")
+	if err := os.WriteFile(delta, []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: delta\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", DeltaPath: delta}); err != nil {
+		t.Fatalf("delta Run() error = %v", err)
+	}
+	deltaHeader, err := ParseBriefHeader(delta)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	evs, err = ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d2 Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d2 = e
+		}
+	}
+	if d2.Attempt != "c1" || d2.Header == nil {
+		t.Fatalf("dispatched c1 event = %+v, want a recorded header", d2)
+	}
+	if !reflect.DeepEqual(*d2.Header, deltaHeader) {
+		t.Errorf("dispatched c1 header = %+v, want the delta's parsed header %+v", *d2.Header, deltaHeader)
+	}
+}
+
 // TestRunResumeModelGateRefusesUnapproved checks L-03: a resume naming a
 // model that differs from the worker's model and is not an approved
 // fallback is refused before any event is read (issue #23).
@@ -3108,5 +3170,103 @@ func TestDispatchLockReleaseDoesNotDeleteSuccessor(t *testing.T) {
 	line, _, _ := strings.Cut(string(b), "\n")
 	if line != tokenB {
 		t.Errorf("lock first line = %q after A's release, want B's token %q", line, tokenB)
+	}
+}
+
+// TestFreshDispatchHeaderUsedAfterDrift is the issue #259 correction's 🔴
+// guard: a brief edited on disk after its planned event but dispatched without
+// --strict-brief must be measured by its own dispatched header — the owns and
+// gates the worker was actually given — not by the stale planned header.
+// Without the fix, AttemptBrief returns the planned 1-gate header and
+// validation checks work nobody measured; with it, the fresh dispatch's
+// recorded header (2 gates, owns a.go and shared.go) wins.
+func TestFreshDispatchHeaderUsedAfterDrift(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	briefPath := filepath.Join(dir, "brief.txt")
+	if err := os.WriteFile(briefPath, []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	planned, err := ParseBriefHeader(briefPath)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt", Header: &planned}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	// The lead edits the brief on disk to add owns: shared.go and a second
+	// gate, recording nothing; a fresh dispatch without --strict-brief is
+	// given the edited prompt.
+	if err := os.WriteFile(briefPath, []byte("owns: a.go, shared.go\nneeds: none\ngate: exit 0\ngate: exit 0\n\n# TASK\n"), 0o644); err != nil {
+		t.Fatalf("edit brief: %v", err)
+	}
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Header == nil || len(d.Header.Gates) != 2 || len(d.Header.Owns) != 2 {
+		t.Fatalf("dispatched header = %+v, want 2 gates and owns a.go, shared.go (the edited prompt)", d.Header)
+	}
+	header, _, err := AttemptBrief(dir, evs, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(header.Gates) != 2 {
+		t.Errorf("AttemptBrief gates = %v, want the edited 2-gate set, not the planned 1-gate", header.Gates)
+	}
+	wantOwns := []string{"a.go", "shared.go"}
+	if len(header.Owns) != len(wantOwns) {
+		t.Fatalf("AttemptBrief owns = %v, want %v", header.Owns, wantOwns)
+	}
+	for i, w := range wantOwns {
+		if header.Owns[i] != w {
+			t.Errorf("owns[%d] = %q, want %q", i, header.Owns[i], w)
+		}
+	}
+}
+
+// TestRunDispatchedHeaderMatchesRecordedSHA256 is the issue #259 correction's
+// 🟡 guard: the header recorded on dispatched is parsed from the same bytes as
+// the recorded SHA256 (the prompt actually sent), so a concurrent editor
+// between the two reads can never make them disagree. ParseBriefHeaderBytes is
+// exercised directly in brief_test.go; here the dispatch must record a header
+// whose sha256 field equals its own SHA256.
+func TestRunDispatchedHeaderMatchesRecordedSHA256(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Header == nil {
+		t.Fatal("dispatched event carries no header")
+	}
+	if d.Header.SHA256 != d.SHA256 {
+		t.Errorf("header sha256 = %q, want it to equal the dispatched sha256 %q (same prompt bytes)", d.Header.SHA256, d.SHA256)
 	}
 }

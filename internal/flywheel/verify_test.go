@@ -825,3 +825,94 @@ func TestVerifyT3SameTimestampCorrectionBeforePassApplies(t *testing.T) {
 		t.Errorf("verify did not apply a preceding correction to a same-timestamp pass: %v", res.Items)
 	}
 }
+
+// TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch is the issue #259
+// correction's interaction guard: AttemptBrief now prefers a fresh attempt's
+// dispatched header, so ruleT3's historical pass must still be measured
+// against the header available when the pass was recorded — the prefix
+// events[:i+1] resolves only the dispatch that existed before that
+// inspection, never a later one. Pass 1 has a reading for gate 1 only; if it
+// were measured against the later r2's 2-gate header, T3 would fail it
+// missing gate 2. The later fresh dispatch must not drag the earlier pass
+// up to its own gate set.
+func TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	briefPath := filepath.Join(dir, "brief.txt")
+	header1, err := ParseBriefHeader(briefPath)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if len(header1.Gates) != 1 {
+		t.Fatalf("brief gates = %v, want 1", header1.Gates)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:30:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Session: "w1", Brief: "brief.txt", SHA256: briefSHA(t, briefPath), Header: &header1}); err != nil {
+		t.Fatalf("append dispatched r1: %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree1, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree1, RC: &rc, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append validated gate 1: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree1, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree1}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	// The brief is edited to two gates; the lead re-records it (so T1's hash
+	// check stays explained) and dispatches a fresh r2 carrying the 2-gate
+	// header — after the first pass, and irrelevant to it.
+	twoGates := "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\n\n# TASK: w259\n"
+	if err := os.WriteFile(briefPath, []byte(twoGates), 0o644); err != nil {
+		t.Fatalf("edit brief: %v", err)
+	}
+	header2, err := ParseBriefHeader(briefPath)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() after edit error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:30:00Z", Task: "T1", Kind: "amended", Brief: "brief.txt", Header: &header2}); err != nil {
+		t.Fatalf("append amended: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T02:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2", Session: "w2", Brief: "brief.txt", SHA256: briefSHA(t, briefPath), Header: &header2}); err != nil {
+		t.Fatalf("append dispatched r2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T02:00:01Z", Task: "T1", Kind: "finished", Attempt: "r2", Session: "w2", RC: &rc}); err != nil {
+		t.Fatalf("append finished r2: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\nchanged\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	tree2, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	for _, g := range []string{"1", "2"} {
+		if err := AppendEvent(dir, Event{TS: "2026-09-16T02:10:00Z", Task: "T1", Kind: "validated", Gate: g, Tree: tree2, RC: &rc, Persona: "supervisor"}); err != nil {
+			t.Fatalf("append validated gate %s: %v", g, err)
+		}
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T02:10:01Z", Task: "T1", Kind: "owns_checked", Tree: tree2, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T02:10:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i2", Persona: "inspector", Tree: tree2}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected FAIL %s: %s", item.Rule, item.Reason)
+			}
+		}
+	}
+}
