@@ -730,3 +730,98 @@ func TestVerifyT3PassSplitAcrossTrees(t *testing.T) {
 		t.Error("T3 accepted readings split across two different trees")
 	}
 }
+
+// TestVerifyT3SameTimestampCorrectionAfterPass is the tie-break guard for the
+// issue #252 fix: the ledger is append-only, so a correction dispatched after
+// a pass with the identical TS must not rewrite that pass's header. The pass
+// at index i is judged by events[:i+1]; the later c1 with the same timestamp
+// never enters its prefix, so its third gate does not apply.
+func TestVerifyT3SameTimestampCorrectionAfterPass(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree1, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	for _, g := range []string{"1", "2"} {
+		if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: g, Tree: tree1, RC: &rc, Persona: "supervisor"}); err != nil {
+			t.Fatalf("append validated gate %s: %v", g, err)
+		}
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree1, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree1}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	// The correction carries the identical TS as the pass above but is
+	// appended after it in the ledger, and adds a third gate.
+	delta := deltaPath(t, dir, "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\ngate: exit 0\n\n# TASK: delta\n")
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "dispatched", Attempt: "c1", Session: "w2", Brief: "delta.txt", SHA256: briefSHA(t, delta)}); err != nil {
+		t.Fatalf("append dispatched c1: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		for _, item := range res.Items {
+			if !item.Pass {
+				t.Errorf("unexpected FAIL %s: %s", item.Rule, item.Reason)
+			}
+		}
+	}
+}
+
+// TestVerifyT3SameTimestampCorrectionBeforePassApplies is the reverse of the
+// tie-break guard: a correction that precedes a pass in the ledger with the
+// same TS does apply to it. Without this, the guard above could be satisfied
+// by ignoring corrections altogether.
+func TestVerifyT3SameTimestampCorrectionBeforePassApplies(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree1, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	for _, g := range []string{"1", "2"} {
+		if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: g, Tree: tree1, RC: &rc, Persona: "supervisor"}); err != nil {
+			t.Fatalf("append validated gate %s: %v", g, err)
+		}
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree1, Persona: "supervisor"}); err != nil {
+		t.Fatalf("append owns_checked: %v", err)
+	}
+	// The correction precedes the pass with the same TS and adds a third gate.
+	delta := deltaPath(t, dir, "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\ngate: exit 0\n\n# TASK: delta\n")
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "dispatched", Attempt: "c1", Session: "w2", Brief: "delta.txt", SHA256: briefSHA(t, delta)}); err != nil {
+		t.Fatalf("append dispatched c1: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: tree1}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	found := false
+	for _, item := range res.Items {
+		if item.Rule == "T3" && !item.Pass {
+			found = true
+			if !strings.Contains(item.Reason, "gate 3") {
+				t.Errorf("T3 reason = %q, want the pass failing the correction's gate 3", item.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("verify did not apply a preceding correction to a same-timestamp pass: %v", res.Items)
+	}
+}

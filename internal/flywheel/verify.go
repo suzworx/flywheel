@@ -206,19 +206,29 @@ func amendedBetween(events []Event, task, ts string) bool {
 // does. Each inspection uses its own window, so a later correction attempt
 // does not invalidate an earlier legitimate pass. A pass is measured against
 // the brief header in force when it was recorded (issue #252): the header is
-// resolved from the events at or before the pass's TS, so a correction delta
-// that adds gates does not retroactively fail passes granted under the
+// resolved positionally from the events recorded up to and including the pass
+// (the log is append-only, so slice order is causal order), so a correction
+// delta that adds gates does not retroactively fail passes granted under the
 // earlier gate set.
 func ruleT3(dir, task string, events []Event) []VerifyItem {
 	if _, err := briefHeaderFor(dir, task, events); err != nil {
 		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}
 	}
 	var items []VerifyItem
-	for _, insp := range events {
+	for i, insp := range events {
 		if insp.Task != task || insp.Kind != "inspected" || insp.Verdict != "pass" {
 			continue
 		}
-		header, err := briefHeaderAt(dir, task, events, insp.TS)
+		// The header in force for this pass is what AttemptBrief saw over the
+		// events recorded up to and including it: events[:i+1]. Slice position
+		// is the causal order here, because the log is append-only and
+		// RFC3339Nano timestamps can repeat (imported or replayed logs); a
+		// timestamp filter would drag a later correction sharing the pass's TS
+		// into its header. latestFinishedBefore below deliberately stays
+		// timestamp-based: that is a chronological question ("what was the last
+		// finished event before this moment"), where timestamps are the right
+		// tool.
+		header, err := briefHeaderFor(dir, task, events[:i+1])
 		if err != nil {
 			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false, Reason: err.Error()})
 			continue
@@ -251,7 +261,11 @@ func ruleT3(dir, task string, events []Event) []VerifyItem {
 }
 
 // latestFinishedBefore returns the latest finished event's timestamp for task
-// that is strictly before ts, or the zero time when there is none.
+// that is strictly before ts, or the zero time when there is none. This stays
+// timestamp-based on purpose, unlike ruleT3's header resolution: it answers a
+// chronological question ("what was the last finished event before this
+// moment"), while which events had been recorded by a pass is a positional
+// question answered by the slice prefix.
 func latestFinishedBefore(events []Event, task, ts string) time.Time {
 	t0, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
@@ -274,25 +288,6 @@ func latestFinishedBefore(events []Event, task, ts string) time.Time {
 func briefHeaderFor(dir, task string, events []Event) (BriefHeader, error) {
 	header, _, err := AttemptBrief(dir, events, task)
 	return header, err
-}
-
-// briefHeaderAt resolves the brief header in force at the moment ts was
-// recorded (issue #252): AttemptBrief over the events whose TS is at or
-// before ts. An unparseable ts falls back to every event, the same no-window
-// reading latestFinishedBefore gives it; events whose own TS does not parse
-// are skipped, as the other rules skip them.
-func briefHeaderAt(dir, task string, events []Event, ts string) (BriefHeader, error) {
-	t0, err := time.Parse(time.RFC3339Nano, ts)
-	if err != nil {
-		return briefHeaderFor(dir, task, events)
-	}
-	upTo := make([]Event, 0, len(events))
-	for _, e := range events {
-		if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil && !t.After(t0) {
-			upTo = append(upTo, e)
-		}
-	}
-	return briefHeaderFor(dir, task, upTo)
 }
 
 // ruleT4 checks that no inspected event comes from a worker session.
