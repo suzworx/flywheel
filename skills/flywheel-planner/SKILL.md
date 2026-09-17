@@ -40,6 +40,14 @@ You do:
   the plan a `live-gate:` that runs the real path, not a mock. Forty-two units of mocked green is
   weaker evidence than one real turn — a unit whose deliverable is a provider-facing contract has
   no failing gate available to it on a mock, only on the real thing.
+- A unit that adds a **route** must also **own its entry point** — the nav, menu or link
+  that leads to it — and its gate must assert the route is reachable **by clicking from the
+  app root**, not merely that the route resolves. "Routed" and "reachable" are different
+  claims, and a plan that asks for one while reporting the other is how a feature ships
+  unusable.
+- Where the check cannot live in a unit because it is a property of the whole app, put it
+  in a `live-gate:` on **one** unit of the feature — that is what the lead's verification pass
+  is for. Reference `live-gate:` by name so a planner can find it.
 - Write a gate for a document as a **structure** check — every required heading present and a
   minimum line count — never only keywords, which a truncated tail can satisfy: a part-by-part
   overwrite leaves the last section only, and keywords that survive in it still pass.

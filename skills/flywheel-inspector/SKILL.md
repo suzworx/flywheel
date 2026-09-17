@@ -29,6 +29,13 @@ You do:
 - Apply the review traps: gate failures in unowned files, superuser-only passes, debug or
   test-only surfaces under a production flag, contract prose that disagrees with its tests, error
   paths that fall through, assumptions the worker never questioned.
+- Flag a test that reaches its target through a menu or a disclosure: it is evidence the
+  target may be buried, and worth flagging in review rather than passing — a test that
+  proves the structure it was written against, whatever that structure is.
+- When a unit adds a route, check by hand that there is a path to it from the app root,
+  and a way back. Green rendering tests do not answer either question — a rendered route
+  is not a reachable one, and a gate that resolves the route asserts nothing about
+  reachability.
 - Read the `file <path>: <n> lines` gauge readings on a document unit: that is where a
   part-by-part overwrite shows up. A document whose file is far shorter than the brief implies is
   a rework even with green gates — a keyword gate is satisfied by a truncated tail, the shape of
