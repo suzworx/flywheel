@@ -20,9 +20,11 @@ type LintResult struct {
 // skips the existence check; an entry ending in "/" must exist as a
 // directory. An entry containing '*', '?' or '[' is a pattern (the same
 // syntax ownsContains matches at validate time) and is checked with
-// filepath.Glob instead of os.Stat: no match is one problem, and a (new)
-// pattern skips the check like any other (new) entry. Warnings cover the
-// missing write rule and a missing needs line.
+// filepath.Glob instead of os.Stat: a pattern filepath.Glob rejects is
+// invalid syntax, while a valid pattern matching nothing is reported like a
+// missing path, with the (new) remedy. A (new) entry skips only the
+// existence check; a (new) pattern still has its syntax validated. Warnings
+// cover the missing write rule and a missing needs line.
 func LintBrief(dir, path string) (LintResult, error) {
 	var res LintResult
 	b, err := os.ReadFile(path)
@@ -48,14 +50,16 @@ func LintBrief(dir, path string) (LintResult, error) {
 		res.Problems = append(res.Problems, "missing owns: line")
 	}
 	for _, e := range entries {
-		if e.annotation == "new" {
-			continue
-		}
 		if isOwnsPattern(e.path) {
 			matches, err := filepath.Glob(filepath.Join(dir, e.path))
-			if err != nil || len(matches) == 0 {
+			if err != nil {
+				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s is invalid: %v; correct the pattern", e.path, err))
+			} else if e.annotation != "new" && len(matches) == 0 {
 				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file; if the unit creates it, annotate it: %s (new)", e.path, e.path))
 			}
+			continue
+		}
+		if e.annotation == "new" {
 			continue
 		}
 		st, err := os.Stat(filepath.Join(dir, e.path))
