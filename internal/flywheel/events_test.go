@@ -780,6 +780,51 @@ func TestWroteFieldRoundTrips(t *testing.T) {
 	}
 }
 
+// TestCommitFieldRoundTrips checks the event's commit field (issue #196)
+// round-trips through the log under the "commit" key and is omitted when
+// empty, and that an event carrying it validates.
+func TestCommitFieldRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-17T00:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: "abc123", Commit: "abc1234",
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:01Z", Task: "T2", Kind: "planned"}); err != nil {
+		t.Fatalf("AppendEvent() plain error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("ReadEvents() = %d events, want 2", len(evs))
+	}
+	if evs[0].Commit != "abc1234" {
+		t.Errorf("commit = %q, want abc1234", evs[0].Commit)
+	}
+	if evs[1].Commit != "" {
+		t.Errorf("plain event commit = %q, want empty", evs[1].Commit)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "validated", Gate: "1", Tree: "abc123", Commit: "abc1234"}); err != nil {
+		t.Errorf("Validate() rejected an event carrying commit: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("events.jsonl = %d lines, want 2", len(lines))
+	}
+	if !strings.Contains(lines[0], `"commit":"abc1234"`) {
+		t.Errorf("line 0 = %q, want commit:\"abc1234\"", lines[0])
+	}
+	if strings.Contains(lines[1], "commit") {
+		t.Errorf("line 1 = %q, want commit omitted when empty", lines[1])
+	}
+}
+
 func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	e := Event{

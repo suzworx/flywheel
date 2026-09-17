@@ -188,6 +188,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if err != nil {
 		return GaugeResult{}, err
 	}
+	commit := headCommit(wd)
 	evDir := filepath.Join(o.Dir, ".flywheel", "evidence", task, attempt)
 	if err := os.MkdirAll(evDir, 0o755); err != nil {
 		return GaugeResult{}, fmt.Errorf("create %s: %w", evDir, err)
@@ -201,7 +202,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
-		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, header.Owns, n, n, gate, false)
+		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false)
 		if err != nil {
 			return GaugeResult{}, err
 		}
@@ -215,7 +216,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if o.Live {
 		for i, gate := range header.LiveGates {
 			n := strconv.Itoa(i + 1)
-			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, header.Owns, "live"+n, "live-"+n, gate, true)
+			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true)
 			if err != nil {
 				return GaugeResult{}, err
 			}
@@ -225,7 +226,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			}
 		}
 	}
-	return finishValidate(o.Dir, wd, task, attempt, tree, header.Owns, header.NeedsState, events, res)
+	return finishValidate(o.Dir, wd, task, attempt, tree, commit, header.Owns, header.NeedsState, events, res)
 }
 
 // runAndRecordGate runs one declared gate — ordinary or live — through the
@@ -235,7 +236,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // validated event carrying gateID as its Gate field. live sets GateOut.Live
 // (issue #152); the recorded reading is otherwise identical to an ordinary
 // gate's.
-func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID, logSuffix, gate string, live bool) (GateOut, error) {
+func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, err := runGate(wd, gate)
@@ -259,7 +260,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID
 	*rcPtr = rc
 	ev := Event{
 		TS: "", Task: task, Kind: "validated", Attempt: attempt,
-		Gate: gateID, Command: gate, Tree: tree, RC: rcPtr,
+		Gate: gateID, Command: gate, Tree: tree, Commit: commit, RC: rcPtr,
 		DurationMS: dur, SHA256: hex.EncodeToString(sum[:]), Path: logRel,
 		Persona: "supervisor",
 	}
@@ -303,7 +304,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree string, owns []string, gateID
 // <path>", unless an in-flight task in that worktree's own event log owns it
 // (issue #200): then it is attributed as "<worktree path>: <path> ->
 // <task>" instead.
-func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
+func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
 		return GaugeResult{}, err
@@ -354,7 +355,7 @@ func finishValidate(dir, wd, task, attempt, tree string, owns, needsState []stri
 	res.Files = measureFiles(wd, owns, changed)
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
-		Tree: tree, Outside: outside, Baselined: baselined, Attributed: attributed,
+		Tree: tree, Commit: commit, Outside: outside, Baselined: baselined, Attributed: attributed,
 		Files: res.Files, Persona: "supervisor",
 	}); err != nil {
 		return GaugeResult{}, err
@@ -607,6 +608,18 @@ func gitRead(wd string, args []string) (string, error) {
 		return "", fmt.Errorf("git %v failed (rc=%d): %s", args, rc, strings.TrimSpace(string(append(stderr, stdout...))))
 	}
 	return string(stdout), nil
+}
+
+// headCommit returns the workdir's current HEAD commit id, or "" when HEAD
+// cannot be resolved: a repo with no commits yet, or git failing for any
+// reason. A reading without a commit is still a valid reading; the field is
+// additional evidence, never a precondition (issue #196).
+func headCommit(wd string) string {
+	out, err := gitRead(wd, []string{"rev-parse", "HEAD"})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // fileSHA returns the SHA-256 hex of the file p inside wd, or "deleted"
