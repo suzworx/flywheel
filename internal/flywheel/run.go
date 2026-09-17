@@ -129,8 +129,11 @@ var commandHook func(RunRequest)
 // events. no-plan is appended once, at the 20th completed step, when no PLAN
 // text has been seen yet. off-course is appended once, when a read, grep or
 // glob tool call names the 5th distinct path outside the worktree (library
-// source), naming the paths in its note. Neither changes the run's outcome.
-// Every path after the dispatched event records a finished event.
+// source), naming the paths in its note. Each of those conditions is also
+// recorded as a signal event (issue #37), as are the finish reasons length
+// (capped), error (provider-error), silent and stalled, one per condition and
+// attempt, after the event that detected them. Neither changes the run's
+// outcome. Every path after the dispatched event records a finished event.
 func Run(dir string, o RunOptions) (res Result, err error) {
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -591,6 +594,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt}); err != nil {
 					return Result{}, err
 				}
+				if err := recordSignal(dir, o.Task, attempt, session, "no-plan", runRel); err != nil {
+					return Result{}, err
+				}
 				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
 			}
 		}
@@ -628,6 +634,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					offCourseRecorded = true
 					note := clipNote(strings.Join(outsideOrder, ", "))
 					if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "off-course", Attempt: attempt, Note: note}); err != nil {
+						return Result{}, err
+					}
+					if err := recordSignal(dir, o.Task, attempt, session, "off-course", runRel); err != nil {
 						return Result{}, err
 					}
 					progress(o.Progress, o.Task+" "+attempt+" off-course (paths outside the worktree)")
@@ -695,6 +704,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
+		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
+			return Result{}, err
+		}
 		line := o.Task + " " + attempt + " finished rc=-1 reason=silent model=" + model
 		if note != "" {
 			line += " note=" + note
@@ -728,6 +740,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
+			return Result{}, err
+		}
+		if err := recordSignal(dir, o.Task, attempt, session, "stalled", runRel); err != nil {
 			return Result{}, err
 		}
 		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=stalled model=%s steps=%d", o.Task, attempt, model, steps))
@@ -804,6 +819,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		PeakReasoning: peak, Wrote: wrote,
 	}); err != nil {
 		return Result{}, err
+	}
+	switch reason {
+	case "length":
+		if err := recordSignal(dir, o.Task, attempt, session, "capped", runRel); err != nil {
+			return Result{}, err
+		}
+	case "error":
+		if err := recordSignal(dir, o.Task, attempt, session, "provider-error", runRel); err != nil {
+			return Result{}, err
+		}
 	}
 	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s model=%s steps=%d tokens=%s cost=$%s", rc, reason, model, steps, tokensK(tok), costK(cost)))
 	if wl := wroteProgressLine(o.Task, attempt, reason, wrote); wl != "" {
@@ -946,6 +971,18 @@ func progress(w io.Writer, line string) {
 	if w != nil {
 		fmt.Fprintln(w, line)
 	}
+}
+
+// recordSignal appends one signal event naming a run condition already
+// detected and recorded under its own kind (issue #37): the same attempt, the
+// session when known, and the run file as Path so the evidence is one field
+// away. The caller records it after the event that detected the condition, so
+// the log reads in causal order, and only once per condition per attempt.
+func recordSignal(dir, task, attempt, session, condition, runRel string) error {
+	return AppendEvent(dir, Event{
+		TS: "", Task: task, Kind: "signal", Signal: condition,
+		Attempt: attempt, Session: session, Path: runRel,
+	})
 }
 
 // ExitCode maps a result to the CLI exit code: 0 when the worker exited 0

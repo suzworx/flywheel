@@ -174,6 +174,10 @@ func TestReviewRemovesTempWorktree(t *testing.T) {
 		t.Fatalf("initTask() error = %v", err)
 	}
 	logFinished(t, dir, "T1", "w1")
+	scoped := t.TempDir()
+	t.Setenv("TMP", scoped)
+	t.Setenv("TEMP", scoped)
+	t.Setenv("TMPDIR", scoped)
 	before, _ := filepath.Glob(filepath.Join(os.TempDir(), "fw-review-*"))
 	if _, err := ReviewTask(dir, "T1", ReviewOptions{Dir: dir, Verdict: "pass", Session: "r1"}); err != nil {
 		t.Fatalf("ReviewTask() error = %v", err)
