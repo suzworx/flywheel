@@ -31,6 +31,7 @@ type RunOptions struct {
 	ForceModel   bool   // bypass the L-03 refusal when --resume --model names a model that is not an approved fallback
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
 	AllowOverlap bool   // skip the owns-collision refusal; the dispatched note records the overlap
+	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -235,6 +236,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		attempt = fmt.Sprintf("c%d", corrN+1)
 	}
+
+	// Brief drift (issue #135): a brief edited after its last dispatch is
+	// caught here, at dispatch, instead of only at audit time (rule T1).
+	// Drift warns and the dispatch proceeds — a lead mid-correction is the
+	// common case — unless --strict-brief makes it a T1 RuleRefusal before
+	// any event is appended.
+	if drift := checkBriefDrift(dir, events, o.Task, brief); drift != nil {
+		msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", drift.attempt, o.Task, brief)
+		if o.StrictBrief {
+			return Result{}, &RuleRefusal{Rule: "T1", Fix: msg}
+		}
+		progress(o.Progress, fmt.Sprintf("%s %s brief-drift (%s)", o.Task, attempt, msg))
+	}
+
 	promptSrc, err := promptSource(dir, brief, o.DeltaPath, o.Task, o.Resume)
 	if err != nil {
 		return Result{}, err
@@ -808,6 +823,56 @@ type ownsCollision struct {
 	task   string
 	status string
 	paths  []string
+}
+
+// briefDrift is a dispatch-time finding that the brief on disk differs from
+// the content hash a previous dispatch recorded (issue #135).
+type briefDrift struct {
+	attempt string // the attempt whose dispatched hash differs from the brief on disk
+}
+
+// checkBriefDrift reports whether the brief on disk at brief — a task's base
+// brief path — has drifted from the hash its last dispatch recorded, with no
+// later planned event re-recording the brief's current content. The hash
+// compared is the last FRESH dispatch's (r*): a correction dispatches its
+// delta, not the brief, so its recorded hash is a delta hash that must never
+// read as the brief's (ruleT1 compares the same way). A task with no previous
+// dispatch cannot drift. A planned event recorded after that dispatch whose
+// brief file hashes to the brief's current content means a lead legitimately
+// re-planned; that stays silent. An unreadable brief never drifts — the
+// dispatch itself fails on it shortly after.
+func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift {
+	last := -1
+	lastAttempt := ""
+	lastHash := ""
+	for i, e := range events {
+		if e.Task != task || e.Kind != "dispatched" || e.SHA256 == "" || isCorrection(e.Attempt) {
+			continue
+		}
+		last = i
+		lastAttempt = e.Attempt
+		lastHash = e.SHA256
+	}
+	if last < 0 || lastHash == "" {
+		return nil
+	}
+	b, err := os.ReadFile(resolveBriefPath(dir, brief))
+	if err != nil {
+		return nil
+	}
+	current := contentSHA(b)
+	if current == lastHash {
+		return nil
+	}
+	for _, e := range events[last+1:] {
+		if e.Task != task || e.Kind != "planned" || e.Brief == "" {
+			continue
+		}
+		if pb, err := os.ReadFile(resolveBriefPath(dir, e.Brief)); err == nil && contentSHA(pb) == current {
+			return nil
+		}
+	}
+	return &briefDrift{attempt: lastAttempt}
 }
 
 // ownsCollisionWith returns the first owns: overlap between owns and an
