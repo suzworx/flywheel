@@ -71,6 +71,7 @@ func runStats(args []string) {
 func printStats(rep flywheel.StatsReport) {
 	fmt.Printf("Tasks: total %d, landed %d, passed %d, rejected %d\n",
 		rep.Tasks.Total, rep.Tasks.Landed, rep.Tasks.Passed, rep.Tasks.Rejected)
+	fmt.Printf("Lead-implemented: %d of %d landed\n", rep.Tasks.LeadImplemented, rep.Tasks.Landed)
 	fmt.Printf("First-pass rate: %.2f (%d/%d)\n", rep.FirstPassRate, rep.FirstPassCount, rep.FirstPassTotal)
 	fmt.Printf("Corrections per task: %.2f\n", rep.CorrectionsPerTask)
 	reasons := make([]string, 0, len(rep.FinishReasons))

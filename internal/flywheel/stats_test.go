@@ -57,6 +57,9 @@ func TestStatsFixture(t *testing.T) {
 	if rep.Tasks != wantTasks {
 		t.Errorf("Tasks = %#v, want %#v", rep.Tasks, wantTasks)
 	}
+	if rep.Tasks.LeadImplemented != 0 {
+		t.Errorf("LeadImplemented = %d, want 0 (no lead-implemented landing in the fixture)", rep.Tasks.LeadImplemented)
+	}
 	if rep.FirstPassRate != 0.5 || rep.FirstPassCount != 2 || rep.FirstPassTotal != 4 {
 		t.Errorf("first-pass = %.2f (%d/%d), want 0.50 (2/4)", rep.FirstPassRate, rep.FirstPassCount, rep.FirstPassTotal)
 	}
@@ -104,6 +107,40 @@ func TestStatsEmptyLog(t *testing.T) {
 	}
 	if rep.CostPerLandedTask != 0 {
 		t.Errorf("CostPerLandedTask = %.4f, want 0", rep.CostPerLandedTask)
+	}
+}
+
+// TestStatsLeadImplemented checks Stats counts only landed tasks whose landing
+// carried the lead-implemented flag, and that the other figures are unaffected.
+func TestStatsLeadImplemented(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-01-01T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-01-01T00:00:10Z", Task: "T1", Kind: "inspected", Verdict: "pass"},
+		{TS: "2026-01-01T00:00:20Z", Task: "T1", Kind: "landed", Commit: "abc1234"},
+
+		{TS: "2026-01-01T01:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-01-01T01:00:10Z", Task: "T2", Kind: "inspected", Verdict: "pass"},
+		{TS: "2026-01-01T01:00:20Z", Task: "T2", Kind: "landed", Commit: "def5678", Note: "lead-implemented: script fix", LeadImplemented: true},
+
+		{TS: "2026-01-01T02:00:00Z", Task: "T3", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-01-01T02:00:10Z", Task: "T3", Kind: "inspected", Verdict: "pass"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	rep, err := Stats(dir)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	want := StatsTasks{Total: 3, Landed: 2, LeadImplemented: 1, Passed: 1}
+	if rep.Tasks != want {
+		t.Errorf("Tasks = %#v, want %#v", rep.Tasks, want)
+	}
+	if rep.FirstPassRate != 1 || rep.FirstPassCount != 3 || rep.FirstPassTotal != 3 {
+		t.Errorf("first-pass = %.2f (%d/%d), want 1.00 (3/3)", rep.FirstPassRate, rep.FirstPassCount, rep.FirstPassTotal)
 	}
 }
 

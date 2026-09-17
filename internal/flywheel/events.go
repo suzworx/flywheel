@@ -24,27 +24,30 @@ type Tokens struct {
 // Event is one JSON object per line in .flywheel/events.jsonl. The event log
 // is the source of truth; state.json and flywheel.md are derived from it.
 type Event struct {
-	TS            string   `json:"ts"`
-	Task          string   `json:"task"`
-	Kind          string   `json:"kind"`
-	Session       string   `json:"session,omitempty"`
-	Model         string   `json:"model,omitempty"`
-	Attempt       string   `json:"attempt,omitempty"`
-	RC            *int     `json:"rc,omitempty"`
-	Reason        string   `json:"reason,omitempty"`
-	Verdict       string   `json:"verdict,omitempty"`
-	Brief         string   `json:"brief,omitempty"`
-	Needs         []string `json:"needs,omitempty"`
-	Owns          []string `json:"owns,omitempty"`
-	Commit        string   `json:"commit,omitempty"`
-	Note          string   `json:"note,omitempty"`
-	Adapter       string   `json:"adapter,omitempty"`
-	Path          string   `json:"path,omitempty"`
-	SHA256        string   `json:"sha256,omitempty"`
-	Tokens        *Tokens  `json:"tokens,omitempty"`
-	Cost          float64  `json:"cost,omitempty"`
-	Steps         int      `json:"steps,omitempty"`
-	PeakReasoning int      `json:"peak_reasoning,omitempty"`
+	TS      string   `json:"ts"`
+	Task    string   `json:"task"`
+	Kind    string   `json:"kind"`
+	Session string   `json:"session,omitempty"`
+	Model   string   `json:"model,omitempty"`
+	Attempt string   `json:"attempt,omitempty"`
+	RC      *int     `json:"rc,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+	Verdict string   `json:"verdict,omitempty"`
+	Brief   string   `json:"brief,omitempty"`
+	Needs   []string `json:"needs,omitempty"`
+	Owns    []string `json:"owns,omitempty"`
+	Commit  string   `json:"commit,omitempty"`
+	Note    string   `json:"note,omitempty"`
+	// LeadImplemented marks a landed event whose unit the lead implemented
+	// directly instead of a worker (issue #198). Omitted on ordinary landings.
+	LeadImplemented bool    `json:"lead_implemented,omitempty"`
+	Adapter         string  `json:"adapter,omitempty"`
+	Path            string  `json:"path,omitempty"`
+	SHA256          string  `json:"sha256,omitempty"`
+	Tokens          *Tokens `json:"tokens,omitempty"`
+	Cost            float64 `json:"cost,omitempty"`
+	Steps           int     `json:"steps,omitempty"`
+	PeakReasoning   int     `json:"peak_reasoning,omitempty"`
 	// Wrote is a finished event's distinct paths written by edit/write tool
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
