@@ -199,7 +199,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
-	brief, _ := latestBaseBriefAndAttempt(events, o.Task)
+	brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
 	lastSession := ""
 	for _, e := range events {
 		if e.Task != o.Task {
@@ -320,6 +320,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	promptBriefField := promptBrief(dir, promptSrc)
 	prompt := string(promptB)
 
+	// The dispatched event carries the parsed header of the prompt it
+	// actually sent (the planned brief on a fresh attempt, the delta on a
+	// correction), so a later reader measures the attempt against the ledger,
+	// not against whatever the file says now (issue #259).
+	promptHeader, err := ParseBriefHeader(promptSrc)
+	if err != nil {
+		return Result{}, fmt.Errorf("parse prompt %s: %w", promptSrc, err)
+	}
+
 	// The run file the dispatched event points at.
 	runsDir := filepath.Join(dir, ".flywheel", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -356,7 +365,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl),
-		Baseline: baseline, Worktrees: worktrees,
+		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
 	}); err != nil {
 		return Result{}, err
 	}

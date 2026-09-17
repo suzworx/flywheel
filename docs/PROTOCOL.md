@@ -29,10 +29,13 @@ all.
 
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path>`.
-- Carries: `task`, `brief` (the brief file's path). `needs`/`owns` only land on the event through
-  `flywheel log --json`; the everyday flag form has no `--needs`/`--owns` flag, so in practice
-  those live in the brief file's own header and are read from there (`ParseBriefHeader`) whenever a
-  command needs them.
+- Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
+  needs, needs-state, gates, live-gates, exclusive, review and sha256 — as recorded when the
+  event was appended). `needs`/`owns` only land on the event through `flywheel log --json`; the
+  everyday flag form has no `--needs`/`--owns` flag, so in practice those live in the brief
+  file's own header and are read from there (`ParseBriefHeader`) whenever a command needs them.
+  When `header` is present it is authoritative over the brief file, and `owns`/`needs` are its
+  summary.
 - Effect: `Derive` sets status `planned`. Verify's T1 (`plannedBriefOnly`) uses the task's *latest*
   `planned` event's brief path, deliberately ignoring any `amended` events, as the hash a fresh
   dispatch must match.
@@ -41,7 +44,9 @@ all.
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter`, `model`, `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
-  correction attempt: the delta file's path), `baseline` (paths already dirty at dispatch, so a
+  correction attempt: the delta file's path), `header` (the parsed brief header of the exact
+  prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
+  authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
   later owns check can excuse pre-existing dirt it didn't cause), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
@@ -143,10 +148,18 @@ all.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`.
-- Carries: `task`, `brief`, optionally `needs`/`owns` (same `--json`-only caveat as `planned`).
+- Carries: `task`, `brief`, `header` (the parsed brief header as recorded when the amendment was
+  appended, as for `planned`), optionally `needs`/`owns` (same `--json`-only caveat as `planned`).
 - Effect: `Derive` updates only `brief`/`needs`/`owns` on the task, never its status. Verify's T1
   treats a `dispatched` hash mismatch as explained when an `amended` event for the task falls
   between that dispatch and now.
+
+Because `planned`, `amended` and `dispatched` events carry the parsed `header`, the log is
+self-contained: a pass is measured against the header recorded in it, so a brief edited on disk
+after the fact — even one re-recorded through `flywheel log --kind amended` with the same path —
+no longer changes what any recorded pass is measured against. An event without a `header` falls
+back to reading the file at its `brief` path, so ledgers written before this field existed keep
+working exactly as before.
 
 ### `validated`
 - Written by: the CLI only, via `flywheel validate <task>`, once per declared `gate:` line.

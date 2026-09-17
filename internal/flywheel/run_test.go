@@ -133,6 +133,68 @@ func writeDelta(t *testing.T, dir, task string) {
 	}
 }
 
+// TestRunDispatchedCarriesPromptHeader checks the dispatched event records
+// the parsed header of the exact prompt it sent: the planned brief on a
+// fresh attempt, the delta on a correction (issue #259), so a later reader
+// measures the attempt against the ledger rather than the mutable file.
+func TestRunDispatchedCarriesPromptHeader(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	briefHeader, err := ParseBriefHeader(filepath.Join(dir, "b.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d1 Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d1 = e
+		}
+	}
+	if d1.Attempt != "r1" || d1.Header == nil {
+		t.Fatalf("dispatched r1 event = %+v, want a recorded header", d1)
+	}
+	if !reflect.DeepEqual(*d1.Header, briefHeader) {
+		t.Errorf("dispatched r1 header = %+v, want the brief's parsed header %+v", *d1.Header, briefHeader)
+	}
+	delta := filepath.Join(dir, "d.txt")
+	if err := os.WriteFile(delta, []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: delta\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", DeltaPath: delta}); err != nil {
+		t.Fatalf("delta Run() error = %v", err)
+	}
+	deltaHeader, err := ParseBriefHeader(delta)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	evs, err = ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d2 Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d2 = e
+		}
+	}
+	if d2.Attempt != "c1" || d2.Header == nil {
+		t.Fatalf("dispatched c1 event = %+v, want a recorded header", d2)
+	}
+	if !reflect.DeepEqual(*d2.Header, deltaHeader) {
+		t.Errorf("dispatched c1 header = %+v, want the delta's parsed header %+v", *d2.Header, deltaHeader)
+	}
+}
+
 // TestRunResumeModelGateRefusesUnapproved checks L-03: a resume naming a
 // model that differs from the worker's model and is not an approved
 // fallback is refused before any event is read (issue #23).
