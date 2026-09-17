@@ -41,8 +41,11 @@ type Event struct {
 	Brief   string   `json:"brief,omitempty"`
 	Needs   []string `json:"needs,omitempty"`
 	Owns    []string `json:"owns,omitempty"`
-	Commit  string   `json:"commit,omitempty"`
-	Note    string   `json:"note,omitempty"`
+	// Commit is a landed event's commit id (flywheel land --commit) and the
+	// HEAD commit of the workdir a validated/owns_checked reading was taken
+	// at (issue #196): "which commit" has one name in the ledger.
+	Commit string `json:"commit,omitempty"`
+	Note   string `json:"note,omitempty"`
 	// LeadImplemented marks a landed event whose unit the lead implemented
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`

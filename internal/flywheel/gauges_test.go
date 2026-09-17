@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -251,6 +252,122 @@ func TestValidatePassingGates(t *testing.T) {
 	}
 	if validated != 2 {
 		t.Errorf("validated events = %d, want 2", validated)
+	}
+}
+
+// TestValidateRecordsHeadCommit checks a validation in a repo with a commit
+// records that commit on every validated event and on owns_checked, and the
+// recorded value equals the workdir's HEAD (issue #196).
+func TestValidateRecordsHeadCommit(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0", "exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	head := git(t, dir, []string{"rev-parse", "HEAD"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("OK() = false, want true: %+v", res)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	validated := 0
+	ownsChecked := false
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			validated++
+			if e.Commit != head {
+				t.Errorf("validated event commit = %q, want %q (workdir HEAD)", e.Commit, head)
+			}
+		case "owns_checked":
+			ownsChecked = true
+			if e.Commit != head {
+				t.Errorf("owns_checked commit = %q, want %q (workdir HEAD)", e.Commit, head)
+			}
+		}
+	}
+	if validated != 2 {
+		t.Errorf("validated events = %d, want 2", validated)
+	}
+	if !ownsChecked {
+		t.Error("no owns_checked event recorded")
+	}
+}
+
+// shimGitOnlyRevParseFails puts a git shim first on PATH that passes every
+// subcommand through to the real git except `git rev-parse`, which exits 1:
+// the one call the commit-recording path adds can fail while the tree-hashing
+// and owns-check git calls keep working, so a validation whose HEAD cannot be
+// resolved still succeeds (issue #196). The real git binary is returned.
+func shimGitOnlyRevParseFails(t *testing.T) string {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath(git) error = %v", err)
+	}
+	shim := t.TempDir()
+	name := "git"
+	var script string
+	if runtime.GOOS == "windows" {
+		name = "git.cmd"
+		script = "@echo off\r\nif \"%1\"==\"rev-parse\" exit /b 1\r\n\"" + real + "\" %*\r\n"
+	} else {
+		script = "#!/bin/sh\nif [ \"$1\" = rev-parse ]; then exit 1; fi\nexec \"" + real + "\" \"$@\"\n"
+	}
+	if err := os.WriteFile(filepath.Join(shim, name), []byte(script), 0o755); err != nil {
+		t.Fatalf("write shim git: %v", err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return real
+}
+
+// TestValidateHeadCommitUnresolvable checks a workdir where the HEAD commit
+// cannot be resolved records an empty commit and the validation still
+// succeeds: OK() is unaffected, because the commit is additional evidence,
+// never a precondition (issue #196).
+func TestValidateHeadCommitUnresolvable(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	shimGitOnlyRevParseFails(t)
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("OK() = false, want true: an unresolvable HEAD must not fail the validation; %+v", res)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	validated := 0
+	ownsChecked := false
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			validated++
+			if e.Commit != "" {
+				t.Errorf("validated event commit = %q, want empty when HEAD cannot be resolved", e.Commit)
+			}
+		case "owns_checked":
+			ownsChecked = true
+			if e.Commit != "" {
+				t.Errorf("owns_checked commit = %q, want empty when HEAD cannot be resolved", e.Commit)
+			}
+		}
+	}
+	if validated != 1 {
+		t.Errorf("validated events = %d, want 1", validated)
+	}
+	if !ownsChecked {
+		t.Error("no owns_checked event recorded")
 	}
 }
 
