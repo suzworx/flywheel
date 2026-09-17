@@ -75,6 +75,11 @@ func LintBrief(dir, path string) (LintResult, error) {
 			}
 		}
 	}
+	for _, e := range header.Exclusive {
+		if strings.TrimSpace(e) == "" {
+			res.Problems = append(res.Problems, "exclusive: entry is empty")
+		}
+	}
 	if len(header.Needs) == 0 {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}
