@@ -97,7 +97,7 @@ Everything is files — no database.
 | `.flywheel/state.json` | Machine-precise state: `version`, `status`, `tasks[]`. |
 | `.flywheel/briefs/` | One file per task brief (`<id>.txt`) and per correction (`<id>.delta.txt`). |
 | `.flywheel/runs/` | Raw dispatch output (JSONL) per attempt — `<id>.r1.jsonl` fresh run, `<id>.c<n>.jsonl` corrections. |
-| `.flywheel/learnings.md` | Dogfood log — friction becomes spec; generated (regenerated from the event log on every `add` and `dismiss`, so do not hand-edit it). |
+| `.flywheel/learnings.md` | Dogfood log — friction becomes spec; generated (regenerated from the event log on every `add`, `dismiss`, and `log --json` import carrying a learning or dismissed event, so do not hand-edit it). |
 
 **Repo is the session.** State lives in files, not in any vendor CLI session. That is what makes
 handoff free: a new head reads the same files and continues. Helper scripts and notes must live in

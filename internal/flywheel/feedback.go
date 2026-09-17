@@ -70,6 +70,14 @@ func NextLearningID(events []Event) string {
 	return fmt.Sprintf("L-%02d", n+1)
 }
 
+// acquireFeedbackLock takes .flywheel/feedback.lock with the feedback lock's
+// own timings (issue #260): the short, worker-free feedback critical sections
+// never need the dispatch lock's wider margins. The mechanics are the shared
+// repository lock in lock.go.
+func acquireFeedbackLock(dir string) (release func(), err error) {
+	return acquireRepoLock(dir, "feedback.lock", feedbackLockTimings())
+}
+
 // AddLearning appends a learning event and rewrites .flywheel/learnings.md,
 // holding .flywheel/feedback.lock across the whole mutation — read, append,
 // reread, render — so two concurrent feedback commands serialise instead of
@@ -81,7 +89,7 @@ func NextLearningID(events []Event) string {
 // Because the mutation is serialised, the id computed from the events read
 // under the lock is the id the append actually writes.
 func AddLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
-	release, err := acquireRepoLock(dir, "feedback.lock")
+	release, err := acquireFeedbackLock(dir)
 	if err != nil {
 		return "", "", err, nil
 	}
@@ -114,7 +122,7 @@ func AddLearning(dir, task, severity, title, observed, evidence, ask string, sig
 // mutation exactly as AddLearning does (issue #260). An id the log does not
 // know records nothing and returns an error naming it.
 func DismissLearning(dir, id, reason string) (appendErr, renderErr error) {
-	release, err := acquireRepoLock(dir, "feedback.lock")
+	release, err := acquireFeedbackLock(dir)
 	if err != nil {
 		return err, nil
 	}
@@ -161,12 +169,50 @@ func DismissLearning(dir, id, reason string) (appendErr, renderErr error) {
 // the file already matches, and refuses a hand-maintained file exactly as
 // the other paths do.
 func RegenLearnings(dir string) error {
-	release, err := acquireRepoLock(dir, "feedback.lock")
+	release, err := acquireFeedbackLock(dir)
 	if err != nil {
 		return err
 	}
 	defer release()
 	events, err := ReadEvents(dir)
+	if err != nil {
+		return err
+	}
+	return WriteLearningsFile(dir, Learnings(events))
+}
+
+// AppendLearningEvents appends a batch of events and rewrites
+// .flywheel/learnings.md, holding the feedback lock across the whole mutation
+// exactly as AddLearning and DismissLearning do (issue #260): the generic
+// `flywheel log --json` path routes any batch carrying a learning or
+// dismissed event through here, so every writer that can change
+// Learnings(events) — the feedback commands and the raw log import — runs in
+// the same transaction. The batch is appended as a batch under one lock
+// acquisition (never N separately locked mutations) and the artifact is
+// rebuilt exactly once, after the whole batch landed, so the file never
+// trails the log. The whole batch is validated before the first append, so a
+// malformed line records nothing. Callers whose batch contains no learning or
+// dismissed event must not call this function: it always takes the lock.
+func AppendLearningEvents(dir string, events []Event) error {
+	release, err := acquireFeedbackLock(dir)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if _, err := CheckLearningsOwned(dir); err != nil {
+		return err
+	}
+	for _, e := range events {
+		if err := Validate(e); err != nil {
+			return err
+		}
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			return err
+		}
+	}
+	events, err = ReadEvents(dir)
 	if err != nil {
 		return err
 	}

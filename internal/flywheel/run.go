@@ -895,10 +895,10 @@ type ownsCollision struct {
 // "read the log -> run the collision checks -> append dispatched" (issue
 // #242). The mechanics — the O_EXCL create, the token-checked release, the
 // heartbeat and the stale takeover — are the shared repository lock in
-// lock.go; this wrapper names the dispatch.lock file and its timings stay the
-// defaults.
+// lock.go; this wrapper names the dispatch.lock file and keeps its own
+// default timings (Run's values and behaviour are unchanged).
 func acquireDispatchLock(dir string) (release func(), err error) {
-	return acquireRepoLock(dir, "dispatch.lock")
+	return acquireRepoLock(dir, "dispatch.lock", defaultRepoLockTimings())
 }
 
 // briefDrift is a dispatch-time finding that the brief on disk differs from

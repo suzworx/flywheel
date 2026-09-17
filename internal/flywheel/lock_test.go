@@ -15,18 +15,20 @@ import (
 // acquire waits out its deadline and fails rather than taking over. The
 // heartbeat interval and the acquire wait are shortened so the guard stays
 // fast; the relationship they test (heartbeat < staleAfter) is unchanged.
+// The timings are this test's own, passed per acquisition: no package global
+// is reassigned (issue #260).
 func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
-	saveHeartbeat, saveWait := repoLockHeartbeat, repoLockWait
-	repoLockHeartbeat = 40 * time.Millisecond
-	repoLockWait = 400 * time.Millisecond
-	defer func() {
-		repoLockHeartbeat, repoLockWait = saveHeartbeat, saveWait
-	}()
+	timings := repoLockTimings{
+		staleAfter: 15 * time.Second,
+		wait:       400 * time.Millisecond,
+		retry:      10 * time.Millisecond,
+		heartbeat:  40 * time.Millisecond,
+	}
 
 	dir := t.TempDir()
-	release, err := acquireDispatchLock(dir)
+	release, err := acquireRepoLock(dir, "dispatch.lock", timings)
 	if err != nil {
-		t.Fatalf("acquireDispatchLock() error = %v", err)
+		t.Fatalf("acquire dispatch.lock error = %v", err)
 	}
 	defer release()
 	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
@@ -38,7 +40,7 @@ func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
 	deadline := now().Add(5 * time.Second)
 	for {
 		info, serr := os.Stat(p)
-		if serr == nil && info.ModTime().After(now().Add(-3*repoLockHeartbeat)) {
+		if serr == nil && info.ModTime().After(now().Add(-3*timings.heartbeat)) {
 			break
 		}
 		if now().After(deadline) {
@@ -46,15 +48,17 @@ func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := acquireDispatchLock(dir); err == nil {
+	if _, err := acquireRepoLock(dir, "dispatch.lock", timings); err == nil {
 		t.Fatal("second acquire succeeded, want it refused: a live holder must not be stolen")
 	}
 }
 
 // TestDispatchLockDeadHolderTakenOver checks the stale path (issue #249): a
-// lock file whose mtime is far past repoLockStaleAfter and that no heartbeat
+// lock file whose mtime is far past the stale window and that no heartbeat
 // keeps fresh — a crashed holder — is renamed aside atomically and the
-// acquire succeeds, leaving no .stale- residue behind.
+// acquire succeeds, leaving no .stale- residue behind. The dead file is aged
+// past the default dispatch timings, so this acquisition runs on the same
+// defaults Run uses.
 func TestDispatchLockDeadHolderTakenOver(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
@@ -94,14 +98,18 @@ func TestDispatchLockDeadHolderTakenOver(t *testing.T) {
 // #249): after B takes the lock over from A, A's release reads the file,
 // sees B's token and leaves B's lock in place — A must never delete a lock
 // it no longer owns. A's heartbeat is parked so the aged mtime cannot be
-// refreshed between the Chtimes and B's takeover.
+// refreshed between the Chtimes and B's takeover. Each holder carries its
+// own timings: A parks its heartbeat, B runs the defaults.
 func TestDispatchLockReleaseDoesNotDeleteSuccessor(t *testing.T) {
-	saveHeartbeat := repoLockHeartbeat
-	repoLockHeartbeat = time.Hour
-	defer func() { repoLockHeartbeat = saveHeartbeat }()
+	aTimings := repoLockTimings{
+		staleAfter: 15 * time.Second,
+		wait:       5 * time.Second,
+		retry:      50 * time.Millisecond,
+		heartbeat:  time.Hour,
+	}
 
 	dir := t.TempDir()
-	releaseA, err := acquireDispatchLock(dir)
+	releaseA, err := acquireRepoLock(dir, "dispatch.lock", aTimings)
 	if err != nil {
 		t.Fatalf("acquire A error = %v", err)
 	}
