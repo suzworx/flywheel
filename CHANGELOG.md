@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.15.0](https://github.com/suzworx/flywheel/compare/v0.14.0...v0.15.0) (2026-09-17)
+
+
+### Features
+
+* enforce exclusive: at dispatch — it was parsed and never read ([#232](https://github.com/suzworx/flywheel/issues/232)) ([3a8691b](https://github.com/suzworx/flywheel/commit/3a8691bdeb1c25e6438b222edd0499950be14f01)), closes [#220](https://github.com/suzworx/flywheel/issues/220)
+* flywheel claim-edit, so a lead's mid-wave edit stops stranding units ([#256](https://github.com/suzworx/flywheel/issues/256)) ([cedcc14](https://github.com/suzworx/flywheel/commit/cedcc14899fceda16669952bb5aa849c759b982e))
+* flywheel feedback export and submit, with consent and an offline outbox ([#226](https://github.com/suzworx/flywheel/issues/226)) ([afddfc6](https://github.com/suzworx/flywheel/commit/afddfc6ec4de367b35cd2a6ca8a4b86ba7714f28)), closes [#40](https://github.com/suzworx/flywheel/issues/40)
+* inspect accepts a reading whose tree differs only outside the unit's owns ([#234](https://github.com/suzworx/flywheel/issues/234)) ([7beb1c3](https://github.com/suzworx/flywheel/commit/7beb1c327794569a167d8d5e3aeeccedbed27de7)), closes [#218](https://github.com/suzworx/flywheel/issues/218)
+* record a signal event alongside the conditions already detected ([#224](https://github.com/suzworx/flywheel/issues/224)) ([7b52e4d](https://github.com/suzworx/flywheel/commit/7b52e4d1686f6113aa550cda30bfa974a1cb12c6)), closes [#37](https://github.com/suzworx/flywheel/issues/37)
+* record the commit each gate reading was taken at ([#236](https://github.com/suzworx/flywheel/issues/236)) ([3625a17](https://github.com/suzworx/flywheel/commit/3625a17b9e882699a3cf6d921e8ef31f51369c91)), closes [#196](https://github.com/suzworx/flywheel/issues/196)
+
+
+### Bug Fixes
+
+* bind the learnings ownership check to the file it overwrites or deletes ([#245](https://github.com/suzworx/flywheel/issues/245)) ([6b109fa](https://github.com/suzworx/flywheel/commit/6b109faeb43a8770a038f14ce02151ee2648cf43))
+* check learnings ownership at the rename, and never duplicate on a failed render ([#257](https://github.com/suzworx/flywheel/issues/257)) ([9e58f7c](https://github.com/suzworx/flywheel/commit/9e58f7c7b5980d52bc462ee40d724ab727ad602b))
+* generate learnings.md inside .flywheel/, and remove the stray root copy ([#233](https://github.com/suzworx/flywheel/issues/233)) ([f656dc4](https://github.com/suzworx/flywheel/commit/f656dc478e62a1bed08910e81b5b0c25c2d2f159)), closes [#221](https://github.com/suzworx/flywheel/issues/221)
+* judge each inspected pass against the gate set in force at the time ([#255](https://github.com/suzworx/flywheel/issues/255)) ([6a6e1f6](https://github.com/suzworx/flywheel/commit/6a6e1f6335ac79ee368685bd2a9fba5eeb2c7afa))
+* never overwrite or delete a learnings.md flywheel did not generate ([#237](https://github.com/suzworx/flywheel/issues/237)) ([1767b57](https://github.com/suzworx/flywheel/commit/1767b5799699342ccd1b68982748a7e6a910d94a))
+* record the tree inspect measured, not a second hash taken later ([#247](https://github.com/suzworx/flywheel/issues/247)) ([35c8e60](https://github.com/suzworx/flywheel/commit/35c8e6074a21ef6c53014fb1a790e453551fc5ab))
+* resolve HEAD at each gauge reading, not once per validation pass ([#246](https://github.com/suzworx/flywheel/issues/246)) ([1b9c6b9](https://github.com/suzworx/flywheel/commit/1b9c6b942671f9fa2654964f4e257db115c59834))
+* serialise dispatch, and carry exclusive: through correction deltas ([#248](https://github.com/suzworx/flywheel/issues/248)) ([dea7fe5](https://github.com/suzworx/flywheel/commit/dea7fe5331febfa51a683b2543585cced2d0a236))
+
+
+### Documentation
+
+* four planner rules from field reports, and one worker rule ([#235](https://github.com/suzworx/flywheel/issues/235)) ([8b98d2c](https://github.com/suzworx/flywheel/commit/8b98d2c5b9a1cd29d0d2376ba6f663004df402ea)), closes [#222](https://github.com/suzworx/flywheel/issues/222) [#229](https://github.com/suzworx/flywheel/issues/229) [#230](https://github.com/suzworx/flywheel/issues/230) [#231](https://github.com/suzworx/flywheel/issues/231)
+* make the install steps actually install, and show the page without JS ([#250](https://github.com/suzworx/flywheel/issues/250)) ([38a3c43](https://github.com/suzworx/flywheel/commit/38a3c4327692d1600478f7a083ff3dae43d66852))
+* planner and inspector rules for reachability — routed is not reachable ([#227](https://github.com/suzworx/flywheel/issues/227)) ([0b549eb](https://github.com/suzworx/flywheel/commit/0b549eb5a3df397911d357bb2893c236824e0e41)), closes [#197](https://github.com/suzworx/flywheel/issues/197)
+* redesign the landing page, and finally show the tool ([#238](https://github.com/suzworx/flywheel/issues/238)) ([2457ea2](https://github.com/suzworx/flywheel/commit/2457ea24bea9774063e9a3d6ab0c4a87666852e1))
+
 ## [0.14.0](https://github.com/suzworx/flywheel/compare/v0.13.0...v0.14.0) (2026-09-17)
 
 
