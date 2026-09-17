@@ -155,6 +155,10 @@ func runFeedbackAdd(args []string) {
 			signals = append(signals, strings.TrimSpace(s))
 		}
 	}
+	if err := flywheel.CheckLearningsOwned(o.dir); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
+		os.Exit(1)
+	}
 	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
 		Task: o.task, Kind: "learning", Severity: o.severity, Title: o.title,
 		Observed: o.observed, Evidence: o.evidence, Ask: o.ask, Signals: signals,
@@ -214,6 +218,10 @@ func runFeedbackDismiss(args []string) {
 	}
 	if !found {
 		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: unknown learning %q\n", id)
+		os.Exit(1)
+	}
+	if err := flywheel.CheckLearningsOwned(o.dir); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel feedback dismiss: %v\n", err)
 		os.Exit(1)
 	}
 	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
