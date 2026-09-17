@@ -279,7 +279,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 		TS: "", Task: task, Kind: "validated", Attempt: attempt,
 		Gate: gateID, Command: gate, Tree: tree, Commit: commit, RC: rcPtr,
 		DurationMS: dur, SHA256: hex.EncodeToString(sum[:]), Path: logRel,
-		Persona: "supervisor",
+		Persona: "supervisor", Workdir: workdirField(wd, dir),
 	}
 	var note string
 	inconclusive := false
@@ -388,7 +388,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Baselined: baselined, Attributed: attributed,
-		Files: res.Files, Persona: "supervisor",
+		Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
 	}); err != nil {
 		return GaugeResult{}, err
 	}

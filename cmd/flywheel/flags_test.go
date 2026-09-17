@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"flywheel/internal/flywheel"
 )
 
 // flagsAny is any command's flags builder keeping its options pointer.
@@ -79,6 +81,50 @@ func TestDirFlagsReachEveryRegistryCommand(t *testing.T) {
 		if got := optionDir(o); got != want {
 			t.Errorf("%s: --dir %s ignored by bound options (got %q)", name, want, got)
 		}
+	}
+}
+
+// TestVerifyExitCodeDistinguishesInconclusive checks the three-state exit
+// mapping (issue #244): 0 when every check passes, 6 for an established
+// violation, 8 when every failing check is inconclusive, and a violation
+// always outranks an inconclusive.
+func TestVerifyExitCodeDistinguishesInconclusive(t *testing.T) {
+	cases := []struct {
+		name  string
+		items []flywheel.VerifyItem
+		want  int
+	}{
+		{"all pass", []flywheel.VerifyItem{{Rule: "T3", Pass: true}}, 0},
+		{"violation", []flywheel.VerifyItem{{Rule: "T3", Pass: false}}, 6},
+		{"inconclusive", []flywheel.VerifyItem{{Rule: "T3", Pass: false, Inconclusive: true}}, 8},
+		{"violation plus inconclusive", []flywheel.VerifyItem{
+			{Rule: "T1", Pass: false},
+			{Rule: "T3", Pass: false, Inconclusive: true},
+		}, 6},
+		{"inconclusive plus pass", []flywheel.VerifyItem{
+			{Rule: "T1", Pass: true},
+			{Rule: "T3", Pass: false, Inconclusive: true},
+		}, 8},
+	}
+	for _, tc := range cases {
+		if got := verifyExit(tc.items); got != tc.want {
+			t.Errorf("%s: verifyExit() = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestVerifyFlagsBindWorkdir checks verify's --workdir reaches the bound
+// options, exactly like the other commands' flags (issue #244).
+func TestVerifyFlagsBindWorkdir(t *testing.T) {
+	fs, o := verifyFlags()
+	if err := fs.Parse([]string{"--workdir", "X", "--all"}); err != nil {
+		t.Fatalf("verifyFlags: %v", err)
+	}
+	if o.workdir != "X" {
+		t.Errorf("workdir = %q, want X", o.workdir)
+	}
+	if !o.all {
+		t.Error("all = false, want true")
 	}
 }
 

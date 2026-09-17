@@ -66,8 +66,14 @@ type Event struct {
 	// Wrote is a finished event's distinct paths written by edit/write tool
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
-	Wrote      []string          `json:"wrote,omitempty"`
-	Tree       string            `json:"tree,omitempty"`
+	Wrote []string `json:"wrote,omitempty"`
+	Tree  string   `json:"tree,omitempty"`
+	// Workdir is the git working tree a validated, owns_checked or inspected
+	// reading was taken in, recorded only when it differs from the flywheel
+	// root (issue #244): the ledger says where a reading happened, so verify
+	// can resolve the tree object in the right repository. Omitted on
+	// ordinary same-dir readings, so existing ledgers are unchanged.
+	Workdir    string            `json:"workdir,omitempty"`
 	Gate       string            `json:"gate,omitempty"`
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
@@ -286,6 +292,18 @@ func Validate(e Event) error {
 		return fmt.Errorf("validated event must carry gate and tree")
 	}
 	return nil
+}
+
+// workdirField returns the workdir a reading event should record, or "" when
+// the reading was taken in the flywheel root itself (issue #244): a
+// validated, owns_checked or inspected event records where its tree was
+// measured only when that differs from the repo dir, so ordinary ledgers stay
+// unchanged.
+func workdirField(wd, dir string) string {
+	if wd == dir {
+		return ""
+	}
+	return wd
 }
 
 // marshalEvent encodes e as one JSON line (no trailing newline) with HTML

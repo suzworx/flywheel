@@ -169,6 +169,48 @@ func TestInspectMatchesValidateWorkdir(t *testing.T) {
 	}
 }
 
+// TestInspectRecordsWorkdirWhenExternal checks the provenance field (issue
+// #244): an inspected event records the workdir it measured when that differs
+// from the flywheel root, and a same-dir inspection records none.
+func TestInspectRecordsWorkdirWhenExternal(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() same-dir error = %v", err)
+	}
+	wd, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() workdir error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Workdir: wd, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Fatalf("InspectTask() external error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	count, withWorkdir := 0, 0
+	for _, e := range evs {
+		if e.Kind == "inspected" {
+			count++
+			if e.Workdir == wd {
+				withWorkdir++
+			} else if e.Workdir != "" {
+				t.Errorf("inspected workdir = %q, want %q", e.Workdir, wd)
+			}
+		}
+	}
+	if count != 2 {
+		t.Fatalf("inspected events = %d, want 2", count)
+	}
+	if withWorkdir != 1 {
+		t.Errorf("inspected events carrying the external workdir = %d, want exactly 1", withWorkdir)
+	}
+}
+
 // TestInspectPassRefusedWithoutLiveReading checks that a brief declaring a
 // live-gate is refused T3 on a pass verdict when only the ordinary gates
 // have a validated reading (issue #152).

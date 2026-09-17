@@ -168,7 +168,10 @@ working exactly as before.
   of the pass — each gate resolves it independently, so two readings in one pass may carry
   different commits and that is correct, not a bug; empty when the workdir is not a git repository
   or HEAD cannot be read, so a consumer must treat `commit` as optional and never assume a
-  non-empty value, issue #240), `rc`, `duration_ms`, `sha256` (of the gate's combined output),
+  non-empty value, issue #240), `workdir` (the git working tree the reading was taken in, only
+  when it differs from the flywheel root — an external `--workdir` clone — so a verifier can
+  resolve the tree object in the right repository, issue #244; omitted on same-dir readings),
+  `rc`, `duration_ms`, `sha256` (of the gate's combined output),
   `path` (`.flywheel/evidence/<task>/<attempt>/gate-<n>.log`), `persona` (always `"supervisor"`,
   hardcoded — see §4), `reason`/`note` (`host-blocked` when Windows Smart App Control blocked the
   freshly built binary twice in a row).
@@ -186,7 +189,9 @@ working exactly as before.
   ran, resolved independently of the gates — each reading carries the HEAD at the time it was
   taken, so it may differ from the gates' commits and that is correct, not a bug; empty when the
   workdir is not a git repository or HEAD cannot be read, so a consumer must treat `commit` as
-  optional and never assume a non-empty value, issue #240), `outside` (changed paths not covered
+  optional and never assume a non-empty value, issue #240), `workdir` (as on `validated` — where
+  the reading was taken, recorded only when it differs from the flywheel root, issue #244),
+  `outside` (changed paths not covered
   by `owns:`), `baselined` (changed paths excused because they were already dirty at dispatch and
   are byte-identical now), `attributed` (changed paths blamed on another in-flight task instead —
   see below), `persona` (`"supervisor"`).
@@ -203,8 +208,9 @@ working exactly as before.
 ### `inspected`
 - Written by: the CLI only, via `flywheel inspect <task> --verdict ... --session ...`.
 - Carries: `task`, `verdict` (`pass`, `rework`, `scrap`, or `escalate`), `tree`, `session`, `note`,
-  `persona` (always `"inspector"`, hardcoded by `InspectTask` — see §4 for the only way a `"lead"`
-  ever appears there).
+  `workdir` (the git working tree inspected, recorded only when it differs from the flywheel root,
+  issue #244), `persona` (always `"inspector"`, hardcoded by `InspectTask` — see §4 for the only
+  way a `"lead"` ever appears there).
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.
@@ -301,7 +307,14 @@ gates (exit 5) without touching the log's legality.
   `amended` event replaces which brief counts as the base outright. `owns:` entries are matched as
   a literal path, a `dir/` prefix, or a `path.Match` shell pattern, all three checked the same way
   (issue #135, `ownsContains`). Each inspection uses its own window, so a later correction attempt
-  never invalidates an earlier legitimate pass.
+  never invalidates an earlier legitimate pass. A pass measured in an external `--workdir` — a
+  separate clone, not a worktree of the verifying repository — is verifiable from its own repo:
+  `flywheel verify --workdir <path>` resolves tree objects there, and without the flag a `workdir`
+  recorded on the task's reading events is used when that path still exists (issue #244). When the
+  pass's tree cannot be resolved in any repository the verifier can see, the strict reading check
+  still runs on the ledger's own evidence (it needs no git): a complete reading passes T3, and an
+  incomplete one is **inconclusive** (exit 8) rather than a violation — a verifier that cannot see
+  the tree must not claim a violation it has not established.
 - **T4 — no self-inspection.** An `inspected` event's `session` must never be a session that wrote
   that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event. `InspectTask`
   checks this **before** T3, so a worker-session inspection is refused as T4 even when its readings
@@ -379,27 +392,35 @@ touches gate output — only `flywheel validate` does, and it always signs its o
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json]` runs T1/T3/T4/T5/T8 for the requested tasks (`--all`
-derives the task list from every `task` seen in the log) and prints one `PASS`/`FAIL` line per
-rule per task, or the same result as JSON (`{"passed": bool, "items": [{"task","rule","pass",
-"reason"}]}`). Naming a task explicitly still runs every rule for it even if the log has never
+`flywheel verify [<task>...|--all] [--json] [--workdir PATH]` runs T1/T3/T4/T5/T8 for the requested
+tasks (`--all` derives the task list from every `task` seen in the log) and prints one
+`PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
+"items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when
+false, so `--json` consumers of the existing fields keep working). `--workdir` names the
+repository to resolve tree objects in when the readings were taken in an external clone (issue
+#244); without it, a `workdir` recorded on the task's reading events is used when that path still
+exists. An `INCONCLUSIVE` item is `pass:false` with `inconclusive:true`: the pass's tree could not
+be resolved in any repository this verifier can see, so T3 can neither confirm the readings nor
+assert a breach. Naming a task explicitly still runs every rule for it even if the log has never
 heard of it — a missing planned brief, for instance, fails T3 by name rather than being skipped.
 An empty log verified with `--all` passes vacuously; verifying with no tasks and no `--all` is a
 usage error.
 
 Exit codes follow the repo-wide convention from `AGENTS.md`: 0 ok, 1 error, 2 usage, 5 gauges
-failed, 6 rule refusal. The enforcing commands:
+failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, or T8 and its fix | 2 usage, 1 other error |
-| `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | 2 usage, 1 other error |
+| `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha>` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 | 2 usage, 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
-`flywheel run`'s own three codes (3, 4, 7) are not in `AGENTS.md`'s repo-wide list above — they are
-`ExitCode`'s reading of one `Result`, keyed by exit number instead of by command:
+`flywheel run`'s own three codes (3, 4, 7) are not part of the repo-wide list: they are
+`ExitCode`'s reading of one `Result`, keyed by exit number instead of by command, and `AGENTS.md`
+records them as `run`-specific. Exit 7 means **stalled** — a mid-stream gap — and nothing else, so
+a consumer scripts exit codes per command, never globally:
 
 | Exit | `flywheel run` reason |
 | --- | --- |

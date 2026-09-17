@@ -2383,3 +2383,64 @@ func TestValidateLeadEditAppendedDuringPassIsHonored(t *testing.T) {
 		t.Errorf("attributed = %v, want [b.txt -> lead lead-1]", res.Attributed)
 	}
 }
+
+// TestValidateRecordsWorkdirOnlyWhenExternal checks the provenance field
+// (issue #244): a same-dir pass records no workdir on any event — the raw log
+// is unchanged — while a pass measured in an external workdir records it on
+// every validated event and on owns_checked.
+func TestValidateRecordsWorkdirOnlyWhenExternal(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() same-dir error = %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if strings.Contains(string(raw), "workdir") {
+		t.Errorf("same-dir pass recorded a workdir field:\n%s", raw)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if (e.Kind == "validated" || e.Kind == "owns_checked") && e.Workdir != "" {
+			t.Errorf("%s event carries workdir %q on a same-dir pass", e.Kind, e.Workdir)
+		}
+	}
+	external, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() external error = %v", err)
+	}
+	logFinished(t, external, "T1", "w1")
+	if _, err := ValidateTask(external, "T1", ValidateOptions{Dir: external, Workdir: dir}); err != nil {
+		t.Fatalf("ValidateTask() external error = %v", err)
+	}
+	evs, err = ReadEvents(external)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	validated, ownsChecked := 0, 0
+	for _, e := range evs {
+		switch e.Kind {
+		case "validated":
+			validated++
+			if e.Workdir != dir {
+				t.Errorf("validated workdir = %q, want %q", e.Workdir, dir)
+			}
+		case "owns_checked":
+			ownsChecked++
+			if e.Workdir != dir {
+				t.Errorf("owns_checked workdir = %q, want %q", e.Workdir, dir)
+			}
+		}
+	}
+	if validated == 0 || ownsChecked == 0 {
+		t.Errorf("validated = %d, owns_checked = %d, want both > 0", validated, ownsChecked)
+	}
+}

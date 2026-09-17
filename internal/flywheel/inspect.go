@@ -86,6 +86,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
 		Tree: tree, Session: o.Session, Note: note, Persona: "inspector",
+		Workdir: workdirField(wd(o.Workdir, o.Dir), o.Dir),
 	}); err != nil {
 		return err
 	}
@@ -156,17 +157,20 @@ func requireReadings(dir, wd, task string, events []Event) readingsResult {
 // readingsForPass reports the tree a pass on tree may rely on after the
 // boundary: "" with ok when tree itself has a complete reading (today's rule),
 // another tree T with ok when the issue #218 relaxation qualifies it, or
-// ok=false when no reading qualifies. The relaxation re-checks the diff
-// against the repository — the note on an inspected event is never trusted.
-// A tree that no longer exists in the repository cannot be examined, so a pass
-// on it never qualifies. requireReadings and ruleT3 share this predicate, so
-// inspect and verify accept exactly the same set of passes.
+// ok=false when no reading qualifies. The strict reading check is pure event
+// matching and runs first: a complete reading on the ledger's own evidence is
+// a pass even when the tree can no longer be resolved in the repository (issue
+// #244). The relaxation re-checks the diff against the repository — the note
+// on an inspected event is never trusted. A tree that no longer exists in the
+// repository cannot be examined, so a pass on it never qualifies.
+// requireReadings and ruleT3 share this predicate, so inspect and verify
+// accept exactly the same set of passes.
 func readingsForPass(wd string, events []Event, header BriefHeader, task, tree string, after time.Time) (string, bool, error) {
-	if !treeExists(wd, tree) {
-		return "", false, nil
-	}
 	if allReadings(events, header, task, tree, after) {
 		return "", true, nil
+	}
+	if !treeExists(wd, tree) {
+		return "", false, nil
 	}
 	return relaxedReadingTree(wd, events, header, task, tree, after)
 }
