@@ -284,6 +284,14 @@ func writeStateJSON(dir string, st State) error {
 // atomicWrite writes b to dir/name via a temp file in the same directory plus
 // os.Rename, so a crash never leaves a half-written destination file.
 func atomicWrite(dir, name, pattern string, b []byte) error {
+	return atomicWriteChecked(dir, name, pattern, b, nil)
+}
+
+// atomicWriteChecked is atomicWrite with a verification hook: check runs
+// immediately before the os.Rename, and a failing check aborts the write
+// (removing the temp file) without touching the destination. A nil check
+// behaves exactly as atomicWrite.
+func atomicWriteChecked(dir, name, pattern string, b []byte, check func() error) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
@@ -299,6 +307,12 @@ func atomicWrite(dir, name, pattern string, b []byte) error {
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return fmt.Errorf("close temp %s: %w", pattern, err)
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			os.Remove(tmp.Name())
+			return err
+		}
 	}
 	if err := os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
 		os.Remove(tmp.Name())

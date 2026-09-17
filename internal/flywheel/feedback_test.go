@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,17 +255,15 @@ func TestWriteLearningsFileLeavesReplacedRootFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat replacement: %v", err)
 	}
-	orig := lstatFile
-	lstatFile = func(path string) (os.FileInfo, error) {
+	lstat := func(path string) (os.FileInfo, error) {
 		if path == old {
 			return rfi, nil
 		}
 		return os.Lstat(path)
 	}
-	defer func() { lstatFile = orig }()
 	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
-	if err := WriteLearningsFile(dir, views); err != nil {
-		t.Fatalf("WriteLearningsFile() error = %v", err)
+	if err := writeLearningsFile(dir, views, lstat); err != nil {
+		t.Fatalf("writeLearningsFile() error = %v", err)
 	}
 	got, err := os.ReadFile(old)
 	if err != nil {
@@ -319,11 +318,9 @@ func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat other file: %v", err)
 	}
-	orig := lstatFile
-	lstatFile = func(path string) (os.FileInfo, error) { return ofi, nil }
-	defer func() { lstatFile = orig }()
+	lstat := func(path string) (os.FileInfo, error) { return ofi, nil }
 	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
-	err = WriteLearningsFile(dir, views)
+	err = writeLearningsFile(dir, views, lstat)
 	if err == nil {
 		t.Fatal("WriteLearningsFile() succeeded, want a refusal when the .flywheel file changed")
 	} else if !strings.Contains(err.Error(), "another writer") {
@@ -335,6 +332,62 @@ func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
 	}
 	if string(got) != string(marked) {
 		t.Errorf("dot file changed to %q, want %q byte-for-byte", got, marked)
+	}
+}
+
+func TestWriteLearningsFileCheckedAtRename(t *testing.T) {
+	dir := t.TempDir()
+	dot := filepath.Join(dir, ".flywheel", "learnings.md")
+	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
+		t.Fatalf("mkdir .flywheel: %v", err)
+	}
+	marked := []byte("# Learnings\n" + learningsMarker + "\nstale\n")
+	if err := os.WriteFile(dot, marked, 0o644); err != nil {
+		t.Fatalf("write marked dot file: %v", err)
+	}
+	replacement := filepath.Join(dir, "replacement.md")
+	replaced := []byte("another writer's file\n")
+	if err := os.WriteFile(replacement, replaced, 0o644); err != nil {
+		t.Fatalf("write replacement: %v", err)
+	}
+	// The injected seam expresses the interleaving: the dot file is replaced
+	// after the temp file is written but before the rename, exactly when the
+	// pre-rename ownership re-check runs.
+	var seamRan bool
+	lstat := func(path string) (os.FileInfo, error) {
+		if path == dot && !seamRan {
+			seamRan = true
+			if err := os.Rename(replacement, dot); err != nil {
+				return nil, fmt.Errorf("replace dot file: %w", err)
+			}
+		}
+		return os.Lstat(path)
+	}
+	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
+	err := writeLearningsFile(dir, views, lstat)
+	if err == nil {
+		t.Fatal("writeLearningsFile() succeeded, want a refusal when the dot file is replaced before the rename")
+	} else if !strings.Contains(err.Error(), "another writer") {
+		t.Errorf("refusal %q does not say the file changed hands", err)
+	}
+	if !seamRan {
+		t.Error("the injected seam never ran; the write did not re-check ownership before the rename")
+	}
+	got, rerr := os.ReadFile(dot)
+	if rerr != nil {
+		t.Fatalf("read dot file: %v", rerr)
+	}
+	if string(got) != string(replaced) {
+		t.Errorf("dot file was clobbered to %q, want the replacement %q left alone", got, replaced)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, ".flywheel"))
+	if err != nil {
+		t.Fatalf("read .flywheel: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "learnings-") {
+			t.Errorf("temp file %s left behind after the refused write", e.Name())
+		}
 	}
 }
 
