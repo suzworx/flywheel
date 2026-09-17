@@ -2951,6 +2951,107 @@ func TestRunSharedGateCountsUnitsNotGates(t *testing.T) {
 	}
 }
 
+// TestRunCorrectionDeltaGateWarns is the w223-c1 correction's guard: a
+// correction whose delta declares a gate an in-flight sibling also declares
+// must produce the shared-gate warning, even though the previous attempt's
+// gate (the base brief's) differs from the sibling's. Without the fix, Run
+// compared the previous attempt's gates and missed the contention the delta
+// actually introduces, so the two units ran the gate at once with no warning
+// (issue #223).
+func TestRunCorrectionDeltaGateWarns(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", gateBrief(t, dir, "b1.txt", "a.go", "npm run validate"))
+	base := gateBrief(t, dir, "b2.txt", "b.go", "go test ./...")
+	planAndDispatch(t, dir, "T2", base)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	delta := filepath.Join(dir, "d2.txt")
+	if err := os.WriteFile(delta, []byte("owns: b.go\ngate: npm run validate\n\n# TASK: delta\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T2", DeltaPath: delta, Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch (a shared gate is a warning, not a refusal)", err)
+	}
+	if res.Attempt != "c1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean c1 run", res)
+	}
+	if !strings.Contains(buf.String(), "gate 1 is shared with 1 in-flight units; they will contend") {
+		t.Errorf("progress = %q, want the shared-gate warning for the delta's gate", buf.String())
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Task == "T2" && e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Attempt != "c1" {
+		t.Fatalf("dispatched event = %+v, want the c1 correction", d)
+	}
+	if !strings.Contains(d.Note, "shared-gate: gate 1 is shared with 1 in-flight units; they will contend") {
+		t.Errorf("dispatched note = %q, want it to record the delta gate's shared-gate warning", d.Note)
+	}
+}
+
+// TestRunCorrectionDeltaGateReplacedSharedNoWarning is the w223-c1
+// correction's invented-contention half: a correction whose delta replaces a
+// gate the base brief (and therefore the previous attempt) shared with an
+// in-flight sibling must produce no warning. Without the fix, Run compared
+// the previous attempt's gates and warned about contention the delta removes
+// (issue #223).
+func TestRunCorrectionDeltaGateReplacedSharedNoWarning(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", gateBrief(t, dir, "b1.txt", "a.go", "npm run validate"))
+	base := gateBrief(t, dir, "b2.txt", "b.go", "npm run validate")
+	planAndDispatch(t, dir, "T2", base)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	delta := filepath.Join(dir, "d2.txt")
+	if err := os.WriteFile(delta, []byte("owns: b.go\ngate: go test ./...\n\n# TASK: delta\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T2", DeltaPath: delta, Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Attempt != "c1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean c1 run", res)
+	}
+	if strings.Contains(buf.String(), "gate 1 is shared") {
+		t.Errorf("progress = %q, want no shared-gate warning (the delta replaces the shared gate)", buf.String())
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Task == "T2" && e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Attempt != "c1" {
+		t.Fatalf("dispatched event = %+v, want the c1 correction", d)
+	}
+	if strings.Contains(d.Note, "shared-gate") {
+		t.Errorf("dispatched note = %q, want no shared-gate warning (the delta replaces the shared gate)", d.Note)
+	}
+}
+
 // concurrentOutcome pairs one concurrent Run's result and error.
 type concurrentOutcome struct {
 	res Result

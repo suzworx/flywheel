@@ -220,11 +220,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// owns and never blocks.
 	myOwns := []string{}
 	myExclusive := []string{}
-	myGates := []string{}
 	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
 		myOwns = header.Owns
 		myExclusive = header.Exclusive
-		myGates = header.Gates
 	}
 	overlap := ownsCollisionWith(dir, events, o.Task, myOwns)
 	if !o.AllowOverlap && overlap != nil {
@@ -247,15 +245,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			Fix:  fmt.Sprintf("exclusive resource %q is held by %s (%s); wait for it to land, or pass --allow-overlap", excl.name, excl.task, excl.status),
 		}
 	}
-
-	// Shared gate (issue #223): a gate line this dispatch declares that an
-	// in-flight task's brief declares byte-identically means those units will
-	// run that command at once — max_parallel caps concurrent workers, not
-	// concurrent gates. A warning, never a refusal: sharing a gate is
-	// legitimate and often unavoidable, and the operator needs to know the
-	// real concurrency limit, not be stopped. Recorded on the dispatched note
-	// below and printed as a progress line.
-	gates := gateContentions(dir, events, o.Task, myGates)
 
 	// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
 	// delta, not the resume flag, makes a dispatch a correction: a given
@@ -296,9 +285,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return Result{}, &RuleRefusal{Rule: "T1", Fix: msg}
 		}
 		progress(o.Progress, fmt.Sprintf("%s %s brief-drift (%s)", o.Task, attempt, msg))
-	}
-	for _, g := range gates {
-		progress(o.Progress, o.Task+" "+attempt+" "+gateContentionLine(g))
 	}
 
 	promptSrc, err := promptSource(dir, brief, o.DeltaPath, o.Task, o.Resume)
@@ -344,6 +330,25 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	promptHeader, err := ParseBriefHeaderBytes(promptB)
 	if err != nil {
 		return Result{}, fmt.Errorf("parse prompt %s: %w", promptSrc, err)
+	}
+
+	// Shared gate (issue #223): a gate line this dispatch will run that an
+	// in-flight task's brief declares byte-identically means those units will
+	// run that command at once — max_parallel caps concurrent workers, not
+	// concurrent gates. A warning, never a refusal: sharing a gate is
+	// legitimate and often unavoidable, and the operator needs to know the
+	// real concurrency limit, not be stopped. The gates compared are the
+	// prompt about to be sent — promptHeader, the exact bytes attached, the
+	// same header recorded on the dispatched event — not AttemptBrief's
+	// resolution of the previous attempt, which has no dispatched event for
+	// this invocation yet and would describe a different prompt: a
+	// correction's delta replaces the base gates when it declares any, and a
+	// fresh dispatch sends the base brief as it is on disk now, edited or
+	// not. Recorded on the dispatched note below and printed as a progress
+	// line.
+	gates := gateContentions(dir, events, o.Task, dispatchGates(dir, events, o.Task, o.DeltaPath != "" || o.Resume, promptHeader))
+	for _, g := range gates {
+		progress(o.Progress, o.Task+" "+attempt+" "+gateContentionLine(g))
 	}
 
 	// The run file the dispatched event points at.
@@ -916,6 +921,33 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 type gateContention struct {
 	gate  int // 1-based index of this task's gate line
 	units int // number of in-flight tasks declaring the identical line
+}
+
+// dispatchGates returns the gate lines the dispatch about to start will run,
+// for the shared-gate comparison (issue #223): the prompt header's gates on a
+// fresh dispatch — the base brief's own, edited or not, since that is the
+// prompt sent — and on a correction the delta's gates when the delta declares
+// any, otherwise the base brief's. The last branch matches AttemptBrief's
+// merge rule exactly: a delta's gates replace the base gates when it declares
+// any, and the base gates stand when it declares none. The base brief is
+// resolved the same way AttemptBrief resolves it, from the latest
+// planned-or-amended event's recorded header when it carries one, the file at
+// its path otherwise (issue #259). Deriving the set from the prompt about to
+// be sent rather than from AttemptBrief's resolution of the previous attempt
+// keeps the warning about the command the worker will actually run.
+func dispatchGates(dir string, events []Event, task string, correction bool, prompt BriefHeader) []string {
+	if !correction || len(prompt.Gates) > 0 {
+		return prompt.Gates
+	}
+	basePath, _, baseEv := latestBaseBriefAndAttempt(events, task)
+	if basePath == "" {
+		return nil
+	}
+	base, err := briefHeaderAt(dir, basePath, baseEv)
+	if err != nil {
+		return nil
+	}
+	return base.Gates
 }
 
 // gateContentions returns one entry per gate line this task declares that an
