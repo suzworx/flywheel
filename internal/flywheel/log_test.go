@@ -44,6 +44,18 @@ func TestRecordPlannedRecordsOwnsNeeds(t *testing.T) {
 	if strings.Join(e.Needs, ",") != strings.Join(wantNeeds, ",") {
 		t.Errorf("needs = %v, want %v", e.Needs, wantNeeds)
 	}
+	if e.Header == nil {
+		t.Fatal("planned event carries no header")
+	}
+	if strings.Join(e.Header.Owns, ",") != strings.Join(wantOwns, ",") {
+		t.Errorf("header owns = %v, want %v", e.Header.Owns, wantOwns)
+	}
+	if strings.Join(e.Header.Needs, ",") != strings.Join(wantNeeds, ",") {
+		t.Errorf("header needs = %v, want %v", e.Header.Needs, wantNeeds)
+	}
+	if e.Header.SHA256 == "" {
+		t.Error("header sha256 is empty, want the brief file's hash")
+	}
 }
 
 func TestRecordPlannedMissingBriefErrors(t *testing.T) {
@@ -88,6 +100,12 @@ func TestRecordAmendedSnapshotsAndRecordsNote(t *testing.T) {
 	}
 	if len(a.Owns) != 1 || a.Owns[0] != "a.go" {
 		t.Errorf("owns = %v, want [a.go]", a.Owns)
+	}
+	if a.Header == nil || len(a.Header.Owns) != 1 || a.Header.Owns[0] != "a.go" {
+		t.Errorf("amended header = %+v, want owns [a.go]", a.Header)
+	}
+	if a.Header == nil || a.Header.SHA256 == "" {
+		t.Error("amended header sha256 is empty, want the brief file's hash")
 	}
 
 	// Editing the brief after the first amend, then amending again, snapshots
