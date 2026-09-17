@@ -149,3 +149,15 @@ func TestLintBriefUnreadable(t *testing.T) {
 		t.Fatal("LintBrief() error = nil, want one for an unreadable brief")
 	}
 }
+
+func TestLintBriefEmptyExclusiveEntry(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nexclusive:   \nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"exclusive: entry is empty"}, nil)
+}
+
+func TestLintBriefNormalExclusiveEntryPasses(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nexclusive: db\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}

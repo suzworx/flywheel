@@ -2433,6 +2433,17 @@ func planOnly(t *testing.T, dir, task, brief string) {
 	}
 }
 
+// exclBrief writes a brief with the given owns and exclusive lines and
+// returns its path.
+func exclBrief(t *testing.T, dir, name, owns, exclusive string) string {
+	t.Helper()
+	content := "owns: " + owns + "\nexclusive: " + exclusive + "\ngate: true\n\n# TASK: " + name + "\nbody\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write brief %s: %v", name, err)
+	}
+	return name
+}
+
 // TestRunRefusesOwnsCollision checks a dispatch whose owns: shares a path
 // with an in-flight task's owns: is refused with the owns RuleRefusal, the
 // message names the shared path and the owning task, and no event is appended
@@ -2566,5 +2577,158 @@ func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
 	}
 	if !strings.Contains(r.Fix, "internal/foo/bar.go") {
 		t.Errorf("refusal fix = %q, want it naming the file under the directory prefix", r.Fix)
+	}
+}
+
+// TestRunRefusesExclusiveCollision checks a dispatch whose exclusive: names a
+// resource an in-flight task already holds is refused with the exclusive
+// RuleRefusal, the message names the resource and the holding task, and no
+// event is appended (issue #220).
+func TestRunRefusesExclusiveCollision(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+	planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "b.go", "db"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T2"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "exclusive" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal exclusive", err)
+	}
+	if !strings.Contains(r.Fix, `"db"`) || !strings.Contains(r.Fix, "T1") {
+		t.Errorf("refusal fix = %q, want it naming the resource db and the holding task T1", r.Fix)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 {
+		t.Errorf("events = %d, want 3 (planned/dispatched T1, planned T2); a refused dispatch must record nothing", len(evs))
+	}
+}
+
+// TestRunExclusiveNamesDisjointBothDispatch checks two briefs declaring
+// different exclusive names both dispatch (issue #220).
+func TestRunExclusiveNamesDisjointBothDispatch(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+	planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "b.go", "cache"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	res, err := Run(dir, RunOptions{Task: "T2"})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch (exclusive names disjoint)", err)
+	}
+	if res.Attempt != "r1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean r1 run", res)
+	}
+}
+
+// TestRunAllowOverlapRecordsExclusiveOverlap checks --allow-overlap dispatches
+// despite an exclusive: clash and records the crossing on the dispatched
+// event's note (issue #220).
+func TestRunAllowOverlapRecordsExclusiveOverlap(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+	planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "b.go", "db"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T2", AllowOverlap: true}); err != nil {
+		t.Fatalf("Run() with --allow-overlap error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Task == "T2" && e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if !strings.Contains(d.Note, "exclusive-overlap: db with T1") {
+		t.Errorf("dispatched note = %q, want it to record exclusive-overlap: db with T1", d.Note)
+	}
+}
+
+// TestRunExclusiveClashWithNotInFlightDispatches checks a clash with a task
+// that is no longer in flight (landed or passed) does not refuse (issue #220).
+func TestRunExclusiveClashWithNotInFlightDispatches(t *testing.T) {
+	for _, final := range []string{"landed", "passed"} {
+		t.Run(final, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Init(dir, false); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+			if final == "landed" {
+				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "landed"}); err != nil {
+					t.Fatalf("AppendEvent() landed: %v", err)
+				}
+			} else {
+				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+					t.Fatalf("AppendEvent() inspected: %v", err)
+				}
+			}
+			planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "b.go", "db"))
+			if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			if _, err := Run(dir, RunOptions{Task: "T2"}); err != nil {
+				t.Fatalf("Run() error = %v, want a normal dispatch (the holding task is no longer in flight)", err)
+			}
+		})
+	}
+}
+
+// TestRunExclusiveAloneDispatches checks a brief declaring an exclusive name
+// dispatches normally when no in-flight peer holds it (issue #220).
+func TestRunExclusiveAloneDispatches(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planOnly(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	res, err := Run(dir, RunOptions{Task: "T1"})
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch (no in-flight peer holds the resource)", err)
+	}
+	if res.Attempt != "r1" || res.Reason != "stop" {
+		t.Errorf("result = %+v, want a clean r1 run", res)
+	}
+}
+
+// TestRunOwnsCollisionBeatsExclusiveClash checks a dispatch whose owns:
+// overlaps an in-flight task's owns: and whose exclusive: clashes with it too
+// is refused as owns, not exclusive — owns is checked first (issue #220).
+func TestRunOwnsCollisionBeatsExclusiveClash(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "shared.go", "db"))
+	planOnly(t, dir, "T2", exclBrief(t, dir, "b2.txt", "shared.go", "db"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T2"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "owns" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal owns (owns is checked first)", err)
 	}
 }

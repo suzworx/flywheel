@@ -30,7 +30,7 @@ type RunOptions struct {
 	Resume       bool
 	ForceModel   bool   // bypass the L-03 refusal when --resume --model names a model that is not an approved fallback
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
-	AllowOverlap bool   // skip the owns-collision refusal; the dispatched note records the overlap
+	AllowOverlap bool   // skip the owns- and exclusive-collision refusals; the dispatched note records the overlap
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
@@ -201,14 +201,30 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// dispatched note instead. A task with no readable brief contributes no
 	// owns and never blocks.
 	myOwns := []string{}
+	myExclusive := []string{}
 	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
 		myOwns = header.Owns
+		myExclusive = header.Exclusive
 	}
 	overlap := ownsCollisionWith(dir, events, o.Task, myOwns)
 	if !o.AllowOverlap && overlap != nil {
 		return Result{}, &RuleRefusal{
 			Rule: "owns",
 			Fix:  fmt.Sprintf("owns collision with %s (%s): %s; wait for it to land, narrow this brief's owns:, or pass --allow-overlap", overlap.task, overlap.status, strings.Join(overlap.paths, ", ")),
+		}
+	}
+
+	// Exclusive resource (issue #220): a dispatch whose exclusive: names a
+	// resource an in-flight task already holds is refused the same way, so
+	// one unit can never race another for a shared database, build cache or
+	// device. The owns check runs first, so its more specific message wins
+	// when both apply. --allow-overlap skips this refusal too and records
+	// the crossing on the dispatched note.
+	excl := exclusiveCollisionWith(dir, events, o.Task, myExclusive)
+	if !o.AllowOverlap && excl != nil {
+		return Result{}, &RuleRefusal{
+			Rule: "exclusive",
+			Fix:  fmt.Sprintf("exclusive resource %q is held by %s (%s); wait for it to land, or pass --allow-overlap", excl.name, excl.task, excl.status),
 		}
 	}
 
@@ -320,7 +336,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
-		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap),
+		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl),
 		Baseline: baseline, Worktrees: worktrees,
 	}); err != nil {
 		return Result{}, err
@@ -955,13 +971,68 @@ func ownsCollisionWith(dir string, events []Event, task string, owns []string) *
 	return nil
 }
 
+// exclusiveCollision describes one exclusive: overlap between the task being
+// dispatched and an in-flight task: the other task, its derived status, and
+// the colliding resource name.
+type exclusiveCollision struct {
+	task   string
+	status string
+	name   string
+}
+
+// exclusiveCollisionWith returns the first exclusive: overlap between names
+// and an in-flight task's exclusive: names, or nil. In-flight means a derived
+// status of dispatched or running, the same window ownsCollisionWith guards:
+// that worker is still running, so it still holds the resource (issue #220).
+// A task with no planned brief, or one whose brief cannot be read, is skipped
+// rather than erroring, exactly like the owns check. Names compare exactly,
+// case-sensitively, after trimming surrounding whitespace.
+func exclusiveCollisionWith(dir string, events []Event, task string, names []string) *exclusiveCollision {
+	held := make(map[string]bool, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			held[n] = true
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	st := Derive(events)
+	status := make(map[string]string, len(st.Tasks))
+	for _, ts := range st.Tasks {
+		status[ts.ID] = ts.Status
+	}
+	for _, other := range inFlightOwners(events, task) {
+		switch status[other] {
+		case "dispatched", "running":
+		default:
+			continue
+		}
+		header, _, err := AttemptBrief(dir, events, other)
+		if err != nil {
+			continue
+		}
+		for _, n := range header.Exclusive {
+			if n = strings.TrimSpace(n); n != "" && held[n] {
+				return &exclusiveCollision{task: other, status: status[other], name: n}
+			}
+		}
+	}
+	return nil
+}
+
 // dispatchedNote builds the dispatched event's note: the policy sha256 always,
 // and the owns-overlap record when --allow-overlap crossed an in-flight task's
-// owns: so a deliberate overlap stays visible in the ledger (issue #164).
-func dispatchedNote(policySHA string, overlap *ownsCollision) string {
+// owns: so a deliberate overlap stays visible in the ledger (issue #164). An
+// exclusive resource crossed under --allow-overlap is recorded the same way
+// (issue #220).
+func dispatchedNote(policySHA string, overlap *ownsCollision, excl *exclusiveCollision) string {
 	note := "policy sha256=" + policySHA
 	if overlap != nil {
 		note += "; owns-overlap: " + strings.Join(overlap.paths, ", ") + " with " + overlap.task
+	}
+	if excl != nil {
+		note += "; exclusive-overlap: " + excl.name + " with " + excl.task
 	}
 	return note
 }

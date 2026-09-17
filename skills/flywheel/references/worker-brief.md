@@ -21,6 +21,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   worktree instead of statting a literal path, so a pattern that currently matches nothing is
   reported the same as a missing path. List every file a unit may create up front, in `owns:`,
   rather than inviting it to add one later.
+- **exclusive:** — an optional **named resource** this task alone may hold while it runs: a shared
+  database, build cache or device. `flywheel run` refuses (exit 6) a dispatch whose `exclusive:`
+  name an in-flight task already holds, before any event is recorded — the same guard `owns:`
+  gives files, but for a resource, not a file: files are `owns:`. `--allow-overlap` dispatches
+  anyway and records the crossing on the dispatched event's note, so a deliberate overlap stays
+  visible in the ledger.
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before
@@ -323,9 +329,13 @@ real coordination mistakes mechanically checkable: two concurrent tasks sharing 
 dispatching before a `needs:` task is done. Do not build a graph runner — it violates the skill's own
 DRY rule, and coordination was not the observed bottleneck; reliability was.
 
-**Exclusive resources.** Tasks that share a build cache or device (for example PlatformIO's
+**Exclusive resources.** Tasks that share a build cache, database or device (for example PlatformIO's
 `.pio/`) must not run together even with disjoint `owns:`. Declare an optional `exclusive: <resource>`
-header line and treat it like a shared choke point.
+header line: `flywheel run` refuses (exit 6) a dispatch whose `exclusive:` name an in-flight task
+already holds, before any event is recorded — the same guard `owns:` gives files, but for a **named
+resource, not a file**. A deliberate crossing dispatches under `--allow-overlap`, which records it on
+the dispatched event's note (`exclusive-overlap: <name> with <task>`) so it stays visible in the
+ledger.
 
 **Gate scoping.** Under concurrency, a worker's full-repo gate can fail on another worker's
 half-written files. Give workers a scoped gate (the affected tests plus typecheck) and run the full
