@@ -70,6 +70,63 @@ func TestAppendEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
 	}
 }
 
+// TestAppendEventsAmendedRoutesThroughCheck checks the JSON log path routes
+// an amended event through the checked, dispatch-locked path instead of
+// appending it raw (issue #272): a benign amendment lands, and the amended
+// event is present in the log afterwards.
+func TestAppendEventsAmendedRoutesThroughCheck(t *testing.T) {
+	dir := t.TempDir()
+	base := flywheel.BriefHeader{Owns: []string{"a.go"}, Gates: []string{"go build ./..."}}
+	appendEvents(dir, []flywheel.Event{
+		{Task: "t1", Kind: "planned", Brief: "b.txt", Header: &base},
+		{Task: "t1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", Header: &base},
+	}, true)
+	amended := flywheel.BriefHeader{Owns: []string{"a.go", "b.go"}, Gates: []string{"go build ./..."}}
+	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "amended", Brief: "b.txt", Header: &amended, Note: "widen owns"}}, true)
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 3 || events[2].Kind != "amended" {
+		t.Errorf("events = %+v, want the benign amended event appended", events)
+	}
+}
+
+// TestAppendEventsAmendedInFeedbackBatchLandsBoth checks an amended event
+// riding in a feedback batch is routed through the check before the batch
+// lands as the feedback transaction, so neither the refusal nor the
+// learnings.md rebuild is skipped (issue #272, #260).
+func TestAppendEventsAmendedInFeedbackBatchLandsBoth(t *testing.T) {
+	dir := t.TempDir()
+	base := flywheel.BriefHeader{Owns: []string{"a.go"}, Gates: []string{"go build ./..."}}
+	appendEvents(dir, []flywheel.Event{
+		{Task: "t1", Kind: "planned", Brief: "b.txt", Header: &base},
+		{Task: "t1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", Header: &base},
+	}, true)
+	amended := flywheel.BriefHeader{Owns: []string{"a.go", "b.go"}, Gates: []string{"go build ./..."}}
+	appendEvents(dir, []flywheel.Event{
+		{Task: "t1", Kind: "amended", Brief: "b.txt", Header: &amended, Note: "widen owns"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
+	}, true)
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4 (planned, dispatched, amended, learning)", len(events))
+	}
+	if events[2].Kind != "amended" || events[3].Kind != "learning" {
+		t.Errorf("events = %+v, want the amended then the learning event appended", events)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "learnings.md"))
+	if err != nil {
+		t.Fatalf("read learnings.md: %v", err)
+	}
+	if !strings.Contains(string(b), "## L-01 — Terse") {
+		t.Errorf("learnings.md lacks the imported learning:\n%s", b)
+	}
+}
+
 // TestBatchHasLearning checks the routing predicate: only batches carrying a
 // learning or dismissed event are routed through the feedback transaction.
 func TestBatchHasLearning(t *testing.T) {

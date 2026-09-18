@@ -286,3 +286,164 @@ func TestRecordAmendedDispatchedWithoutGateChangeSucceeds(t *testing.T) {
 		t.Errorf("amended header gates = %+v, want the unchanged gate", a.Header)
 	}
 }
+
+// TestRecordAmendedInheritedGatesChangeSucceeds is the false-refusal guard:
+// a correction whose delta declares no gate: lines inherits the base brief's
+// gates, so amending the base gates DOES change what validation would run
+// for that attempt and must be allowed (issue #272 correction).
+func TestRecordAmendedInheritedGatesChangeSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	delta := writeLogBrief(t, dir, "delta.txt", "owns: b.go\n\n# TASK: t\ncorrection\n")
+	dh, err := ParseBriefHeader(delta)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{Task: "t", Kind: "dispatched", Attempt: "c1", Brief: "delta.txt", Header: &dh}); err != nil {
+		t.Fatalf("dispatched error = %v", err)
+	}
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n")
+	if err := RecordAmended(dir, "t", brief, "fix gate"); err != nil {
+		t.Fatalf("RecordAmended() error = %v, want the inherited-gate amendment to succeed", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 || evs[2].Kind != "amended" {
+		t.Fatalf("events = %+v, want the amended event appended", evs)
+	}
+	if evs[2].Header == nil || len(evs[2].Header.Gates) != 1 || evs[2].Header.Gates[0] != "go test ./..." {
+		t.Errorf("amended header gates = %+v, want [go test ./...]", evs[2].Header)
+	}
+	header, _, err := AttemptBrief(dir, evs, "t")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(header.Gates) != 1 || header.Gates[0] != "go test ./..." {
+		t.Errorf("AttemptBrief gates = %v, want the amended [go test ./...] inherited by the correction", header.Gates)
+	}
+}
+
+// TestRecordAmendedEffectiveGatesLiveChangeSucceeds pins the live-gate
+// rule: the base's live-gate: lines are always inherited — a correction's
+// delta never replaces them — so an amendment touching only live-gate: lines
+// takes effect on a correction attempt and is allowed, and AttemptBrief
+// returns the amended live gate while the delta's own gates still override.
+func TestRecordAmendedEffectiveGatesLiveChangeSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	delta := writeLogBrief(t, dir, "delta.txt", "owns: b.go\ngate: go test ./...\n\n# TASK: t\ncorrection\n")
+	dh, err := ParseBriefHeader(delta)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{Task: "t", Kind: "dispatched", Attempt: "c1", Brief: "delta.txt", Header: &dh}); err != nil {
+		t.Fatalf("dispatched error = %v", err)
+	}
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real2\n\n# TASK: t\nv2\n")
+	if err := RecordAmended(dir, "t", brief, "fix live gate"); err != nil {
+		t.Fatalf("RecordAmended() error = %v, want the live-gate amendment to succeed", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	header, _, err := AttemptBrief(dir, evs, "t")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(header.LiveGates) != 1 || header.LiveGates[0] != "go run ./cmd/real2" {
+		t.Errorf("AttemptBrief live gates = %v, want the amended [go run ./cmd/real2] (always inherited from the base)", header.LiveGates)
+	}
+	if len(header.Gates) != 1 || header.Gates[0] != "go test ./..." {
+		t.Errorf("AttemptBrief gates = %v, want the delta's [go test ./...] still overriding", header.Gates)
+	}
+}
+
+// TestRecordAmendedLiveGatesInertAfterDispatchRefused is the fresh-attempt
+// half of the live-gate rule: a dispatched attempt measures its own recorded
+// header, so a live-gate-only amendment is inert there and refused, exactly
+// as an ordinary gate change is.
+func TestRecordAmendedLiveGatesInertAfterDispatchRefused(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real2\n\n# TASK: t\nv2\n")
+	err := RecordAmended(dir, "t", brief, "fix live gate")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("RecordAmended() error = %v, want a RuleRefusal", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Errorf("events = %d, want 2 (the refusal appends nothing)", len(evs))
+	}
+}
+
+// TestAppendAmendedEventRefusesInert is the JSON-path guard: a
+// JSON-ingested amended event that would be inert is refused through the
+// same check as --kind amended, before anything is written (issue #272).
+func TestAppendAmendedEventRefusesInert(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	newH, err := ParseBriefHeader(writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	err = AppendAmendedEvent(dir, Event{Task: "t", Kind: "amended", Brief: brief, Header: &newH, Note: "via json"})
+	if !IsRuleRefusal(err) {
+		t.Fatalf("AppendAmendedEvent() error = %v, want a RuleRefusal", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Errorf("events = %d, want 2 (the refusal appends nothing)", len(evs))
+	}
+}
+
+// TestAppendAmendedEventBenignAppends is the other half of the JSON path: a
+// JSON-ingested amendment that does not try to change the gates (owns
+// widened) lands exactly as the flag path would.
+func TestAppendAmendedEventBenignAppends(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	newH, err := ParseBriefHeader(writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv2\n"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if err := AppendAmendedEvent(dir, Event{Task: "t", Kind: "amended", Brief: brief, Header: &newH, Note: "widen owns"}); err != nil {
+		t.Fatalf("AppendAmendedEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 3 || evs[2].Kind != "amended" {
+		t.Fatalf("events = %+v, want the amended event appended", evs)
+	}
+	if evs[2].Header == nil || len(evs[2].Header.Gates) != 1 || evs[2].Header.Gates[0] != "go build ./..." {
+		t.Errorf("amended header gates = %+v, want the unchanged gate", evs[2].Header)
+	}
+}

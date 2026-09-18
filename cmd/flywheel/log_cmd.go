@@ -65,14 +65,38 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 // generic JSON log path serialises against the feedback commands exactly as
 // they serialise against each other (issue #260). A batch with no learning or
 // dismissed event takes no feedback lock at all: logging a planned event must
-// never wait on a feedback command.
+// never wait on a feedback command. An amended event never bypasses the
+// inert-amendment refusal (issue #272): it is routed through
+// flywheel.AppendAmendedEvent, which holds the dispatch lock and runs the
+// same check as --kind amended, whatever else the batch carries. In a
+// feedback batch the amended events land first, before the feedback
+// transaction appends the rest; the transaction re-reads the log for its
+// artifact rebuild, so a landed amendment is included exactly as a separate
+// append would be.
 func appendEvents(dir string, events []flywheel.Event, noState bool) {
 	var err error
 	if batchHasLearning(events) {
-		err = flywheel.AppendLearningEvents(dir, events)
+		var rest []flywheel.Event
+		for _, e := range events {
+			if e.Kind == "amended" {
+				if err = flywheel.AppendAmendedEvent(dir, e); err != nil {
+					break
+				}
+			} else {
+				rest = append(rest, e)
+			}
+		}
+		if err == nil {
+			err = flywheel.AppendLearningEvents(dir, rest)
+		}
 	} else {
 		for _, e := range events {
-			if err = flywheel.AppendEvent(dir, e); err != nil {
+			if e.Kind == "amended" {
+				err = flywheel.AppendAmendedEvent(dir, e)
+			} else {
+				err = flywheel.AppendEvent(dir, e)
+			}
+			if err != nil {
 				break
 			}
 		}

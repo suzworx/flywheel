@@ -147,17 +147,25 @@ all.
   recorded.
 
 ### `amended`
-- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`.
+- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`; a
+  `--json`-ingested `amended` event lands through the same check.
 - Carries: `task`, `brief`, `header` (the parsed brief header as recorded when the amendment was
   appended, as for `planned`), optionally `needs`/`owns` (same `--json`-only caveat as `planned`).
 - Effect: `Derive` updates only `brief`/`needs`/`owns` on the task, never its status. Verify's T1
   treats a `dispatched` hash mismatch as explained when an `amended` event for the task falls
   between that dispatch and now.
-- Limit: an amendment cannot change the gates of an attempt that has already been dispatched — the
-  dispatched header is what a pass is measured against, so the command refuses (exit 6) an
-  amendment that would change the gate set instead of recording one that changes nothing. Change
-  the gates of a dispatched attempt with a correction delta: `flywheel run <task> --delta <file>`.
-  An amendment that does not change the gates (widening `owns:`, fixing prose) is still allowed.
+- Limit: an amendment cannot change the gate set an attempt has already been dispatched with — a
+  pass is measured against the attempt's effective header, so the command refuses (exit 6) an
+  amendment that would change the effective gate set instead of recording one that changes
+  nothing. The comparison is against the effective set `AttemptBrief` merges, not the dispatched
+  header alone: a correction whose delta declares no `gate:` lines inherits the base gates, so
+  amending them does change what validation runs and is allowed; a correction's delta never
+  replaces `live-gate:` lines, so an amendment touching only `live-gate:` takes effect on a
+  correction attempt but is inert — and refused — on a fresh dispatched one. Change the gates of
+  a dispatched attempt with a correction delta: `flywheel run <task> --delta <file>`. An
+  amendment that does not change the gates (widening `owns:`, fixing prose) is still allowed.
+  The refusal and the append run under `.flywheel/dispatch.lock`, the same lock file `flywheel
+  run` holds across its own read-check-append, so an amendment and a dispatch serialise.
 
 Because `planned`, `amended` and `dispatched` events carry the parsed `header`, the log is
 self-contained: a pass is measured against the header recorded in it, so a brief edited on disk
