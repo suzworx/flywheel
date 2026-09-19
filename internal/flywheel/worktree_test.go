@@ -212,3 +212,67 @@ func TestWorktreeGitignored(t *testing.T) {
 		t.Errorf(".gitignore does not contain 'worktrees/', got: %q", content)
 	}
 }
+
+// worktreeRepo is a flywheel dir with a git repo, a committed brief planned
+// as T1 (owns a.go) and the sim worker, ready for Run with Worktree.
+func worktreeRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte("owns: a.go\nneeds: none\n\n# TASK: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "brief"})
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestWorktreeCleanRunNoFalseGitWrite checks that a --worktree run that
+// touched no git history records no git-write signal: the before and after
+// snapshots both read the task's worktree (#333 review).
+func TestWorktreeCleanRunNoFalseGitWrite(t *testing.T) {
+	dir := worktreeRepo(t)
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind == "signal" && e.Signal == "git-write" {
+			t.Fatalf("git-write signal on a clean --worktree run: %+v", e)
+		}
+		if e.Kind == "dispatched" && e.Task == "T1" {
+			for path := range e.Worktrees {
+				if strings.Contains(filepath.ToSlash(path), ".flywheel/worktrees/T1") {
+					t.Errorf("the task's own worktree %s is snapshotted as another checkout", path)
+				}
+			}
+		}
+	}
+}
+
+// TestWorktreeRefusesForeignDir checks that a plain directory left at the
+// worktree path is refused, not reused (#333 review).
+func TestWorktreeRefusesForeignDir(t *testing.T) {
+	dir := worktreeRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel", "worktrees", "T1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TaskWorktree(dir, "T1"); err == nil {
+		t.Error("TaskWorktree reused a plain directory, want an error")
+	}
+}

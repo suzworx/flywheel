@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// TaskWorktree must be called under the dispatch lock (Run does): its
+// existence check, branch lookup and creation are separate git commands.
+//
 // TaskWorktree returns the absolute path of task's worktree under dir,
 // <dir>/.flywheel/worktrees/<task>, creating it when missing with
 // `git -C <dir> worktree add -b fw/<task> <path> HEAD` (or, when branch
@@ -22,9 +25,13 @@ func TaskWorktree(dir, task string) (string, error) {
 	worktreesDir := filepath.Join(abs, ".flywheel", "worktrees")
 	path := filepath.Join(worktreesDir, task)
 
-	// Check if the path already exists as a git worktree
+	// An existing path is reused only when it is a worktree of this same
+	// repository with fw/<task> checked out; anything else is refused rather
+	// than silently running a worker in the wrong tree (#333 review).
 	if _, err := os.Stat(path); err == nil {
-		// Directory exists; assume it's already a worktree
+		if err := checkTaskWorktree(abs, path, "fw/"+task); err != nil {
+			return "", err
+		}
 		return path, nil
 	}
 
@@ -85,7 +92,10 @@ func recordedWorkdir(events []Event, task string) string {
 			// A worktree removed after landing no longer holds the unit:
 			// measure the flywheel root instead, as before --worktree.
 			if e.Workdir != "" {
-				if _, err := os.Stat(e.Workdir); err != nil {
+				// Only a worktree that is gone falls back; any other error
+				// keeps the recorded path so validation fails loudly there
+				// (#333 review).
+				if _, err := os.Stat(e.Workdir); os.IsNotExist(err) {
 					return ""
 				}
 			}
@@ -93,4 +103,29 @@ func recordedWorkdir(events []Event, task string) string {
 		}
 	}
 	return ""
+}
+
+// checkTaskWorktree verifies that path is a git worktree sharing dir's
+// repository (the same git common directory) with branch checked out.
+func checkTaskWorktree(dir, path, branch string) error {
+	common := func(d string) (string, error) {
+		out, err := exec.Command("git", "-C", d, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(strings.TrimSpace(string(out))), nil
+	}
+	want, err := common(dir)
+	if err != nil {
+		return fmt.Errorf("resolve the repository of %s: %w", dir, err)
+	}
+	got, err := common(path)
+	if err != nil || !samePath(got, want) {
+		return fmt.Errorf("%s exists but is not a worktree of this repository; remove it (git worktree prune) and rerun", path)
+	}
+	head, err := exec.Command("git", "-C", path, "symbolic-ref", "-q", "HEAD").Output()
+	if err != nil || strings.TrimSpace(string(head)) != "refs/heads/"+branch {
+		return fmt.Errorf("%s does not have %s checked out; switch it back or remove the worktree and rerun", path, branch)
+	}
+	return nil
 }
