@@ -60,7 +60,11 @@ func FactorySummary(dir string) (string, error) {
 	} else {
 		limitStrs = append(limitStrs, "budget none")
 	}
-	limitStrs = append(limitStrs, "tokens none")
+	if cfg.Limits.Budget != nil && cfg.Limits.Budget.WaveTokens > 0 {
+		limitStrs = append(limitStrs, fmt.Sprintf("tokens %d", cfg.Limits.Budget.WaveTokens))
+	} else {
+		limitStrs = append(limitStrs, "tokens none")
+	}
 	if cfg.Limits.Breaker != nil && cfg.Limits.Breaker.Errors > 0 {
 		// The effective cooldown: an omitted one is 10m (#328 review).
 		d, err := cfg.Limits.Breaker.CooldownDuration()
@@ -72,7 +76,11 @@ func FactorySummary(dir string) (string, error) {
 	} else {
 		limitStrs = append(limitStrs, "breaker none")
 	}
-	limitStrs = append(limitStrs, "rate none")
+	if cfg.Limits.RatePerMinute > 0 {
+		limitStrs = append(limitStrs, fmt.Sprintf("rate %d/min", cfg.Limits.RatePerMinute))
+	} else {
+		limitStrs = append(limitStrs, "rate none")
+	}
 	lines = append(lines, fmt.Sprintf("  limits: %s", strings.Join(limitStrs, " · ")))
 
 	// Audit line
