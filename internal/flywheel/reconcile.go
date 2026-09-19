@@ -339,13 +339,20 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		}
 	}
 
-	// Rate limiting: cap capacity based on model's dispatch rate in the last 60s.
-	// A fallback takeover is not rate-capped here.
-	if p.RatePerMinute > 0 && fallbackTakeover == "" {
+	// Rate limiting: cap capacity by the model's free dispatch slots in the
+	// last 60 s; at zero no task is dispatched this tick (no HOLD — the next
+	// tick sees the slot).
+	// The rate applies to the model the dispatch will use: an approved
+	// fallback's own count when it takes over (#329 review).
+	rateModel := p.Model
+	if fallbackTakeover != "" {
+		rateModel = fallbackTakeover
+	}
+	if p.RatePerMinute > 0 {
 		window := now.Add(-60 * time.Second)
 		count := 0
 		for _, e := range events {
-			if e.Kind != "dispatched" || e.Model != p.Model {
+			if e.Kind != "dispatched" || e.Model != rateModel {
 				continue
 			}
 			t, err := time.Parse(time.RFC3339Nano, e.TS)

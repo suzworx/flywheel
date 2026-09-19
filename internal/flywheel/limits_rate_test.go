@@ -18,7 +18,8 @@ func TestLimitsTokensRefusesDispatch(t *testing.T) {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
 	// Add a finished event with tokens summing >= 100
-	now := time.Now()
+	now := limitsTestNow
+	setTestNow(t, now)
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: "T2", Kind: "planned", Brief: "b.txt",
 	}); err != nil {
@@ -61,7 +62,8 @@ func TestLimitsTokensCacheDoesNotCount(t *testing.T) {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
 	// Add a finished event with high cache tokens but low billable tokens
-	now := time.Now()
+	now := limitsTestNow
+	setTestNow(t, now)
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: "T2", Kind: "planned", Brief: "b.txt",
 	}); err != nil {
@@ -100,7 +102,8 @@ func TestLimitsRateRefusesBurst(t *testing.T) {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
 	model := cfg.DefaultWorker().Model
-	now := time.Now()
+	now := limitsTestNow
+	setTestNow(t, now)
 	// Add two recent dispatched events for the same model
 	t1 := now.Add(-20 * time.Second)
 	t2 := now.Add(-10 * time.Second)
@@ -146,7 +149,8 @@ func TestLimitsRateWindowSlides(t *testing.T) {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
 	model := cfg.DefaultWorker().Model
-	now := time.Now()
+	now := limitsTestNow
+	setTestNow(t, now)
 	// Add two old dispatched events outside the 60s window
 	t1 := now.Add(-90 * time.Second)
 	t2 := now.Add(-70 * time.Second)
@@ -191,7 +195,7 @@ func TestLimitsTokensReconcileHolds(t *testing.T) {
 	}
 	s := Derive(events)
 	p := Policy{MaxParallel: 2, Model: "sim", BudgetTokens: 100}
-	actions := Reconcile(s, events, Observed{}, p, time.Now())
+	actions := Reconcile(s, events, Observed{}, p, limitsTestNow)
 
 	holding := false
 	for _, a := range actions {
@@ -208,7 +212,8 @@ func TestLimitsTokensReconcileHolds(t *testing.T) {
 // TestLimitsRateReconcileCapsCapacity checks that Reconcile caps capacity
 // based on the model's dispatch rate.
 func TestLimitsRateReconcileCapsCapacity(t *testing.T) {
-	now := time.Now()
+	now := limitsTestNow
+	setTestNow(t, now)
 	beforeWindow := now.Add(-10 * time.Second)
 	events := []Event{
 		{Task: "T1", Kind: "planned", Brief: "b.txt"},
@@ -282,5 +287,40 @@ func TestLimitsRateValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, want message containing %q", err, tt.wantMsg)
 			}
 		})
+	}
+}
+
+// limitsTestNow is the fixed instant the limits tests run at: Run reads the
+// injectable clock now, so the rate window is deterministic (#329 review).
+var limitsTestNow = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+
+// setTestNow points the package clock at ts for the rest of the test.
+func setTestNow(t *testing.T, ts time.Time) {
+	t.Helper()
+	old := now
+	now = func() time.Time { return ts }
+	t.Cleanup(func() { now = old })
+}
+
+// TestLimitsRateAppliesToFallback checks that when an approved fallback takes
+// over, next counts the fallback's own dispatches against the rate limit, as
+// run does (#329 review).
+func TestLimitsRateAppliesToFallback(t *testing.T) {
+	ts := func(d time.Duration) string { return limitsTestNow.Add(d).Format(time.RFC3339Nano) }
+	events := []Event{
+		{TS: ts(-5 * time.Minute), Task: "E1", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: ts(-4 * time.Minute), Task: "E2", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: ts(-30 * time.Second), Task: "F1", Kind: "dispatched", Attempt: "r1", Model: "m2"},
+		{TS: ts(-29 * time.Second), Task: "F1", Kind: "finished", Attempt: "r1", Model: "m2", Reason: "stop"},
+		{TS: ts(-20 * time.Second), Task: "F2", Kind: "dispatched", Attempt: "r1", Model: "m2"},
+		{TS: ts(-19 * time.Second), Task: "F2", Kind: "finished", Attempt: "r1", Model: "m2", Reason: "stop"},
+		{TS: ts(-10 * time.Second), Task: "T1", Kind: "planned", Brief: "b.txt"},
+	}
+	p := Policy{MaxParallel: 4, Model: "m1", Fallbacks: []string{"m2"},
+		Breaker: &Breaker{Errors: 2, Cooldown: "10m"}, RatePerMinute: 2}
+	for _, a := range Reconcile(Derive(events), events, Observed{}, p, limitsTestNow) {
+		if a.Kind == "DISPATCH" {
+			t.Errorf("DISPATCH %s while fallback m2 is at its rate limit, want none", a.Task)
+		}
 	}
 }
