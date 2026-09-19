@@ -247,7 +247,7 @@ func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (s
 			return "", nil, fmt.Errorf("write %s: %w", configPath, err)
 		}
 	}
-	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\n"))
+	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\nworktrees/\n"))
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", gitignorePath, err)

@@ -34,6 +34,7 @@ type RunOptions struct {
 	AllowOverlap bool   // skip the owns- and exclusive-collision refusals; the dispatched note records the overlap
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
+	Worktree     bool   // run the worker in the task's own worktree (issue #45)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -465,26 +466,41 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, err
 	}
 
+	// Worktree: when --worktree, create or reuse task's own worktree
+	// (.flywheel/worktrees/<task>, branch fw/<task>) before computing baseline.
+	var wt string
+	if o.Worktree {
+		var err error
+		wt, err = TaskWorktree(dir, o.Task)
+		if err != nil {
+			return Result{}, err
+		}
+	} else {
+		wt = dir
+	}
+
 	// Baseline: hash every path dirty at dispatch (the same read-only git
 	// commands the owns check uses) so validate can tell this unit's edits
 	// from the lead's or another worker's pre-existing ones. Not a git repo:
 	// no baseline.
-	baseline := computeBaseline(dir)
+	baseline := computeBaseline(wt)
 
 	// Snapshot the worktree's git history state before the worker runs (issue #314).
-	histBefore, histOK := gitHistoryState(dir)
+	histBefore, histOK := gitHistoryState(wt)
 
 	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
 	// other worktrees, record each one's changed paths and shas so validate
 	// can catch a worker that edited another checkout instead of staying in
 	// this one. Not a git repo, or no other worktrees: nil (omitted).
-	worktrees := otherWorktrees(dir)
+	// The worker's own tree is excluded (with --worktree that is the task's
+	// worktree, and the flywheel root becomes one of the others) (#333 review).
+	worktrees := otherWorktrees(wt)
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
-		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
+		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
 	}); err != nil {
 		return Result{}, err
 	}
@@ -593,7 +609,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			note = startNote
 		}
 		stopRenewer()
-		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: joinNote(note, gitNote), SHA256: runSHA}); aerr == nil {
 			progress(o.Progress, o.Task+" "+attempt+" finished rc=1 reason="+reason+" note="+note)
 			if gitWrote {
@@ -648,8 +664,8 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if worker.Adapter != "sim" {
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
-		cmd.Dir = dir
-		guardBin, guardEnv, err := installGitGuard(dir, o.Task, attempt)
+		cmd.Dir = wt
+		guardBin, guardEnv, err := installGitGuard(wt, o.Task, attempt)
 		if err != nil {
 			// Fail closed: a worker never runs without the git guard (#325
 			// review). The attempt is recorded as failed like any other
@@ -905,7 +921,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
@@ -946,7 +962,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			_ = cmd.Wait()
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
@@ -1032,7 +1048,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	// Did the worker change git history? Every exit path runs the same check
 	// before its finished event (issue #314, #318 review).
-	gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+	gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 	note = joinNote(note, gitNote)
 
 	if err := AppendEvent(dir, Event{

@@ -152,19 +152,23 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if o.Dir == "" {
 		o.Dir = "."
 	}
+	events, err := ReadEvents(o.Dir)
+	if err != nil {
+		return GaugeResult{}, err
+	}
 	wd := o.Workdir
 	if wd == "" {
-		wd = o.Dir
+		if recorded := recordedWorkdir(events, task); recorded != "" {
+			wd = recorded
+		} else {
+			wd = o.Dir
+		}
 	}
 	// A relative --workdir names a place against the process's current
 	// directory; normalise it (and the comparison against dir) to absolute form
 	// so the "differs from dir" test below and the recorded provenance both
 	// stay true when the ledger is read from elsewhere (issue #244).
 	wd = absPath(wd)
-	events, err := ReadEvents(o.Dir)
-	if err != nil {
-		return GaugeResult{}, err
-	}
 	header, briefPaths, err := AttemptBrief(o.Dir, events, task)
 	if err != nil {
 		return GaugeResult{}, err
