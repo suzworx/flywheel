@@ -72,6 +72,7 @@ unit — that is QC's call.
   the flywheel root (or with `--dir <flywheel-root>`). It re-runs the brief's `gate:` lines on the
   clean tree and checks owns (exit 0 or 5), giving you a fresh supervisor reading rather than
   trusting the line's recorded one.
+- `flywheel audit <task> --session <your session>` — re-measure the unit in a clean copy and check its record; records `audited conforms`/`nonconformance` with the findings. You may not audit a unit your session planned, built or inspected.
 - `flywheel supervise` — planned (#55); today: read the run files directly.
 - `flywheel explain <task>` — the unit's whole traveler from the ledger; `flywheel context` — the
   factory's state in one read (goals, in flight, what needs a verdict or triage, recent learnings).

@@ -178,6 +178,16 @@ all.
   the signals are not triaged by this event (they stay listed by `flywheel feedback` until a
   learning names them), and the event is purely for auditability and transparency.
 
+### `audited`
+- Written by: `flywheel audit <task> --session S`, from a session that did not plan, build or inspect the unit.
+- Carries: `task`, `verdict` (`conforms` / `nonconformance`), `session`, `tree`, `note` (the findings), `persona` (`auditor`).
+- Effect: no status change, and its verdict never replaces the unit's QC verdict in derived state.
+  The `tree` is the one the gates were re-run on: captured before the clean copy is made and
+  re-checked before recording (a tree that changed mid-audit records nothing). A record check that
+  cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
+  The auditor's independence is checked again right before the event is appended. T7 gating is not
+  implemented.
+
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
   `--json`-ingested `amended` event lands through the same check.
@@ -406,8 +416,8 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
 - **T6** (sensitive domains need the lead's sign-off and an audit before landing) — nothing detects
   a "sensitive domain," and no command asks for a sign-off.
 - **T7** (a wave's first article needs `audited conforms` before the rest lands; an open
-  nonconformance stops its kind of task) — there is no `audited` kind, no auditor command, and
-  nothing gates landing on it.
+  nonconformance stops its kind of task) — `flywheel audit` now records `audited`
+  (issue #61), but nothing selects first articles or samples yet and nothing gates landing on it.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
   now enforced **live** by `flywheel land` for a task's own untriaged signals (refused with exit 6
   unless `--allow-untriaged <reason>` records an `allow_untriaged` event). `flywheel handoff` does

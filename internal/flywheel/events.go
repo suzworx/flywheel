@@ -142,6 +142,7 @@ var kinds = map[string]bool{
 	"signal":          true,
 	"excepted":        true,
 	"allow_untriaged": true,
+	"audited":         true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -260,7 +261,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited", e.Kind)
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {
@@ -297,6 +298,11 @@ func Validate(e Event) error {
 	if e.Kind == "allow_untriaged" {
 		if e.Note == "" || e.Task == "" || !CommitOK(e.Commit) {
 			return fmt.Errorf("allow_untriaged event must carry a task, a note (the reason) and the commit it covers")
+		}
+	}
+	if e.Kind == "audited" {
+		if e.Task == "" || e.Session == "" || (e.Verdict != "conforms" && e.Verdict != "nonconformance") {
+			return fmt.Errorf("audited event must carry a task, a session and a verdict of conforms or nonconformance")
 		}
 	}
 	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
