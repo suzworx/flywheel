@@ -180,6 +180,13 @@ func runLog(args []string) {
 		runLogJSON(o.dir, o.jsonIn, o.noState)
 		return
 	}
+	// --goal is legal only for planned: refuse it on amended as a usage
+	// error (exit 2) before asking whether the goal exists.
+	if o.kind == "amended" && o.goal != "" {
+		fmt.Fprintf(os.Stderr, "flywheel log: --goal applies to --kind planned only\n")
+		usage(os.Stderr)
+		os.Exit(2)
+	}
 	if o.goal != "" {
 		if _, ok := findGoal(o.dir, o.goal); !ok {
 			fmt.Fprintf(os.Stderr, "flywheel log: unknown goal %q\n", o.goal)
@@ -196,11 +203,6 @@ func runLog(args []string) {
 	if o.kind == "amended" {
 		if o.note == "" {
 			fmt.Fprintf(os.Stderr, "flywheel log: --kind amended requires --note <why>\n")
-			usage(os.Stderr)
-			os.Exit(2)
-		}
-		if o.goal != "" {
-			fmt.Fprintf(os.Stderr, "flywheel log: --goal applies to --kind planned only\n")
 			usage(os.Stderr)
 			os.Exit(2)
 		}
