@@ -12,7 +12,7 @@ import (
 
 func init() {
 	register("verify", "verify tasks against the poka-yoke rules", runVerify)
-	registerHelp("verify", "flywheel verify [<task>...] [--all] [--json] [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := verifyFlags(); return fs })
+	registerHelp("verify", "flywheel verify [<task>...] [--all] [--json] [--log] [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := verifyFlags(); return fs })
 }
 
 // verifyOptions holds the parsed verify flags.
@@ -21,6 +21,7 @@ type verifyOptions struct {
 	all     bool
 	jsonOut bool
 	workdir string
+	log     bool
 }
 
 // verifyFlags defines verify's flags once, so help and run share them.
@@ -32,12 +33,13 @@ func verifyFlags() (*flag.FlagSet, *verifyOptions) {
 	fs.StringVar(&o.workdir, "workdir", "", "repository to resolve tree objects in (default: a workdir recorded on the events, else the target directory)")
 	fs.BoolVar(&o.all, "all", false, "verify every task in the event log")
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
+	fs.BoolVar(&o.log, "log", false, "also check the event log's hash chain (a record edited or removed breaks it)")
 	return fs, o
 }
 
 // verifyUsage prints the flywheel verify usage line.
 func verifyUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel verify [<task>...] [--all] [--json] [--dir DIR] [--workdir PATH]")
+	fmt.Fprintln(w, "usage: flywheel verify [<task>...] [--all] [--json] [--log] [--dir DIR] [--workdir PATH]")
 }
 
 // verifyExit maps a verify result to the CLI exit code: 0 when every check
@@ -81,6 +83,27 @@ func runVerify(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
 		os.Exit(1)
+	}
+	if o.log {
+		chain, err := flywheel.VerifyLogChain(o.dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
+			os.Exit(1)
+		}
+		reason := ""
+		if chain.OK() {
+			if chain.Chained == 0 {
+				reason = "no chained records yet"
+			} else {
+				reason = fmt.Sprintf("%d of %d records chained since line %d, no break", chain.Chained, chain.Lines, chain.FirstChained)
+			}
+		} else {
+			reason = fmt.Sprintf("line %d: prev %s matches no earlier line (an earlier record was edited or removed)", chain.BreakLine, chain.BreakPrev[:min(12, len(chain.BreakPrev))])
+		}
+		res.Items = append(res.Items, flywheel.VerifyItem{Task: "-", Rule: "LOG", Pass: chain.OK(), Reason: reason})
+		if !chain.OK() {
+			res.Passed = false
+		}
 	}
 	if o.jsonOut {
 		b, _ := json.Marshal(res)
