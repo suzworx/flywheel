@@ -546,6 +546,34 @@ func TestWorkerToolDefaults(t *testing.T) {
 	}
 }
 
+// TestConfigBaselineValidate checks baseline validation: a valid baseline
+// passes, empty model fails, negative prices fail (issue #59).
+func TestConfigBaselineValidate(t *testing.T) {
+	cases := []struct {
+		name    string
+		base    Baseline
+		wantErr string
+	}{
+		{"empty model", Baseline{Model: "", InputPerMTok: 5}, "baseline.model must not be empty"},
+		{"negative input", Baseline{Model: "m", InputPerMTok: -1}, "baseline.input_per_mtok -1 must be >= 0"},
+		{"negative output", Baseline{Model: "m", OutputPerMTok: -0.5}, "baseline.output_per_mtok -0.5 must be >= 0"},
+		{"negative cache_read", Baseline{Model: "m", CacheReadPerMTok: -1}, "baseline.cache_read_per_mtok -1 must be >= 0"},
+		{"negative cache_write", Baseline{Model: "m", CacheWritePerMTok: -1}, "baseline.cache_write_per_mtok -1 must be >= 0"},
+	}
+	for _, tc := range cases {
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}}, Baseline: &tc.base}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: Validate() = %v, want error containing %q", tc.name, err, tc.wantErr)
+		}
+	}
+	ok := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+		Baseline: &Baseline{Model: "frontier-x", InputPerMTok: 5, OutputPerMTok: 25, CacheReadPerMTok: 0.5, CacheWritePerMTok: 6.25}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid baseline: Validate() error = %v, want nil", err)
+	}
+}
+
 // TestConfigToolListsJSONRoundTrip checks allowed_tools/disallowed_tools
 // survive a WriteConfig/LoadConfig round trip under their JSON field names
 // (issue #192).

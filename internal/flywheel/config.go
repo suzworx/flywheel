@@ -26,6 +26,7 @@ type Config struct {
 	Feedback   Feedback          `json:"feedback,omitempty"`
 	Lease      *LeaseConfig      `json:"lease,omitempty"`
 	Controller *ControllerConfig `json:"controller,omitempty"`
+	Baseline   *Baseline         `json:"baseline,omitempty"`
 }
 
 // Worker configures a single CLI worker.
@@ -145,6 +146,25 @@ const (
 	defaultControllerLockTTL       = 30 * time.Second
 	defaultControllerIntentTimeout = 2 * time.Minute
 )
+
+// Baseline prices a frontier model per million tokens, for the frontier-only
+// cost comparison in flywheel stats (issue #59): the same tokens the workers
+// used, priced as if the frontier model had done the work.
+type Baseline struct {
+	Model             string  `json:"model"`
+	InputPerMTok      float64 `json:"input_per_mtok"`
+	OutputPerMTok     float64 `json:"output_per_mtok"`
+	CacheReadPerMTok  float64 `json:"cache_read_per_mtok"`
+	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
+}
+
+// Cost prices t at the baseline: reasoning is billed at the output price.
+func (b Baseline) Cost(t Tokens) float64 {
+	return (float64(t.Input)*b.InputPerMTok +
+		float64(t.Output+t.Reasoning)*b.OutputPerMTok +
+		float64(t.CacheRead)*b.CacheReadPerMTok +
+		float64(t.CacheWrite)*b.CacheWritePerMTok) / 1e6
+}
 
 // controllerTimings returns the controller interval, lock ttl and intent
 // timeout; an absent controller block (or unparseable values, which Validate
@@ -322,6 +342,25 @@ func (c Config) Validate() error {
 		}
 		if ierr == nil && terr == nil && lockTTL <= interval {
 			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", c.Controller.LockTTL, c.Controller.Interval))
+		}
+	}
+	if c.Baseline != nil {
+		if c.Baseline.Model == "" {
+			problems = append(problems, "baseline.model must not be empty")
+		}
+		// A slice, not a map, so the problems come out in a stable order.
+		for _, p := range []struct {
+			field string
+			val   float64
+		}{
+			{"baseline.input_per_mtok", c.Baseline.InputPerMTok},
+			{"baseline.output_per_mtok", c.Baseline.OutputPerMTok},
+			{"baseline.cache_read_per_mtok", c.Baseline.CacheReadPerMTok},
+			{"baseline.cache_write_per_mtok", c.Baseline.CacheWritePerMTok},
+		} {
+			if p.val < 0 {
+				problems = append(problems, fmt.Sprintf("%s %g must be >= 0", p.field, p.val))
+			}
 		}
 	}
 	if len(problems) == 0 {

@@ -158,3 +158,90 @@ func TestStatsUnreadableLog(t *testing.T) {
 		t.Error("Stats() on an unreadable log succeeded, want error")
 	}
 }
+
+// TestStatsBaselineRatio checks Stats calculates the baseline cost and ratio
+// when config carries a baseline (issue #59).
+func TestStatsBaselineRatio(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Version: 1,
+		Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+		Baseline: &Baseline{
+			Model:             "frontier-x",
+			InputPerMTok:      5,
+			OutputPerMTok:     25,
+			CacheReadPerMTok:  0.5,
+			CacheWritePerMTok: 6.25,
+		},
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	e := Event{
+		TS:      "2026-01-01T00:00:00Z",
+		Task:    "T1",
+		Kind:    "finished",
+		Attempt: "r1",
+		Reason:  "stop",
+		Cost:    0.05,
+		Tokens:  &Tokens{Input: 1000000, Output: 100000},
+	}
+	if err := AppendEvent(dir, e); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	rep, err := Stats(dir)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if rep.Baseline == nil {
+		t.Fatal("Baseline = nil, want non-nil")
+	}
+	if rep.Baseline.Model != "frontier-x" {
+		t.Errorf("Baseline.Model = %q, want frontier-x", rep.Baseline.Model)
+	}
+	if rep.Baseline.Cost != 7.5 {
+		t.Errorf("Baseline.Cost = %v, want 7.5 (5*1 + 25*0.3)", rep.Baseline.Cost)
+	}
+	if rep.Spend != 0.05 {
+		t.Errorf("Spend = %v, want 0.05", rep.Spend)
+	}
+	wantRatio := round(0.05/7.5, 4)
+	if rep.Baseline.Ratio != wantRatio {
+		t.Errorf("Baseline.Ratio = %v, want %v (0.05 / 7.5)", rep.Baseline.Ratio, wantRatio)
+	}
+}
+
+// TestStatsBaselineAbsent checks Stats sets Tokens and Spend even without a
+// baseline in config, and Baseline is nil (issue #59).
+func TestStatsBaselineAbsent(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	e := Event{
+		TS:      "2026-01-01T00:00:00Z",
+		Task:    "T1",
+		Kind:    "finished",
+		Attempt: "r1",
+		Reason:  "stop",
+		Cost:    0.05,
+		Tokens:  &Tokens{Input: 1000000, Output: 100000},
+	}
+	if err := AppendEvent(dir, e); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	rep, err := Stats(dir)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if rep.Tokens != (Tokens{Input: 1000000, Output: 100000}) {
+		t.Errorf("Tokens = %v, want {1000000, 100000, 0, 0, 0}", rep.Tokens)
+	}
+	if rep.Spend != 0.05 {
+		t.Errorf("Spend = %v, want 0.05", rep.Spend)
+	}
+	if rep.Baseline != nil {
+		t.Errorf("Baseline = %v, want nil (not configured)", rep.Baseline)
+	}
+}

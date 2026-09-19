@@ -31,6 +31,17 @@ type StatsReport struct {
 	UncleanPer100      float64        `json:"unclean_per_100"`
 	MeanAttemptSeconds int            `json:"mean_attempt_seconds"`
 	CostPerLandedTask  float64        `json:"cost_per_landed_task"`
+	Tokens             Tokens         `json:"tokens"`
+	Spend              float64        `json:"spend"`
+	Baseline           *StatsBaseline `json:"baseline,omitempty"`
+}
+
+// StatsBaseline is the frontier-only comparison: the recorded tokens priced
+// at the configured baseline model, and actual spend as a fraction of it.
+type StatsBaseline struct {
+	Model string  `json:"model"`
+	Cost  float64 `json:"cost"`
+	Ratio float64 `json:"ratio"` // spend / baseline cost; 0 when the baseline cost is 0
 }
 
 // attemptKey identifies one attempt of one task, for pairing its dispatched
@@ -150,8 +161,19 @@ func Stats(dir string) (StatsReport, error) {
 	if err != nil {
 		return StatsReport{}, fmt.Errorf("stats %s: %w", dir, err)
 	}
+	rep.Tokens = cost.Total.Tokens
+	rep.Spend = round(cost.Total.Cost, 4)
 	if rep.Tasks.Landed > 0 {
 		rep.CostPerLandedTask = round(cost.Total.Cost/float64(rep.Tasks.Landed), 4)
+	}
+
+	cfg, _, _ := LoadConfig(dir)
+	if cfg.Baseline != nil {
+		bc := cfg.Baseline.Cost(cost.Total.Tokens)
+		rep.Baseline = &StatsBaseline{Model: cfg.Baseline.Model, Cost: round(bc, 4)}
+		if bc > 0 {
+			rep.Baseline.Ratio = round(cost.Total.Cost/bc, 4)
+		}
 	}
 
 	return rep, nil
