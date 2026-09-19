@@ -79,10 +79,15 @@ func runVerify(args []string) {
 		os.Exit(2)
 	}
 	tasks := pos
-	res, err := flywheel.VerifyTasks(o.dir, flywheel.VerifyOptions{Dir: o.dir, Tasks: tasks, All: o.all, Workdir: o.workdir})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
-		os.Exit(1)
+	// --log alone checks only the chain: no task list is required.
+	res := flywheel.VerifyResult{Passed: true}
+	if len(tasks) > 0 || o.all || !o.log {
+		var err error
+		res, err = flywheel.VerifyTasks(o.dir, flywheel.VerifyOptions{Dir: o.dir, Tasks: tasks, All: o.all, Workdir: o.workdir})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	if o.log {
 		chain, err := flywheel.VerifyLogChain(o.dir)
