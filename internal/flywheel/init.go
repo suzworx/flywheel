@@ -534,12 +534,14 @@ type claudeHookCmd struct {
 // hook allows the stop when stop_hook_active is true (no loop), runs
 // `flywheel gate` with its report on stderr, and blocks (exit 2, which Claude
 // Code shows to the agent) only on gate's exit 6 — never on a gate error.
+// It points gate at $CLAUDE_PROJECT_DIR (the project Claude Code opened), not the
+// hook's working directory, which can be a subdirectory with no ledger.
 // OpenCode has no way to block ending a session, so gate is Claude-only for now.
 const (
 	claudeSessionStartHook   = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_start --session "$s"'`
 	claudeSessionEndHook     = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_end --session "$s"'`
 	claudeSessionCommandHook = `sh -c 'j=$(cat); c=$(printf "%s" "$j" | sed -n "s/.*\"command\":\"\([^\"]*\)\".*/\1/p"); case "$c" in flywheel*) s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_command --session "$s" --note "$c";; esac'`
-	claudeStopGateHook       = `sh -c 'j=$(cat); printf "%s" "$j" | grep -q "\"stop_hook_active\" *: *true" && exit 0; flywheel gate >&2; [ $? -eq 6 ] && exit 2; exit 0'`
+	claudeStopGateHook       = `sh -c 'j=$(cat); printf "%s" "$j" | grep -q "\"stop_hook_active\" *: *true" && exit 0; flywheel gate --dir "${CLAUDE_PROJECT_DIR:-.}" >&2; [ $? -eq 6 ] && exit 2; exit 0'`
 )
 
 // claudeSettingsPayload renders the .claude/settings.json bytes InitHooks
