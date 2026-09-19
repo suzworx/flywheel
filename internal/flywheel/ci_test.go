@@ -45,8 +45,8 @@ func TestInitCIWritesAtRepoRoot(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 	contentStr := string(content)
-	if !strings.Contains(contentStr, "--dir .") {
-		t.Fatalf("expected content to contain '--dir .', got %q", contentStr)
+	if !strings.Contains(contentStr, `FLYWHEEL_DIR: "."`) || !strings.Contains(contentStr, `--dir "$FLYWHEEL_DIR"`) {
+		t.Fatalf("expected content to target FLYWHEEL_DIR \".\", got %q", contentStr)
 	}
 	if !strings.Contains(contentStr, "@latest") {
 		t.Fatalf("expected content to contain '@latest', got %q", contentStr)
@@ -88,8 +88,8 @@ func TestInitCISubdirTargetsFactory(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 	contentStr := string(content)
-	if !strings.Contains(contentStr, "--dir svc/api") {
-		t.Fatalf("expected content to contain '--dir svc/api', got %q", contentStr)
+	if !strings.Contains(contentStr, `FLYWHEEL_DIR: "svc/api"`) {
+		t.Fatalf("expected content to contain FLYWHEEL_DIR \"svc/api\", got %q", contentStr)
 	}
 }
 
@@ -180,5 +180,28 @@ func TestInitCINotARepo(t *testing.T) {
 	_, _, err := InitCI(dir, "dev")
 	if err == nil {
 		t.Fatalf("InitCI: expected error, got nil")
+	}
+}
+
+// TestInitCIPathWithSpace checks that any directory name git accepts is
+// written safely: YAML-quoted in env, used as "$FLYWHEEL_DIR" (#315 review).
+func TestInitCIPathWithSpace(t *testing.T) {
+	root := t.TempDir()
+	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	sub := filepath.Join(root, "order api")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InitCI(sub, "dev"); err != nil {
+		t.Fatalf("InitCI with a space in the path: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "flywheel-audit.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `FLYWHEEL_DIR: "order api"`) {
+		t.Errorf("workflow does not quote the directory:\n%s", b)
 	}
 }
