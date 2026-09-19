@@ -119,7 +119,11 @@ hooks check every commit and push (`flywheel init --git-hooks`); whatever the wo
 `flywheel run` flags an attempt that moved HEAD, switched branch or stashed with a `git-write`
 signal, which blocks landing until the lead triages it (it compares the attempt's end points, so a
 push or a write undone before exit needs the command-level guard,
-[#319](https://github.com/suzworx/flywheel/issues/319)).
+[#319](https://github.com/suzworx/flywheel/issues/319)). That guard is in place: `flywheel run`
+puts a `git` shim first on the worker's PATH that refuses history-writing subcommands (commit, push,
+stash, reset, checkout, switch, restore, rebase, merge, tag, pull, …) and passes every read to the
+real git; a worker that calls git by an absolute path bypasses it, and the end-point check still
+applies.
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state
