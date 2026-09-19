@@ -3,7 +3,9 @@ package flywheel
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +69,13 @@ func localEndpointClass(dir, model string, client *http.Client) (class string, o
 	}
 
 	// Trim trailing slash.
+	// Only a loopback endpoint is contacted directly: the URL comes from the
+	// repository, and doctor on an untrusted checkout must not reach other
+	// hosts from the operator's machine (#330 review). Any other host is left
+	// to the adapter probe, as before.
+	if u, err := url.Parse(baseURL); err != nil || !loopbackHost(u.Hostname()) {
+		return "", true
+	}
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	modelsURL := baseURL + "/models"
 
@@ -110,4 +119,13 @@ func localEndpointClass(dir, model string, client *http.Client) (class string, o
 	}
 
 	return ClassLocalMissing, false
+}
+
+// loopbackHost reports whether host is "localhost" or a loopback IP literal.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

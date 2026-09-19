@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDoctorLocalServed tests that a served model returns ok true.
@@ -143,5 +144,20 @@ func TestDoctorLocalUnknownWorker(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"nope"`) || !errors.Is(err, ErrUnknownWorker) {
 		t.Errorf("DoctorWorker error %q: want it to name \"nope\" and wrap ErrUnknownWorker", err.Error())
+	}
+}
+
+// TestDoctorLocalNonLoopbackNotContacted checks that a repository-supplied
+// non-loopback baseURL is never requested directly (#330 review): the check
+// is skipped and left to the adapter probe.
+func TestDoctorLocalNonLoopbackNotContacted(t *testing.T) {
+	dir := t.TempDir()
+	Init(dir, false)
+	if _, err := InitLocal(dir, "m1", "http://10.255.255.1:9/v1"); err != nil {
+		t.Fatal(err)
+	}
+	class, ok := localEndpointClass(dir, "flywheel-local/m1", &http.Client{Timeout: 50 * time.Millisecond})
+	if !ok || class != "" {
+		t.Errorf("non-loopback endpoint = %q %v, want unchecked (\"\", true)", class, ok)
 	}
 }

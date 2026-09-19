@@ -179,7 +179,7 @@ func runInit(args []string) {
 		for _, p := range lpieces {
 			fmt.Printf("updated: %s\n", p.Path)
 		}
-		fmt.Println("next: flywheel doctor, then flywheel run <task> --worker local")
+		fmt.Println("next: flywheel doctor --worker local, then flywheel run <task> --worker local")
 	}
 	if configExisted && (o.model != "" || o.variant != "") {
 		fmt.Println("config.json exists; change it with: flywheel config set model|variant <value>")
