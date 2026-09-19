@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"0199a300-0000-7000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"error","message":"The 'gpt-x' model is not supported when using Codex with a ChatGPT account."}
+{"type":"turn.failed","error":{"message":"The 'gpt-x' model is not supported when using Codex with a ChatGPT account."}}

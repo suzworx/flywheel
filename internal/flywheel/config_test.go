@@ -121,8 +121,17 @@ func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
 	}
 }
 
+// TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
+// adapter names (issue #275) alongside opencode, sim, and claude.
+func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "codex", Model: "gpt-5-codex"}}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() error = %v, want nil for adapter \"codex\"", err)
+	}
+}
+
 // TestConfigValidateRejectsUnknownAdapter checks an adapter outside
-// opencode/sim/claude is still rejected.
+// opencode/sim/claude/codex is still rejected.
 func TestConfigValidateRejectsUnknownAdapter(t *testing.T) {
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "nope", Model: "m"}}}
 	err := cfg.Validate()
