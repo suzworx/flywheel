@@ -31,6 +31,7 @@ You do:
 - Prepare upstream feedback — sanitized, repo-relative paths only, no code or secrets — only with
   the user's consent, and never submit it without their approval of the exact text.
 - Leave the record clean: no session ends with untriaged signals.
+  `flywheel land` refuses a unit while its signals are untriaged (T9), `flywheel gate` lists them before a session ends, and `flywheel handoff` carries any that remain to the next head.
 
 You never:
 - Change units. You do not edit code, briefs or run files to fix what you found.

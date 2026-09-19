@@ -22,20 +22,23 @@ type HandoffTask struct {
 }
 
 // Handoff is the derived handoff summary: one list per section, tasks sorted
-// by id, plus the default worker model from the config.
+// by id, plus the default worker model from the config. Untriaged carries
+// forward any untriaged signals so a new head can triage them (rule T9).
 type Handoff struct {
-	InFlight []HandoffTask `json:"in_flight,omitempty"`
-	Blocked  []string      `json:"blocked,omitempty"`
-	Ready    []string      `json:"ready,omitempty"`
-	Model    string        `json:"model"`
+	InFlight  []HandoffTask `json:"in_flight,omitempty"`
+	Blocked   []string      `json:"blocked,omitempty"`
+	Ready     []string      `json:"ready,omitempty"`
+	Untriaged []SignalView  `json:"untriaged,omitempty"`
+	Model     string        `json:"model"`
 }
 
 // DeriveHandoff derives the handoff lists from events. In-flight holds the
 // tasks whose derived status is dispatched or running, blocked the blocked
 // ones, and ready the planned tasks whose needs (from the latest
 // planned/amended event) are all among the landed or passed tasks; a planned
-// task with no needs is ready. The derived state sorts tasks by id, so each
-// list is sorted too.
+// task with no needs is ready. Untriaged carries forward any signals not yet
+// triaged, so the next head can judge them (rule T9). The derived state
+// sorts tasks by id, so each list is sorted too.
 func DeriveHandoff(events []Event) Handoff {
 	st := Derive(events)
 	var done map[string]bool = map[string]bool{}
@@ -63,6 +66,7 @@ func DeriveHandoff(events []Event) Handoff {
 			}
 		}
 	}
+	h.Untriaged = UntriagedSignals(events)
 	return h
 }
 
@@ -87,14 +91,17 @@ func HandoffSummary(dir string) (Handoff, error) {
 // in-flight: t1 (running, session ses_1, model m1)
 // blocked: t2
 // ready: t3 t4
+// untriaged signals: T1 r1 no-plan
 // model: <the default worker model>
 // The session and model appear only when the task has them; an empty section
-// reads none.
+// reads none. Untriaged signals are carried forward so the next head can
+// triage them; an empty list reads "untriaged signals: none" (rule T9).
 func HandoffText(h Handoff) string {
 	return strings.Join([]string{
 		inFlightLine(h.InFlight),
 		sectionLine("blocked", h.Blocked),
 		sectionLine("ready", h.Ready),
+		untriagedLine(h.Untriaged),
 		"model: " + h.Model,
 	}, "\n")
 }
@@ -131,6 +138,20 @@ func handoffTaskText(t HandoffTask) string {
 		parts = append(parts, "model "+t.Model)
 	}
 	return t.ID + " (" + strings.Join(parts, ", ") + ")"
+}
+
+// untriagedLine renders the untriaged signals as "untriaged signals: none"
+// when empty, otherwise "untriaged signals: " + entries joined with ", ",
+// each entry as "<task> <attempt> <signal>".
+func untriagedLine(sigs []SignalView) string {
+	if len(sigs) == 0 {
+		return "untriaged signals: none"
+	}
+	var parts []string
+	for _, s := range sigs {
+		parts = append(parts, s.Task+" "+s.Attempt+" "+s.Signal)
+	}
+	return "untriaged signals: " + strings.Join(parts, ", ")
 }
 
 // WriteHandoff writes the summary into flywheel.md between the handoff

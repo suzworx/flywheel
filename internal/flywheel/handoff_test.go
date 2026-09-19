@@ -51,6 +51,7 @@ func TestHandoffFixtureDerivesSections(t *testing.T) {
 	wantText := "in-flight: t1 (running, session ses_1, model m1)\n" +
 		"blocked: t2\n" +
 		"ready: t3 t4\n" +
+		"untriaged signals: none\n" +
 		"model: openrouter/deepseek/deepseek-v4-flash-0731"
 	if got := HandoffText(h); got != wantText {
 		t.Errorf("HandoffText() =\n%q\nwant\n%q", got, wantText)
@@ -99,7 +100,7 @@ func TestHandoffEmptyLogPrintsNoneSections(t *testing.T) {
 		t.Errorf("model = %q, want the built-in default worker model", h.Model)
 	}
 	text := HandoffText(h)
-	for _, want := range []string{"in-flight: none", "blocked: none", "ready: none"} {
+	for _, want := range []string{"in-flight: none", "blocked: none", "ready: none", "untriaged signals: none"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("HandoffText() missing %q:\n%q", want, text)
 		}
@@ -176,5 +177,49 @@ func TestHandoffBlockReplacedOnSecondRun(t *testing.T) {
 	}
 	if string(b2) != string(b) {
 		t.Error("WriteHandoff() output changed between runs")
+	}
+}
+
+func TestHandoffCarriesUntriagedSignals(t *testing.T) {
+	dir := t.TempDir()
+	appendHandoffEvents(t, dir, []Event{
+		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-14T10:02:00Z", Task: "T1", Kind: "signal", Attempt: "r1", Signal: "no-plan"},
+	})
+	h, err := HandoffSummary(dir)
+	if err != nil {
+		t.Fatalf("HandoffSummary() error = %v", err)
+	}
+	if len(h.Untriaged) != 1 {
+		t.Fatalf("Untriaged = %+v, want 1 signal", h.Untriaged)
+	}
+	if h.Untriaged[0].Task != "T1" || h.Untriaged[0].Attempt != "r1" || h.Untriaged[0].Signal != "no-plan" {
+		t.Errorf("Untriaged[0] = %+v, want Task T1, Attempt r1, Signal no-plan", h.Untriaged[0])
+	}
+	text := HandoffText(h)
+	if !strings.Contains(text, "untriaged signals: T1 r1 no-plan") {
+		t.Errorf("HandoffText() missing untriaged signal entry:\n%q", text)
+	}
+}
+
+func TestHandoffUntriagedNoneWhenTriaged(t *testing.T) {
+	dir := t.TempDir()
+	appendHandoffEvents(t, dir, []Event{
+		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-14T10:02:00Z", Task: "T1", Kind: "signal", Attempt: "r1", Signal: "no-plan"},
+		{TS: "2026-09-14T10:03:00Z", Task: "T1", Kind: "learning", Severity: "P2", Title: "t", Observed: "o", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
+	})
+	h, err := HandoffSummary(dir)
+	if err != nil {
+		t.Fatalf("HandoffSummary() error = %v", err)
+	}
+	if len(h.Untriaged) != 0 {
+		t.Errorf("Untriaged = %+v, want empty after triaging", h.Untriaged)
+	}
+	text := HandoffText(h)
+	if !strings.Contains(text, "untriaged signals: none") {
+		t.Errorf("HandoffText() missing 'untriaged signals: none':\n%q", text)
 	}
 }
