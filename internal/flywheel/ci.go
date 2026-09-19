@@ -40,9 +40,10 @@ jobs:
             echo "::error::@FLYWHEEL_DIR@/.flywheel/events.jsonl is not committed; flywheel-audit needs the event log in the repository"
             exit 1
           fi
+          export PATH="$(go env GOPATH)/bin:$PATH"
           # --workdir .: resolve trees in this checkout, not the paths the ledger recorded on the author's machine.
           set +e
-          "$(go env GOPATH)/bin/flywheel" verify --all --log --dir @FLYWHEEL_DIR@ --workdir .
+          flywheel verify --all --log --dir @FLYWHEEL_DIR@ --workdir .
           rc=$?
           if [ "$rc" -eq 8 ]; then
             echo "::warning::some checks were inconclusive (a pass whose tree this checkout cannot resolve); no violation was established"
