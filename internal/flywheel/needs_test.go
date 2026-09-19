@@ -108,3 +108,16 @@ func TestNeedsReconcileDispatchesNone(t *testing.T) {
 		t.Errorf("action Task = %q, want T1", actions[0].Task)
 	}
 }
+
+// TestNeedsRepeatedLinesDeduped checks that an id named on two needs: lines is
+// kept once (#310 review).
+func TestNeedsRepeatedLinesDeduped(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: T1\nneeds: T1, T2\ngate: true\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Needs) != 2 || h.Needs[0] != "T1" || h.Needs[1] != "T2" {
+		t.Errorf("needs = %v, want [T1 T2]", h.Needs)
+	}
+}

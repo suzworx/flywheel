@@ -103,6 +103,9 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			}
 		}
 	}
+	// One pass over every needs: line, so an id repeated across lines is kept
+	// once (#310 review).
+	h.Needs = NeedTargets(h.Needs...)
 	return h, nil
 }
 
