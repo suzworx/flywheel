@@ -447,3 +447,69 @@ func TestAppendAmendedEventBenignAppends(t *testing.T) {
 		t.Errorf("amended header gates = %+v, want the unchanged gate", evs[2].Header)
 	}
 }
+
+// TestRecordPlannedByIdentity records the planner's identity and goal link.
+func TestRecordPlannedByIdentity(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
+	if err := RecordPlannedBy(dir, "t", brief, PlanMeta{Session: "lead-1", Model: "m", GoalID: "G1", Note: "n"}); err != nil {
+		t.Fatalf("RecordPlannedBy() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	e := evs[0]
+	if e.Session != "lead-1" || e.Model != "m" || e.GoalID != "G1" || e.Note != "n" || e.Persona != "planner" {
+		t.Errorf("event = %+v, want Session=lead-1, Model=m, GoalID=G1, Note=n, Persona=planner", e)
+	}
+	if len(e.Owns) != 1 || e.Owns[0] != "a.txt" {
+		t.Errorf("owns = %v, want [a.txt]", e.Owns)
+	}
+}
+
+// TestRecordPlannedIdentityEmptyByDefault verifies RecordPlanned leaves Session, Model, GoalID, Note empty.
+func TestRecordPlannedIdentityEmptyByDefault(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	e := evs[0]
+	if e.Session != "" || e.Model != "" || e.GoalID != "" || e.Note != "" {
+		t.Errorf("event = %+v, want empty Session, Model, GoalID, Note", e)
+	}
+}
+
+// TestRecordAmendedByIdentity records the planner's identity on an amended event.
+func TestRecordAmendedByIdentity(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	if err := RecordAmendedBy(dir, "t", brief, "why", PlanMeta{Session: "lead-2", Model: "m"}); err != nil {
+		t.Fatalf("RecordAmendedBy() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(evs))
+	}
+	a := evs[1]
+	if a.Kind != "amended" || a.Session != "lead-2" || a.Model != "m" || a.Note != "why" {
+		t.Errorf("amended event = %+v, want Kind=amended, Session=lead-2, Model=m, Note=why", a)
+	}
+}

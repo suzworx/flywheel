@@ -14,6 +14,7 @@ type ReviewOptions struct {
 	Workdir   string // git working tree to review; default Dir
 	Verdict   string
 	Session   string
+	Model     string // the reviewer's model, recorded as its identity (issue #53); optional
 	Note      string
 	Checklist []string // domain checklist lines the reviewer confirms; optional
 }
@@ -37,8 +38,8 @@ type ReviewResult struct {
 // disjoint import graph). Refusals mirror inspect.go's style: T8 for a bad
 // verdict, T4 for a missing or worker --session, "owns" for a changed path
 // outside the brief's owns, and T3 for a gate that fails in the isolated
-// tree. On success the reviewed event is recorded (Verdict, Session, Note,
-// and Tree = the workdir's tree hash) and derived state is refreshed.
+// tree. On success the reviewed event is recorded (Verdict, Session, Model,
+// Note, and Tree = the workdir's tree hash) and derived state is refreshed.
 func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 	if o.Dir == "" {
 		o.Dir = "."
@@ -115,7 +116,7 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "reviewed", Verdict: o.Verdict,
-		Tree: tree, Session: o.Session, Note: note, Persona: "reviewer",
+		Tree: tree, Session: o.Session, Model: o.Model, Note: note, Persona: "reviewer",
 	}); err != nil {
 		return ReviewResult{}, err
 	}

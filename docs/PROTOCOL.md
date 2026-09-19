@@ -28,17 +28,18 @@ orders them for replay); the rest — `worker_plan`, `no-plan`, `off-course`, `r
 all.
 
 ### `planned`
-- Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path>`.
+- Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
   needs, needs-state, gates, live-gates, exclusive, review and sha256 — as recorded when the
-  event was appended). `needs`/`owns` only land on the event through `flywheel log --json`; the
-  everyday flag form has no `--needs`/`--owns` flag, so in practice those live in the brief
-  file's own header and are read from there (`ParseBriefHeader`) whenever a command needs them.
-  When `header` is present it is authoritative over the brief file, and `owns`/`needs` are its
-  summary.
+  event was appended), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
+  nothing is appended), and `note`. `owns`/`needs` are copied from the brief header when the event
+  is appended. When `header` is present it is authoritative over the brief file, and `owns`/`needs`
+  are its summary.
 - Effect: `Derive` sets status `planned`. Verify's T1 (`plannedBriefOnly`) uses the task's *latest*
   `planned` event's brief path, deliberately ignoring any `amended` events, as the hash a fresh
-  dispatch must match.
+  dispatch must match. Acceptance criteria belong to the goal (`flywheel goal add --accept CMD`),
+  not to a unit: a planned event links to its goal with `goal_id`.
 
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
@@ -120,9 +121,10 @@ all.
   so a cut-off or failed run can never be mistaken for a done one.
 
 ### `reviewed`
-- Written by: nothing in this codebase today. `flywheel log --task <id> --kind reviewed --verdict
-  pass|correct|reject` remains valid input, and `Derive` still understands it.
-- Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`).
+- Written by: `flywheel review <task> --verdict pass|correct|reject --session S [--model M]`, from
+  an isolated copy of the tree; `flywheel log --kind reviewed` remains valid input.
+- Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`), `session`,
+  `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`).
 - Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`. Unlike
   `inspected`, verify's T8 does not restrict who may write a `reviewed` event — `inspected` (§4) is
   the path every current command actually takes.
@@ -161,10 +163,12 @@ all.
   that wrote the task's `started`, `finished`, `dispatched`, `report` or `worker_plan` event).
 
 ### `amended`
-- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`; a
+- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
   `--json`-ingested `amended` event lands through the same check.
 - Carries: `task`, `brief`, `header` (the parsed brief header as recorded when the amendment was
-  appended, as for `planned`), optionally `needs`/`owns` (same `--json`-only caveat as `planned`).
+  appended, as for `planned`), `session` and `model` (the planner's identity, recorded as for
+  `planned`), `note`, `persona` (`planner`), and `owns`/`needs` copied from the brief header, as for
+  `planned`. The `--goal` flag is a usage error (exit 2) with `--kind amended`.
 - Effect: `Derive` updates only `brief`/`needs`/`owns` on the task, never its status. Verify's T1
   treats a `dispatched` hash mismatch as explained when an `amended` event for the task falls
   between that dispatch and now.
