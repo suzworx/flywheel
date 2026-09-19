@@ -518,19 +518,44 @@ func workerSessionOf(task string, events []Event, sess string) bool {
 	return false
 }
 
+// unlandedOwners returns, sorted, every task in a sibling worktree's own
+// ledger that has been dispatched and has not landed: until it lands, a unit
+// that ran owns the uncommitted files in its own worktree — including edits
+// made after it passed inspection — so they are never charged to a unit
+// validating elsewhere (issue #278). A task that was only planned never ran,
+// so it accounts for nothing; a landed task no longer owns anything.
+func unlandedOwners(events []Event) []string {
+	dispatched := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "dispatched" {
+			dispatched[e.Task] = true
+		}
+	}
+	st := Derive(events)
+	var owners []string
+	for _, ts := range st.Tasks {
+		if dispatched[ts.ID] && ts.Status != "landed" {
+			owners = append(owners, ts.ID)
+		}
+	}
+	sort.Strings(owners)
+	return owners
+}
+
 // worktreeOwner reports the task in worktree W whose brief owns the changed
-// path p (relative to W), or "" when no in-flight task there owns it (issue
-// #200). It reads W's own event log — that worktree's own record of what it
-// is building — so the attribution is trustworthy. An unreadable sibling log
-// is never an error: it attributes nothing. Owners are tried in
-// inFlightOwners' sorted order, matching attributeOutside, and a task whose
-// brief cannot be read is skipped, never treated as an owner.
+// path p (relative to W) and which was dispatched and has not landed, or ""
+// when no such task there owns it (issue #200, #278). It reads W's own event
+// log — that worktree's own record of what it is building — so the
+// attribution is trustworthy. An unreadable sibling log is never an error: it attributes
+// nothing. Owners are tried in unlandedOwners' sorted order, matching
+// attributeOutside, and a task whose brief cannot be read is skipped, never
+// treated as an owner.
 func worktreeOwner(W, p string) string {
 	wEvents, err := ReadEvents(W)
 	if err != nil {
 		return ""
 	}
-	for _, other := range inFlightOwners(wEvents, "") {
+	for _, other := range unlandedOwners(wEvents) {
 		header, _, err := AttemptBrief(W, wEvents, other)
 		if err != nil {
 			continue
