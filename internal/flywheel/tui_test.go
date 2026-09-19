@@ -623,3 +623,95 @@ func TestTUILiveFilter(t *testing.T) {
 		t.Errorf("expected 'Units(all)[3]' in view after Esc, got:\n%s", view)
 	}
 }
+
+// TestTUIEmptyTableNoDrillDown checks that moving on an empty table keeps the
+// cursor at 0 and Enter/l open nothing (#344 review).
+func TestTUIEmptyTableNoDrillDown(t *testing.T) {
+	d := TUIData{}
+	m := NewTUI()
+	for _, k := range []term.Key{{Kind: term.KeyDown}, {Kind: term.KeyRune, Rune: 'j'}, {Kind: term.KeyPgDn}, {Kind: term.KeyEnd}, {Kind: term.KeyEnter}, {Kind: term.KeyRune, Rune: 'l'}} {
+		m.Update(k, d)
+	}
+	if _, _, ok := m.Wants(); ok {
+		t.Error("Wants() ok = true on an empty table, want false")
+	}
+	if m.cursor != 0 {
+		t.Errorf("cursor = %d, want 0", m.cursor)
+	}
+}
+
+// TestTUIAndonStateColored checks that the andon view colours the STATE
+// cell of rows off the cursor (#344 review).
+func TestTUIAndonStateColored(t *testing.T) {
+	d := makeTestTUIData()
+	d.Floor.Andon = append(d.Floor.Andon, Andon{Task: "T9", State: "stalled", Age: 5})
+	m := NewTUI()
+	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'a'}, {Kind: term.KeyEnter}} {
+		m.Update(k, d)
+	}
+	frame := m.View(d, 80, 12, true)
+	if !strings.Contains(frame, stateColor("stalled")+"stalled") {
+		t.Errorf("andon frame lacks a coloured STATE cell:\n%q", frame)
+	}
+}
+
+// TestTUILastLineAtBottom checks that the prompt/status/breadcrumbs line is
+// the frame's last line in help and in a short drill-down (#344 review).
+func TestTUILastLineAtBottom(t *testing.T) {
+	d := makeTestTUIData()
+	m := NewTUI()
+	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
+	lines := strings.Split(m.View(d, 80, 40, false), "\n")
+	if len(lines) != 40 || lines[39] != "<units>" {
+		t.Errorf("help: %d lines, last %q; want 40 and <units>", len(lines), lines[len(lines)-1])
+	}
+	m = NewTUI()
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	d.Detail = []string{"only line"}
+	lines = strings.Split(m.View(d, 80, 20, false), "\n")
+	if len(lines) != 20 || !strings.HasPrefix(lines[19], "<units> <") {
+		t.Errorf("drill-down: %d lines, last %q; want 20 and the breadcrumbs", len(lines), lines[len(lines)-1])
+	}
+}
+
+// TestTUISmallFrameNeverEnlarged checks that View never returns more lines
+// or wider lines than asked, and keeps the last line (#344 review).
+func TestTUISmallFrameNeverEnlarged(t *testing.T) {
+	d := makeTestTUIData()
+	for _, size := range [][2]int{{10, 3}, {1, 1}, {15, 2}, {5, 6}} {
+		m := NewTUI()
+		lines := strings.Split(m.View(d, size[0], size[1], false), "\n")
+		if len(lines) != size[1] {
+			t.Errorf("%dx%d: %d lines", size[0], size[1], len(lines))
+		}
+		for _, l := range lines {
+			if utf8.RuneCountInString(l) > size[0] {
+				t.Errorf("%dx%d: line %q is wider", size[0], size[1], l)
+			}
+		}
+		if last := lines[len(lines)-1]; last != cutRunes("<units>", size[0]) {
+			t.Errorf("%dx%d: last line %q, want the breadcrumbs", size[0], size[1], last)
+		}
+	}
+	if got := NewTUI().View(d, 0, 10, false); got != "" {
+		t.Errorf("View at width 0 = %q, want empty", got)
+	}
+}
+
+// TestTUIHelpScrolls checks that help scrolls on a short screen so its last
+// line is reachable (#344 review).
+func TestTUIHelpScrolls(t *testing.T) {
+	d := makeTestTUIData()
+	m := NewTUI()
+	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
+	if strings.Contains(m.View(d, 80, 8, false), "q       quit") {
+		t.Fatal("an 8-line help already shows its last line; the test needs a shorter screen")
+	}
+	for i := 0; i < 30; i++ {
+		m.Update(term.Key{Kind: term.KeyRune, Rune: 'j'}, d)
+		m.View(d, 80, 8, false)
+	}
+	if !strings.Contains(m.View(d, 80, 8, false), "q       quit") {
+		t.Error("help scrolled to the end does not show its last line (q quit)")
+	}
+}

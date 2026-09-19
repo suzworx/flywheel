@@ -43,7 +43,10 @@ func NewTUI() *TUI {
 	}
 }
 
-// cutRunes returns at most n runes; when s is longer, returns the first n-1 runes plus "~".
+// cutRunes returns at most n runes; when s is longer, returns the first n-1
+// runes plus "~". It counts runes, not terminal cells: the standard library
+// has no East Asian width table, and the floor's cells (task ids, models,
+// states, paths) are ASCII in practice.
 func cutRunes(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -112,6 +115,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 				m.drillKind = ""
 				m.drillTask = ""
 				m.help = true
+				m.detailTop = 0
 				m.statusMsg = ""
 			}
 		case term.KeyCtrlC:
@@ -120,18 +124,32 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		return
 	}
 
-	// Help mode.
+	// Help mode: scrolls like a drill-down, so a short screen still reaches
+	// every line (#344 review).
 	if m.help {
 		switch k.Kind {
 		case term.KeyEsc:
 			m.help = false
 			m.statusMsg = ""
+		case term.KeyDown:
+			m.detailTop++
+		case term.KeyUp:
+			m.detailTop = max(0, m.detailTop-1)
+		case term.KeyPgDn:
+			m.detailTop += m.page
+		case term.KeyPgUp:
+			m.detailTop = max(0, m.detailTop-m.page)
 		case term.KeyRune:
-			if k.Rune == '?' {
+			switch k.Rune {
+			case '?':
 				m.help = false
 				m.statusMsg = ""
-			} else if k.Rune == 'q' {
+			case 'q':
 				m.quit = true
+			case 'j':
+				m.detailTop++
+			case 'k':
+				m.detailTop = max(0, m.detailTop-1)
 			}
 		case term.KeyCtrlC:
 			m.quit = true
@@ -176,6 +194,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	// Table mode.
 	_, rows := m.Rows(d)
 	n := len(rows)
+	defer m.clampCursor(n)
 
 	switch k.Kind {
 	case term.KeyEsc:
@@ -227,12 +246,13 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 			m.statusMsg = ""
 		case '?':
 			m.help = true
+			m.detailTop = 0
 			m.statusMsg = ""
 		case 'q':
 			m.quit = true
 		case 'l':
 			if m.view == "units" || m.view == "andon" {
-				if m.cursor < len(rows) {
+				if m.cursor < len(rows) && len(rows) > 0 {
 					m.drillKind = "log"
 					m.drillTask = m.getTaskAtCursor(d)
 					m.detailTop = 0
@@ -262,7 +282,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		}
 		m.statusMsg = ""
 	case term.KeyEnter:
-		if (m.view == "units" || m.view == "andon") && m.cursor < len(rows) {
+		if (m.view == "units" || m.view == "andon") && m.cursor < len(rows) && len(rows) > 0 {
 			m.drillKind = "explain"
 			m.drillTask = m.getTaskAtCursor(d)
 			m.detailTop = 0
@@ -271,6 +291,12 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	case term.KeyCtrlC:
 		m.quit = true
 	}
+}
+
+// clampCursor keeps the cursor on one of n rows: 0 when there are none, so
+// a move on an empty table never leaves it negative (#344 review).
+func (m *TUI) clampCursor(n int) {
+	m.cursor = max(0, min(m.cursor, n-1))
 }
 
 // executeCommand processes the command entered by the user.
@@ -390,12 +416,12 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 
 // rowsAndon returns the header and filtered rows for the andon view.
 func (m *TUI) rowsAndon(d TUIData) (header []string, rows [][]string) {
-	header = []string{"TASK", "STATE", "AGE"}
+	header = []string{"TASK", "AGE", "STATE"} // STATE last, as in units: it is the coloured cell
 	for _, a := range d.Floor.Andon {
 		row := []string{
 			a.Task,
-			a.State,
 			HumanAge(a.Age),
+			a.State,
 		}
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
@@ -419,12 +445,11 @@ func (m *TUI) rowsEvents(d TUIData) (header []string, rows [][]string) {
 
 // View renders one full frame, exactly height lines, each at most width
 // runes wide; color adds ANSI colours and reverse video for the cursor row.
+// A frame too short for the layout keeps its first lines and the last one
+// (the prompt, status or breadcrumbs); a non-positive size renders "".
 func (m *TUI) View(d TUIData, width, height int, color bool) string {
-	if width < 20 {
-		width = 20
-	}
-	if height < 5 {
-		height = 5
+	if width < 1 || height < 1 {
+		return ""
 	}
 
 	lines := []string{}
@@ -494,10 +519,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  ?       show this help",
 			"  q       quit",
 		}
-		for _, line := range helpText {
-			if len(lines) < height-1 {
-				lines = append(lines, cutRunes(line, width))
-			}
+		visible := max(1, height-4)
+		m.page = visible
+		m.detailTop = max(0, min(m.detailTop, len(helpText)-visible))
+		for i := m.detailTop; i < len(helpText) && i < m.detailTop+visible; i++ {
+			lines = append(lines, cutRunes(helpText[i], width))
 		}
 	} else if m.drillKind != "" {
 		// Drill-down view shows detail lines with scrolling.
@@ -579,10 +605,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			lines = append(lines, rowLineCut)
 		}
 
-		// Pad with empty rows.
-		for len(lines) < height-1 {
-			lines = append(lines, "")
-		}
+	}
+	// Pad the body so the last line sits on the frame's bottom row in every
+	// mode (#344 review).
+	for len(lines) < height-1 {
+		lines = append(lines, "")
 	}
 
 	// Last line: status, prompt, or breadcrumbs.
@@ -598,15 +625,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	} else {
 		lastLine = fmt.Sprintf("<%s>", m.view)
 	}
+	// Exactly height lines: a short frame drops body lines, never the last.
+	if len(lines) > height-1 {
+		lines = lines[:height-1]
+	}
 	lines = append(lines, cutRunes(lastLine, width))
-
-	// Ensure we have exactly `height` lines.
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-	if len(lines) > height {
-		lines = lines[:height]
-	}
 
 	return strings.Join(lines, "\n")
 }
