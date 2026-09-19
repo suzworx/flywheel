@@ -77,20 +77,19 @@ func TestTUILiveClosedKeys(t *testing.T) {
 }
 
 func TestTUILiveTickRefetches(t *testing.T) {
-	keys := make(chan term.Key, 2)
-	ticks := make(chan time.Time, 2)
-
-	// Send tick, then quit key
+	// Deterministic order: only the tick is ready at first; the second
+	// fetch (the tick's) queues q. A key and a tick ready together would
+	// let select pick either.
+	keys := make(chan term.Key, 1)
+	ticks := make(chan time.Time, 1)
 	ticks <- time.Now()
-	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
-	close(keys)
-	close(ticks)
-
-	out := &bytes.Buffer{}
 
 	var fetchCount int
 	fetch := func(m *TUI) (TUIData, error) {
 		fetchCount++
+		if fetchCount == 2 {
+			keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+		}
 		return makeTestTUIData(), nil
 	}
 
@@ -98,17 +97,13 @@ func TestTUILiveTickRefetches(t *testing.T) {
 		Keys:  keys,
 		Ticks: ticks,
 		Size:  func() (int, int) { return 100, 20 },
-		Out:   out,
-		Color: false,
+		Out:   &bytes.Buffer{},
 	}
-
-	err := RunTUILoop(tio, fetch)
-	if err != nil {
+	if err := RunTUILoop(tio, fetch); err != nil {
 		t.Errorf("RunTUILoop returned error: %v", err)
 	}
-
-	if fetchCount < 2 {
-		t.Errorf("fetch called %d times, expected at least 2", fetchCount)
+	if fetchCount != 2 {
+		t.Errorf("fetch called %d times, want 2 (the first frame and the tick)", fetchCount)
 	}
 }
 
