@@ -195,3 +195,131 @@ func TestContextRenderShowsSession(t *testing.T) {
 		t.Errorf("markdown lacks the session:\n%s", b.String())
 	}
 }
+
+// TestContextRoleUnknownErrors verifies that an unknown role returns an error.
+func TestContextRoleUnknownErrors(t *testing.T) {
+	events := []Event{}
+	cfg := Config{}
+	_, err := BuildRoleContext(events, cfg, 5, "nobody")
+	if err == nil {
+		t.Errorf("BuildRoleContext with unknown role = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "unknown role") {
+		t.Errorf("error message = %q, want to contain 'unknown role'", err.Error())
+	}
+}
+
+// TestContextRoleInspectorOnlyUninspected verifies inspector gets only uninspected blockers.
+func TestContextRoleInspectorOnlyUninspected(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
+		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:02Z", Task: "T1", Kind: "finished", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:03Z", Task: "T2", Kind: "signal", Signal: "stalled", Attempt: "r1"},
+	}
+	cfg := Config{}
+	pack, err := BuildRoleContext(events, cfg, 5, "inspector")
+	if err != nil {
+		t.Fatalf("BuildRoleContext() error = %v", err)
+	}
+
+	if len(pack.Goals) != 0 {
+		t.Errorf("len(Goals) = %d, want 0 for inspector", len(pack.Goals))
+	}
+	if len(pack.InFlight) != 0 {
+		t.Errorf("len(InFlight) = %d, want 0 for inspector", len(pack.InFlight))
+	}
+	if len(pack.Ready) != 0 {
+		t.Errorf("len(Ready) = %d, want 0 for inspector", len(pack.Ready))
+	}
+
+	if len(pack.Unjudged) != 1 {
+		t.Fatalf("len(Unjudged) = %d, want 1 for inspector", len(pack.Unjudged))
+	}
+	if pack.Unjudged[0].Task != "T1" || pack.Unjudged[0].Kind != "uninspected" {
+		t.Errorf("Unjudged[0] = {Task: %q, Kind: %q}, want {Task: T1, Kind: uninspected}", pack.Unjudged[0].Task, pack.Unjudged[0].Kind)
+	}
+}
+
+// TestContextRoleStewardOnlyUntriaged verifies steward gets only untriaged blockers.
+func TestContextRoleStewardOnlyUntriaged(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
+		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:02Z", Task: "T1", Kind: "finished", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:03Z", Task: "T2", Kind: "signal", Signal: "stalled", Attempt: "r1"},
+	}
+	cfg := Config{}
+	pack, err := BuildRoleContext(events, cfg, 5, "steward")
+	if err != nil {
+		t.Fatalf("BuildRoleContext() error = %v", err)
+	}
+
+	if len(pack.Goals) != 0 {
+		t.Errorf("len(Goals) = %d, want 0 for steward", len(pack.Goals))
+	}
+	if len(pack.InFlight) != 0 {
+		t.Errorf("len(InFlight) = %d, want 0 for steward", len(pack.InFlight))
+	}
+	if len(pack.Ready) != 0 {
+		t.Errorf("len(Ready) = %d, want 0 for steward", len(pack.Ready))
+	}
+
+	if len(pack.Unjudged) != 1 {
+		t.Fatalf("len(Unjudged) = %d, want 1 for steward", len(pack.Unjudged))
+	}
+	if pack.Unjudged[0].Task != "T2" || pack.Unjudged[0].Kind != "untriaged" {
+		t.Errorf("Unjudged[0] = {Task: %q, Kind: %q}, want {Task: T2, Kind: untriaged}", pack.Unjudged[0].Task, pack.Unjudged[0].Kind)
+	}
+}
+
+// TestContextRoleAuditorUnaudited verifies auditor sees only unaudited landed tasks.
+func TestContextRoleAuditorUnaudited(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
+		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:02Z", Task: "T1", Kind: "finished", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:03Z", Task: "T1", Kind: "landed"},
+		{TS: "2026-09-18T10:00:04Z", Task: "T2", Kind: "planned"},
+		{TS: "2026-09-18T10:00:05Z", Task: "T2", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:06Z", Task: "T2", Kind: "finished", Attempt: "r1"},
+		{TS: "2026-09-18T10:00:07Z", Task: "T2", Kind: "landed"},
+		{TS: "2026-09-18T10:00:08Z", Task: "T2", Kind: "audited"},
+	}
+	cfg := Config{}
+	pack, err := BuildRoleContext(events, cfg, 5, "auditor")
+	if err != nil {
+		t.Fatalf("BuildRoleContext() error = %v", err)
+	}
+
+	if len(pack.Unaudited) != 1 {
+		t.Fatalf("len(Unaudited) = %d, want 1", len(pack.Unaudited))
+	}
+	if pack.Unaudited[0] != "T1" {
+		t.Errorf("Unaudited[0] = %q, want T1", pack.Unaudited[0])
+	}
+}
+
+// TestContextRoleRenderOnlyOwnSections verifies role-filtered rendering.
+func TestContextRoleRenderOnlyOwnSections(t *testing.T) {
+	p := ContextPack{
+		Role:     "inspector",
+		Goals:    []GoalView{{ID: "G1", Title: "Goal", Status: "active"}},
+		Unjudged: []GateBlocker{{Task: "T1", Kind: "uninspected", Detail: "needs verdict"}},
+	}
+	var buf bytes.Buffer
+	if err := RenderContext(&buf, p); err != nil {
+		t.Fatalf("RenderContext() error = %v", err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, "# flywheel context — inspector") {
+		t.Errorf("output lacks '# flywheel context — inspector'")
+	}
+	if !strings.Contains(output, "## Needs a verdict or triage") {
+		t.Errorf("output lacks '## Needs a verdict or triage'")
+	}
+	if strings.Contains(output, "## Goals") {
+		t.Errorf("output should not contain '## Goals' for inspector role")
+	}
+}
