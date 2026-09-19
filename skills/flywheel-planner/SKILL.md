@@ -123,5 +123,5 @@ gauge readings, inspections or audits — a worker never records those either.
   (and `amended`) event you record carries your persona, `planner`, so the ledger always says who
   decided.
 - `flywheel status` — planned; today: read `flywheel.md` and `.flywheel/state.json`.
-- `flywheel explain` / `flywheel context` — planned (#58); today: read the briefs and run files
-  directly.
+- `flywheel explain <task>` — a unit's whole story from the ledger; `flywheel context` — the
+  factory's state in one read (goals, in flight, blocked, ready, recent learnings).

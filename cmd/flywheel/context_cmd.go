@@ -80,7 +80,10 @@ func runContext(args []string) {
 			fmt.Fprintf(os.Stderr, "flywheel context: encode JSON: %v\n", jerr)
 			os.Exit(1)
 		}
-		fmt.Printf("%s\n", b)
+		if _, werr := fmt.Printf("%s\n", b); werr != nil {
+			fmt.Fprintf(os.Stderr, "flywheel context: write JSON: %v\n", werr)
+			os.Exit(1)
+		}
 	} else {
 		if rerr := flywheel.RenderContext(os.Stdout, pack); rerr != nil {
 			fmt.Fprintf(os.Stderr, "flywheel context: %v\n", rerr)

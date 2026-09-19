@@ -182,3 +182,16 @@ func TestContextJSON(t *testing.T) {
 		t.Errorf("JSON does not contain goal ID G1")
 	}
 }
+
+// TestContextRenderShowsSession checks an in-flight task's session is in the
+// Markdown, not only the JSON (#297 review).
+func TestContextRenderShowsSession(t *testing.T) {
+	p := ContextPack{InFlight: []HandoffTask{{ID: "T1", Status: "running", Model: "m1", Session: "s-42"}}}
+	var b bytes.Buffer
+	if err := RenderContext(&b, p); err != nil {
+		t.Fatalf("RenderContext() error = %v", err)
+	}
+	if !strings.Contains(b.String(), "- T1 running m1 (session s-42)") {
+		t.Errorf("markdown lacks the session:\n%s", b.String())
+	}
+}

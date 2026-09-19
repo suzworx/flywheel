@@ -103,6 +103,9 @@ func RenderContext(w io.Writer, p ContextPack) error {
 			if t.Model != "" {
 				line += fmt.Sprintf(" %s", t.Model)
 			}
+			if t.Session != "" {
+				line += fmt.Sprintf(" (session %s)", t.Session)
+			}
 			sb.WriteString(line + "\n")
 		}
 	}
