@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -33,7 +33,7 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   binaries:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     steps:
