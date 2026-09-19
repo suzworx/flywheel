@@ -245,3 +245,19 @@ func TestStatsBaselineAbsent(t *testing.T) {
 		t.Errorf("Baseline = %v, want nil (not configured)", rep.Baseline)
 	}
 }
+
+// TestStatsBaselineInvalidConfigErrors checks a config that fails validation
+// is reported, not treated as having no baseline (#292 review).
+func TestStatsBaselineInvalidConfigErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := `{"version":1,"workers":[{"name":"default","adapter":"sim","model":"m"}],"baseline":{"model":"","input_per_mtok":1}}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Stats(dir); err == nil {
+		t.Fatal("Stats() error = nil, want the invalid baseline reported")
+	}
+}

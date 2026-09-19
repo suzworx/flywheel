@@ -167,7 +167,12 @@ func Stats(dir string) (StatsReport, error) {
 		rep.CostPerLandedTask = round(cost.Total.Cost/float64(rep.Tasks.Landed), 4)
 	}
 
-	cfg, _, _ := LoadConfig(dir)
+	// A missing config yields the defaults (no baseline); a broken one is an
+	// error, never a silently absent baseline.
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return StatsReport{}, fmt.Errorf("stats %s: %w", dir, err)
+	}
 	if cfg.Baseline != nil {
 		bc := cfg.Baseline.Cost(cost.Total.Tokens)
 		rep.Baseline = &StatsBaseline{Model: cfg.Baseline.Model, Cost: round(bc, 4)}
