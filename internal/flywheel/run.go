@@ -303,6 +303,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	if b := cfg.Limits.Breaker; b != nil {
+		if open, until := breakerOpen(events, model, *b, now()); open {
+			return Result{}, &RuleRefusal{
+				Rule: "breaker",
+				Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", model, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+			}
+		}
+	}
+
 	// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
 	// delta, not the resume flag, makes a dispatch a correction: a given
 	// --delta is always the prompt, with or without --resume.
@@ -1624,4 +1633,80 @@ func briefHasIncrement(text string, n int) bool {
 		}
 	}
 	return false
+}
+
+// breakerOpen reports whether the circuit for model is open at now: its last
+// b.Errors finished attempts across the ledger (newest first, by timestamp,
+// only events whose Model is model) all ended with reason "error", and the
+// newest of them is less than the cooldown ago. It also returns when the
+// circuit closes again.
+func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open bool, until time.Time) {
+	if b.Errors <= 0 {
+		return false, time.Time{}
+	}
+	cooldown, err := b.CooldownDuration()
+	if err != nil {
+		cooldown = 10 * time.Minute
+	}
+	type finish struct {
+		at     time.Time
+		reason string
+	}
+	var finished []finish
+	for _, e := range events {
+		if e.Kind != "finished" || e.Model != model {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil {
+			finished = append(finished, finish{at: t, reason: e.Reason})
+		}
+	}
+	if len(finished) < b.Errors {
+		return false, time.Time{}
+	}
+	sort.Slice(finished, func(i, j int) bool { return finished[i].at.After(finished[j].at) })
+	for _, f := range finished[:b.Errors] {
+		if f.reason != "error" {
+			return false, time.Time{}
+		}
+	}
+	until = finished[0].at.Add(cooldown)
+	if now.Before(until) {
+		return true, until
+	}
+	// Half-open: the cooldown is over, but only ONE probe may run. A
+	// dispatch of this model after the newest error whose attempt has not
+	// finished yet is that probe; until it finishes, the breaker stays open
+	// (#304 review). Dispatch holds the dispatch lock, so a second caller
+	// always sees the first probe's dispatched event.
+	done := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "finished" {
+			done[e.Task+"/"+e.Attempt] = true
+		}
+	}
+	for _, e := range events {
+		if e.Kind != "dispatched" || e.Model != model || done[e.Task+"/"+e.Attempt] {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(finished[0].at) {
+			return true, until
+		}
+	}
+	return false, until
+}
+
+// approvedFallbackHint returns a string listing approved fallbacks from w,
+// formatted as " (approved fallbacks: a, b)" or "" when there are none.
+func approvedFallbackHint(w Worker) string {
+	var approved []string
+	for _, f := range w.Fallbacks {
+		if f.Approved {
+			approved = append(approved, f.Model)
+		}
+	}
+	if len(approved) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (approved fallbacks: %s)", strings.Join(approved, ", "))
 }

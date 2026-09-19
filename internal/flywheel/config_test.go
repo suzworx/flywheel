@@ -609,3 +609,64 @@ func TestConfigToolListsJSONRoundTrip(t *testing.T) {
 		t.Errorf("LoadConfig() = %+v, want %+v", got, cfg)
 	}
 }
+
+// TestConfigBreakerValidate checks Breaker validation: valid configs pass, invalid ones fail.
+func TestConfigBreakerValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+		wantMsg string
+	}{
+		{
+			name: "valid breaker",
+			cfg: Config{
+				Version: 1,
+				Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+				Limits:  Limits{Breaker: &Breaker{Errors: 2, Cooldown: "10m"}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative errors",
+			cfg: Config{
+				Version: 1,
+				Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+				Limits:  Limits{Breaker: &Breaker{Errors: -1, Cooldown: "10m"}},
+			},
+			wantErr: true,
+			wantMsg: "limits.breaker.errors -1 must be >= 0",
+		},
+		{
+			name: "invalid cooldown",
+			cfg: Config{
+				Version: 1,
+				Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+				Limits:  Limits{Breaker: &Breaker{Errors: 2, Cooldown: "banana"}},
+			},
+			wantErr: true,
+			wantMsg: "limits.breaker.cooldown",
+		},
+		{
+			name: "zero cooldown",
+			cfg: Config{
+				Version: 1,
+				Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}},
+				Limits:  Limits{Breaker: &Breaker{Errors: 2, Cooldown: "0s"}},
+			},
+			wantErr: true,
+			wantMsg: "limits.breaker.cooldown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), tt.wantMsg)) {
+				t.Errorf("Validate() = %v, want error containing %q", err, tt.wantMsg)
+			}
+		})
+	}
+}

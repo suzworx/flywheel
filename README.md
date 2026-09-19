@@ -187,6 +187,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).
+`limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
+passes.
 
 ## Quickstart
 

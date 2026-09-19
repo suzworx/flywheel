@@ -103,13 +103,31 @@ type Fallback struct {
 
 // Limits caps shared resource use across workers.
 type Limits struct {
-	PerHost int     `json:"per_host,omitempty"`
-	Budget  *Budget `json:"budget,omitempty"`
+	PerHost int      `json:"per_host,omitempty"`
+	Budget  *Budget  `json:"budget,omitempty"`
+	Breaker *Breaker `json:"breaker,omitempty"`
 }
 
 // Budget caps spending per wave.
 type Budget struct {
 	WaveCostUSD float64 `json:"wave_cost_usd,omitempty"`
+}
+
+// Breaker opens the circuit for a model after Errors consecutive provider
+// errors (finished attempts with reason "error") and keeps it open for
+// Cooldown after the newest one; then one dispatch is let through as a probe
+// (issue #46).
+type Breaker struct {
+	Errors   int    `json:"errors"`   // consecutive provider errors that open it; 0 disables
+	Cooldown string `json:"cooldown"` // how long it stays open, a Go duration such as "10m"
+}
+
+// CooldownDuration parses Cooldown ("" means 10 minutes).
+func (b Breaker) CooldownDuration() (time.Duration, error) {
+	if b.Cooldown == "" {
+		return 10 * time.Minute, nil
+	}
+	return time.ParseDuration(b.Cooldown)
 }
 
 // Feedback configures how results flow upstream.
@@ -298,6 +316,19 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.PerHost < 0 {
 		problems = append(problems, fmt.Sprintf("limits.per_host %d must be >= 0", c.Limits.PerHost))
+	}
+	if c.Limits.Breaker != nil {
+		if c.Limits.Breaker.Errors < 0 {
+			problems = append(problems, fmt.Sprintf("limits.breaker.errors %d must be >= 0", c.Limits.Breaker.Errors))
+		}
+		if _, err := c.Limits.Breaker.CooldownDuration(); err != nil {
+			problems = append(problems, fmt.Sprintf("limits.breaker.cooldown %q: %v", c.Limits.Breaker.Cooldown, err))
+		} else {
+			dur, _ := c.Limits.Breaker.CooldownDuration()
+			if dur <= 0 {
+				problems = append(problems, fmt.Sprintf("limits.breaker.cooldown %q must be > 0", c.Limits.Breaker.Cooldown))
+			}
+		}
 	}
 	switch c.Feedback.Submit {
 	case "", "ask", "never":
