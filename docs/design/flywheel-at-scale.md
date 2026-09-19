@@ -222,8 +222,8 @@ What needs a network today, and how each part works without one:
 | CI, releases, upstream feedback | GitHub | run the gates locally; publish and submit feedback later from the outbox |
 
 Making it first-class:
-- `flywheel init --local <model>` writes the OpenCode provider block for Ollama
-  (`baseURL http://localhost:11434/v1`) and a `local` worker entry in config.
+- `flywheel init --local <model> [--local-url URL]` writes the OpenCode provider block for Ollama
+  (`baseURL http://localhost:11434/v1`) and a `local` worker entry in config — implemented (#44).
 - `flywheel doctor` probes the local endpoint like any other model, and reports when a provider
   package or plugin would need the network.
 - `max_parallel` for local workers comes from the hardware, not from the provider: one CPU-only
