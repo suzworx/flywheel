@@ -68,8 +68,8 @@ type measureTarget struct {
 
 // measureTargets returns, sorted by task, every task that needs measuring:
 // every finished task whose current attempt has no COMPLETE validate pass
-// since its latest finish, and every passed or needs-correction task whose
-// owned files changed since its reading. A pass is complete once it has
+// since its latest finish, and every passed, needs-correction or finished (already
+// measured, typically failed) task whose owned files changed since its reading. A pass is complete once it has
 // recorded owns_checked (its last record), so an interrupted pass that
 // recorded only some gates is measured again (#298 review). The attempt is the
 // derived current one, or — when the ledger never recorded a dispatch — the
@@ -78,6 +78,7 @@ type measureTarget struct {
 // When dir is "", the passed-unit re-measurement check is skipped.
 func measureTargets(dir string, events []Event) []measureTarget {
 	var out []measureTarget
+	added := make(map[string]bool) // tasks the first loop already returned
 	for _, ts := range Derive(events).Tasks {
 		if ts.Status != "finished" {
 			continue
@@ -92,18 +93,19 @@ func measureTargets(dir string, events []Event) []measureTarget {
 				}
 			}
 		}
-		measured := false
+		isMeasured := false
 		for _, e := range events {
 			if e.Task != ts.ID || e.Kind != "owns_checked" || e.Attempt != cur || !finishedOK {
 				continue
 			}
 			if t, ok := parseTS(e.TS); ok && t.After(finished) {
-				measured = true
+				isMeasured = true
 				break
 			}
 		}
-		if !measured {
+		if !isMeasured {
 			out = append(out, measureTarget{task: ts.ID, attempt: cur})
+			added[ts.ID] = true
 		}
 	}
 
@@ -112,7 +114,10 @@ func measureTargets(dir string, events []Event) []measureTarget {
 		// review); an error leaves it empty, which counts as changed.
 		curTree, _ := treeHash(dir)
 		for _, ts := range Derive(events).Tasks {
-			if ts.Status != "passed" && ts.Status != "needs-correction" {
+			if ts.Status != "passed" && ts.Status != "needs-correction" && ts.Status != "finished" {
+				continue
+			}
+			if added[ts.ID] {
 				continue
 			}
 			cur := currentAttempt(ts, events)

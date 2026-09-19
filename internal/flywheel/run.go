@@ -305,9 +305,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	if b := cfg.Limits.Breaker; b != nil {
 		if open, until := breakerOpen(events, model, *b, now()); open {
-			return Result{}, &RuleRefusal{
-				Rule: "breaker",
-				Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", model, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+			oldModel := model
+			fallback := ""
+			if o.Model == "" {
+				fallback = breakerFallback(events, worker, *b, now())
+			}
+			if fallback != "" {
+				model = fallback
+				progress(o.Progress, fmt.Sprintf("%s breaker open for %s until %s; dispatching approved fallback %s", o.Task, oldModel, until.UTC().Format(time.RFC3339), fallback))
+			} else {
+				return Result{}, &RuleRefusal{
+					Rule: "breaker",
+					Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", oldModel, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+				}
 			}
 		}
 	}
@@ -443,6 +453,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(dir)
 
+	// Snapshot the worktree's git history state before the worker runs (issue #314).
+	histBefore, histOK := gitHistoryState(dir)
+
 	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
 	// other worktrees, record each one's changed paths and shas so validate
 	// can catch a worker that edited another checkout instead of staying in
@@ -562,8 +575,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			note = startNote
 		}
 		stopRenewer()
-		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: note, SHA256: runSHA}); aerr == nil {
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: joinNote(note, gitNote), SHA256: runSHA}); aerr == nil {
 			progress(o.Progress, o.Task+" "+attempt+" finished rc=1 reason="+reason+" note="+note)
+			if gitWrote {
+				_ = flagGitWrite(dir, o.Task, attempt, "", runRel, gitNote, o.Progress)
+			}
 			_ = RemoveLease(dir, o.Task, attempt)
 		}
 		_, _ = WriteState(dir)
@@ -859,11 +876,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA, Wrote: wrote}); err != nil {
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
 			return Result{}, err
+		}
+		if gitWrote {
+			if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+				return Result{}, err
+			}
 		}
 		line := o.Task + " " + attempt + " finished rc=-1 reason=silent model=" + model
 		if note != "" {
@@ -894,14 +917,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			_ = cmd.Wait()
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "stalled", runRel); err != nil {
 			return Result{}, err
+		}
+		if gitWrote {
+			if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+				return Result{}, err
+			}
 		}
 		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=stalled model=%s steps=%d", o.Task, attempt, model, steps))
 		if wl := wroteProgressLine(o.Task, attempt, "stalled", wrote); wl != "" {
@@ -971,6 +1000,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	tokPtr := new(Tokens)
 	*tokPtr = tok
 	runSHA := hex.EncodeToString(hasher.Sum(nil))
+
+	// Did the worker change git history? Every exit path runs the same check
+	// before its finished event (issue #314, #318 review).
+	gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+	note = joinNote(note, gitNote)
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
@@ -978,6 +1013,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+
+	if gitWrote {
+		if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+			return Result{}, err
+		}
+	}
+
 	switch reason {
 	case "length":
 		if err := recordSignal(dir, o.Task, attempt, session, "capped", runRel); err != nil {
@@ -1293,6 +1335,16 @@ func progress(w io.Writer, line string) {
 // session when known, and the run file as Path so the evidence is one field
 // away. The caller records it after the event that detected the condition, so
 // the log reads in causal order, and only once per condition per attempt.
+// flagGitWrite records the git-write signal for an attempt whose git history
+// changed and says so on the progress stream (issue #314).
+func flagGitWrite(dir, task, attempt, session, runRel, note string, w io.Writer) error {
+	if err := recordSignal(dir, task, attempt, session, "git-write", runRel); err != nil {
+		return err
+	}
+	progress(w, task+" "+attempt+" git-write: "+note+"; workers never commit, stash, reset, checkout or push")
+	return nil
+}
+
 func recordSignal(dir, task, attempt, session, condition, runRel string) error {
 	return AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "signal", Signal: condition,
@@ -1698,6 +1750,20 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 		}
 	}
 	return false, until
+}
+
+// breakerFallback returns the first of w's approved fallbacks (config order)
+// whose own breaker is closed at now, or "" when there is none (issue #46).
+func breakerFallback(events []Event, w Worker, b Breaker, now time.Time) string {
+	for _, f := range w.Fallbacks {
+		if !f.Approved || f.Model == w.Model {
+			continue
+		}
+		if open, _ := breakerOpen(events, f.Model, b, now); !open {
+			return f.Model
+		}
+	}
+	return ""
 }
 
 // approvedFallbackHint returns a string listing approved fallbacks from w,

@@ -115,7 +115,11 @@ every unit, with `flywheel supervise` measuring each finished unit nobody has me
 it, selecting first articles and seeded samples
 ([#61](https://github.com/suzworx/flywheel/issues/61)). Enforcement sits in more than one layer:
 the CLI refuses illegal transitions (exit 6), an agent Stop hook runs `flywheel gate`, and git
-hooks check every commit and push (`flywheel init --git-hooks`).
+hooks check every commit and push (`flywheel init --git-hooks`); whatever the worker's adapter,
+`flywheel run` flags an attempt that moved HEAD, switched branch or stashed with a `git-write`
+signal, which blocks landing until the lead triages it (it compares the attempt's end points, so a
+push or a write undone before exit needs the command-level guard,
+[#319](https://github.com/suzworx/flywheel/issues/319)).
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state
@@ -196,7 +200,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
-passes.
+passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
+the first whose own breaker is closed).
 
 ## Quickstart
 
@@ -276,7 +281,7 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 | `flywheel watch [--once] [--last N] [--interval D] [--dir DIR]` | available ([#58](https://github.com/suzworx/flywheel/issues/58)) | A readable live stream: the last N events as one human line each, then every new event as it is appended (`--once` prints and exits). Read-only. |
 | `flywheel validate` | available | Machine gauges: run a task's gate: lines on the exact tree and check owns (exit 0/5). |
 | `flywheel lint` | available | Check a brief for problems: owns, gate, goal, report contract, owns paths (exit 0/1). |
-| `flywheel supervise [--once] [--interval D] [--json] [--dir DIR]` | available ([#55](https://github.com/suzworx/flywheel/issues/55)) | Machine gauges without anyone asking: every unit whose worker finished and whose current attempt has not been measured since is validated (gates and owns, recorded as supervisor readings), and re-measures a passed unit whose owned files changed since its reading. `--once` runs one pass (exit 5 if any unit's gauges fail); `--interval D` repeats. Never inspects or lands. |
+| `flywheel supervise [--once] [--interval D] [--json] [--dir DIR]` | available ([#55](https://github.com/suzworx/flywheel/issues/55)) | Machine gauges without anyone asking: every unit whose worker finished and whose current attempt has not been measured since is validated (gates and owns, recorded as supervisor readings), and re-measures a failed or passed unit whose owned files changed since its reading. `--once` runs one pass (exit 5 if any unit's gauges fail); `--interval D` repeats. Never inspects or lands. |
 | `flywheel verify` | available | Check the event log against the transition rules T1, T3, T4, T5, T8 (exit 0/6). `--log` also checks the event log's hash chain. |
 | `flywheel inspect` | available | Inspection verdict, refused unless the gauges' readings cover the tree as it is now (T3/T4/T8; exit 6). |
 | `flywheel review <task> --verdict pass\|correct\|reject --session <session> [--model M]` | available ([#24](https://github.com/suzworx/flywheel/issues/24)) | Re-run a task's gates and owns check on an isolated copy of the tree, so another in-flight worker's half-written files can't skew the reading; refused (exit 6) for a bad verdict, a worker's session, a changed path outside owns, or a failing gate. The reviewer's session and model are recorded on the reviewed event. |
