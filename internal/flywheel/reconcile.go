@@ -20,12 +20,13 @@ type Policy struct {
 	Model       string   `json:"model,omitempty"`      // the default worker's model, which DISPATCH would use
 	BudgetUSD   float64  `json:"budget_usd,omitempty"` // limits.budget.wave_cost_usd; 0 means no budget
 	Breaker     *Breaker `json:"breaker,omitempty"`    // limits.breaker; nil means no breaker
+	Fallbacks   []string `json:"fallbacks,omitempty"`  // the default worker's approved fallback models, in config order
 }
 
 // PolicyFromConfig derives the policy from the configuration: the default
 // worker's max_parallel (where 0 means 1), the default worker's model, the
-// budget from limits.budget.wave_cost_usd when set, and the breaker from
-// limits.breaker when set.
+// budget from limits.budget.wave_cost_usd when set, the breaker from
+// limits.breaker when set, and the default worker's approved fallback models.
 func PolicyFromConfig(cfg Config) Policy {
 	mp := cfg.DefaultWorker().MaxParallel
 	if mp < 1 {
@@ -35,7 +36,13 @@ func PolicyFromConfig(cfg Config) Policy {
 	if cfg.Limits.Budget != nil {
 		budgetUSD = cfg.Limits.Budget.WaveCostUSD
 	}
-	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, Breaker: cfg.Limits.Breaker}
+	var fallbacks []string
+	for _, f := range cfg.DefaultWorker().Fallbacks {
+		if f.Approved {
+			fallbacks = append(fallbacks, f.Model)
+		}
+	}
+	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, Breaker: cfg.Limits.Breaker, Fallbacks: fallbacks}
 }
 
 // Action is one transition Reconcile recommends. Nothing executes the
@@ -187,6 +194,7 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 
 	// Compute hold reason ONCE: budget or breaker.
 	holdReason := ""
+	fallbackTakeover := ""
 	if p.BudgetUSD > 0 {
 		spent := 0.0
 		for _, e := range events {
@@ -200,7 +208,26 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	}
 	if holdReason == "" && p.Breaker != nil && p.Model != "" {
 		if open, until := breakerOpen(events, p.Model, *p.Breaker, now); open {
-			holdReason = fmt.Sprintf("breaker: model %s is open until %s; dispatch another model with flywheel run <task> --model <m>", p.Model, until.UTC().Format(time.RFC3339))
+			fb := ""
+			fbHalfOpen := false
+			for _, model := range p.Fallbacks {
+				if model != p.Model {
+					if fbOpen, fbUntil := breakerOpen(events, model, *p.Breaker, now); !fbOpen {
+						fb = model
+						fbHalfOpen = !fbUntil.IsZero()
+						break
+					}
+				}
+			}
+			if fb != "" {
+				fallbackTakeover = fb
+				// A half-open fallback admits one probe, like the default model.
+				if fbHalfOpen && capacity > 1 {
+					capacity = 1
+				}
+			} else {
+				holdReason = fmt.Sprintf("breaker: model %s is open until %s; dispatch another model with flywheel run <task> --model <m>", p.Model, until.UTC().Format(time.RFC3339))
+			}
 		} else if !until.IsZero() && capacity > 1 {
 			// Half-open: the cooldown is over and no probe is in flight;
 			// run admits exactly one probe, so recommend one (#311 review).
@@ -239,7 +266,9 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		}
 		kind := "DISPATCH"
 		reason := fmt.Sprintf("ready, needs met, capacity %d free", capacity)
-		if holdReason != "" {
+		if fallbackTakeover != "" {
+			reason = fmt.Sprintf("ready, needs met, capacity %d free; breaker open for %s, approved fallback %s takes over", capacity, p.Model, fallbackTakeover)
+		} else if holdReason != "" {
 			kind = "HOLD"
 			reason = holdReason
 		}
