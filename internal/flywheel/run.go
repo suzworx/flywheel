@@ -304,7 +304,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 
 	if b := cfg.Limits.Breaker; b != nil {
-		if open, until := breakerOpen(events, model, *b, time.Now()); open {
+		if open, until := breakerOpen(events, model, *b, now()); open {
 			return Result{}, &RuleRefusal{
 				Rule: "breaker",
 				Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", model, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
@@ -1671,7 +1671,29 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 		}
 	}
 	until = finished[0].at.Add(cooldown)
-	return now.Before(until), until
+	if now.Before(until) {
+		return true, until
+	}
+	// Half-open: the cooldown is over, but only ONE probe may run. A
+	// dispatch of this model after the newest error whose attempt has not
+	// finished yet is that probe; until it finishes, the breaker stays open
+	// (#304 review). Dispatch holds the dispatch lock, so a second caller
+	// always sees the first probe's dispatched event.
+	done := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "finished" {
+			done[e.Task+"/"+e.Attempt] = true
+		}
+	}
+	for _, e := range events {
+		if e.Kind != "dispatched" || e.Model != model || done[e.Task+"/"+e.Attempt] {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(finished[0].at) {
+			return true, until
+		}
+	}
+	return false, until
 }
 
 // approvedFallbackHint returns a string listing approved fallbacks from w,

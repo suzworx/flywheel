@@ -3661,6 +3661,30 @@ func TestBreakerIgnoresOtherModels(t *testing.T) {
 	}
 }
 
+// TestBreakerHalfOpenAdmitsOneProbe checks that after the cooldown only one
+// probe runs: while a dispatch of the model made after the newest error has
+// not finished, the breaker stays open (#304 review).
+func TestBreakerHalfOpenAdmitsOneProbe(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	ts := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339Nano) }
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	events := []Event{
+		{TS: ts(-30 * time.Minute), Task: "A", Kind: "finished", Attempt: "r1", Model: "m", Reason: "error"},
+		{TS: ts(-20 * time.Minute), Task: "B", Kind: "finished", Attempt: "r1", Model: "m", Reason: "error"},
+	}
+	if open, _ := breakerOpen(events, "m", b, now); open {
+		t.Fatal("breaker open after the cooldown with no probe in flight, want half-open (closed for one probe)")
+	}
+	probe := append(events, Event{TS: ts(-1 * time.Minute), Task: "C", Kind: "dispatched", Attempt: "r1", Model: "m"})
+	if open, _ := breakerOpen(probe, "m", b, now); !open {
+		t.Error("breaker closed while a probe is in flight, want open")
+	}
+	finishedProbe := append(probe, Event{TS: ts(-30 * time.Second), Task: "C", Kind: "finished", Attempt: "r1", Model: "m", Reason: "stop"})
+	if open, _ := breakerOpen(finishedProbe, "m", b, now); open {
+		t.Error("breaker open after the probe succeeded, want closed")
+	}
+}
+
 // TestRunBreakerRefusesDispatch checks that Run refuses a dispatch when the
 // circuit breaker for the model is open due to consecutive provider errors.
 func TestRunBreakerRefusesDispatch(t *testing.T) {
