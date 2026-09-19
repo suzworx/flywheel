@@ -305,9 +305,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	if b := cfg.Limits.Breaker; b != nil {
 		if open, until := breakerOpen(events, model, *b, now()); open {
-			return Result{}, &RuleRefusal{
-				Rule: "breaker",
-				Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", model, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+			oldModel := model
+			fallback := ""
+			if o.Model == "" {
+				fallback = breakerFallback(events, worker, *b, now())
+			}
+			if fallback != "" {
+				model = fallback
+				progress(o.Progress, fmt.Sprintf("%s breaker open for %s until %s; dispatching approved fallback %s", o.Task, oldModel, until.UTC().Format(time.RFC3339), fallback))
+			} else {
+				return Result{}, &RuleRefusal{
+					Rule: "breaker",
+					Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", oldModel, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+				}
 			}
 		}
 	}
@@ -1749,6 +1759,20 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 		}
 	}
 	return false, until
+}
+
+// breakerFallback returns the first of w's approved fallbacks (config order)
+// whose own breaker is closed at now, or "" when there is none (issue #46).
+func breakerFallback(events []Event, w Worker, b Breaker, now time.Time) string {
+	for _, f := range w.Fallbacks {
+		if !f.Approved || f.Model == w.Model {
+			continue
+		}
+		if open, _ := breakerOpen(events, f.Model, b, now); !open {
+			return f.Model
+		}
+	}
+	return ""
 }
 
 // approvedFallbackHint returns a string listing approved fallbacks from w,

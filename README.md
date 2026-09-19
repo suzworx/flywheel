@@ -204,7 +204,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
-passes.
+passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
+the first whose own breaker is closed).
 
 ## Quickstart
 
