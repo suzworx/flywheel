@@ -51,7 +51,8 @@ type Observation struct {
 	Text    string
 	Tool    string
 	Path    string
-	Reason  string // step finish reason
+	Paths   []string // every path a multi-file tool touched (codex file_change); Path is the first of them. Empty for single-path observations.
+	Reason  string   // step finish reason
 	Error   string
 	Tokens  *Tokens
 	// Aggregate marks Tokens as a session total (the claude result line),
@@ -68,6 +69,18 @@ type Adapter interface {
 	Name() string
 	Command(r RunRequest) (bin string, args []string)
 	Parse(line []byte) (Observation, bool)
+}
+
+// obsPaths returns every path an observation touched: Paths when set, else
+// Path alone, else nothing.
+func obsPaths(o Observation) []string {
+	if len(o.Paths) > 0 {
+		return o.Paths
+	}
+	if o.Path != "" {
+		return []string{o.Path}
+	}
+	return nil
 }
 
 // AdapterFor returns the adapter named name: opencode, the offline sim
@@ -570,6 +583,11 @@ func (a codexAdapter) Parse(line []byte) (Observation, bool) {
 				obs.Tool = "edit"
 			}
 			obs.Path, _ = rawStringOK(changes[0], "path")
+			for _, ch := range changes {
+				if p, ok := rawStringOK(ch, "path"); ok && p != "" {
+					obs.Paths = append(obs.Paths, p)
+				}
+			}
 			return obs, true
 		case "mcp_tool_call":
 			obs.Kind = "tool"
