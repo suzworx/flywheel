@@ -444,6 +444,16 @@ func AppendEvents(dir string, events []Event) error {
 		return fmt.Errorf("create %s: %w", dot, err)
 	}
 	path := filepath.Join(dot, "events.jsonl")
+	// Serialise "read the last line, then append" (#299 review): without it
+	// two writers can chain to the same predecessor and a record no later
+	// line references could be removed undetected. The lock is innermost —
+	// nothing takes another lock while holding it — and held for one read
+	// and one write.
+	release, err := acquireRepoLock(dir, "events.lock", feedbackLockTimings())
+	if err != nil {
+		return err
+	}
+	defer release()
 	prev, err := lastLineHash(path)
 	if err != nil {
 		return err

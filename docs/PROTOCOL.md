@@ -420,11 +420,12 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
   git conflict marker as a hard error). Every event carries `prev`, the SHA-256 of the log's last
   complete line when it was appended (issue #57); `flywheel verify --log` checks that every `prev`
   matches the hash of some earlier line, failing (exit 6) at the first line whose `prev` matches
-  none. Chaining to "some earlier line" keeps concurrent appends and merged logs valid (two writers
-  may both chain to the same line, and a git merge interleaves lines from two branches). Limits: a
-  line edited in a way that changes its hash breaks every later line's chain; removing the LAST
-  line, or editing a line written before the chain existed (and never referenced), is not detected
-  (issue #47 tracks per-shard chains).
+  none. Appends are serialised by `.flywheel/events.lock` (held only for the read of the last line
+  and the write), so within one ledger the chain is linear: every record but the last is the
+  predecessor of the next, and removing or editing any of them is detected. "Some earlier line" is
+  accepted so a git merge, which interleaves two branches' lines, stays valid. Limits: removing the
+  LAST line, or editing a line written before the chain existed, is not detected (issue #47 tracks
+  per-shard chains).
 
 Until these land, the factory-role table, the andon cord, sampling, and nonconformance handling in
 `docs/design/autonomous-shipping.md` and `skills/flywheel/references/factory.md` describe intent
@@ -479,7 +480,8 @@ matches none, indicating a line was edited or removed. An `INCONCLUSIVE` item is
 see, so T3 can neither confirm the readings nor assert a breach. Naming a task explicitly still
 runs every rule for it even if the log has never heard of it — a missing planned brief, for
 instance, fails T3 by name rather than being skipped. An empty log verified with `--all` passes
-vacuously; verifying with no tasks and no `--all` is a usage error.
+vacuously; verifying with no tasks and no `--all` is a usage error — except `--log` alone, which
+checks only the chain.
 
 Exit codes follow the repo-wide convention from `AGENTS.md`: 0 ok, 1 error, 2 usage, 5 gauges
 failed, 6 rule refusal, 8 inconclusive. The enforcing commands:

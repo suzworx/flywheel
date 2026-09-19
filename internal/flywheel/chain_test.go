@@ -2,9 +2,11 @@ package flywheel
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -327,5 +329,88 @@ func TestLastLineHashAcrossChunksChain(t *testing.T) {
 				t.Errorf("lastLineHash() = %s, want the long line's hash %s", got, want)
 			}
 		})
+	}
+}
+
+// TestLastLineHashSkipsBlankAndUnterminatedChain checks a blank last line and
+// an unterminated-only file never become a predecessor (#299 review).
+func TestLastLineHashSkipsBlankAndUnterminatedChain(t *testing.T) {
+	cases := map[string]string{
+		"trailing blank line":       "a\n\n",
+		"only an unterminated tail": "partial",
+		"blank then partial":        "a\n\npartial",
+	}
+	want := map[string]string{
+		"trailing blank line":       lineHash([]byte("a")),
+		"only an unterminated tail": "",
+		"blank then partial":        lineHash([]byte("a")),
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			got, err := lastLineHash(path)
+			if err != nil {
+				t.Fatalf("lastLineHash() error = %v", err)
+			}
+			if got != want[name] {
+				t.Errorf("lastLineHash() = %q, want %q", got, want[name])
+			}
+		})
+	}
+}
+
+// TestAppendEventsConcurrentChain appends from many goroutines at once to an
+// empty log: exactly one record is the root, the chain verifies, and every
+// record but the last is the predecessor of the next — so removing any of
+// them would be detected (#299 review).
+func TestAppendEventsConcurrentChain(t *testing.T) {
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- AppendEvent(dir, Event{Task: fmt.Sprintf("T%d", i), Kind: "planned", Brief: "b.txt"})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+	}
+	chain, err := VerifyLogChain(dir)
+	if err != nil || !chain.OK() {
+		t.Fatalf("VerifyLogChain() = %+v, %v, want an intact chain", chain, err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 20 {
+		t.Fatalf("lines = %d, want 20", len(lines))
+	}
+	roots := 0
+	for i, line := range lines {
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("line %d: %v", i+1, err)
+		}
+		if e.Prev == "" {
+			roots++
+			continue
+		}
+		if i == 0 || e.Prev != lineHash([]byte(lines[i-1])) {
+			t.Errorf("line %d prev does not name line %d: the chain is not linear", i+1, i)
+		}
+	}
+	if roots != 1 {
+		t.Errorf("roots = %d, want exactly 1", roots)
 	}
 }

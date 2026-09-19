@@ -22,8 +22,10 @@ func lineHash(line []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// lastLineHash returns lineHash of the last COMPLETE line of the log at path
-// ("" when the file is missing or has no complete line). It reads backwards in
+// lastLineHash returns lineHash of the last COMPLETE, non-blank line of the
+// log at path ("" when the file is missing or has no such line) — exactly the
+// lines VerifyLogChain hashes, so a blank or unterminated tail never becomes
+// a predecessor (#299 review). It reads backwards in
 // 64 KiB chunks from the end, so a large log is never read whole. An
 // unterminated tail (a record still being appended) is not a complete line
 // and is skipped; the complete line before it is used.
@@ -56,30 +58,35 @@ func lastLineHash(path string) (string, error) {
 			return "", fmt.Errorf("read %s: %w", path, err)
 		}
 		tail = append(buf, tail...)
-		if line, ok := lastCompleteLine(tail, off == 0); ok {
+		if line, found, ok := lastCompleteLine(tail, off == 0); ok {
+			if !found {
+				return "", nil
+			}
 			return lineHash(line), nil
 		}
 	}
 	return "", nil
 }
 
-// lastCompleteLine returns the last newline-terminated line in tail (without
-// its newline), dropping an unterminated tail. ok is false while tail does not
-// yet reach back to the newline before that line and more of the file is left
-// to read (atStart false).
-func lastCompleteLine(tail []byte, atStart bool) ([]byte, bool) {
+// lastCompleteLine returns the last newline-terminated, non-blank line in tail
+// (without its newline) — the same lines VerifyLogChain hashes — dropping an
+// unterminated tail and skipping blank lines. found is false when tail holds
+// no such line; ok is false while tail does not yet reach back far enough to
+// be sure and more of the file is left to read (atStart false).
+func lastCompleteLine(tail []byte, atStart bool) (line []byte, found, ok bool) {
 	end := bytes.LastIndexByte(tail, '\n')
-	if end < 0 {
-		return nil, atStart
-	}
-	start := bytes.LastIndexByte(tail[:end], '\n')
-	if start < 0 {
-		if !atStart {
-			return nil, false
+	for end >= 0 {
+		start := bytes.LastIndexByte(tail[:end], '\n')
+		if start < 0 && !atStart {
+			return nil, false, false
 		}
-		return tail[:end], true
+		cand := tail[start+1 : end]
+		if len(bytes.TrimSpace(cand)) > 0 {
+			return cand, true, true
+		}
+		end = start
 	}
-	return tail[start+1 : end], true
+	return nil, false, atStart
 }
 
 // LogChain is the result of checking the log's hash chain (issue #57).
