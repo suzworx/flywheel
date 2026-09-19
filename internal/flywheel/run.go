@@ -484,7 +484,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
-		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
+		Baseline: baseline, Base: headCommit(dir), Worktrees: worktrees, Header: &promptHeader,
 	}); err != nil {
 		return Result{}, err
 	}

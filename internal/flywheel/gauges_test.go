@@ -578,7 +578,7 @@ func dispatchedWithBaseline(t *testing.T, dir string) {
 	for _, p := range paths {
 		base[p] = shaOf(filepath.Join(dir, filepath.FromSlash(p)), t)
 	}
-	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Baseline: base}); err != nil {
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Baseline: base, Base: headCommit(dir)}); err != nil {
 		t.Fatalf("AppendEvent() dispatched error = %v", err)
 	}
 }
@@ -1225,6 +1225,60 @@ func TestValidateOutOfOwns(t *testing.T) {
 				t.Error("owns_checked missing tree")
 			}
 		}
+	}
+}
+
+// TestValidateCommittedOutsideOwnsHiddenWithoutBase documents the pre-#332
+// fallback: a ledger with no dispatch base diffs against current HEAD, so a
+// worker commit of an out-of-owns file before validate is invisible.
+func TestValidateCommittedOutsideOwnsHiddenWithoutBase(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	git(t, dir, []string{"add", "b.txt"})
+	git(t, dir, []string{"commit", "-m", "worker stray"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.OwnsOK {
+		t.Errorf("OwnsOK = false with outside %v, want true when no dispatch base is recorded", res.Outside)
+	}
+}
+
+// TestValidateCommittedOutsideOwnsReportedWithBase checks issue #332: with
+// the dispatch HEAD recorded, a worker commit of an out-of-owns file before
+// validate is still reported.
+func TestValidateCommittedOutsideOwnsReportedWithBase(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	base := headCommit(dir)
+	if base == "" {
+		t.Fatal("HEAD empty")
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Base: base}); err != nil {
+		t.Fatalf("AppendEvent() dispatched error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	git(t, dir, []string{"add", "b.txt"})
+	git(t, dir, []string{"commit", "-m", "worker stray"})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK {
+		t.Fatalf("OwnsOK = true, want false after committing b.txt since dispatch")
+	}
+	if len(res.Outside) != 1 || res.Outside[0] != "b.txt" {
+		t.Errorf("outside = %v, want [b.txt]", res.Outside)
 	}
 }
 

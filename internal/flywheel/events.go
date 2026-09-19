@@ -86,6 +86,11 @@ type Event struct {
 	// inside the unit's owns, sorted by path (issue #130), so a truncated
 	// document is visible in the ledger without re-reading the tree.
 	Files []FileShape `json:"files,omitempty"`
+	// Base is a dispatched event's HEAD commit at dispatch (issue #332): the
+	// owns check diffs against this instead of current HEAD so a worker
+	// commit before validate cannot hide paths. Empty on old ledgers and
+	// non-repos; the owns check then falls back to HEAD.
+	Base string `json:"base,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git
