@@ -13,7 +13,7 @@ import (
 
 func init() {
 	register("audit", "re-measure a unit in a clean copy and check its record, from an independent session", runAudit)
-	registerHelp("audit", "flywheel audit (<task> | --sample RATE | --first-article) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]", func() *flag.FlagSet { fs, _ := auditFlags(); return fs })
+	registerHelp("audit", "flywheel audit (<task> | --sample RATE | --first-article | --wave) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]", func() *flag.FlagSet { fs, _ := auditFlags(); return fs })
 }
 
 // auditOptions holds the parsed audit flags.
@@ -25,6 +25,7 @@ type auditOptions struct {
 	json         bool
 	sample       float64
 	firstArticle bool
+	wave         bool
 	seed         int64
 	list         bool
 }
@@ -41,6 +42,7 @@ func auditFlags() (*flag.FlagSet, *auditOptions) {
 	fs.BoolVar(&o.json, "json", false, "JSON output")
 	fs.Float64Var(&o.sample, "sample", -1, "audit a random sample of passed, unaudited units at this rate (0..1)")
 	fs.BoolVar(&o.firstArticle, "first-article", false, "audit the first unit each worker adapter/model built")
+	fs.BoolVar(&o.wave, "wave", false, "audit every passed, unaudited unit in the ledger (the wave)")
 	fs.Int64Var(&o.seed, "seed", 0, "sample seed; 0 picks one from the clock and prints it")
 	fs.BoolVar(&o.list, "list", false, "print the selection and exit without auditing")
 	return fs, o
@@ -48,7 +50,7 @@ func auditFlags() (*flag.FlagSet, *auditOptions) {
 
 // auditUsage prints the flywheel audit usage line.
 func auditUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel audit (<task> | --sample RATE | --first-article) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel audit (<task> | --sample RATE | --first-article | --wave) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]")
 }
 
 // runAudit implements `flywheel audit`: re-measure the task's declared gates
@@ -77,9 +79,12 @@ func runAudit(args []string) {
 	if o.firstArticle {
 		modes++
 	}
+	if o.wave {
+		modes++
+	}
 
 	if modes != 1 {
-		fmt.Fprintf(os.Stderr, "flywheel audit: exactly one of a task id, --sample, or --first-article is required\n")
+		fmt.Fprintf(os.Stderr, "flywheel audit: exactly one of a task id, --sample, --first-article or --wave is required\n")
 		auditUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -149,6 +154,8 @@ func runAudit(args []string) {
 	var selection flywheel.AuditSelection
 	if o.firstArticle {
 		selection = flywheel.SelectFirstArticles(events)
+	} else if o.wave {
+		selection = flywheel.SelectWave(events)
 	} else {
 		// --sample mode: validate rate
 		if o.sample > 1 {
@@ -175,6 +182,8 @@ func runAudit(args []string) {
 	// Print selection summary
 	if selection.Mode == "sample" {
 		fmt.Printf("audit selection: sample rate=%.2f seed=%d -> %d unit(s):", selection.Rate, selection.Seed, len(selection.Tasks))
+	} else if selection.Mode == "wave" {
+		fmt.Printf("audit selection: wave -> %d unit(s):", len(selection.Tasks))
 	} else {
 		fmt.Printf("audit selection: first-article -> %d unit(s):", len(selection.Tasks))
 	}
