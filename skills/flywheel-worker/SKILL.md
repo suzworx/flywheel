@@ -48,7 +48,7 @@ A brief is a plain-text file with these parts:
    a failure is yours, use `git diff --name-only`, a scoped gate on your own files, or a throwaway
    `git worktree add` outside the tree. Many of these are blocked outright by permission rules; do
    not look for a way around a block, report it. Under `flywheel run`, `git` on your PATH is a
-   guard: history-writing subcommands are refused with exit 1 — report instead of working around it.
+   guard: only read-only git commands run (status, diff, log, show, grep, …); anything else is refused with exit 1 — report instead of working around it.
 3. **Implement, don't plan.** You do not redesign the brief. If the brief is ambiguous, report the
    blocker. Do not silently pick a different scope.
 4. **Write in chunks.** At most one write per response and at most 120 lines per write; batch

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -14,93 +15,125 @@ import (
 // guard skips that directory when it looks for the real git.
 const GitGuardEnv = "FLYWHEEL_GIT_GUARD"
 
-// GitGuardRefused reports whether args (git's arguments, without "git") run
-// a history-writing subcommand a worker may not run, and which. Global
-// options before the subcommand are skipped: -C <path>, -c <k=v>,
-// --git-dir=<p>, --work-tree=<p>, --namespace=<n>, -P, -p, --no-pager,
-// --paginate, --bare, --no-replace-objects, --literal-pathspecs and any other
-// argument starting with "-" (a "-C"/"-c" consumes the next argument too).
-func GitGuardRefused(args []string) (refused bool, sub string) {
-	refusedCommands := map[string]bool{
-		"commit":      true,
-		"push":        true,
-		"stash":       true,
-		"reset":       true,
-		"checkout":    true,
-		"switch":      true,
-		"restore":     true,
-		"rebase":      true,
-		"merge":       true,
-		"cherry-pick": true,
-		"revert":      true,
-		"am":          true,
-		"pull":        true,
-		"tag":         true,
-		"update-ref":  true,
-		"worktree":    true,
-	}
+// gitReadOnly lists the git subcommands a worker may run through the guard:
+// reads that change neither history, refs, the index nor the working tree
+// (#325 review). Everything else is refused — an allow-list, so a new or
+// aliased command cannot slip through (git never lets an alias shadow a
+// builtin, so an alias name is simply not on this list).
+var gitReadOnly = map[string]bool{
+	"status": true, "diff": true, "log": true, "show": true, "rev-parse": true,
+	"ls-files": true, "ls-tree": true, "grep": true, "blame": true, "annotate": true,
+	"describe": true, "shortlog": true, "cat-file": true, "rev-list": true,
+	"show-ref": true, "name-rev": true, "merge-base": true, "for-each-ref": true,
+	"diff-tree": true, "diff-index": true, "diff-files": true, "check-ignore": true,
+	"check-attr": true, "var": true, "count-objects": true, "whatchanged": true,
+	"help": true, "version": true, "range-diff": true, "cherry": true,
+}
 
+// GitGuardRefused reports whether args (git's arguments, without "git") may
+// not run through the worker's guard, and the subcommand. Global options
+// before the subcommand are skipped (-C <path>, -c <k=v>, --git-dir[=]<p>,
+// --work-tree[=]<p>, --namespace[=]<n>, --exec-path, --config-env, -P, -p,
+// --no-pager, --paginate, --bare, --no-replace-objects, --literal-pathspecs
+// and any other argument starting with "-"). A subcommand is allowed only
+// when it is on gitReadOnly, or is one of the read-only forms of branch, tag,
+// config, remote, reflog, stash or worktree; everything else — commit, push,
+// add, rm, mv, clean, checkout, update-index, an alias, … — is refused (issue
+// #319, #325 review). No args (plain "git") and --version/--help are allowed.
+func GitGuardRefused(args []string) (refused bool, sub string) {
 	i := 0
 	for i < len(args) {
 		arg := args[i]
-
 		if !strings.HasPrefix(arg, "-") {
 			break
 		}
-
-		if arg == "-C" || arg == "-c" {
+		switch arg {
+		case "--version", "--help", "-h":
+			return false, arg
+		case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env":
 			i += 2
 			continue
 		}
-
-		if arg == "--git-dir" || arg == "--work-tree" || arg == "--namespace" || arg == "--exec-path" || arg == "--config-env" {
-			i += 2
-			continue
-		}
-
-		if strings.HasPrefix(arg, "--git-dir=") || strings.HasPrefix(arg, "--work-tree=") ||
-			strings.HasPrefix(arg, "--namespace=") {
-			i++
-			continue
-		}
-
-		if arg == "-P" || arg == "-p" || arg == "--no-pager" || arg == "--paginate" ||
-			arg == "--bare" || arg == "--no-replace-objects" || arg == "--literal-pathspecs" {
-			i++
-			continue
-		}
-
 		i++
 	}
-
 	if i >= len(args) {
 		return false, ""
 	}
-
-	subcommand := args[i]
-
-	if refusedCommands[subcommand] {
-		return true, subcommand
+	sub = args[i]
+	rest := args[i+1:]
+	if gitReadOnly[sub] {
+		return false, sub
 	}
+	switch sub {
+	case "branch":
+		return !branchReadOnly(rest), sub
+	case "tag":
+		return !listOnly(rest, "-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--column", "--no-column", "-i", "--ignore-case"), sub
+	case "config":
+		return !hasAny(rest, "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "get", "list"), sub
+	case "remote":
+		return !(len(rest) == 0 || (len(rest) == 1 && (rest[0] == "-v" || rest[0] == "--verbose")) || (len(rest) >= 1 && (rest[0] == "show" || rest[0] == "get-url"))), sub
+	case "reflog":
+		return !(len(rest) == 0 || rest[0] == "show" || strings.HasPrefix(rest[0], "-")), sub
+	case "stash":
+		return !(len(rest) >= 1 && (rest[0] == "list" || rest[0] == "show")), sub
+	case "worktree":
+		return !(len(rest) >= 1 && rest[0] == "list"), sub
+	}
+	return true, sub
+}
 
-	if subcommand == "branch" {
-		i++
-		for i < len(args) {
-			arg := args[i]
-			if arg == "-D" || arg == "-d" || arg == "-m" || arg == "-M" ||
-				arg == "-c" || arg == "-C" || arg == "-f" || arg == "--delete" ||
-				arg == "--move" || arg == "--copy" || arg == "--force" {
-				return true, "branch"
-			}
-			if !strings.HasPrefix(arg, "-") {
-				return true, "branch"
-			}
-			i++
+// branchReadOnly reports whether git branch's arguments only list or query
+// branches: no write flag, and positional arguments only while a query mode
+// (--list, --contains, --merged, --points-at, …) is active.
+func branchReadOnly(args []string) bool {
+	write := map[string]bool{"-d": true, "-D": true, "-m": true, "-M": true, "-c": true, "-C": true,
+		"--delete": true, "--move": true, "--copy": true, "-f": true, "--force": true, "-u": true,
+		"--set-upstream-to": true, "--unset-upstream": true, "--edit-description": true, "-t": true,
+		"--track": true, "--no-track": true, "--create-reflog": true}
+	query := map[string]bool{"-l": true, "--list": true, "--contains": true, "--no-contains": true,
+		"--merged": true, "--no-merged": true, "--points-at": true}
+	queryMode := false
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		if write[name] || strings.HasPrefix(name, "--set-upstream-to") {
+			return false
 		}
-		return false, ""
+		if query[name] {
+			queryMode = true
+			continue
+		}
+		if !strings.HasPrefix(a, "-") && !queryMode {
+			return false // a positional outside a query mode creates a branch
+		}
 	}
+	return true
+}
 
-	return false, ""
+// listOnly reports whether args hold no positional argument, or a listing
+// flag among flags (so "tag" lists and "tag v1" creates).
+func listOnly(args []string, flags ...string) bool {
+	listing := hasAny(args, "-l", "--list")
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") && !listing {
+			return false
+		}
+		name, _, _ := strings.Cut(a, "=")
+		if strings.HasPrefix(a, "-") && !slices.Contains(flags, name) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasAny reports whether args contain any of names.
+func hasAny(args []string, names ...string) bool {
+	for _, a := range args {
+		if slices.Contains(names, a) {
+			return true
+		}
+	}
+	return false
 }
 
 // GitGuard runs as `git`: it refuses a history-writing subcommand (exit 1,
@@ -111,7 +144,7 @@ func GitGuardRefused(args []string) (refused bool, sub string) {
 func GitGuard(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	refused, sub := GitGuardRefused(args)
 	if refused {
-		io.WriteString(stderr, "flywheel: workers never commit, stash, reset, checkout or push; \"git "+sub+"\" is refused (the lead commits after inspection)\n")
+		io.WriteString(stderr, "flywheel: workers never commit, stash, reset, checkout or push; \"git "+sub+"\" is refused — under flywheel run, git runs read-only commands only (the lead commits after inspection)\n")
 		return 1
 	}
 

@@ -40,14 +40,11 @@ func TestGitGuardRefusesHistoryWrites(t *testing.T) {
 }
 
 func TestGitGuardAllowsReads(t *testing.T) {
-	tests := []string{"status", "diff", "log", "show", "add", "rev-parse", "ls-files", "grep", "blame", "fetch", "config"}
+	tests := []string{"status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame", "config"}
 
 	for _, subcmd := range tests {
 		t.Run(subcmd, func(t *testing.T) {
 			args := []string{subcmd}
-			if subcmd == "add" {
-				args = append(args, ".")
-			}
 			if subcmd == "rev-parse" {
 				args = append(args, "HEAD")
 			}
@@ -220,5 +217,39 @@ func TestGitGuardSeparateValueOptions(t *testing.T) {
 	}
 	if refused, _ := GitGuardRefused([]string{"--work-tree", "/x", "status"}); refused {
 		t.Error("--work-tree /x status refused, want allowed")
+	}
+}
+
+// TestGitGuardAllowListRefusesTheRest checks the #325 review cases: an alias,
+// and commands that mutate the index or working tree, are refused; branch,
+// tag, config, stash and worktree pass only in their read-only forms.
+func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
+	refused := [][]string{
+		{"-c", "alias.publish=push", "publish", "origin", "main"},
+		{"publish"},
+		{"clean", "-fd"}, {"add", "."}, {"rm", "a.go"}, {"mv", "a", "b"},
+		{"update-index", "--add", "a"}, {"read-tree", "HEAD"}, {"checkout-index", "-a"},
+		{"fetch"}, {"apply", "p.diff"}, {"gc"},
+		{"branch", "new"}, {"branch", "-D", "x"}, {"branch", "--set-upstream-to=origin/x"},
+		{"tag", "v1"}, {"config", "user.name", "x"}, {"config", "--unset", "a.b"},
+		{"stash"}, {"stash", "push"}, {"worktree", "add", "../x"}, {"remote", "add", "o", "u"},
+		{"reflog", "expire", "--all"},
+	}
+	for _, args := range refused {
+		if r, _ := GitGuardRefused(args); !r {
+			t.Errorf("GitGuardRefused(%v) allowed, want refused", args)
+		}
+	}
+	allowed := [][]string{
+		{}, {"--version"}, {"help", "log"},
+		{"branch", "--list", "release/*"}, {"branch", "--contains", "abc"}, {"branch", "--merged", "main"},
+		{"tag"}, {"tag", "-l", "v1.*"}, {"config", "--get", "user.email"}, {"config", "--list"},
+		{"stash", "list"}, {"worktree", "list"}, {"remote", "-v"}, {"reflog"}, {"reflog", "show", "HEAD"},
+		{"-C", "/x", "log", "--oneline"}, {"diff-tree", "-r", "HEAD"}, {"cat-file", "-p", "HEAD"},
+	}
+	for _, args := range allowed {
+		if r, _ := GitGuardRefused(args); r {
+			t.Errorf("GitGuardRefused(%v) refused, want allowed", args)
+		}
 	}
 }
