@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,17 +12,18 @@ import (
 
 func init() {
 	register("doctor", "probe every configured model and classify its availability", runDoctor)
-	registerHelp("doctor", "flywheel doctor [--dir DIR]", func() *flag.FlagSet { fs, _ := doctorFlags(); return fs })
+	registerHelp("doctor", "flywheel doctor [--worker NAME] [--dir DIR]", func() *flag.FlagSet { fs, _ := doctorFlags(); return fs })
 }
 
 // doctorOptions holds the parsed `flywheel doctor` flags.
 type doctorOptions struct {
-	dir string
+	dir    string
+	worker string
 }
 
 // doctorUsage prints the flywheel doctor usage line.
 func doctorUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel doctor [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel doctor [--worker NAME] [--dir DIR]")
 }
 
 // doctorFlags defines doctor's flags once, so help and run share them.
@@ -30,6 +32,7 @@ func doctorFlags() (*flag.FlagSet, *doctorOptions) {
 	fs.SetOutput(io.Discard)
 	o := &doctorOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
+	fs.StringVar(&o.worker, "worker", "", "probe this worker's model and fallbacks (default: the default worker)")
 	return fs, o
 }
 
@@ -50,10 +53,24 @@ func runDoctor(args []string) {
 		doctorUsage(os.Stderr)
 		os.Exit(2)
 	}
-	probes, err := flywheel.Doctor(o.dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel doctor: %v\n", err)
-		os.Exit(1)
+	var probes []flywheel.DoctorProbe
+	if o.worker != "" {
+		var err error
+		probes, err = flywheel.DoctorWorker(o.dir, o.worker)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel doctor: %v\n", err)
+			if errors.Is(err, flywheel.ErrUnknownWorker) {
+				os.Exit(2) // a usage error; a broken config stays exit 1
+			}
+			os.Exit(1)
+		}
+	} else {
+		var err error
+		probes, err = flywheel.Doctor(o.dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel doctor: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	for _, p := range probes {
 		fmt.Printf("%s: %s\n", p.Model, p.Class)
