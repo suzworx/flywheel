@@ -3399,3 +3399,147 @@ func TestRunDispatchedHeaderMatchesRecordedSHA256(t *testing.T) {
 		t.Errorf("header sha256 = %q, want it to equal the dispatched sha256 %q (same prompt bytes)", d.Header.SHA256, d.SHA256)
 	}
 }
+
+// TestRunLimitsPerHostRefused checks that a dispatch is refused when
+// limits.per_host attempts are already in flight.
+func TestRunLimitsPerHostRefused(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.PerHost = 1
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// Add another task T2 in flight (dispatched).
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2: %v", err)
+	}
+	// Try to run T1; should be refused with limits RuleRefusal.
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	if err == nil {
+		t.Fatal("Run() expected error, got nil")
+	}
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "limits" {
+		t.Errorf("Run() error = %v, want RuleRefusal with Rule='limits'", err)
+	}
+	// Verify no dispatched event was recorded for T1.
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded for T1 despite limits refusal: %v", e)
+		}
+	}
+}
+
+// TestRunLimitsPerHostAllowsBelowCap checks that a dispatch succeeds when
+// fewer than limits.per_host attempts are in flight.
+func TestRunLimitsPerHostAllowsBelowCap(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.PerHost = 2
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// Add another task T2 in flight (dispatched).
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2: %v", err)
+	}
+	// Run T1; should succeed because only 1 of 2 allowed are in flight.
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+// TestRunBudgetReachedRefused checks that a dispatch is refused when
+// the ledger's recorded spend has reached limits.budget.wave_cost_usd.
+func TestRunBudgetReachedRefused(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.Budget = &Budget{WaveCostUSD: 0.5}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// Add another task T2 with a finished event recording Cost 0.6 (exceeding budget).
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T2", Kind: "finished", Attempt: "r1", Cost: 0.6}); err != nil {
+		t.Fatalf("AppendEvent() finished T2: %v", err)
+	}
+	// Try to run T1; should be refused with budget RuleRefusal.
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	if err == nil {
+		t.Fatal("Run() expected error, got nil")
+	}
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "budget" {
+		t.Errorf("Run() error = %v, want RuleRefusal with Rule='budget'", err)
+	}
+	// Verify no dispatched event was recorded for T1.
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded for T1 despite budget refusal: %v", e)
+		}
+	}
+}
+
+// TestRunBudgetBelowCapDispatches checks that a dispatch succeeds when
+// the ledger's recorded spend is below limits.budget.wave_cost_usd.
+func TestRunBudgetBelowCapDispatches(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.Budget = &Budget{WaveCostUSD: 0.5}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// Add another task T2 with a finished event recording Cost 0.1 (below budget).
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T2", Kind: "finished", Attempt: "r1", Cost: 0.1}); err != nil {
+		t.Fatalf("AppendEvent() finished T2: %v", err)
+	}
+	// Run T1; should succeed because budget is not yet reached.
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+// TestRunLimitsPerHostCountsSameTask checks a second fresh run of a task that
+// is already running counts toward limits.per_host: it is another attempt on
+// the host (#293 review).
+func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.PerHost = 1
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T1: %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "limits" {
+		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='limits' for a second attempt of a running task", err)
+	}
+}

@@ -16,6 +16,7 @@ type Observed struct {
 // Policy caps the factory's parallelism for one tick.
 type Policy struct {
 	MaxParallel int `json:"max_parallel"`
+	PerHost     int `json:"per_host,omitempty"` // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
 }
 
 // PolicyFromConfig derives the policy from the configuration: the default
@@ -25,7 +26,7 @@ func PolicyFromConfig(cfg Config) Policy {
 	if mp < 1 {
 		mp = 1
 	}
-	return Policy{MaxParallel: mp}
+	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost}
 }
 
 // Action is one transition Reconcile recommends. Nothing executes the
@@ -59,8 +60,8 @@ type Action struct {
 //   - WAIT: a planned task with a needs target not yet passed or landed; the
 //     reason lists every unmet target in the order they appear in the brief.
 //   - DISPATCH: a planned task whose needs are all passed or landed, with no
-//     live lease, up to the free capacity (MaxParallel minus live leases,
-//     never below 0); the reason names the free capacity.
+//     live lease, up to the free capacity (MaxParallel minus live leases, further
+//     capped by per_host if set, never below 0); the reason names the free capacity.
 func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) []Action {
 	byID := map[string]TaskState{}
 	planned := map[string]bool{}
@@ -156,7 +157,8 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	}
 	// 4. dispatch: ready planned tasks (needs all passed or landed, no live
 	// lease) in planned-time order, up to the free capacity. The capacity is
-	// computed once from the observed leases, so a tick never invents work
+	// the smaller of MaxParallel and per_host (when set), minus live leases.
+	// It is computed once from the observed leases, so a tick never invents work
 	// and the same inputs give the same actions.
 	live := 0
 	for _, l := range obs.Leases {
@@ -165,6 +167,9 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		}
 	}
 	capacity := p.MaxParallel - live
+	if p.PerHost > 0 && p.PerHost-live < capacity {
+		capacity = p.PerHost - live
+	}
 	if capacity < 0 {
 		capacity = 0
 	}
