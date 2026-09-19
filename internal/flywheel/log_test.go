@@ -513,3 +513,70 @@ func TestRecordAmendedByIdentity(t *testing.T) {
 		t.Errorf("amended event = %+v, want Kind=amended, Session=lead-2, Model=m, Note=why", a)
 	}
 }
+
+// TestRecordAmendedWidenOwnsAfterDispatchTakesEffect checks that when an
+// amendment widens owns after dispatch, the amendment takes effect on
+// AttemptBrief (issue #281).
+func TestRecordAmendedWidenOwnsAfterDispatchTakesEffect(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	if err := RecordAmended(dir, "t", brief, "widen owns"); err != nil {
+		t.Fatalf("RecordAmended() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	header, _, err := AttemptBrief(dir, evs, "t")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	wantOwns := []string{"a.go", "b.go"}
+	if len(header.Owns) != len(wantOwns) {
+		t.Fatalf("owns = %v, want %v", header.Owns, wantOwns)
+	}
+	for i, w := range wantOwns {
+		if header.Owns[i] != w {
+			t.Errorf("owns[%d] = %q, want %q", i, header.Owns[i], w)
+		}
+	}
+}
+
+// TestRecordAmendedRefusesInertOwnsNarrowingAfterDispatch checks that an
+// amendment that would narrow owns after dispatch is refused with a
+// RuleRefusal (issue #281).
+func TestRecordAmendedRefusesInertOwnsNarrowingAfterDispatch(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	err := RecordAmended(dir, "t", brief, "narrow owns")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("RecordAmended() error = %v, want a RuleRefusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) {
+		t.Fatalf("error %v is not a *RuleRefusal", err)
+	}
+	if r.Rule == "" || r.Fix == "" {
+		t.Errorf("RuleRefusal = rule %q fix %q, want both non-empty", r.Rule, r.Fix)
+	}
+	if !strings.Contains(r.Fix, "cannot narrow") {
+		t.Errorf("RuleRefusal fix = %q, want it to mention 'cannot narrow'", r.Fix)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 2 {
+		t.Errorf("events = %d, want 2 (the refusal appends nothing)", len(evs))
+	}
+}

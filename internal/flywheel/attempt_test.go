@@ -507,3 +507,74 @@ func TestAttemptBriefCorrectionDeltaMergesGatesOwnsExclusiveTogether(t *testing.
 		}
 	}
 }
+
+// TestAttemptBriefFreshAmendedAfterDispatchWidensOwns checks that an amendment
+// after dispatch widens the attempt's owns and takes effect (issue #281).
+func TestAttemptBriefFreshAmendedAfterDispatchWidensOwns(t *testing.T) {
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "amended.txt", "owns: a.go, b.go\ngate: exit 0\n\n# TASK\n")
+
+	h, err := ParseBriefHeader(filepath.Join(dir, "brief.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+
+	ha, err := ParseBriefHeader(filepath.Join(dir, "amended.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() amended error = %v", err)
+	}
+
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt", Header: &h},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt", Header: &h},
+		{Task: "T1", Kind: "amended", Brief: "amended.txt", Header: &ha},
+	}
+
+	header, _, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	wantOwns := []string{"a.go", "b.go"}
+	if len(header.Owns) != len(wantOwns) {
+		t.Fatalf("owns = %v, want %v", header.Owns, wantOwns)
+	}
+	for i, w := range wantOwns {
+		if header.Owns[i] != w {
+			t.Errorf("owns[%d] = %q, want %q", i, header.Owns[i], w)
+		}
+	}
+}
+
+// TestAttemptBriefFreshAmendedBeforeDispatchIgnored checks that when an
+// amendment happens BEFORE dispatch with the same owns in the dispatch brief,
+// there are no duplicates in the result.
+func TestAttemptBriefFreshAmendedBeforeDispatchIgnored(t *testing.T) {
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go, b.go\ngate: exit 0\n\n# TASK\n")
+
+	h, err := ParseBriefHeader(filepath.Join(dir, "brief.txt"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt", Header: &h},
+		{Task: "T1", Kind: "amended", Brief: "brief.txt", Header: &h},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt", Header: &h},
+	}
+
+	header, _, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	wantOwns := []string{"a.go", "b.go"}
+	if len(header.Owns) != len(wantOwns) {
+		t.Fatalf("owns = %v, want %v (exactly once each, no duplicates)", header.Owns, wantOwns)
+	}
+	for i, w := range wantOwns {
+		if header.Owns[i] != w {
+			t.Errorf("owns[%d] = %q, want %q", i, header.Owns[i], w)
+		}
+	}
+}

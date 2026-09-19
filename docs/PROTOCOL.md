@@ -181,7 +181,10 @@ all.
   replaces `live-gate:` lines, so an amendment touching only `live-gate:` takes effect on a
   correction attempt but is inert — and refused — on a fresh dispatched one. Change the gates of
   a dispatched attempt with a correction delta: `flywheel run <task> --delta <file>`. An
-  amendment that does not change the gates (widening `owns:`, fixing prose) is still allowed.
+  amendment that widens `owns:` after a fresh dispatch takes effect: the attempt's effective
+  owns are the dispatched header's plus every later amendment's (issue #281). One that would
+  narrow `owns:` cannot take effect — owns are unioned — so it is refused (exit 6) like an
+  inert gate change; fixing prose is allowed.
   The refusal and the append run under `.flywheel/dispatch.lock`, the same lock file `flywheel
   run` holds across its own read-check-append, so an amendment and a dispatch serialise.
 

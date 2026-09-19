@@ -56,10 +56,16 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 		// dispatched event recorded when it carries one — the prompt actually
 		// sent, not the base planned/amended header — and against the base
 		// header only when the dispatched event has none (every ledger written
-		// before the header field existed).
+		// before the header field existed). An amended event recorded after
+		// that dispatch widens its owns and exclusive (issue #281).
 		if attempt != "" && attempt[0] == 'r' {
 			if h := freshDispatchedHeader(events, task, attempt); h != nil {
-				return *h, paths, nil
+				eff := *h
+				for _, a := range amendedAfterDispatch(events, task, attempt) {
+					eff.Owns = unionStrings(eff.Owns, a.Owns)
+					eff.Exclusive = unionStrings(eff.Exclusive, a.Exclusive)
+				}
+				return eff, paths, nil
 			}
 		}
 		return header, paths, nil
@@ -144,6 +150,32 @@ func freshDispatchedHeader(events []Event, task, attempt string) *BriefHeader {
 		}
 	}
 	return h
+}
+
+// amendedAfterDispatch returns the headers of task's amended events recorded
+// after the latest dispatched event of attempt, in log order (issue #281). An
+// amendment is a recorded decision, not on-disk drift, so its widened owns and
+// exclusive take effect on a fresh attempt already dispatched; its gates never
+// do (RecordAmended refuses an inert gate change). An amended event without a
+// recorded header contributes nothing.
+func amendedAfterDispatch(events []Event, task, attempt string) []BriefHeader {
+	last := -1
+	for i := range events {
+		e := &events[i]
+		if e.Task == task && e.Kind == "dispatched" && e.Attempt == attempt {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	var out []BriefHeader
+	for _, e := range events[last+1:] {
+		if e.Task == task && e.Kind == "amended" && e.Header != nil {
+			out = append(out, *e.Header)
+		}
+	}
+	return out
 }
 
 // resolveBriefPath joins a repo-relative brief path against dir, leaving an
