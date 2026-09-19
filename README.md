@@ -327,9 +327,11 @@ Three epics drive the factory:
 
 - **`ci`** runs on every PR and push to main: build, vet and tests on Linux, Windows and macOS,
   gofmt, a cross-compile of all release targets, a JSON parse check, and a PR-title check.
-- **`scale`** CI job drives a 1,000-task simulated wave through `flywheel run` in one ledger and checks
-  that no task is dispatched twice, every task finishes, and the event log's hash chain stays intact
-  (`FLYWHEEL_SCALE=1000 go test -run TestScaleWave ./internal/flywheel/`).
+- **`scale`** CI job drives 1,000 simulated tasks in one ledger twice: through `flywheel run`
+  (`TestScaleWave`), and through the whole loop — `next` picks, `run` dispatches, the gauges
+  measure, a lead session inspects and lands, and the log is read back as `flywheel watch` reads it
+  (`TestScaleFactoryLoop`) — checking no double dispatch, every task landed, no lead escalations and
+  an intact hash chain (`FLYWHEEL_SCALE=1000 go test -run TestScale ./internal/flywheel/`).
 - **`release`** keeps one release PR open; merging it tags `vX.Y.Z`, publishes the GitHub release,
   and attaches binaries for five platforms plus `checksums.txt`.
 - Bump rules, highest wins: `type!` or `BREAKING CHANGE:` → major (minor while major is 0);
