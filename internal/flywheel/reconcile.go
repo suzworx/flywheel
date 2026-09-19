@@ -15,18 +15,27 @@ type Observed struct {
 
 // Policy caps the factory's parallelism for one tick.
 type Policy struct {
-	MaxParallel int `json:"max_parallel"`
-	PerHost     int `json:"per_host,omitempty"` // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
+	MaxParallel int      `json:"max_parallel"`
+	PerHost     int      `json:"per_host,omitempty"`   // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
+	Model       string   `json:"model,omitempty"`      // the default worker's model, which DISPATCH would use
+	BudgetUSD   float64  `json:"budget_usd,omitempty"` // limits.budget.wave_cost_usd; 0 means no budget
+	Breaker     *Breaker `json:"breaker,omitempty"`    // limits.breaker; nil means no breaker
 }
 
 // PolicyFromConfig derives the policy from the configuration: the default
-// worker's max_parallel, where 0 means 1.
+// worker's max_parallel (where 0 means 1), the default worker's model, the
+// budget from limits.budget.wave_cost_usd when set, and the breaker from
+// limits.breaker when set.
 func PolicyFromConfig(cfg Config) Policy {
 	mp := cfg.DefaultWorker().MaxParallel
 	if mp < 1 {
 		mp = 1
 	}
-	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost}
+	budgetUSD := 0.0
+	if cfg.Limits.Budget != nil {
+		budgetUSD = cfg.Limits.Budget.WaveCostUSD
+	}
+	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, Breaker: cfg.Limits.Breaker}
 }
 
 // Action is one transition Reconcile recommends. Nothing executes the
@@ -62,6 +71,8 @@ type Action struct {
 //   - DISPATCH: a planned task whose needs are all passed or landed, with no
 //     live lease, up to the free capacity (MaxParallel minus live leases, further
 //     capped by per_host if set, never below 0); the reason names the free capacity.
+//   - HOLD: a task that would be DISPATCHed while the wave's budget is spent or
+//     the default model's breaker is open; the reason names which.
 func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) []Action {
 	byID := map[string]TaskState{}
 	planned := map[string]bool{}
@@ -173,6 +184,30 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	if capacity < 0 {
 		capacity = 0
 	}
+
+	// Compute hold reason ONCE: budget or breaker.
+	holdReason := ""
+	if p.BudgetUSD > 0 {
+		spent := 0.0
+		for _, e := range events {
+			if e.Kind == "finished" {
+				spent += e.Cost
+			}
+		}
+		if spent >= p.BudgetUSD {
+			holdReason = fmt.Sprintf("budget: recorded spend $%.4f has reached limits.budget.wave_cost_usd $%.4f", spent, p.BudgetUSD)
+		}
+	}
+	if holdReason == "" && p.Breaker != nil && p.Model != "" {
+		if open, until := breakerOpen(events, p.Model, *p.Breaker, now); open {
+			holdReason = fmt.Sprintf("breaker: model %s is open until %s; dispatch another model with flywheel run <task> --model <m>", p.Model, until.UTC().Format(time.RFC3339))
+		} else if !until.IsZero() && capacity > 1 {
+			// Half-open: the cooldown is over and no probe is in flight;
+			// run admits exactly one probe, so recommend one (#311 review).
+			capacity = 1
+		}
+	}
+
 	var ready []actionKey
 	for _, ts := range s.Tasks {
 		if ts.Status != "planned" {
@@ -202,9 +237,14 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		if hasLive {
 			continue
 		}
+		kind := "DISPATCH"
+		reason := fmt.Sprintf("ready, needs met, capacity %d free", capacity)
+		if holdReason != "" {
+			kind = "HOLD"
+			reason = holdReason
+		}
 		ready = append(ready, actionKey{Rank: 3, Valid: planned[ts.ID], Time: pt[ts.ID],
-			Action: Action{Kind: "DISPATCH", Task: ts.ID,
-				Reason: fmt.Sprintf("ready, needs met, capacity %d free", capacity)}})
+			Action: Action{Kind: kind, Task: ts.ID, Reason: reason}})
 	}
 	slices.SortStableFunc(ready, func(a, b actionKey) int { return keyCompare(a, b) })
 	if len(ready) > capacity {
