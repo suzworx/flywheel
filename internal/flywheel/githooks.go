@@ -14,25 +14,29 @@ const gitCommitMsgHook = `#!/bin/sh
 # flywheel commit-msg: every commit names its unit with a Flywheel-Task trailer (issue #56).
 # Written by "flywheel init --git-hooks"; a rerun never overwrites this file.
 head -n 1 "$1" | grep -q -E '^(Merge |Revert |fixup! |squash! )' && exit 0
-git interpret-trailers --parse "$1" | grep -q -E '^Flywheel-Task: *[^ ]' && exit 0
+git interpret-trailers --parse "$1" | grep -q -E '^Flywheel-Task: *[A-Za-z0-9._-]+ *$' && exit 0
 echo "flywheel: name the unit this commit belongs to with a trailer, e.g. git commit --trailer 'Flywheel-Task: <id>'" >&2
 exit 1
 `
 
+// gitPrePushHook is a template: @FLYWHEEL_DIR@ is the flywheel directory, shell-quoted and
+// relative to the repository root (git runs pre-push from the worktree root),
+// so a factory scaffolded below the root verifies its own ledger (#308 review).
 const gitPrePushHook = `#!/bin/sh
 # flywheel pre-push: a push is refused while a unit named in the pushed commits fails
 # flywheel verify, or the event log's hash chain is broken (issue #56).
 # Written by "flywheel init --git-hooks"; a rerun never overwrites this file.
+d=@FLYWHEEL_DIR@
 fail=0
 while read -r lref lsha rref rsha; do
   case "$lsha" in *[!0]*) ;; *) continue ;; esac
   case "$rsha" in *[!0]*) range="$rsha..$lsha" ;; *) range="$lsha --not --remotes" ;; esac
   for t in $(git log --format='%(trailers:key=Flywheel-Task,valueonly)' $range | sort -u); do
-    flywheel verify "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify; fix its record before pushing" >&2; fail=1; }
+    flywheel verify --dir "$d" "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify; fix its record before pushing" >&2; fail=1; }
   done
 done
-if [ -f .flywheel/events.jsonl ]; then
-  flywheel verify --log >&2 || fail=1
+if [ -f "$d/.flywheel/events.jsonl" ]; then
+  flywheel verify --dir "$d" --log >&2 || fail=1
 fi
 exit $fail
 `
@@ -64,6 +68,19 @@ func InitGitHooks(dir string) (string, []ScaffoldPiece, error) {
 		return "", nil, fmt.Errorf("create %s: %w", hooksPath, err)
 	}
 
+	// The factory's directory relative to the worktree root, from git itself
+	// (--show-prefix), so no path comparison can trip on 8.3 short names or
+	// symlinks; "" at the root.
+	prefix, err := exec.Command("git", "-C", abs, "rev-parse", "--show-prefix").Output()
+	if err != nil {
+		return "", nil, fmt.Errorf("git rev-parse --show-prefix: %w", err)
+	}
+	flywheelDir := strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/")
+	if flywheelDir == "" {
+		flywheelDir = "."
+	}
+	prePush := strings.Replace(gitPrePushHook, "@FLYWHEEL_DIR@", shellQuote(flywheelDir), 1)
+
 	commitMsgPath := filepath.Join(hooksPath, "commit-msg")
 	prePushPath := filepath.Join(hooksPath, "pre-push")
 
@@ -78,7 +95,7 @@ func InitGitHooks(dir string) (string, []ScaffoldPiece, error) {
 		}
 	}
 
-	createdPrePush, err := createIfMissing(prePushPath, []byte(gitPrePushHook))
+	createdPrePush, err := createIfMissing(prePushPath, []byte(prePush))
 	if err != nil {
 		if createdCommitMsg {
 			os.Remove(commitMsgPath)
@@ -110,4 +127,9 @@ func hookPiecePath(abs, path string) string {
 		return filepath.ToSlash(path)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// shellQuote single-quotes s for POSIX sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

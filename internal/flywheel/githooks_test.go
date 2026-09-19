@@ -137,6 +137,7 @@ func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
 		{"revert exempt", "Revert 'something'\n", false},
 		{"fixup exempt", "fixup! previous\n", false},
 		{"squash exempt", "squash! previous\n", false},
+		{"malformed id refused", "feat: x\n\nFlywheel-Task: !\n", true},
 	}
 
 	for _, tt := range tests {
@@ -154,6 +155,30 @@ func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
 				t.Errorf("hook returned err=%v, want err=%v", err != nil, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestGitHooksPrePushVerifiesSubdirLedger checks that a factory scaffolded
+// below the repository root gets a pre-push hook that verifies its own
+// ledger, not the root's (#308 review).
+func TestGitHooksPrePushVerifiesSubdirLedger(t *testing.T) {
+	dir := t.TempDir()
+	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	sub := filepath.Join(dir, "services", "api")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InitGitHooks(sub); err != nil {
+		t.Fatalf("InitGitHooks(sub): %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "pre-push"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("\nd='services/api'\n")) || !bytes.Contains(b, []byte(`flywheel verify --dir "$d" --log`)) {
+		t.Errorf("pre-push does not target services/api:\n%s", b)
 	}
 }
 
