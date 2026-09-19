@@ -42,6 +42,8 @@ type Event struct {
 	Brief   string   `json:"brief,omitempty"`
 	Needs   []string `json:"needs,omitempty"`
 	Owns    []string `json:"owns,omitempty"`
+	// Line is the product line a dispatched attempt belongs to (issue #69).
+	Line string `json:"line,omitempty"`
 	// Header is the parsed brief header (owns, needs, needs-state, gates,
 	// live-gates, exclusive, review, sha256) carried by planned, amended and
 	// dispatched events (issue #259): the gate set a pass is measured against

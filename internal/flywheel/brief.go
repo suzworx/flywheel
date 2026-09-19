@@ -9,7 +9,7 @@ import (
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
-// live-gate, exclusive, review.
+// live-gate, exclusive, review, line.
 type BriefHeader struct {
 	Owns  []string // comma-separated, annotations stripped
 	Needs []string
@@ -27,6 +27,7 @@ type BriefHeader struct {
 	LiveGates []string
 	Exclusive []string
 	Review    []string
+	Line      string `json:",omitempty"`
 	SHA256    string
 }
 
@@ -94,6 +95,8 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Exclusive = append(h.Exclusive, val)
 		case "review":
 			h.Review = append(h.Review, val)
+		case "line":
+			h.Line = val
 		}
 	}
 	for _, part := range owns {

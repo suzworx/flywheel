@@ -150,6 +150,28 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return Result{}, fmt.Errorf("no worker named %q in .flywheel/config.json", o.Worker)
 		}
 	}
+	// Product line (issue #69): resolved from the task's brief header before
+	// anything reads the worker or model, so every check below (L-03,
+	// limits, budget, breaker, rate) sees the worker that will really run.
+	// The line's worker staffs the unit unless --worker was given; the line
+	// is recorded on the dispatch either way.
+	var usedLine string
+	if h, ok := lineHeader(dir, o); ok {
+		line, lineFound, lineErr := cfg.LineFor(h)
+		if lineErr != nil {
+			return Result{}, lineErr
+		}
+		if lineFound {
+			usedLine = line.Name
+			if o.Worker == "" {
+				lw, ok := cfg.Worker(line.Worker)
+				if !ok {
+					return Result{}, fmt.Errorf("line %q references worker %q, which is not in workers[]", line.Name, line.Worker)
+				}
+				worker = lw
+			}
+		}
+	}
 	model := o.Model
 	if model == "" {
 		model = worker.Model
@@ -502,6 +524,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
+		Line: usedLine,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1881,4 +1904,44 @@ func rateLimited(events []Event, model string, limit int, now time.Time) (bool, 
 		return true, until
 	}
 	return false, time.Time{}
+}
+
+// lineHeader returns the brief header a dispatch's product line is resolved
+// from (issue #69, #340 review): the header of the exact prompt this
+// invocation will send — the brief on disk for a fresh attempt, the delta
+// for a correction — with the base brief's line and owns filling in what a
+// delta leaves out. ok is false when neither can be read (the dispatch then
+// fails later with the usual error).
+func lineHeader(dir string, o RunOptions) (BriefHeader, bool) {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return BriefHeader{}, false
+	}
+	brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
+	if brief == "" {
+		return BriefHeader{}, false
+	}
+	baseSrc, err := promptSource(dir, brief, "", o.Task, false)
+	if err != nil {
+		return BriefHeader{}, false
+	}
+	base, baseErr := ParseBriefHeader(baseSrc)
+	if o.DeltaPath == "" && !o.Resume {
+		return base, baseErr == nil
+	}
+	src, err := promptSource(dir, brief, o.DeltaPath, o.Task, o.Resume)
+	if err != nil {
+		return base, baseErr == nil
+	}
+	h, err := ParseBriefHeader(src)
+	if err != nil {
+		return base, baseErr == nil
+	}
+	if h.Line == "" {
+		h.Line = base.Line
+	}
+	if len(h.Owns) == 0 {
+		h.Owns = base.Owns
+	}
+	return h, true
 }
