@@ -47,7 +47,7 @@ land.
 | `flywheel factory [--once\|--json]` | **implemented** | Render the floor — workers, units with run states, andon, output; bare `flywheel` opens it, one shot when stdout is not a terminal. |
 | `flywheel status [--dir DIR] [--now RFC3339] [--json]` | **implemented** | Summarize the factory deterministically: task counts per status, live and stale attempts, last event and last meaningful progress, andon count. |
 | `flywheel cost [--dir DIR] [--json]` | **implemented** | Sum finished events' tokens and cost per task and per model; a finished task without a dispatch is listed under `unknown`. |
-| `flywheel stats [--dir DIR] [--json]` | **implemented** | The factory's own numbers from the event log: first-pass rate, corrections per task, finish reasons and unclean rate, mean attempt seconds, cost per landed task. |
+| `flywheel stats [--dir DIR] [--json]` | **implemented** | The factory's own numbers from the event log: first-pass rate, corrections per task, finish reasons and unclean rate, mean attempt seconds, cost per landed task, token totals, spend, and spend against a frontier-only baseline priced from `baseline` in config. |
 | `flywheel next [--dir DIR] [--now RFC3339] [--json]` | **implemented** | Print the reconciler's next actions read-only: lost attempts, inspection requests, blocks, waits and dispatches; nothing executes them yet. |
 | `flywheel goal add "<title>" --id <id> [--accept CMD]... [--require TASK]...` | **implemented** | Record a factory goal; later add, list, show and set its status with `flywheel goal <add\|list\|show\|set>`. |
 | `flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]` | **implemented** | The controller loop: acquire `.flywheel/controller.lock`, tick (mark lost attempts, block tasks whose needs were scrapped), renew the lock each tick; `--once` runs one tick and releases the lock, a live lock held elsewhere exits 6. |
@@ -123,6 +123,7 @@ scratch — consumer repos commit theirs.
 | `workers[]` | One entry per worker: `name`, `adapter` (`opencode` or `sim`), `model`, `variant`, `max_parallel` (0 means 1), `fallbacks[{model, approved}]` (fallback models, each with a standing `approved` OK to switch without asking). |
 | `limits` | Shared caps: `per_host` (parallel workers per host) and `budget{wave_cost_usd}` (spending cap per wave). |
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
+| `baseline` | Frontier prices for `flywheel stats`'s cost comparison: `model`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_write_per_mtok` (USD per million tokens; reasoning is priced as output). |
 
 Read and set it with the CLI:
 
