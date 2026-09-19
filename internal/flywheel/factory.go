@@ -18,16 +18,16 @@ import (
 type Floor struct {
 	Dir       string    // repo directory the floor watches
 	Refreshed time.Time // the clock the floor was drawn at
-	Lines     []Line
+	Lines     []FloorLine
 	Staffing  Staffing
 	Units     []Unit
 	Andon     []Andon
 	Output    Output
 }
 
-// Line is one config worker: a station on the floor. busy is the number of
+// FloorLine is one config worker: a station on the floor. Busy is the number of
 // its in-flight units grouped by model.
-type Line struct {
+type FloorLine struct {
 	Name        string
 	Adapter     string
 	Model       string
@@ -505,12 +505,12 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 	return units, byModel, nil
 }
 
-// buildLines turns each config worker into a line, with busy = in-flight units
+// buildLines turns each config worker into a floor line, with busy = in-flight units
 // on the worker's model.
-func buildLines(cfg Config, byModel map[string]int) []Line {
-	var lines []Line
+func buildLines(cfg Config, byModel map[string]int) []FloorLine {
+	var lines []FloorLine
 	for _, w := range cfg.Workers {
-		lines = append(lines, Line{Name: w.Name, Adapter: w.Adapter, Model: w.Model, MaxParallel: w.MaxParallel, Busy: byModel[w.Model]})
+		lines = append(lines, FloorLine{Name: w.Name, Adapter: w.Adapter, Model: w.Model, MaxParallel: w.MaxParallel, Busy: byModel[w.Model]})
 	}
 	return lines
 }

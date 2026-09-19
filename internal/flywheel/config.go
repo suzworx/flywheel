@@ -18,10 +18,19 @@ const configFileName = "config.json"
 
 var workerNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// Line is a product line (issue #69): a named part of the product, the paths
+// it covers, and the worker that builds it.
+type Line struct {
+	Name   string   `json:"name"`
+	Worker string   `json:"worker"`         // a worker name in Workers
+	Owns   []string `json:"owns,omitempty"` // path entries, matched like a brief's owns:
+}
+
 // Config is the project configuration stored in .flywheel/config.json.
 type Config struct {
 	Version    int               `json:"version"`
 	Workers    []Worker          `json:"workers"`
+	Lines      []Line            `json:"lines,omitempty"`
 	Limits     Limits            `json:"limits,omitempty"`
 	Feedback   Feedback          `json:"feedback,omitempty"`
 	Lease      *LeaseConfig      `json:"lease,omitempty"`
@@ -323,6 +332,24 @@ func (c Config) Validate() error {
 			case f.Model == w.Model:
 				problems = append(problems, fmt.Sprintf("%s: fallback model %q must differ from the worker's model", where, f.Model))
 			}
+		}
+	}
+	seenLines := make(map[string]bool)
+	for i, l := range c.Lines {
+		where := fmt.Sprintf("lines[%d]", i)
+		if l.Name == "" {
+			problems = append(problems, where+": name must not be empty")
+		} else {
+			if !workerNameRe.MatchString(l.Name) {
+				problems = append(problems, fmt.Sprintf("%s: name %q must match ^[a-z0-9][a-z0-9-]*$", where, l.Name))
+			}
+			if seenLines[l.Name] {
+				problems = append(problems, fmt.Sprintf("%s: duplicate name %q", where, l.Name))
+			}
+			seenLines[l.Name] = true
+		}
+		if _, ok := c.Worker(l.Worker); !ok {
+			problems = append(problems, fmt.Sprintf("line %q: worker %q is not in workers[]", l.Name, l.Worker))
 		}
 	}
 	if c.Limits.PerHost < 0 {
