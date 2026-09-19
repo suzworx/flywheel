@@ -185,8 +185,7 @@ all.
   The `tree` is the one the gates were re-run on: captured before the clean copy is made and
   re-checked before recording (a tree that changed mid-audit records nothing). A record check that
   cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
-  The auditor's independence is checked again right before the event is appended. T7 gating is not
-  implemented.
+  The auditor's independence is checked again right before the event is appended. T7 gating is opt-in: see T7 below.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
@@ -422,7 +421,7 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
   a "sensitive domain," and no command asks for a sign-off.
 - **T7** (a wave's first article needs `audited conforms` before the rest lands; an open
   nonconformance stops its kind of task) — `flywheel audit` now records `audited` (issue #61),
-  and `flywheel audit --first-article` / `--sample RATE` select first articles and a seeded sample (issue #61), but nothing gates landing on an audit yet.
+  and `flywheel audit --first-article` / `--sample RATE` select first articles and a seeded sample (issue #61), and T7 is enforced by `flywheel land` when .flywheel/config.json sets `audit.first_article`: a unit is refused (exit 6) until its worker line has a conforming audit, and while the line's latest audit is a nonconformance.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
   now enforced **live** by `flywheel land` for a task's own untriaged signals (refused with exit 6
   unless `--allow-untriaged <reason>` records an `allow_untriaged` event). `flywheel handoff` does
