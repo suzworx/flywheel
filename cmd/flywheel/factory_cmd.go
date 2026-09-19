@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
+	"github.com/suzworx/flywheel/internal/term"
 )
 
 func init() {
@@ -22,6 +23,7 @@ type factoryOptions struct {
 	dir      string
 	once     bool
 	asJSON   bool
+	plain    bool
 	interval time.Duration
 	width    int
 	now      string
@@ -35,6 +37,7 @@ func factoryFlags() (*flag.FlagSet, *factoryOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.BoolVar(&o.once, "once", false, "render the floor once and exit")
 	fs.BoolVar(&o.asJSON, "json", false, "print one JSON snapshot and exit")
+	fs.BoolVar(&o.plain, "plain", false, "redraw the plain floor instead of the interactive view")
 	fs.DurationVar(&o.interval, "interval", 2*time.Second, "redraw interval in live mode")
 	fs.IntVar(&o.width, "width", 100, "render width in columns")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to render at; makes a screenshot reproducible")
@@ -77,7 +80,17 @@ func runFactory(args []string) {
 		render(w, o.dir, o.width, false, color, clock)
 		return
 	}
-	pulse(w, o.dir, o.width, o.interval, color, clock)
+	if o.plain || !term.IsTerminal(os.Stdin) {
+		// --plain, or no keyboard to drive the interactive view: the plain
+		// redraw loop.
+		pulse(w, o.dir, o.width, o.interval, color, clock)
+		return
+	}
+	// Live interactive mode.
+	if err := flywheel.RunTUI(os.Stdin, os.Stdout, o.dir, o.interval, clock); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // clockFor turns the --now flag into a clock. "" returns the real clock, read
