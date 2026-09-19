@@ -104,14 +104,16 @@ type Fallback struct {
 
 // Limits caps shared resource use across workers.
 type Limits struct {
-	PerHost int      `json:"per_host,omitempty"`
-	Budget  *Budget  `json:"budget,omitempty"`
-	Breaker *Breaker `json:"breaker,omitempty"`
+	PerHost       int      `json:"per_host,omitempty"`
+	Budget        *Budget  `json:"budget,omitempty"`
+	Breaker       *Breaker `json:"breaker,omitempty"`
+	RatePerMinute int      `json:"rate_per_minute,omitempty"` // at most this many dispatches of one model in any 60 seconds; 0 means no limit
 }
 
-// Budget caps spending per wave.
+// Budget caps spending and tokens per wave.
 type Budget struct {
 	WaveCostUSD float64 `json:"wave_cost_usd,omitempty"`
+	WaveTokens  int     `json:"wave_tokens,omitempty"` // once recorded input+output+reasoning tokens reach it, new dispatches are refused
 }
 
 // Breaker opens the circuit for a model after Errors consecutive provider
@@ -325,6 +327,12 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.PerHost < 0 {
 		problems = append(problems, fmt.Sprintf("limits.per_host %d must be >= 0", c.Limits.PerHost))
+	}
+	if c.Limits.RatePerMinute < 0 {
+		problems = append(problems, fmt.Sprintf("limits.rate_per_minute %d must be >= 0", c.Limits.RatePerMinute))
+	}
+	if c.Limits.Budget != nil && c.Limits.Budget.WaveTokens < 0 {
+		problems = append(problems, fmt.Sprintf("limits.budget.wave_tokens %d must be >= 0", c.Limits.Budget.WaveTokens))
 	}
 	if c.Limits.Breaker != nil {
 		if c.Limits.Breaker.Errors < 0 {

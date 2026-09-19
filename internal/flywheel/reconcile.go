@@ -15,26 +15,31 @@ type Observed struct {
 
 // Policy caps the factory's parallelism for one tick.
 type Policy struct {
-	MaxParallel int      `json:"max_parallel"`
-	PerHost     int      `json:"per_host,omitempty"`   // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
-	Model       string   `json:"model,omitempty"`      // the default worker's model, which DISPATCH would use
-	BudgetUSD   float64  `json:"budget_usd,omitempty"` // limits.budget.wave_cost_usd; 0 means no budget
-	Breaker     *Breaker `json:"breaker,omitempty"`    // limits.breaker; nil means no breaker
-	Fallbacks   []string `json:"fallbacks,omitempty"`  // the default worker's approved fallback models, in config order
+	MaxParallel   int      `json:"max_parallel"`
+	PerHost       int      `json:"per_host,omitempty"`        // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
+	Model         string   `json:"model,omitempty"`           // the default worker's model, which DISPATCH would use
+	BudgetUSD     float64  `json:"budget_usd,omitempty"`      // limits.budget.wave_cost_usd; 0 means no budget
+	BudgetTokens  int      `json:"budget_tokens,omitempty"`   // limits.budget.wave_tokens; 0 means no budget
+	RatePerMinute int      `json:"rate_per_minute,omitempty"` // limits.rate_per_minute; 0 means no limit
+	Breaker       *Breaker `json:"breaker,omitempty"`         // limits.breaker; nil means no breaker
+	Fallbacks     []string `json:"fallbacks,omitempty"`       // the default worker's approved fallback models, in config order
 }
 
 // PolicyFromConfig derives the policy from the configuration: the default
 // worker's max_parallel (where 0 means 1), the default worker's model, the
-// budget from limits.budget.wave_cost_usd when set, the breaker from
-// limits.breaker when set, and the default worker's approved fallback models.
+// budget from limits.budget.wave_cost_usd and wave_tokens when set, the breaker
+// from limits.breaker when set, the rate limit from limits.rate_per_minute,
+// and the default worker's approved fallback models.
 func PolicyFromConfig(cfg Config) Policy {
 	mp := cfg.DefaultWorker().MaxParallel
 	if mp < 1 {
 		mp = 1
 	}
 	budgetUSD := 0.0
+	budgetTokens := 0
 	if cfg.Limits.Budget != nil {
 		budgetUSD = cfg.Limits.Budget.WaveCostUSD
+		budgetTokens = cfg.Limits.Budget.WaveTokens
 	}
 	var fallbacks []string
 	for _, f := range cfg.DefaultWorker().Fallbacks {
@@ -42,7 +47,7 @@ func PolicyFromConfig(cfg Config) Policy {
 			fallbacks = append(fallbacks, f.Model)
 		}
 	}
-	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, Breaker: cfg.Limits.Breaker, Fallbacks: fallbacks}
+	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, BudgetTokens: budgetTokens, RatePerMinute: cfg.Limits.RatePerMinute, Breaker: cfg.Limits.Breaker, Fallbacks: fallbacks}
 }
 
 // Action is one transition Reconcile recommends. Nothing executes the
@@ -299,6 +304,12 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 			holdReason = fmt.Sprintf("budget: recorded spend $%.4f has reached limits.budget.wave_cost_usd $%.4f", spent, p.BudgetUSD)
 		}
 	}
+	if holdReason == "" && p.BudgetTokens > 0 {
+		n := recordedTokens(events)
+		if n >= p.BudgetTokens {
+			holdReason = fmt.Sprintf("budget: recorded tokens %d have reached limits.budget.wave_tokens %d", n, p.BudgetTokens)
+		}
+	}
 	if holdReason == "" && p.Breaker != nil && p.Model != "" {
 		if open, until := breakerOpen(events, p.Model, *p.Breaker, now); open {
 			fb := ""
@@ -325,6 +336,39 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 			// Half-open: the cooldown is over and no probe is in flight;
 			// run admits exactly one probe, so recommend one (#311 review).
 			capacity = 1
+		}
+	}
+
+	// Rate limiting: cap capacity by the model's free dispatch slots in the
+	// last 60 s; at zero no task is dispatched this tick (no HOLD — the next
+	// tick sees the slot).
+	// The rate applies to the model the dispatch will use: an approved
+	// fallback's own count when it takes over (#329 review).
+	rateModel := p.Model
+	if fallbackTakeover != "" {
+		rateModel = fallbackTakeover
+	}
+	if p.RatePerMinute > 0 {
+		window := now.Add(-60 * time.Second)
+		count := 0
+		for _, e := range events {
+			if e.Kind != "dispatched" || e.Model != rateModel {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339Nano, e.TS)
+			if err != nil {
+				continue
+			}
+			if t.After(window) {
+				count++
+			}
+		}
+		free := p.RatePerMinute - count
+		if free < 0 {
+			free = 0
+		}
+		if free < capacity {
+			capacity = free
 		}
 	}
 
