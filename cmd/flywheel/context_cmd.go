@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -58,6 +59,14 @@ func runContext(args []string) {
 	}
 	if o.learnings < 0 {
 		fmt.Fprintf(os.Stderr, "flywheel context: --learnings must be non-negative\n")
+		contextUsage(os.Stderr)
+		os.Exit(2)
+	}
+
+	// The role is a CLI argument: check it before touching any factory file,
+	// so a bad role is always a usage error (#302 review).
+	if o.role != "" && !flywheel.ValidRole(o.role) {
+		fmt.Fprintf(os.Stderr, "flywheel context: unknown role %q: one of %s\n", o.role, strings.Join(flywheel.ContextRoles, ", "))
 		contextUsage(os.Stderr)
 		os.Exit(2)
 	}

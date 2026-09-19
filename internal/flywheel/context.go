@@ -84,104 +84,89 @@ func BuildContext(events []Event, cfg Config, maxLearnings int) ContextPack {
 // ContextRoles lists the valid roles for role-filtered context packs.
 var ContextRoles = []string{"lead", "planner", "foreman", "inspector", "steward", "auditor"}
 
-// BuildRoleContext builds a ContextPack filtered for a specific role.
-// role "" or "lead" returns the full context (with Role set if non-empty and Unaudited).
-// unknown role returns an error.
-// Other roles get the full context with sections they don't own cleared.
-func BuildRoleContext(events []Event, cfg Config, maxLearnings int, role string) (ContextPack, error) {
-	base := BuildContext(events, cfg, maxLearnings)
+// roleSections is the single authority on which pack sections each role owns
+// (issue #58): BuildRoleContext empties the others and RenderContext prints
+// only these, so JSON and Markdown can never disagree. The lead (or no role)
+// owns every section.
+var roleSections = map[string][]string{
+	"planner":   {"goals", "blocked", "ready"},
+	"foreman":   {"inflight", "ready"},
+	"inspector": {"unjudged"},
+	"steward":   {"unjudged", "learnings"},
+	"auditor":   {"unaudited"},
+}
 
-	// Compute unaudited tasks: landed tasks with no audited event
-	state := Derive(events)
-	var unaudited []string
-	for _, ts := range state.Tasks {
-		if ts.Status == "landed" {
-			hasAudited := false
-			for _, e := range events {
-				if e.Task == ts.ID && e.Kind == "audited" {
-					hasAudited = true
-					break
-				}
-			}
-			if !hasAudited {
-				unaudited = append(unaudited, ts.ID)
-			}
-		}
-	}
-	slices.Sort(unaudited)
-	if unaudited == nil {
-		unaudited = []string{} // JSON prints [], never null
-	}
-	base.Unaudited = unaudited
+// ValidRole reports whether role is one of ContextRoles.
+func ValidRole(role string) bool { return slices.Contains(ContextRoles, role) }
 
+// RoleOwns reports whether role owns a pack section ("goals", "inflight",
+// "blocked", "ready", "unjudged", "learnings", "unaudited").
+func RoleOwns(role, section string) bool {
 	if role == "" || role == "lead" {
-		base.Role = role
-		return base, nil
+		return true
 	}
+	return slices.Contains(roleSections[role], section)
+}
 
-	// Validate role
-	if !slices.Contains(ContextRoles, role) {
+// BuildRoleContext builds a ContextPack filtered for a role: the full pack for
+// "" or "lead", and for any other role only the sections RoleOwns grants it,
+// the rest empty (never nil). The inspector's needs-a-verdict list keeps only
+// uninspected units and the steward's only untriaged signals. Unaudited lists
+// the landed tasks with no audited event. An unknown role is an error.
+func BuildRoleContext(events []Event, cfg Config, maxLearnings int, role string) (ContextPack, error) {
+	if role != "" && !ValidRole(role) {
 		return ContextPack{}, fmt.Errorf("unknown role %q: one of %s", role, strings.Join(ContextRoles, ", "))
 	}
+	p := BuildContext(events, cfg, maxLearnings)
+	p.Role = role
 
-	// Clear sections based on role
-	switch role {
-	case "planner":
-		base.InFlight = []HandoffTask{}
-		base.Unjudged = []GateBlocker{}
-		base.Learnings = []LearningView{}
-	case "foreman":
-		base.Goals = []GoalView{}
-		base.Blocked = []string{}
-		base.Unjudged = []GateBlocker{}
-		base.Learnings = []LearningView{}
-	case "inspector":
-		base.Goals = []GoalView{}
-		base.InFlight = []HandoffTask{}
-		base.Blocked = []string{}
-		base.Ready = []string{}
-		base.Learnings = []LearningView{}
-		// Filter Unjudged to only "uninspected"
-		var filtered []GateBlocker
-		for _, ub := range base.Unjudged {
-			if ub.Kind == "uninspected" {
-				filtered = append(filtered, ub)
+	audited := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "audited" {
+			audited[e.Task] = true
+		}
+	}
+	p.Unaudited = []string{}
+	for _, ts := range Derive(events).Tasks {
+		if ts.Status == "landed" && !audited[ts.ID] {
+			p.Unaudited = append(p.Unaudited, ts.ID)
+		}
+	}
+	slices.Sort(p.Unaudited)
+
+	keep := map[string]string{"inspector": "uninspected", "steward": "untriaged"}
+	if kind, ok := keep[role]; ok {
+		filtered := []GateBlocker{}
+		for _, b := range p.Unjudged {
+			if b.Kind == kind {
+				filtered = append(filtered, b)
 			}
 		}
-		base.Unjudged = filtered
-		if base.Unjudged == nil {
-			base.Unjudged = []GateBlocker{}
-		}
-	case "steward":
-		base.Goals = []GoalView{}
-		base.InFlight = []HandoffTask{}
-		base.Blocked = []string{}
-		base.Ready = []string{}
-		// Filter Unjudged to only "untriaged"
-		var filtered []GateBlocker
-		for _, ub := range base.Unjudged {
-			if ub.Kind == "untriaged" {
-				filtered = append(filtered, ub)
-			}
-		}
-		base.Unjudged = filtered
-		if base.Unjudged == nil {
-			base.Unjudged = []GateBlocker{}
-		}
-	case "auditor":
-		base.Goals = []GoalView{}
-		base.InFlight = []HandoffTask{}
-		base.Blocked = []string{}
-		base.Ready = []string{}
-		base.Unjudged = []GateBlocker{}
-		base.Learnings = []LearningView{}
+		p.Unjudged = filtered
 	}
 
-	if role != "auditor" {
-		base.Unaudited = []string{} // only the lead and the auditor own audits
+	if !RoleOwns(role, "goals") {
+		p.Goals = []GoalView{}
 	}
-	base.Role = role
-	return base, nil
+	if !RoleOwns(role, "inflight") {
+		p.InFlight = []HandoffTask{}
+	}
+	if !RoleOwns(role, "blocked") {
+		p.Blocked = []string{}
+	}
+	if !RoleOwns(role, "ready") {
+		p.Ready = []string{}
+	}
+	if !RoleOwns(role, "unjudged") {
+		p.Unjudged = []GateBlocker{}
+	}
+	if !RoleOwns(role, "learnings") {
+		p.Learnings = []LearningView{}
+	}
+	if !RoleOwns(role, "unaudited") {
+		p.Unaudited = []string{}
+	}
+	return p, nil
 }
 
 // RenderContext renders a ContextPack as Markdown to w.
@@ -196,28 +181,7 @@ func RenderContext(w io.Writer, p ContextPack) error {
 	}
 
 	// Render only sections the role owns
-	shouldShow := func(section string) bool {
-		if p.Role == "" || p.Role == "lead" {
-			return true
-		}
-		switch section {
-		case "goals":
-			return p.Role == "planner"
-		case "inflight":
-			return p.Role == "foreman"
-		case "blocked":
-			return p.Role == "planner"
-		case "ready":
-			return p.Role == "planner" || p.Role == "foreman"
-		case "unjudged":
-			return p.Role == "inspector" || p.Role == "steward"
-		case "learnings":
-			return p.Role == "steward"
-		case "unaudited":
-			return p.Role == "lead" || p.Role == "auditor"
-		}
-		return false
-	}
+	shouldShow := func(section string) bool { return RoleOwns(p.Role, section) }
 
 	// Goals
 	if shouldShow("goals") {
