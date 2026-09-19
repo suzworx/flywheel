@@ -82,7 +82,7 @@ flowchart LR
 ### Set up, run, watch
 
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files
-  (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
+  (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
@@ -208,8 +208,9 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
 passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
 the first whose own breaker is closed).
+`limits.budget.wave_tokens` caps the wave's recorded tokens (input, output and reasoning — a cost budget cannot cap an adapter that reports no cost), and `limits.rate_per_minute` caps dispatches of one model in any 60 seconds; both are refused by `flywheel run` (exit 6, rules `budget` and `rate`); `flywheel next` HOLDs on a spent token budget and dispatches no more than the model's free rate slots.
 
-**Offline.** `flywheel init --local <model> [--local-url URL]` points OpenCode workers at a local OpenAI-compatible server (Ollama at `http://localhost:11434/v1` by default; LM Studio or a llama.cpp server with `--local-url`): it adds an OpenCode provider `flywheel-local` to `.flywheel/opencode-worker.json` and a worker named `local`, so `flywheel run <task> --worker local` dispatches to the local model. Run each provider once while online (OpenCode may fetch its provider package on first use). A local model is weaker than an online one: keep briefs small and let the signals show where it is not good enough.
+**Offline.** `flywheel init --local <model> [--local-url URL]` points OpenCode workers at a local OpenAI-compatible server (Ollama at `http://localhost:11434/v1` by default; LM Studio or a llama.cpp server with `--local-url`): it adds an OpenCode provider `flywheel-local` to `.flywheel/opencode-worker.json` and a worker named `local`, so `flywheel run <task> --worker local` dispatches to the local model. Run each provider once while online (OpenCode may fetch its provider package on first use). A local model is weaker than an online one: keep briefs small and let the signals show where it is not good enough. `flywheel doctor --worker local` asks the server first: `local endpoint down` when it does not answer, `model not pulled` when it does not serve the model. It contacts a loopback server only (`localhost`, `127.0.0.1`); any other host is left to the ordinary probe, so `doctor` on an unfamiliar checkout never reaches hosts its config names.
 
 **Worktrees.** `flywheel run <task> --worktree` runs the worker in the task's own git worktree (`.flywheel/worktrees/<task>`, branch `fw/<task>`) while the factory keeps one ledger; the attempt records it, so `flywheel validate` and `flywheel inspect` measure that tree by default. Landing through a local queue is next ([#45](https://github.com/suzworx/flywheel/issues/45)).
 
@@ -281,7 +282,7 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 | `flywheel log` | available (v0.2.0) | Append an event to `.flywheel/events.jsonl` and re-derive state. |
 | `flywheel state` | available (v0.2.0) | Derive and print state from the event log. |
 | `flywheel config` | available | Read, validate and `set` `.flywheel/config.json` (config package merged). |
-| `flywheel doctor` | available | Probe every configured model and classify its availability (exit 0/1). |
+| `flywheel doctor [--worker NAME]` | available | Probe every configured model and classify its availability (exit 0/1). |
 | `flywheel run` | available | Dispatch a worker (adapter and model from `.flywheel/config.json`, or `--worker <name>`) and capture the run. `[--increment N]` sends only increment N of a brief with an `## Increments` list, as a fresh session, and records it on the dispatched event. |
 | `flywheel status` | available ([#21](https://github.com/suzworx/flywheel/issues/21)) | Summarize the factory: task counts, live/stale attempts, last event and progress, andon. |
 | `flywheel handoff` | available | Print the handoff summary for a new head: in-flight tasks (with session and model), blockers, next ready tasks, the untriaged signals it carries forward, and the default worker model; `--stdout` prints it, otherwise it goes into `flywheel.md`. |

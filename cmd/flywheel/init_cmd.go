@@ -126,7 +126,6 @@ func runInit(args []string) {
 		if o.ignore {
 			fmt.Println("ignored: flywheel.md")
 		}
-		fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 	}
 	if o.hooks {
 		_, hpieces, herr := flywheel.InitHooks(o.dir)
@@ -179,7 +178,7 @@ func runInit(args []string) {
 		for _, p := range lpieces {
 			fmt.Printf("updated: %s\n", p.Path)
 		}
-		fmt.Println("next: flywheel doctor, then flywheel run <task> --worker local")
+		fmt.Println("next: flywheel doctor --worker local, then flywheel run <task> --worker local")
 	}
 	if configExisted && (o.model != "" || o.variant != "") {
 		fmt.Println("config.json exists; change it with: flywheel config set model|variant <value>")
@@ -194,4 +193,14 @@ func runInit(args []string) {
 			fmt.Fprintln(os.Stderr, "!"+p)
 		}
 	}
+
+	fmt.Println()
+	summary, err := flywheel.FactorySummary(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel init: summary: %v\n", err)
+	} else {
+		fmt.Println(summary)
+	}
+
+	fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 }

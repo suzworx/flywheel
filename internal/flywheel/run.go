@@ -303,6 +303,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			}
 		}
 	}
+	if b := cfg.Limits.Budget; b != nil && b.WaveTokens > 0 {
+		n := recordedTokens(events)
+		if n >= b.WaveTokens {
+			return Result{}, &RuleRefusal{
+				Rule: "budget",
+				Fix:  fmt.Sprintf("recorded tokens %d have reached limits.budget.wave_tokens %d; raise it in .flywheel/config.json or start a new wave (a new ledger)", n, b.WaveTokens),
+			}
+		}
+	}
 
 	if b := cfg.Limits.Breaker; b != nil {
 		if open, until := breakerOpen(events, model, *b, now()); open {
@@ -319,6 +328,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					Rule: "breaker",
 					Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", oldModel, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
 				}
+			}
+		}
+	}
+
+	if cfg.Limits.RatePerMinute > 0 {
+		if limited, until := rateLimited(events, model, cfg.Limits.RatePerMinute, now()); limited {
+			return Result{}, &RuleRefusal{
+				Rule: "rate",
+				Fix:  fmt.Sprintf("model %s was dispatched %d times in the last minute (limits.rate_per_minute); dispatch again after %s", model, cfg.Limits.RatePerMinute, until.UTC().Format(time.RFC3339)),
 			}
 		}
 	}
@@ -1804,4 +1822,45 @@ func approvedFallbackHint(w Worker) string {
 		return ""
 	}
 	return fmt.Sprintf(" (approved fallbacks: %s)", strings.Join(approved, ", "))
+}
+
+// recordedTokens sums input, output and reasoning tokens over finished events.
+func recordedTokens(events []Event) int {
+	total := 0
+	for _, e := range events {
+		if e.Kind == "finished" && e.Tokens != nil {
+			total += e.Tokens.Input + e.Tokens.Output + e.Tokens.Reasoning
+		}
+	}
+	return total
+}
+
+// rateLimited reports whether model already has limit dispatched events in
+// the 60 seconds before now, and when the oldest of them leaves the window.
+func rateLimited(events []Event, model string, limit int, now time.Time) (bool, time.Time) {
+	if limit <= 0 {
+		return false, time.Time{}
+	}
+	window := now.Add(-60 * time.Second)
+	var dispatches []time.Time
+	for _, e := range events {
+		if e.Kind != "dispatched" || e.Model != model {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, e.TS)
+		if err != nil {
+			continue
+		}
+		if t.After(window) {
+			dispatches = append(dispatches, t)
+		}
+	}
+	if len(dispatches) >= limit {
+		sort.Slice(dispatches, func(i, j int) bool { return dispatches[i].Before(dispatches[j]) })
+		// A slot opens when enough of them leave the window that fewer
+		// than limit remain: the (len-limit)th oldest, 0-based.
+		until := dispatches[len(dispatches)-limit].Add(60 * time.Second)
+		return true, until
+	}
+	return false, time.Time{}
 }
