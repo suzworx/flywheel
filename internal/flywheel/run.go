@@ -659,6 +659,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if !ok {
 			continue
 		}
+		// A plan is recognised BEFORE the turn it arrives on is counted: the
+		// claude adapter marks each assistant message (text included) as
+		// ending a turn, so a plan in the 20th message must not first trip
+		// the no-plan threshold (issue #284 review).
+		if obs.Kind == "text" && !planRecorded {
+			if plan, isPlan := planText(obs.Text); isPlan {
+				planRecorded = true
+				planPath := filepath.Join(runsDir, o.Task+"."+attempt+".plan.md")
+				if err := os.WriteFile(planPath, []byte(plan), 0o644); err != nil {
+					return Result{}, err
+				}
+				planSum := sha256.Sum256([]byte(plan))
+				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
+					return Result{}, err
+				}
+				progress(o.Progress, o.Task+" "+attempt+" plan recorded")
+			}
+		}
 		if obs.EndsTurn {
 			steps++
 			if steps == 20 && !planRecorded && !noPlanRecorded {
@@ -685,19 +703,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 			}
 		case "text":
-			plan, isPlan := planText(obs.Text)
-			if !planRecorded && isPlan {
-				planRecorded = true
-				planPath := filepath.Join(runsDir, o.Task+"."+attempt+".plan.md")
-				if err := os.WriteFile(planPath, []byte(plan), 0o644); err != nil {
-					return Result{}, err
-				}
-				planSum := sha256.Sum256([]byte(plan))
-				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
-					return Result{}, err
-				}
-				progress(o.Progress, o.Task+" "+attempt+" plan recorded")
-			}
 			lastText = obs.Text
 		case "tool":
 			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(dir, obs.Path) && !outsideSeen[obs.Path] {
