@@ -221,7 +221,8 @@ the first whose own breaker is closed).
 New here? Start with the two pages that close the gap between "I have a binary" and "I have
 landed one unit through the loop": [**Quickstart**](docs/quickstart.md) walks you through it end
 to end, and [**Concepts**](docs/concepts.md) defines the vocabulary every command rests on —
-work orders, `owns:`, gates, the event log, and the poka-yoke rules.
+work orders, `owns:`, gates, the event log, and the poka-yoke rules. Leading the agents yourself
+from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walks you through it.
 
 1. **Get the CLI.** Download **flywheel-\<version\>-\<os\>-\<arch\>.zip** from the
    [latest release](https://github.com/suzworx/flywheel/releases/latest) — Windows binaries ship
