@@ -1069,6 +1069,44 @@ func TestInitHooksRollbackRemovesCreatedFile(t *testing.T) {
 	}
 }
 
+// TestInitHooksStopRunsGate checks InitHooks creates a Stop hook that runs
+// flywheel gate and blocks ending the session while work is left unjudged.
+func TestInitHooksStopRunsGate(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := InitHooks(dir); err != nil {
+		t.Fatalf("InitHooks() error = %v", err)
+	}
+
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var cfg claudeSettings
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatalf("unmarshal settings.json: %v", err)
+	}
+
+	if len(cfg.Hooks.Stop) != 1 {
+		t.Fatalf("Stop hook groups = %d, want 1", len(cfg.Hooks.Stop))
+	}
+	if len(cfg.Hooks.Stop[0].Hooks) != 1 {
+		t.Fatalf("Stop hook commands = %d, want 1", len(cfg.Hooks.Stop[0].Hooks))
+	}
+
+	cmd := cfg.Hooks.Stop[0].Hooks[0].Command
+	if cmd != claudeStopGateHook {
+		t.Errorf("Stop hook command = %q, want %q", cmd, claudeStopGateHook)
+	}
+
+	for _, want := range []string{"flywheel gate", "stop_hook_active", "exit 2"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("Stop hook missing %q, got %q", want, cmd)
+		}
+	}
+}
+
 func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
