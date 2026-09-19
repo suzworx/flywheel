@@ -152,6 +152,11 @@ func logFilesOf(dir string) ([]logFile, error) {
 
 // fileState is what a logReader knows about one file.
 type fileState struct {
+	// gen counts how often this file was re-read from the start. A cursor
+	// from an older generation has consumed nothing of the current one, even
+	// when the replacement has the same size and the same number of events
+	// (#350 review).
+	gen    int
 	size   int64 // the file's size at the last refresh (off lags it by an unterminated tail)
 	off    int64
 	mtime  time.Time
@@ -254,7 +259,7 @@ func (r *logReader) refreshFile(lf logFile) (changed bool, err error) {
 	}
 	if reread {
 		r.Bytes -= state.off
-		*state = fileState{}
+		*state = fileState{gen: state.gen + 1}
 		changed = true
 	}
 	state.mtime = mtime
@@ -406,17 +411,119 @@ func observedLog(dir string) time.Time {
 	return observedLogs[absDir]
 }
 
-// readShardedEvents reads the whole sharded log in merged order:
-// newLogReader().refresh(dir), observeLog(dir, maxKey()), merged().
+// clone returns a deep copy of the logReader: new map with copied fileState values.
+func (r *logReader) clone() *logReader {
+	clone := &logReader{
+		files: make(map[string]*fileState),
+		Bytes: r.Bytes,
+	}
+	for rel, state := range r.files {
+		newState := &fileState{
+			gen:    state.gen,
+			size:   state.size,
+			off:    state.off,
+			mtime:  state.mtime,
+			last:   state.last,
+			events: append([]Event{}, state.events...),
+			keys:   append([]time.Time{}, state.keys...),
+		}
+		clone.files[rel] = newState
+	}
+	return clone
+}
+
+// mergedSince returns only the events the logReader gained since prev: per file,
+// only the events beyond the count prev had, merged in log order (legacy file
+// first, then shards sorted by (key, Rel, index)).
+func (r *logReader) mergedSince(prev *logReader) []Event {
+	if prev == nil {
+		return r.merged()
+	}
+
+	var legacyEvents []Event
+	var shardEntries []struct {
+		rel    string
+		state  *fileState
+		events []Event
+		keys   []time.Time
+	}
+
+	for rel, state := range r.files {
+		prevCount := 0
+		if prevState := prev.files[rel]; prevState != nil {
+			prevCount = len(prevState.events)
+			// A file re-read from the start (shrunk, or rewritten — even to
+			// the same size with the same number of events) has every event
+			// new again: its generation moved on.
+			if prevState.gen != state.gen || prevCount > len(state.events) {
+				prevCount = 0
+			}
+		}
+
+		gainedEvents := state.events[prevCount:]
+		if len(gainedEvents) == 0 {
+			continue
+		}
+
+		if rel == "events.jsonl" {
+			legacyEvents = append(legacyEvents, gainedEvents...)
+		} else {
+			gainedKeys := state.keys[prevCount:]
+			shardEntries = append(shardEntries, struct {
+				rel    string
+				state  *fileState
+				events []Event
+				keys   []time.Time
+			}{rel, state, gainedEvents, gainedKeys})
+		}
+	}
+
+	type item struct {
+		key   time.Time
+		rel   string
+		index int
+		event Event
+	}
+
+	var items []item
+	for _, s := range shardEntries {
+		for i, e := range s.events {
+			key := time.Time{}
+			if i < len(s.keys) {
+				key = s.keys[i]
+			}
+			items = append(items, item{key: key, rel: s.rel, index: i, event: e})
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if !items[i].key.Equal(items[j].key) {
+			return items[i].key.Before(items[j].key)
+		}
+		if items[i].rel != items[j].rel {
+			return items[i].rel < items[j].rel
+		}
+		return items[i].index < items[j].index
+	})
+
+	var result []Event
+	result = append(result, legacyEvents...)
+	for _, item := range items {
+		result = append(result, item.event)
+	}
+
+	return result
+}
+
+// readShardedEvents reads the whole sharded log in merged order, through the
+// process cache, and raises the repository's logical clock to the latest
+// timestamp it saw (the cache reports it; re-parsing every event here would
+// undo what the cache saves).
 func readShardedEvents(dir string) ([]Event, error) {
-	reader := newLogReader()
-	_, err := reader.refresh(dir)
+	events, maxKey, err := cachedShardedEvents(dir)
 	if err != nil {
 		return nil, err
 	}
-
-	maxKey := reader.maxKey()
 	observeLog(dir, maxKey)
-
-	return reader.merged(), nil
+	return events, nil
 }
