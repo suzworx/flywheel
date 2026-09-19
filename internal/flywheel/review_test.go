@@ -260,3 +260,32 @@ func TestReviewAppliesUncommittedChangesAndUntrackedFiles(t *testing.T) {
 		t.Error("empty tree hash")
 	}
 }
+
+// TestReviewRecordsModelIdentity verifies the reviewer's model is recorded on the reviewed event.
+func TestReviewRecordsModelIdentity(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	_, err = ReviewTask(dir, "T1", ReviewOptions{Dir: dir, Verdict: "pass", Session: "r1", Model: "claude-sonnet-5"})
+	if err != nil {
+		t.Fatalf("ReviewTask() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "reviewed" {
+			found = true
+			if e.Model != "claude-sonnet-5" {
+				t.Errorf("reviewed event Model = %q, want claude-sonnet-5", e.Model)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no reviewed event recorded")
+	}
+}

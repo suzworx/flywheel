@@ -180,17 +180,37 @@ func runLog(args []string) {
 		runLogJSON(o.dir, o.jsonIn, o.noState)
 		return
 	}
+	// --goal is legal only for planned: refuse it on amended as a usage
+	// error (exit 2) before asking whether the goal exists.
+	if o.kind == "amended" && o.goal != "" {
+		fmt.Fprintf(os.Stderr, "flywheel log: --goal applies to --kind planned only\n")
+		usage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.goal != "" {
+		if _, ok := findGoal(o.dir, o.goal); !ok {
+			fmt.Fprintf(os.Stderr, "flywheel log: unknown goal %q\n", o.goal)
+			if gs := knownGoals(o.dir); len(gs) > 0 {
+				ids := make([]string, len(gs))
+				for i, g := range gs {
+					ids[i] = g.ID
+				}
+				fmt.Fprintf(os.Stderr, "known goals: %s\n", strings.Join(ids, ", "))
+			}
+			os.Exit(1)
+		}
+	}
 	if o.kind == "amended" {
 		if o.note == "" {
 			fmt.Fprintf(os.Stderr, "flywheel log: --kind amended requires --note <why>\n")
 			usage(os.Stderr)
 			os.Exit(2)
 		}
-		finishLog(o.dir, flywheel.RecordAmended(o.dir, o.task, o.brief, o.note), o.noState)
+		finishLog(o.dir, flywheel.RecordAmendedBy(o.dir, o.task, o.brief, o.note, flywheel.PlanMeta{Session: o.session, Model: o.model}), o.noState)
 		return
 	}
 	if o.kind == "planned" && o.brief != "" {
-		finishLog(o.dir, flywheel.RecordPlanned(o.dir, o.task, o.brief), o.noState)
+		finishLog(o.dir, flywheel.RecordPlannedBy(o.dir, o.task, o.brief, flywheel.PlanMeta{Session: o.session, Model: o.model, GoalID: o.goal, Note: o.note}), o.noState)
 		return
 	}
 
@@ -205,19 +225,6 @@ func runLog(args []string) {
 	e.Brief = o.brief
 	e.Commit = o.commit
 	e.Note = o.note
-	if o.goal != "" {
-		if _, ok := findGoal(o.dir, o.goal); !ok {
-			fmt.Fprintf(os.Stderr, "flywheel log: unknown goal %q\n", o.goal)
-			if gs := knownGoals(o.dir); len(gs) > 0 {
-				ids := make([]string, len(gs))
-				for i, g := range gs {
-					ids[i] = g.ID
-				}
-				fmt.Fprintf(os.Stderr, "known goals: %s\n", strings.Join(ids, ", "))
-			}
-			os.Exit(1)
-		}
-	}
 	e.GoalID = o.goal
 	if o.rc != "" {
 		v, err := strconv.ParseInt(o.rc, 10, strconv.IntSize)

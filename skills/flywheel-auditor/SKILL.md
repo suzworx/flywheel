@@ -75,5 +75,5 @@ unit — that is QC's call.
 - `flywheel supervise` — planned (#55); today: read the run files directly.
 - `flywheel explain` / `flywheel context` — planned (#58); today: reconstruct the traveler from
   the briefs, run files and state.
-- `flywheel feedback` — planned (#37-#39); today: file nonconformances in
-  `.flywheel/learnings.md`.
+- `flywheel feedback add` — file a nonconformance as a learning (it is rendered into
+  `.flywheel/learnings.md`; never hand-edit that file).

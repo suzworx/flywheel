@@ -11,7 +11,7 @@ import (
 
 func init() {
 	register("review", "re-run a task's gates and owns check in an isolated worktree", runReview)
-	registerHelp("review", "flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := reviewFlags(); return fs })
+	registerHelp("review", "flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := reviewFlags(); return fs })
 }
 
 // reviewOptions holds the parsed review flags.
@@ -20,6 +20,7 @@ type reviewOptions struct {
 	workdir   string
 	verdict   string
 	session   string
+	model     string
 	note      string
 	checklist repeatable
 }
@@ -33,6 +34,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.StringVar(&o.workdir, "workdir", "", "git working tree to review")
 	fs.StringVar(&o.verdict, "verdict", "", "pass, correct, or reject")
 	fs.StringVar(&o.session, "session", "", "reviewer session, distinct from every worker session")
+	fs.StringVar(&o.model, "model", "", "the reviewer's model, recorded on the reviewed event")
 	fs.StringVar(&o.note, "note", "", "optional review note")
 	fs.Var(&o.checklist, "check", "domain checklist confirmation line (repeatable)")
 	return fs, o
@@ -40,7 +42,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 
 // reviewUsage prints the flywheel review usage line.
 func reviewUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]")
+	fmt.Fprintln(w, "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]")
 }
 
 // runReview implements `flywheel review <task>`: re-run the task's declared
@@ -62,7 +64,7 @@ func runReview(args []string) {
 	}
 	task := pos[0]
 	res, err := flywheel.ReviewTask(o.dir, task, flywheel.ReviewOptions{
-		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Note: o.note,
+		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Model: o.model, Note: o.note,
 		Checklist: o.checklist,
 	})
 	if err != nil {

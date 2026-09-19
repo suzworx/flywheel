@@ -6,12 +6,32 @@ import (
 	"path/filepath"
 )
 
+// PlanMeta is who recorded a planned or amended event and what it links to:
+// the planner's session and model (issue #53), the goal a planned event serves,
+// and an optional note. Empty fields are omitted from the event.
+type PlanMeta struct {
+	Session string
+	Model   string
+	GoalID  string
+	Note    string
+}
+
 // RecordPlanned parses the brief header at brief (resolved against dir when
 // relative) and appends a planned event for task carrying the brief path
 // exactly as given, the whole parsed header, the header's owns and needs
 // arrays (paths stored exactly as given in the header), and the planner
-// persona.
+// persona. The planner's session and model are not recorded (empty); use
+// RecordPlannedBy to record them.
 func RecordPlanned(dir, task, brief string) error {
+	return RecordPlannedBy(dir, task, brief, PlanMeta{})
+}
+
+// RecordPlannedBy parses the brief header at brief (resolved against dir when
+// relative) and appends a planned event for task carrying the brief path
+// exactly as given, the whole parsed header, the header's owns and needs
+// arrays (paths stored exactly as given in the header), the planner persona,
+// and the planner's identity (session, model) and the goal the event links to.
+func RecordPlannedBy(dir, task, brief string, meta PlanMeta) error {
 	header, err := ParseBriefHeader(resolveBriefPath(dir, brief))
 	if err != nil {
 		return fmt.Errorf("read brief %s: %w", brief, err)
@@ -24,30 +44,41 @@ func RecordPlanned(dir, task, brief string) error {
 		Needs:   header.Needs,
 		Header:  &header,
 		Persona: "planner",
+		Session: meta.Session,
+		Model:   meta.Model,
+		GoalID:  meta.GoalID,
+		Note:    meta.Note,
 	})
 }
 
-// RecordAmended resolves the brief path to amend — the one given, or when
+// RecordAmended is RecordAmendedBy without the planner's identity: the
+// amended event carries no session or model.
+func RecordAmended(dir, task, brief, note string) error {
+	return RecordAmendedBy(dir, task, brief, note, PlanMeta{})
+}
+
+// RecordAmendedBy resolves the brief path to amend — the one given, or when
 // empty, task's latest planned-or-amended event's Brief (an error naming the
 // task when neither exists) — reads that file (an error naming it when
 // missing or unreadable), snapshots its current content to
 // .flywheel/briefs/<task>.prev.brief.txt (atomic temp file + rename,
 // replacing an earlier copy), the previous brief text the amendment
 // replaces, then appends the amended event carrying the brief path, the
-// whole parsed header, the header's owns and needs, note, and the planner
-// persona. The dispatch lock is held across the read, the inert-amendment
-// check and the append (issue #272): the same lock file, ordering and
-// timings Run uses, so an amendment and a dispatch serialise instead of each
-// deciding from a ledger missing the other's event. When the task's current
-// attempt was already dispatched and the amendment would change the gate set
-// the attempt is effectively measured against without succeeding in changing
-// it, the amendment is refused as a RuleRefusal before anything is written:
-// a pass is measured against the attempt's effective header, so the
-// amendment would be inert. The fix is a correction delta —
+// whole parsed header, the header's owns and needs, note, the planner
+// persona, and the planner's session and model (issue #53). The dispatch
+// lock is held across the read, the inert-amendment check and the append
+// (issue #272): the same lock file, ordering and timings Run uses, so an
+// amendment and a dispatch serialise instead of each deciding from a ledger
+// missing the other's event. When the
+// task's current attempt was already dispatched and the amendment would
+// change the gate set the attempt is effectively measured against without
+// succeeding in changing it, the amendment is refused as a RuleRefusal before
+// anything is written: a pass is measured against the attempt's effective
+// header, so the amendment would be inert. The fix is a correction delta —
 // `flywheel run <task> --delta <file>` — while amending before dispatch, or
 // changing anything but the gates of a dispatched attempt (widening owns:,
 // fixing prose), still works exactly as before.
-func RecordAmended(dir, task, brief, note string) error {
+func RecordAmendedBy(dir, task, brief, note string, meta PlanMeta) error {
 	// The dispatch lock (issue #272): the log is read, the inert-amendment
 	// check is run and the amended event is appended under
 	// .flywheel/dispatch.lock — the same lock file, the same ordering and
@@ -59,14 +90,14 @@ func RecordAmended(dir, task, brief, note string) error {
 		return err
 	}
 	defer release()
-	return recordAmendedLocked(dir, task, brief, note)
+	return recordAmendedLocked(dir, task, brief, note, meta)
 }
 
-// recordAmendedLocked is RecordAmended's critical section, run under the
+// recordAmendedLocked is RecordAmendedBy's critical section, run under the
 // dispatch lock: resolve the brief path, read and parse the brief, refuse an
 // inert gate amendment, snapshot the current content, and append the amended
 // event.
-func recordAmendedLocked(dir, task, brief, note string) error {
+func recordAmendedLocked(dir, task, brief, note string, meta PlanMeta) error {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return err
@@ -104,6 +135,8 @@ func recordAmendedLocked(dir, task, brief, note string) error {
 		Note:    note,
 		Header:  &header,
 		Persona: "planner",
+		Session: meta.Session,
+		Model:   meta.Model,
 	})
 }
 

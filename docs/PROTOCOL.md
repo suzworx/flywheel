@@ -28,17 +28,18 @@ orders them for replay); the rest — `worker_plan`, `no-plan`, `off-course`, `r
 all.
 
 ### `planned`
-- Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path>`.
+- Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
   needs, needs-state, gates, live-gates, exclusive, review and sha256 — as recorded when the
-  event was appended). `needs`/`owns` only land on the event through `flywheel log --json`; the
-  everyday flag form has no `--needs`/`--owns` flag, so in practice those live in the brief
-  file's own header and are read from there (`ParseBriefHeader`) whenever a command needs them.
-  When `header` is present it is authoritative over the brief file, and `owns`/`needs` are its
-  summary.
+  event was appended), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
+  nothing is appended), and `note`. `owns`/`needs` are copied from the brief header when the event
+  is appended. When `header` is present it is authoritative over the brief file, and `owns`/`needs`
+  are its summary.
 - Effect: `Derive` sets status `planned`. Verify's T1 (`plannedBriefOnly`) uses the task's *latest*
   `planned` event's brief path, deliberately ignoring any `amended` events, as the hash a fresh
-  dispatch must match.
+  dispatch must match. Acceptance criteria belong to the goal (`flywheel goal add --accept CMD`),
+  not to a unit: a planned event links to its goal with `goal_id`.
 
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
@@ -120,9 +121,10 @@ all.
   so a cut-off or failed run can never be mistaken for a done one.
 
 ### `reviewed`
-- Written by: nothing in this codebase today. `flywheel log --task <id> --kind reviewed --verdict
-  pass|correct|reject` remains valid input, and `Derive` still understands it.
-- Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`).
+- Written by: `flywheel review <task> --verdict pass|correct|reject --session S [--model M]`, from
+  an isolated copy of the tree; `flywheel log --kind reviewed` remains valid input.
+- Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`), `session`,
+  `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`).
 - Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`. Unlike
   `inspected`, verify's T8 does not restrict who may write a `reviewed` event — `inspected` (§4) is
   the path every current command actually takes.
@@ -142,15 +144,31 @@ all.
 - Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
 - Carries: `task`, `commit`, `note`.
 - Effect: `Derive` sets status `landed`. Verify's T5 (`ruleT5`) requires an earlier `inspected pass`
-  for the task; `LandTask` itself refuses **live** (exit 6) unless the task's derived status is
-  already `passed`, and refuses to re-land the same task under a different commit than it already
-  recorded.
+  or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6) unless
+  the task's derived status is already `passed` or an exception is provided, and refuses to re-land
+  the same task under a different commit than it already recorded. The read, the checks and the
+  append(s) run under `.flywheel/dispatch.lock` (the lock `run` and `amended` take), so two
+  concurrent landings of one task can never both pass the already-landed check.
+
+### `excepted`
+- Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.
+- Carries: `task`, `commit` (the commit the evidence covers), `session` (the lead), `note` (the
+  evidence), `reason` (the status it overrode). `Validate` requires the note, the session and a
+  valid commit on every write path.
+- Effect: no status change by itself. It is appended in the same single write as the `landed`
+  event it permits (`AppendEvents`), so a failure never leaves an exception without its landing.
+  Verify's T5 accepts a landing on an exception only when the exception names the **same commit**
+  and reports it as "landed on a recorded exception" (a deliberate, visible exception to T5, never
+  a silent bypass). T4 fails an `excepted` event from a worker session (one
+  that wrote the task's `started`, `finished`, `dispatched`, `report` or `worker_plan` event).
 
 ### `amended`
-- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`; a
+- Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
   `--json`-ingested `amended` event lands through the same check.
 - Carries: `task`, `brief`, `header` (the parsed brief header as recorded when the amendment was
-  appended, as for `planned`), optionally `needs`/`owns` (same `--json`-only caveat as `planned`).
+  appended, as for `planned`), `session` and `model` (the planner's identity, recorded as for
+  `planned`), `note`, `persona` (`planner`), and `owns`/`needs` copied from the brief header, as for
+  `planned`. The `--goal` flag is a usage error (exit 2) with `--kind amended`.
 - Effect: `Derive` updates only `brief`/`needs`/`owns` on the task, never its status. Verify's T1
   treats a `dispatched` hash mismatch as explained when an `amended` event for the task falls
   between that dispatch and now.
@@ -331,14 +349,15 @@ gates (exit 5) without touching the log's legality.
   still runs on the ledger's own evidence (it needs no git): a complete reading passes T3, and an
   incomplete one is **inconclusive** (exit 8) rather than a violation — a verifier that cannot see
   the tree must not claim a violation it has not established.
-- **T4 — no self-inspection.** An `inspected` event's `session` must never be a session that wrote
-  that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event. `InspectTask`
-  checks this **before** T3, so a worker-session inspection is refused as T4 even when its readings
-  are also missing.
-- **T5 — no landing without a pass.** A `landed` event needs an earlier `inspected pass` for the
-  same task. `LandTask` additionally refuses to land a task whose derived status is not `passed`,
-  and refuses a second `landed` event for the same task under a different commit than the one
-  already recorded (the same commit is a silent no-op, exit 0).
+- **T4 — no self-inspection.** An `inspected` or `excepted` event's `session` must never be a session
+  that wrote that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event.
+  `InspectTask` checks this **before** T3, so a worker-session inspection is refused as T4 even when
+  its readings are also missing.
+- **T5 — no landing without a pass.** A `landed` event needs an earlier `inspected pass` or a
+  recorded `excepted` event for the same task. `LandTask` additionally refuses to land a task whose
+  derived status is not `passed` (unless an exception is provided), and refuses a second `landed`
+  event for the same task under a different commit than the one already recorded (the same commit is
+  a silent no-op, exit 0).
 - **T8 — personas write only their own kinds.** `validated` and `owns_checked` must carry `persona
   "supervisor"`; `inspected` must carry `"inspector"` or `"lead"`. No other kind is persona-checked
   by this rule (§4 has the full picture, including what is and is not mechanically enforced).
@@ -347,21 +366,24 @@ gates (exit 5) without touching the log's legality.
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, `allow_untriaged`, "by" attribution
-blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the twenty-five kinds in
-`events.go` exist at all — `Validate` rejects any other kind by name, so an event carrying
-`audited` or `signal` today is simply a validation error, not a recognized-but-unchecked record.
+blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the kinds in `events.go`'s
+known-kinds map exist at all — `Validate` rejects any other kind by name, so an event carrying
+`audited` or `allow_untriaged` today is simply a validation error, not a recognized-but-unchecked record.
 Concretely, still design-only:
 
-- **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); nothing reads a
-  `no-plan` event as a rule violation today, and there is no signal kind for it to raise.
+- **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); `flywheel run` now
+  records a `signal` event for `no-plan` and the other conditions, but nothing treats one as a
+  rule violation.
 - **T6** (sensitive domains need the lead's sign-off and an audit before landing) — nothing detects
   a "sensitive domain," and no command asks for a sign-off.
 - **T7** (a wave's first article needs `audited conforms` before the rest lands; an open
   nonconformance stops its kind of task) — there is no `audited` kind, no auditor command, and
   nothing gates landing on it.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
-  there is no `signal`, `dismissed`, or `allow_untriaged` kind, and `flywheel land`/`flywheel
-  handoff` do not check for one.
+  signals are recorded and `flywheel feedback` lists the untriaged ones (a signal is triaged once a
+  later learning on the same task names it with `--signals`; a recurrence after it is untriaged
+  again), but there is no `allow_untriaged` kind and
+  `flywheel land`/`flywheel handoff` do not refuse.
 - **T10** (the log is append-only with a hash chain per shard) — the log is append-only in
   practice (`AppendEvent` only ever opens with `O_APPEND`, and `ParseEvents` treats an unresolved
   git conflict marker as a hard error), but there is no hash chain: nothing computes or checks a
@@ -430,7 +452,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, or T8 and its fix | 2 usage, 1 other error |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
-| `flywheel land <task> --commit <sha>` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 | 2 usage, 1 other error |
+| `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 | 2 usage (e.g., --exception without --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
 `flywheel run`'s own three codes (3, 4, 7) are not part of the repo-wide list: they are

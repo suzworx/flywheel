@@ -123,7 +123,7 @@ extends a shared file whose size a previous brief's gate bounded, amend that bri
 to verify's T1, so validate no longer fails the stale gate.
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
-First choice: `flywheel log --task <id> --kind planned --brief <path>`, then `flywheel run <task>`
+First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
 (attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
 adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,
 or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
@@ -216,7 +216,7 @@ OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \
 ```
 
 - Correct and gate-passing → surface the result; commit **only** if the user asked you to.
-- After merging, run `flywheel land <task> --commit <sha>` to record the landing.
+- After merging, run `flywheel land <task> --commit <sha>` to record the landing. When the gauges cannot run but you verified the unit by hand, land it with `--exception "<what you ran and saw>" --session <your session>`; never use it to skip a failing gate.
 
 ## References
 

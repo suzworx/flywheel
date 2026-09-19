@@ -132,6 +132,7 @@ var kinds = map[string]bool{
 	"learning":        true,
 	"dismissed":       true,
 	"signal":          true,
+	"excepted":        true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -279,6 +280,11 @@ func Validate(e Event) error {
 			return fmt.Errorf("dismissed event must carry a note")
 		}
 	}
+	if e.Kind == "excepted" {
+		if e.Note == "" || e.Session == "" || !CommitOK(e.Commit) {
+			return fmt.Errorf("excepted event must carry a note (the evidence), a session and the commit it covers")
+		}
+	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)
 	}
@@ -378,24 +384,43 @@ func needsNewlinePrefix(path string) (bool, error) {
 // .flywheel/events.jsonl with a single O_APPEND write. If the file ends in a
 // torn (non-newline) byte, the same write is prefixed with a newline.
 func AppendEvent(dir string, e Event) error {
-	if e.Kind == "staffed" && e.Persona == "" {
-		e.Persona = "lead"
+	return AppendEvents(dir, []Event{e})
+}
+
+// AppendEvents appends a batch of events in one write. Every event gets the
+// same defaults and validation as AppendEvent before anything is written, so
+// one invalid event appends none; events without a timestamp share one
+// instant (kindRank orders same-instant kinds); and all the lines go out in
+// a single O_APPEND write. Records that must stand or fall together — an
+// excepted event and the landing it permits — can then never be split by a
+// failure between two separate appends.
+func AppendEvents(dir string, events []Event) error {
+	if len(events) == 0 {
+		return nil
 	}
-	// planned and amended events default to the planner persona, so every
-	// ingestion route — the JSON log path and the generic flag path included —
-	// records who decided. A value already set wins.
-	if (e.Kind == "planned" || e.Kind == "amended") && e.Persona == "" {
-		e.Persona = "planner"
-	}
-	if err := Validate(e); err != nil {
-		return err
-	}
-	if e.TS == "" {
-		e.TS = time.Now().UTC().Format(time.RFC3339Nano)
-	}
-	line, err := marshalEvent(e)
-	if err != nil {
-		return err
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var lines [][]byte
+	for _, e := range events {
+		if e.Kind == "staffed" && e.Persona == "" {
+			e.Persona = "lead"
+		}
+		// planned and amended events default to the planner persona, so every
+		// ingestion route — the JSON log path and the generic flag path included —
+		// records who decided. A value already set wins.
+		if (e.Kind == "planned" || e.Kind == "amended") && e.Persona == "" {
+			e.Persona = "planner"
+		}
+		if err := Validate(e); err != nil {
+			return err
+		}
+		if e.TS == "" {
+			e.TS = now
+		}
+		line, err := marshalEvent(e)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, line)
 	}
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
@@ -412,11 +437,13 @@ func AppendEvent(dir string, e Event) error {
 			return fmt.Errorf("buffer: %w", err)
 		}
 	}
-	if _, err := buf.Write(line); err != nil {
-		return fmt.Errorf("buffer: %w", err)
-	}
-	if _, err := buf.WriteString("\n"); err != nil {
-		return fmt.Errorf("buffer: %w", err)
+	for _, line := range lines {
+		if _, err := buf.Write(line); err != nil {
+			return fmt.Errorf("buffer: %w", err)
+		}
+		if _, err := buf.WriteString("\n"); err != nil {
+			return fmt.Errorf("buffer: %w", err)
+		}
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
