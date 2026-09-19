@@ -56,8 +56,11 @@ func TestScaleFactoryLoop(t *testing.T) {
 		taskID := fmt.Sprintf("L%04d", i)
 		// One brief per task, each owning its own file: concurrent units
 		// with overlapping owns are refused by run (and #322 makes next
-		// aware of it). The real planning path parses the header.
-		brief := "b" + taskID + ".txt"
+		// aware of it). The real planning path parses the header. Briefs
+		// live under .flywheel/briefs/ as flywheel's own do: outside the
+		// unit's tree, so a validation never hashes N brief files (in the
+		// repo root they made the loop quadratic and CI timed out at 1,000).
+		brief := ".flywheel/briefs/" + taskID + ".txt"
 		text := "owns: f" + taskID + ".txt\nneeds: none\ngate: true\n\n# TASK: t\n"
 		if err := os.WriteFile(filepath.Join(dir, brief), []byte(text), 0o644); err != nil {
 			t.Fatalf("write brief %s: %v", brief, err)

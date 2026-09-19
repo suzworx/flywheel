@@ -37,8 +37,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: 1,000-task simulated wave and loop
-        run: go test -count=1 -run 'TestScale' -timeout 30m -v ./internal/flywheel/
+      - name: 1,000-task simulated wave
+        run: go test -count=1 -run 'TestScaleWave' -timeout 30m -v ./internal/flywheel/
+        env:
+          FLYWHEEL_SCALE: "1000"
+      - name: 1,000-task simulated loop (next, run, validate, inspect, land, watch)
+        run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 60m -v ./internal/flywheel/
         env:
           FLYWHEEL_SCALE: "1000"
 
