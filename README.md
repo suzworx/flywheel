@@ -82,7 +82,7 @@ flowchart LR
 ### Set up, run, watch
 
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files
-  (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
+  (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and

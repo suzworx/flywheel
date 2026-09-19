@@ -168,4 +168,14 @@ func runInit(args []string) {
 			fmt.Fprintln(os.Stderr, "!"+p)
 		}
 	}
+
+	fmt.Println()
+	summary, err := flywheel.FactorySummary(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel init: summary: %v\n", err)
+	} else {
+		fmt.Println(summary)
+	}
+
+	fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 }
