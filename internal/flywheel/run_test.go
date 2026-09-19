@@ -195,6 +195,46 @@ func TestRunDispatchedCarriesPromptHeader(t *testing.T) {
 	}
 }
 
+// TestRunDispatchedRecordsHeadAsBase checks issue #332: a dispatch in a git
+// repo records HEAD on the dispatched event so validate can diff against it.
+func TestRunDispatchedRecordsHeadAsBase(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: T1\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	want := headCommit(dir)
+	if want == "" {
+		t.Fatal("HEAD empty")
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Base != want {
+		t.Errorf("dispatched base = %q, want HEAD at dispatch %q", d.Base, want)
+	}
+}
+
 // TestRunResumeModelGateRefusesUnapproved checks L-03: a resume naming a
 // model that differs from the worker's model and is not an approved
 // fallback is refused before any event is read (issue #23).

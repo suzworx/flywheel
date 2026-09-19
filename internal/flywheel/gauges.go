@@ -333,7 +333,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 // recorded on the event (or the path is still absent, for a deletion
 // marker): the lead declared that edit, not the file forever (issue #258).
 func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
-	changed, err := changedPaths(wd)
+	changed, err := changedPathsSince(wd, dispatchBase(events, task))
 	if err != nil {
 		return GaugeResult{}, err
 	}
@@ -699,8 +699,30 @@ func runCmdSplit(wd string, argv, env []string) (rc int, stdout, stderr []byte, 
 // changedPaths lists every path that differs from HEAD plus untracked files,
 // using read-only git commands. Paths are normalised to forward slashes.
 func changedPaths(wd string) ([]string, error) {
+	return changedPathsSince(wd, "")
+}
+
+// dispatchBase returns the first dispatched event's HEAD commit for the task
+// (issue #332). Empty when that event recorded none: the owns check then
+// diffs against current HEAD, matching ledgers from before this field.
+func dispatchBase(events []Event, task string) string {
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" {
+			return e.Base
+		}
+	}
+	return ""
+}
+
+// changedPathsSince lists every path that differs from rev plus untracked
+// files. Empty rev means HEAD. git diff <rev> includes commits after rev, so
+// a worker commit before validate cannot hide an out-of-owns path (#332).
+func changedPathsSince(wd, rev string) ([]string, error) {
+	if rev == "" {
+		rev = "HEAD"
+	}
 	var paths []string
-	diff, err := gitRead(wd, []string{"diff", "--name-only", "HEAD"})
+	diff, err := gitRead(wd, []string{"diff", "--name-only", rev})
 	if err != nil {
 		return nil, err
 	}
