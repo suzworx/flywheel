@@ -146,13 +146,15 @@ var kinds = map[string]bool{
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
-// no-plan, off-course, no-writes, capped, provider-error, stalled, silent and
-// failed-dirty. The last two and no-writes and failed-dirty are still derived
-// states in the factory view; run.go emits the others where it already
-// detects them.
+// no-plan, off-course, no-writes, capped, provider-error, stalled, silent,
+// failed-dirty and git-write. no-writes and failed-dirty are still derived
+// states in the factory view; run.go emits the others where it detects them
+// (git-write when the worktree's git history changed during an attempt,
+// issue #314).
 var Signals = map[string]bool{
 	"no-plan": true, "off-course": true, "no-writes": true, "capped": true,
 	"provider-error": true, "stalled": true, "silent": true, "failed-dirty": true,
+	"git-write": true,
 }
 
 // severities is the set of severities a learning event may carry.
@@ -268,7 +270,7 @@ func Validate(e Event) error {
 			return fmt.Errorf("signal event must carry a signal")
 		}
 		if !Signals[e.Signal] {
-			return fmt.Errorf("signal %q is not one of no-plan, off-course, no-writes, capped, provider-error, stalled, silent, failed-dirty", e.Signal)
+			return fmt.Errorf("signal %q is not one of no-plan, off-course, no-writes, capped, provider-error, stalled, silent, failed-dirty, git-write", e.Signal)
 		}
 	}
 	if e.Signal != "" && e.Kind != "signal" {

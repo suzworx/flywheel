@@ -115,7 +115,9 @@ every unit, with `flywheel supervise` measuring each finished unit nobody has me
 it, selecting first articles and seeded samples
 ([#61](https://github.com/suzworx/flywheel/issues/61)). Enforcement sits in more than one layer:
 the CLI refuses illegal transitions (exit 6), an agent Stop hook runs `flywheel gate`, and git
-hooks check every commit and push (`flywheel init --git-hooks`).
+hooks check every commit and push (`flywheel init --git-hooks`); whatever the worker's adapter,
+`flywheel run` flags an attempt that moved HEAD, switched branch or stashed with a `git-write`
+signal, which blocks landing until the lead triages it.
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state

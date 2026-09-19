@@ -443,6 +443,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(dir)
 
+	// Snapshot the worktree's git history state before the worker runs (issue #314).
+	histBefore, histOK := gitHistoryState(dir)
+
 	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
 	// other worktrees, record each one's changed paths and shas so validate
 	// can catch a worker that edited another checkout instead of staying in
@@ -967,6 +970,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	tokPtr := new(Tokens)
 	*tokPtr = tok
 	runSHA := hex.EncodeToString(hasher.Sum(nil))
+
+	// Check if git history changed during the attempt (issue #314).
+	gitWriteDetected := false
+	histAfter := ""
+	if histOK {
+		h, ok := gitHistoryState(dir)
+		if ok && h != histBefore {
+			gitWriteDetected = true
+			histAfter = h
+			gitChangeNote := "git history changed during the attempt: " + histBefore + " -> " + h
+			if note != "" {
+				note += "; " + gitChangeNote
+			} else {
+				note = gitChangeNote
+			}
+		}
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
@@ -974,6 +995,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+
+	// Record git-write signal if history changed.
+	if gitWriteDetected {
+		if err := recordSignal(dir, o.Task, attempt, session, "git-write", runRel); err != nil {
+			return Result{}, err
+		}
+		progress(o.Progress, o.Task+" "+attempt+" git-write: the worker changed git history ("+histBefore+" -> "+histAfter+"); workers never commit, stash, reset, checkout or push")
+	}
+
 	switch reason {
 	case "length":
 		if err := recordSignal(dir, o.Task, attempt, session, "capped", runRel); err != nil {
