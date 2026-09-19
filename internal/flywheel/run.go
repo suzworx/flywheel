@@ -443,6 +443,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(dir)
 
+	// Snapshot the worktree's git history state before the worker runs (issue #314).
+	histBefore, histOK := gitHistoryState(dir)
+
 	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
 	// other worktrees, record each one's changed paths and shas so validate
 	// can catch a worker that edited another checkout instead of staying in
@@ -562,8 +565,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			note = startNote
 		}
 		stopRenewer()
-		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: note, SHA256: runSHA}); aerr == nil {
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: joinNote(note, gitNote), SHA256: runSHA}); aerr == nil {
 			progress(o.Progress, o.Task+" "+attempt+" finished rc=1 reason="+reason+" note="+note)
+			if gitWrote {
+				_ = flagGitWrite(dir, o.Task, attempt, "", runRel, gitNote, o.Progress)
+			}
 			_ = RemoveLease(dir, o.Task, attempt)
 		}
 		_, _ = WriteState(dir)
@@ -859,11 +866,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: note, SHA256: runSHA, Wrote: wrote}); err != nil {
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
 			return Result{}, err
+		}
+		if gitWrote {
+			if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+				return Result{}, err
+			}
 		}
 		line := o.Task + " " + attempt + " finished rc=-1 reason=silent model=" + model
 		if note != "" {
@@ -894,14 +907,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			_ = cmd.Wait()
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
+		gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "stalled", runRel); err != nil {
 			return Result{}, err
+		}
+		if gitWrote {
+			if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+				return Result{}, err
+			}
 		}
 		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=stalled model=%s steps=%d", o.Task, attempt, model, steps))
 		if wl := wroteProgressLine(o.Task, attempt, "stalled", wrote); wl != "" {
@@ -971,6 +990,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	tokPtr := new(Tokens)
 	*tokPtr = tok
 	runSHA := hex.EncodeToString(hasher.Sum(nil))
+
+	// Did the worker change git history? Every exit path runs the same check
+	// before its finished event (issue #314, #318 review).
+	gitWrote, gitNote := gitWriteNote(dir, histBefore, histOK)
+	note = joinNote(note, gitNote)
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
@@ -978,6 +1003,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+
+	if gitWrote {
+		if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+			return Result{}, err
+		}
+	}
+
 	switch reason {
 	case "length":
 		if err := recordSignal(dir, o.Task, attempt, session, "capped", runRel); err != nil {
@@ -1293,6 +1325,16 @@ func progress(w io.Writer, line string) {
 // session when known, and the run file as Path so the evidence is one field
 // away. The caller records it after the event that detected the condition, so
 // the log reads in causal order, and only once per condition per attempt.
+// flagGitWrite records the git-write signal for an attempt whose git history
+// changed and says so on the progress stream (issue #314).
+func flagGitWrite(dir, task, attempt, session, runRel, note string, w io.Writer) error {
+	if err := recordSignal(dir, task, attempt, session, "git-write", runRel); err != nil {
+		return err
+	}
+	progress(w, task+" "+attempt+" git-write: "+note+"; workers never commit, stash, reset, checkout or push")
+	return nil
+}
+
 func recordSignal(dir, task, attempt, session, condition, runRel string) error {
 	return AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "signal", Signal: condition,
