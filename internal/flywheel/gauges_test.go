@@ -985,6 +985,50 @@ func TestValidateOtherWorktreePassedTaskAttributed(t *testing.T) {
 	}
 }
 
+// TestValidateOtherWorktreePlannedOnlyTaskNotAttributed checks a sibling task
+// that was planned but never dispatched attributes nothing: it never ran, so a
+// change to a path its brief declares stays outside (issue #278 review).
+func TestValidateOtherWorktreePlannedOnlyTaskNotAttributed(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	wt := t.TempDir()
+	if _, err := Init(wt, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	initRepo(t, wt)
+	if err := os.WriteFile(filepath.Join(wt, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "B-brief.txt"), []byte("owns: theirs.go\nneeds: none\ngate: exit 0\n\n# TASK: B\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if err := AppendEvent(wt, Event{TS: "2026-09-12T00:30:00Z", Task: "B", Kind: "planned", Brief: "B-brief.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned B error = %v", err)
+	}
+	git(t, wt, []string{"add", "-A"})
+	git(t, wt, []string{"commit", "-m", "B brief"})
+	dispatchedWithWorktree(t, dir, wt)
+	if err := os.WriteFile(filepath.Join(wt, "theirs.go"), []byte("package b\n"), 0o644); err != nil {
+		t.Fatalf("write theirs.go: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if res.OwnsOK || res.OK() {
+		t.Errorf("OwnsOK = %v, want false (B was only planned, never dispatched)", res.OwnsOK)
+	}
+	want := wt + ": theirs.go"
+	if len(res.Outside) != 1 || res.Outside[0] != want {
+		t.Errorf("outside = %v, want [%s]", res.Outside, want)
+	}
+	if len(res.Attributed) != 0 {
+		t.Errorf("attributed = %v, want nothing", res.Attributed)
+	}
+}
+
 // TestValidateOtherWorktreeNeedsCorrectionTaskAttributed checks a changed
 // path in a sibling worktree whose own task needs correction (reviewed,
 // not yet landed) still lands in Attributed as "<worktree>: <path> ->

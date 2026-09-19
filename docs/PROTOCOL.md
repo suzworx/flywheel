@@ -236,10 +236,10 @@ working exactly as before.
   attributed paths as `<task> owns: attributed <path> -> <task>[, ...]` before the outside line.
 - In a **sibling worktree** (another git worktree of the same repository, compared against the
   dispatch-time snapshot), a changed path is attributed to a task of THAT worktree's own ledger
-  whose brief owns it and which has not landed (any status except `landed`) — its own ledger is the
-  authority for its own worktree, and a unit that passed inspection still owns the uncommitted
-  edits made in its worktree afterwards (issue #278). A path no not-yet-landed task there owns is
-  still `outside`.
+  whose brief owns it, which was dispatched, and which has not landed (any status except `landed`)
+  — its own ledger is the authority for its own worktree, and a unit that passed inspection still
+  owns the uncommitted edits made in its worktree afterwards (issue #278). A task that was only
+  planned never ran and attributes nothing; a path no such task owns is still `outside`.
 
 ### `inspected`
 - Written by: the CLI only, via `flywheel inspect <task> --verdict ... --session ...`.
