@@ -41,20 +41,8 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		return AuditResult{}, err
 	}
 
-	// T4: independence check. The auditor's session must not have planned,
-	// amended, dispatched, started, worker_plan, report, finished, inspected
-	// or reviewed the task.
-	for _, e := range events {
-		if e.Task != task || e.Session != o.Session {
-			continue
-		}
-		switch e.Kind {
-		case "planned", "amended", "dispatched", "started", "worker_plan", "report", "finished", "inspected", "reviewed":
-			return AuditResult{}, &RuleRefusal{
-				Rule: "T4",
-				Fix:  fmt.Sprintf("session %q planned, built or inspected task %s; an audit must come from an independent session", o.Session, task),
-			}
-		}
+	if r := auditIndependence(events, task, o.Session); r != nil {
+		return AuditResult{}, r
 	}
 
 	// Task must have events.
@@ -76,6 +64,14 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 	}
 
 	var findings []string
+
+	// The tree this audit measures, captured before the clean copy is made;
+	// re-checked before recording, so the verdict never names a tree it did
+	// not measure (#301 review).
+	tree, err := treeHash(workdir)
+	if err != nil {
+		return AuditResult{}, err
+	}
 
 	// Re-measure gates in a clean copy.
 	tmp, err := isolateWorktree(workdir)
@@ -100,15 +96,19 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		return AuditResult{}, err
 	}
 	for _, item := range verifyRes.Items {
-		if !item.Pass && !item.Inconclusive {
+		switch {
+		case item.Inconclusive:
+			// An audit that cannot establish a check does not pass it.
+			findings = append(findings, fmt.Sprintf("record %s could not be established: %s", item.Rule, item.Reason))
+		case !item.Pass:
 			findings = append(findings, fmt.Sprintf("record %s: %s", item.Rule, item.Reason))
 		}
 	}
 
-	// Get tree hash.
-	tree, err := treeHash(workdir)
-	if err != nil {
+	if after, err := treeHash(workdir); err != nil {
 		return AuditResult{}, err
+	} else if after != tree {
+		return AuditResult{}, fmt.Errorf("the tree changed during the audit (%s -> %s); nothing was recorded, rerun it on a quiet tree", short(tree), short(after))
 	}
 
 	if findings == nil {
@@ -132,6 +132,14 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		}
 	}
 
+	// Independence again, right before recording: the session may have
+	// acted on the unit while the gates ran (#301 review).
+	if fresh, err := ReadEvents(o.Dir); err != nil {
+		return AuditResult{}, err
+	} else if r := auditIndependence(fresh, task, o.Session); r != nil {
+		return AuditResult{}, r
+	}
+
 	// Append the audited event.
 	if err := AppendEvent(o.Dir, Event{
 		Task: task, Kind: "audited", Verdict: verdict, Session: o.Session, Tree: tree, Note: note, Persona: "auditor",
@@ -140,12 +148,34 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		return AuditResult{}, err
 	}
 
-	// Refresh derived state.
-	_, _ = WriteState(o.Dir)
+	// Refresh derived state; the audit is recorded either way, but a stale
+	// state file must not be reported as success (#301 review).
+	if _, err := WriteState(o.Dir); err != nil {
+		return AuditResult{}, fmt.Errorf("audit recorded, but refreshing state failed: %w", err)
+	}
 
 	return AuditResult{
 		Verdict:  verdict,
 		Tree:     tree,
 		Findings: findings,
 	}, nil
+}
+
+// auditIndependence refuses (T4) an audit from a session that planned,
+// amended, built, inspected or reviewed the task: an audit is only worth
+// something from a session that neither made nor judged the unit.
+func auditIndependence(events []Event, task, session string) *RuleRefusal {
+	for _, e := range events {
+		if e.Task != task || e.Session != session {
+			continue
+		}
+		switch e.Kind {
+		case "planned", "amended", "dispatched", "started", "worker_plan", "report", "finished", "inspected", "reviewed":
+			return &RuleRefusal{
+				Rule: "T4",
+				Fix:  fmt.Sprintf("session %q planned, built or inspected task %s; an audit must come from an independent session", session, task),
+			}
+		}
+	}
+	return nil
 }

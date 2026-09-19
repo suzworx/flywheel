@@ -181,7 +181,12 @@ all.
 ### `audited`
 - Written by: `flywheel audit <task> --session S`, from a session that did not plan, build or inspect the unit.
 - Carries: `task`, `verdict` (`conforms` / `nonconformance`), `session`, `tree`, `note` (the findings), `persona` (`auditor`).
-- Effect: no status change. `Derive` ignores it. T7 gating is not implemented.
+- Effect: no status change, and its verdict never replaces the unit's QC verdict in derived state.
+  The `tree` is the one the gates were re-run on: captured before the clean copy is made and
+  re-checked before recording (a tree that changed mid-audit records nothing). A record check that
+  cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
+  The auditor's independence is checked again right before the event is appended. T7 gating is not
+  implemented.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a

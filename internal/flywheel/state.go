@@ -230,7 +230,9 @@ func Derive(events []Event) State {
 		if e.RC != nil {
 			ts.RC = e.RC
 		}
-		if e.Verdict != "" {
+		// An audit's verdict describes the audit, not the unit's QC state:
+		// it never replaces the inspector's or reviewer's verdict (#301 review).
+		if e.Verdict != "" && e.Kind != "audited" {
 			ts.Verdict = e.Verdict
 		}
 		if e.Reason != "" {

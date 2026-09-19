@@ -120,6 +120,21 @@ func TestAuditFailingGateIsNonconformance(t *testing.T) {
 	}
 }
 
+// TestAuditDoesNotOverwriteVerdict checks an audited event leaves the unit's
+// derived QC verdict alone (#301 review).
+func TestAuditDoesNotOverwriteVerdict(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "insp", Persona: "inspector"},
+		{TS: "2026-09-18T10:02:00Z", Task: "T1", Kind: "audited", Verdict: "nonconformance", Session: "aud", Persona: "auditor"},
+	}
+	for _, ts := range Derive(events).Tasks {
+		if ts.ID == "T1" && ts.Verdict != "pass" {
+			t.Errorf("derived verdict = %q, want the inspector's pass", ts.Verdict)
+		}
+	}
+}
+
 func TestAuditValidateRejectsBadVerdict(t *testing.T) {
 	err := Validate(Event{Task: "T1", Kind: "audited", Session: "a", Verdict: "maybe"})
 	if err == nil {
