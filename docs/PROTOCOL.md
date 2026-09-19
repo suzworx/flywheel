@@ -360,6 +360,11 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   content does not hash to the recorded `baseline` value: an unbound claim (no entry for the path)
   never excuses anything. The owns check re-reads the event log immediately before attributing, so
   a claim appended while the gates ran still qualifies for that reading.
+- Sibling worktrees (issue #339): a path changed in another worktree recorded at the unit's
+  dispatch, owned by no in-flight unit's brief there, is attributed `"<worktree>: <path> -> lead
+  <session>"` when that worktree's own ledger has a `lead_edit` claim covering it under the same
+  three guards (the worker-session guard against each of that worktree's in-flight units), and only
+  while that worktree still has a dispatched, unlanded unit.
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.
