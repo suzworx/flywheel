@@ -3523,3 +3523,23 @@ func TestRunBudgetBelowCapDispatches(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
+
+// TestRunLimitsPerHostCountsSameTask checks a second fresh run of a task that
+// is already running counts toward limits.per_host: it is another attempt on
+// the host (#293 review).
+func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	cfg.Limits.PerHost = 1
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T1: %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "limits" {
+		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='limits' for a second attempt of a running task", err)
+	}
+}

@@ -252,7 +252,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if cfg.Limits.PerHost > 0 {
 		inFlight := 0
 		for _, ts := range Derive(events).Tasks {
-			if ts.ID != o.Task && (ts.Status == "dispatched" || ts.Status == "running") {
+			// Every task in flight counts, this one included: a second fresh
+			// run of a task already running is another attempt on the host
+			// (a correction dispatches from needs-correction, not in flight).
+			if ts.Status == "dispatched" || ts.Status == "running" {
 				inFlight++
 			}
 		}
