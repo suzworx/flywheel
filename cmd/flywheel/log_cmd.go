@@ -103,20 +103,32 @@ func logShardConflicts(o *logOptions) error {
 // version (a line containing "version:" under the flywheel action/step, or
 // any "flywheel@v" reference): an older binary in CI verifies only the
 // legacy file.
-func runLogShard(dir string, stdout, stderr io.Writer) error {
-	sealed, legacyLines, err := flywheel.EnableShards(dir, time.Now())
-	if err != nil {
-		return err
-	}
+func runLogShard(dir string, stdout, stderr io.Writer, now time.Time) error {
+	// Everything that can fail happens BEFORE the layout changes: a config
+	// that does not parse, a config that cannot be written, or an ignore file
+	// that cannot be updated must not leave a migrated repository without its
+	// fence (#351 review). The config is restored when the migration fails.
 	cfg, _, err := flywheel.LoadConfig(dir)
 	if err != nil {
 		return err
 	}
+	if err := flywheel.EnsureLocksIgnored(dir); err != nil {
+		return err
+	}
+	had := cfg.Log
 	if cfg.Log == nil {
 		cfg.Log = &flywheel.LogConfig{}
 	}
 	cfg.Log.Shards = true
 	if err := flywheel.WriteConfig(dir, cfg); err != nil {
+		return err
+	}
+	sealed, legacyLines, err := flywheel.EnableShards(dir, now)
+	if err != nil {
+		cfg.Log = had
+		if werr := flywheel.WriteConfig(dir, cfg); werr != nil {
+			return fmt.Errorf("%w (and restoring the config failed: %v)", err, werr)
+		}
 		return err
 	}
 	if sealed {
@@ -138,7 +150,13 @@ var pinnedFlywheel = regexp.MustCompile(`flywheel@v?[0-9]`)
 // that binary may be older than the shards and would verify only the legacy
 // log, reporting a pass over records it cannot see.
 func warnPinnedAuditWorkflow(dir string, stderr io.Writer) {
-	auditPath := filepath.Join(dir, ".github", "workflows", "flywheel-audit.yml")
+	// The workflow lives at the repository root, which a nested factory does
+	// not share (#351 review); fall back to dir when git cannot say.
+	root := dir
+	if r, err := flywheel.RepoRoot(dir); err == nil {
+		root = r
+	}
+	auditPath := filepath.Join(root, ".github", "workflows", "flywheel-audit.yml")
 	b, err := os.ReadFile(auditPath)
 	if err != nil {
 		return // no audit workflow, or unreadable: nothing to warn about
@@ -272,7 +290,7 @@ func runLog(args []string) {
 			usage(os.Stderr)
 			os.Exit(2)
 		}
-		if err := runLogShard(o.dir, os.Stdout, os.Stderr); err != nil {
+		if err := runLogShard(o.dir, os.Stdout, os.Stderr, time.Now()); err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
 			os.Exit(1)
 		}

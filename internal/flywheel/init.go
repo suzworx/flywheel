@@ -451,11 +451,64 @@ func IgnoredStateFiles(dir string) []string {
 			ignored = append(ignored, p)
 		}
 	}
-	shardedPath := filepath.ToSlash(filepath.Join(".flywheel", "events", "@floor.jsonl"))
-	if gitIgnores(dir, shardedPath) {
-		ignored = append(ignored, shardedPath)
+	// The shards: the floor shard always, and every shard that exists (up to
+	// a bound), because an ignore rule can name one file and leave the rest
+	// visible (#351 review).
+	probes := []string{filepath.ToSlash(filepath.Join(".flywheel", "events", "@floor.jsonl"))}
+	if entries, err := os.ReadDir(filepath.Join(dir, ".flywheel", "events")); err == nil {
+		for _, e := range entries {
+			if len(probes) >= maxShardProbes {
+				break
+			}
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") || e.Name() == floorShard {
+				continue
+			}
+			probes = append(probes, filepath.ToSlash(filepath.Join(".flywheel", "events", e.Name())))
+		}
+	}
+	for _, p := range probes {
+		if gitIgnores(dir, p) {
+			ignored = append(ignored, p)
+		}
 	}
 	return ignored
+}
+
+// maxShardProbes bounds how many shard files IgnoredStateFiles asks git
+// about: enough to catch a rule that hides them, cheap on a large factory.
+const maxShardProbes = 20
+
+// EnsureLocksIgnored adds a "locks/" line to an existing .flywheel/.gitignore
+// when it has none, so a migrated repository ignores the transient shard
+// locks the way a fresh one does (#351 review). A missing file is left to
+// Init; the file's existing content and newline style are kept.
+func EnsureLocksIgnored(dir string) error {
+	p := filepath.Join(dir, ".flywheel", ".gitignore")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", p, err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(strings.TrimSuffix(line, "\r")) == "locks/" {
+			return nil
+		}
+	}
+	nl := "\n"
+	if strings.Contains(string(b), "\r\n") {
+		nl = "\r\n"
+	}
+	out := string(b)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += nl
+	}
+	out += "locks/" + nl
+	if err := os.WriteFile(p, []byte(out), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", p, err)
+	}
+	return nil
 }
 
 // IgnoreMarkdown ensures the root .gitignore in dir contains an exact

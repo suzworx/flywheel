@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -167,7 +168,7 @@ func TestLogShardSealsAndMarksConfig(t *testing.T) {
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
 		{Task: "t1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt"},
 	}, true)
-	err := runLogShard(dir, os.Stdout, os.Stderr)
+	err := runLogShard(dir, os.Stdout, os.Stderr, shardTestClock)
 	if err != nil {
 		t.Fatalf("runLogShard() error = %v", err)
 	}
@@ -190,11 +191,11 @@ func TestLogShardIdempotent(t *testing.T) {
 	appendEvents(dir, []flywheel.Event{
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
 	}, true)
-	if err := runLogShard(dir, os.Stdout, os.Stderr); err != nil {
+	if err := runLogShard(dir, os.Stdout, os.Stderr, shardTestClock); err != nil {
 		t.Fatalf("first runLogShard() error = %v", err)
 	}
 	var buf strings.Builder
-	if err := runLogShard(dir, &buf, os.Stderr); err != nil {
+	if err := runLogShard(dir, &buf, os.Stderr, shardTestClock); err != nil {
 		t.Fatalf("second runLogShard() error = %v", err)
 	}
 	output := buf.String()
@@ -240,7 +241,7 @@ func TestLogShardWarnsOnPinnedAuditWorkflow(t *testing.T) {
 		t.Fatalf("write workflow: %v", err)
 	}
 	var stderrBuf strings.Builder
-	if err := runLogShard(dir, os.Stdout, &stderrBuf); err != nil {
+	if err := runLogShard(dir, os.Stdout, &stderrBuf, shardTestClock); err != nil {
 		t.Fatalf("runLogShard() error = %v", err)
 	}
 	stderr := stderrBuf.String()
@@ -259,7 +260,7 @@ func TestInitShardCreatesShardedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
 	}
-	if err := runLogShard(path, os.Stdout, os.Stderr); err != nil {
+	if err := runLogShard(path, os.Stdout, os.Stderr, shardTestClock); err != nil {
 		t.Fatalf("runLogShard() error = %v", err)
 	}
 	layout, err := flywheel.ShardedLayout(path)
@@ -268,5 +269,78 @@ func TestInitShardCreatesShardedRepo(t *testing.T) {
 	}
 	if !layout {
 		t.Errorf("ShardedLayout() = false, want true")
+	}
+}
+
+// shardTestClock is the fixed instant the migration tests stamp seals with.
+var shardTestClock = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+
+// TestLogShardKeepsLayoutWhenConfigFails checks that nothing irreversible
+// happens when the config cannot be read: the fence must never be missing
+// from a migrated repository (#351 review).
+func TestLogShardKeepsLayoutWhenConfigFails(t *testing.T) {
+	dir := t.TempDir()
+	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := runLogShard(dir, os.Stdout, os.Stderr, shardTestClock); err == nil {
+		t.Fatal("runLogShard() succeeded with a malformed config, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "events")); !os.IsNotExist(err) {
+		t.Errorf("the layout changed although the config could not be read (stat err = %v)", err)
+	}
+}
+
+// TestLogShardAddsLocksToExistingGitignore checks that a migrated repository
+// ignores the transient shard locks (#351 review).
+func TestLogShardAddsLocksToExistingGitignore(t *testing.T) {
+	dir := t.TempDir()
+	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
+	ignore := filepath.Join(dir, ".flywheel", ".gitignore")
+	if err := os.WriteFile(ignore, []byte("runs/\nworktrees/\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	for i := 0; i < 2; i++ { // idempotent
+		if err := runLogShard(dir, os.Stdout, os.Stderr, shardTestClock); err != nil {
+			t.Fatalf("runLogShard() error = %v", err)
+		}
+	}
+	b, err := os.ReadFile(ignore)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if got := strings.Count(string(b), "locks/"); got != 1 {
+		t.Errorf(".gitignore = %q, want exactly one locks/ line", b)
+	}
+	if !strings.Contains(string(b), "runs/") || !strings.Contains(string(b), "worktrees/") {
+		t.Errorf(".gitignore = %q, want the existing rules kept", b)
+	}
+}
+
+// TestLogShardWarnsForNestedFactory checks that the pinned-CI warning finds
+// the workflow at the repository root, not under a nested factory (#351
+// review).
+func TestLogShardWarnsForNestedFactory(t *testing.T) {
+	root := t.TempDir()
+	gitInitRepo(t, root)
+	workflows := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(workflows, 0o755); err != nil {
+		t.Fatalf("mkdir workflows: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workflows, "flywheel-audit.yml"), []byte("go install github.com/suzworx/flywheel/cmd/flywheel@v0.17.0\n"), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	nested := filepath.Join(root, "services", "api")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	appendEvents(nested, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
+	var stderrBuf strings.Builder
+	if err := runLogShard(nested, os.Stdout, &stderrBuf, shardTestClock); err != nil {
+		t.Fatalf("runLogShard() error = %v", err)
+	}
+	if !strings.Contains(stderrBuf.String(), "pins a flywheel release") {
+		t.Errorf("stderr = %q, want the pinned-release warning for the root workflow", stderrBuf.String())
 	}
 }

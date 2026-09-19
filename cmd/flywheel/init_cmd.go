@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -197,7 +198,7 @@ func runInit(args []string) {
 	}
 
 	if o.shard {
-		if err := runLogShard(o.dir, os.Stdout, os.Stderr); err != nil {
+		if err := runLogShard(o.dir, os.Stdout, os.Stderr, time.Now()); err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
 			os.Exit(1)
 		}
