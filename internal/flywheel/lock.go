@@ -3,9 +3,12 @@ package flywheel
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -92,7 +95,7 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 			_ = f.Close()
 			return repoLockRelease(p, token, timings.heartbeat), nil
 		}
-		if !os.IsExist(oerr) {
+		if !os.IsExist(oerr) && !lockBusyOnWindows(oerr) {
 			return nil, fmt.Errorf("create %s: %w", p, oerr)
 		}
 		if info, serr := os.Stat(p); serr == nil && now().Sub(info.ModTime()) > timings.staleAfter {
@@ -100,7 +103,7 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 			if rerr := os.Rename(p, stale); rerr == nil {
 				_ = os.Remove(stale)
 				continue
-			} else if !os.IsNotExist(rerr) {
+			} else if !os.IsNotExist(rerr) && !lockBusyOnWindows(rerr) {
 				return nil, fmt.Errorf("clear stale lock %s: %w", p, rerr)
 			}
 		}
@@ -168,4 +171,14 @@ func repoLockToken() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// lockBusyOnWindows reports whether err is Windows' answer to touching a lock
+// file another holder is deleting at that moment: an exclusive create or a
+// rename racing a pending delete fails with "Access is denied" instead of
+// "file exists". That is contention, not a real permission problem, so the
+// caller retries until its deadline; on every other OS a permission error
+// stays fatal.
+func lockBusyOnWindows(err error) bool {
+	return runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission)
 }
