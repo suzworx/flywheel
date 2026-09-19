@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/term"
@@ -18,6 +20,9 @@ type TUIIO struct {
 	Size  func() (width, height int)
 	Out   io.Writer
 	Color bool
+	// Stop ends the loop cleanly when it is closed or receives (a signal
+	// from another process, #346 review); nil never stops.
+	Stop <-chan struct{}
 }
 
 // RunTUILoop drives the interactive factory until the model quits or Keys is
@@ -25,7 +30,8 @@ type TUIIO struct {
 // fetch again when the drill-down it Wants changed) or a tick (fetch again),
 // and draw again. Each frame is written as "\x1b[H" + View(...) with every
 // line ended by "\x1b[K" (clear to end of line) and the frame followed by
-// "\x1b[J" (clear below). A fetch error ends the loop with that error.
+// "\x1b[J" (clear below). A fetch error ends the loop with that error; a
+// quit key or Stop ends it at once, without another fetch.
 func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	m := NewTUI()
 	for {
@@ -59,8 +65,15 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 				return nil
 			}
 			m.Update(k, data)
+			if m.Quit() {
+				// No refresh on the way out: a failing read must not turn a
+				// clean quit into an error (#346 review).
+				return nil
+			}
 		case <-tio.Ticks:
 			// Tick: fetch again.
+		case <-tio.Stop:
+			return nil
 		}
 	}
 }
@@ -139,23 +152,40 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 // term.NewReader(stdin, 0).ReadKey() into Keys (closing it on error), a
 // time.Ticker at interval for Ticks, Size from term.Size(stdout) (80x24 on
 // error), Color from term.EnableVT(stdout). It restores the terminal mode,
-// cursor and screen on every return path, a panic included (defer).
-func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time) error {
-	// Set up terminal.
+// cursor and screen on every return path, a panic included (defer), and on
+// SIGINT or SIGTERM from another process, which stop the loop instead of
+// killing the process with the terminal still raw (#346 review). A failed
+// restoration is returned when nothing else failed first.
+func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time) (err error) {
 	restore, err := term.MakeRaw(stdin)
 	if err != nil {
-		return err
+		return fmt.Errorf("raw mode on %s: %w", stdin.Name(), err)
 	}
 	defer func() {
-		if restore != nil {
-			_ = restore()
+		if rerr := restore(); rerr != nil && err == nil {
+			err = fmt.Errorf("restore the terminal mode: %w", rerr)
 		}
 	}()
 
-	// Enter alternate screen and hide cursor.
-	fmt.Fprint(stdout, "\x1b[?1049h\x1b[?25l")
+	// Enter alternate screen and hide cursor; leave both on the way out.
+	if _, err := fmt.Fprint(stdout, "\x1b[?1049h\x1b[?25l"); err != nil {
+		return fmt.Errorf("enter the alternate screen: %w", err)
+	}
 	defer func() {
-		fmt.Fprint(stdout, "\x1b[?25h\x1b[?1049l")
+		if _, werr := fmt.Fprint(stdout, "\x1b[?25h\x1b[?1049l"); werr != nil && err == nil {
+			err = fmt.Errorf("leave the alternate screen: %w", werr)
+		}
+	}()
+
+	// A signal from another process stops the loop so the defers run.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	stop := make(chan struct{})
+	go func() {
+		if _, ok := <-sigs; ok {
+			close(stop)
+		}
 	}()
 
 	// Set up input channel.
@@ -189,6 +219,7 @@ func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func
 		},
 		Out:   stdout,
 		Color: term.EnableVT(stdout),
+		Stop:  stop,
 	}
 	return RunTUILoop(tio, TUIFetcher(dir, now))
 }

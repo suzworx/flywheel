@@ -233,3 +233,44 @@ func TestTUILiveFetcherLog(t *testing.T) {
 		t.Errorf("Events has %d lines, want >= 3", len(data.Events))
 	}
 }
+
+// TestTUILiveQuitDoesNotRefetch checks that q ends the loop without another
+// fetch, so a failing read on the way out cannot turn a clean quit into an
+// error (#346 review).
+func TestTUILiveQuitDoesNotRefetch(t *testing.T) {
+	keys := make(chan term.Key, 1)
+	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+	calls := 0
+	fetch := func(m *TUI) (TUIData, error) {
+		calls++
+		if calls > 1 {
+			return TUIData{}, errors.New("log is being rotated")
+		}
+		return makeTestTUIData(), nil
+	}
+	tio := TUIIO{Keys: keys, Size: func() (int, int) { return 80, 20 }, Out: &bytes.Buffer{}}
+	if err := RunTUILoop(tio, fetch); err != nil {
+		t.Errorf("RunTUILoop() = %v, want nil after q", err)
+	}
+	if calls != 1 {
+		t.Errorf("fetch called %d times, want 1", calls)
+	}
+}
+
+// TestTUILiveStopEndsLoop checks that closing Stop (a signal from another
+// process) ends the loop cleanly so RunTUI's restoration runs (#346 review).
+func TestTUILiveStopEndsLoop(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	tio := TUIIO{Keys: make(chan term.Key), Size: func() (int, int) { return 80, 20 }, Out: &bytes.Buffer{}, Stop: stop}
+	done := make(chan error, 1)
+	go func() { done <- RunTUILoop(tio, func(m *TUI) (TUIData, error) { return makeTestTUIData(), nil }) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("RunTUILoop() = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunTUILoop did not stop")
+	}
+}
