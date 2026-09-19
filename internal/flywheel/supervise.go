@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -26,10 +27,36 @@ type SupervisedTask struct {
 // its latest finish; see measureTargets.
 func NeedsMeasuring(events []Event) []string {
 	var out []string
-	for _, m := range measureTargets(events) {
+	for _, m := range measureTargets("", events) {
 		out = append(out, m.task)
 	}
 	return out
+}
+
+// ownedPathsChanged reports whether any path in owns differs between the git
+// tree readingTree (the tree a reading measured) and curTree (dir's current
+// tree as treeHash computes it, flywheel's own bookkeeping excluded). An empty
+// curTree, a tree git cannot read, or any git error counts as "changed", so a
+// unit is re-measured rather than silently trusted. Paths are read NUL-
+// delimited (-z), so git never quotes an unusual file name (#303 review).
+func ownedPathsChanged(dir, readingTree, curTree string, owns []string) bool {
+	if curTree == "" {
+		return true
+	}
+	if curTree == readingTree {
+		return false
+	}
+	// No GIT_INDEX_FILE override: diff-tree compares two trees and reads no index.
+	rc, out, _, err := runCmdSplit(dir, gitArgs([]string{"diff-tree", "-r", "-z", "--name-only", readingTree, curTree}), nil)
+	if err != nil || rc != 0 {
+		return true
+	}
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" && ownsContains(owns, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // measureTarget is one task a supervise pass must measure, with the attempt
@@ -39,31 +66,23 @@ type measureTarget struct {
 	attempt string
 }
 
-// measureTargets returns, sorted by task, every finished task whose current
-// attempt has no COMPLETE validate pass since its latest finish. A pass is
-// complete once it has recorded owns_checked (its last record), so an
-// interrupted pass that recorded only some gates is measured again (#298
-// review). The attempt is the derived current one, or — when the ledger never
-// recorded a dispatch — the attempt of the newest finish; "latest" means the
-// newest timestamp, never the last line, so an out-of-order ledger cannot
-// make a stale reading count.
-func measureTargets(events []Event) []measureTarget {
+// measureTargets returns, sorted by task, every task that needs measuring:
+// every finished task whose current attempt has no COMPLETE validate pass
+// since its latest finish, and every passed or needs-correction task whose
+// owned files changed since its reading. A pass is complete once it has
+// recorded owns_checked (its last record), so an interrupted pass that
+// recorded only some gates is measured again (#298 review). The attempt is the
+// derived current one, or — when the ledger never recorded a dispatch — the
+// attempt of the newest finish; "latest" means the newest timestamp, never the
+// last line, so an out-of-order ledger cannot make a stale reading count.
+// When dir is "", the passed-unit re-measurement check is skipped.
+func measureTargets(dir string, events []Event) []measureTarget {
 	var out []measureTarget
 	for _, ts := range Derive(events).Tasks {
 		if ts.Status != "finished" {
 			continue
 		}
-		cur := ts.Attempt
-		if cur == "" {
-			var newest time.Time
-			for _, e := range events {
-				if e.Task == ts.ID && e.Kind == "finished" {
-					if t, ok := parseTS(e.TS); ok && !t.Before(newest) {
-						newest, cur = t, e.Attempt
-					}
-				}
-			}
-		}
+		cur := currentAttempt(ts, events)
 		var finished time.Time
 		finishedOK := false
 		for _, e := range events {
@@ -87,6 +106,48 @@ func measureTargets(events []Event) []measureTarget {
 			out = append(out, measureTarget{task: ts.ID, attempt: cur})
 		}
 	}
+
+	if dir != "" {
+		// The current tree is computed once per pass, not per unit (#303
+		// review); an error leaves it empty, which counts as changed.
+		curTree, _ := treeHash(dir)
+		for _, ts := range Derive(events).Tasks {
+			if ts.Status != "passed" && ts.Status != "needs-correction" {
+				continue
+			}
+			cur := currentAttempt(ts, events)
+			if cur == "" {
+				continue
+			}
+			// The newest complete reading of this attempt, by timestamp.
+			var reading *Event
+			var newest time.Time
+			for i := range events {
+				e := &events[i]
+				if e.Task == ts.ID && e.Kind == "owns_checked" && e.Attempt == cur && e.Tree != "" {
+					if t, ok := parseTS(e.TS); ok && !t.Before(newest) {
+						newest, reading = t, e
+					}
+				}
+			}
+			// A unit measured in another checkout (--workdir) cannot be
+			// re-measured here; supervise would validate the wrong tree.
+			if reading == nil || reading.Workdir != "" {
+				continue
+			}
+			header, _, err := AttemptBrief(dir, events, ts.ID)
+			if err != nil {
+				// Never hide a unit: validate will report why its brief
+				// cannot be resolved.
+				out = append(out, measureTarget{task: ts.ID, attempt: cur})
+				continue
+			}
+			if ownedPathsChanged(dir, reading.Tree, curTree, header.Owns) {
+				out = append(out, measureTarget{task: ts.ID, attempt: cur})
+			}
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].task < out[j].task })
 	return out
 }
@@ -114,7 +175,7 @@ func Supervise(dir string) (SuperviseResult, error) {
 	}
 
 	result := SuperviseResult{Measured: []SupervisedTask{}}
-	for _, m := range measureTargets(events) {
+	for _, m := range measureTargets(dir, events) {
 		res, err := ValidateTask(dir, m.task, ValidateOptions{Dir: dir})
 		if err != nil {
 			result.Measured = append(result.Measured, SupervisedTask{Task: m.task, Attempt: m.attempt, Error: err.Error()})
@@ -141,4 +202,22 @@ func (r SuperviseResult) MarshalJSON() ([]byte, error) {
 		r.Measured = make([]SupervisedTask, 0)
 	}
 	return json.Marshal((*Alias)(&r))
+}
+
+// currentAttempt is the task's derived current attempt, or — when the ledger
+// never recorded a dispatch — the attempt of its newest finish by timestamp.
+func currentAttempt(ts TaskState, events []Event) string {
+	if ts.Attempt != "" {
+		return ts.Attempt
+	}
+	cur := ""
+	var newest time.Time
+	for _, e := range events {
+		if e.Task == ts.ID && e.Kind == "finished" {
+			if t, ok := parseTS(e.TS); ok && !t.Before(newest) {
+				newest, cur = t, e.Attempt
+			}
+		}
+	}
+	return cur
 }

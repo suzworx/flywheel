@@ -1,6 +1,8 @@
 package flywheel
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -146,6 +148,182 @@ func TestSuperviseSecondPassMeasuresNothing(t *testing.T) {
 	}
 	if len(result1.Measured) != 1 {
 		t.Fatalf("first pass Measured len = %d, want 1", len(result1.Measured))
+	}
+
+	result2, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() second pass error = %v", err)
+	}
+	if len(result2.Measured) != 0 {
+		t.Errorf("second pass Measured len = %d, want 0", len(result2.Measured))
+	}
+}
+
+// TestSuperviseRemeasuresPassedUnitAfterOwnedEdit checks that supervise
+// re-measures a unit inspected as passed after an owned file changes (#300).
+func TestSuperviseRemeasuresPassedUnitAfterOwnedEdit(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+
+	result1, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() first pass error = %v", err)
+	}
+	if len(result1.Measured) != 1 {
+		t.Fatalf("first pass Measured len = %d, want 1", len(result1.Measured))
+	}
+
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+
+	var readingTree string
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "owns_checked" {
+			readingTree = e.Tree
+			break
+		}
+	}
+	if readingTree == "" {
+		t.Fatal("owns_checked event with tree not found")
+	}
+
+	if err := AppendEvent(dir, Event{
+		TS:      "2026-09-12T02:30:00Z",
+		Task:    "T1",
+		Kind:    "inspected",
+		Attempt: "r1",
+		Verdict: "pass",
+		Session: "insp",
+		Persona: "inspector",
+		Tree:    readingTree,
+	}); err != nil {
+		t.Fatalf("AppendEvent(inspected) error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+
+	result2, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() second pass error = %v", err)
+	}
+	if len(result2.Measured) != 1 {
+		t.Errorf("second pass Measured len = %d, want 1", len(result2.Measured))
+	}
+	if len(result2.Measured) > 0 && result2.Measured[0].Task != "T1" {
+		t.Errorf("second pass Task = %q, want T1", result2.Measured[0].Task)
+	}
+}
+
+// TestSuperviseIgnoresPassedUnitWhenUnchanged checks that supervise does not
+// re-measure a passed unit when its owned files haven't changed.
+func TestSuperviseIgnoresPassedUnitWhenUnchanged(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+
+	result1, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() first pass error = %v", err)
+	}
+	if len(result1.Measured) != 1 {
+		t.Fatalf("first pass Measured len = %d, want 1", len(result1.Measured))
+	}
+
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+
+	var readingTree string
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "owns_checked" {
+			readingTree = e.Tree
+			break
+		}
+	}
+	if readingTree == "" {
+		t.Fatal("owns_checked event with tree not found")
+	}
+
+	if err := AppendEvent(dir, Event{
+		TS:      "2026-09-12T02:30:00Z",
+		Task:    "T1",
+		Kind:    "inspected",
+		Attempt: "r1",
+		Verdict: "pass",
+		Session: "insp",
+		Persona: "inspector",
+		Tree:    readingTree,
+	}); err != nil {
+		t.Fatalf("AppendEvent(inspected) error = %v", err)
+	}
+
+	result2, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() second pass error = %v", err)
+	}
+	if len(result2.Measured) != 0 {
+		t.Errorf("second pass Measured len = %d, want 0", len(result2.Measured))
+	}
+}
+
+// TestSuperviseIgnoresEditOutsideOwns checks that supervise does not
+// re-measure a passed unit when only files outside its owns changed.
+func TestSuperviseIgnoresEditOutsideOwns(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+
+	result1, err := Supervise(dir)
+	if err != nil {
+		t.Fatalf("Supervise() first pass error = %v", err)
+	}
+	if len(result1.Measured) != 1 {
+		t.Fatalf("first pass Measured len = %d, want 1", len(result1.Measured))
+	}
+
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+
+	var readingTree string
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "owns_checked" {
+			readingTree = e.Tree
+			break
+		}
+	}
+	if readingTree == "" {
+		t.Fatal("owns_checked event with tree not found")
+	}
+
+	if err := AppendEvent(dir, Event{
+		TS:      "2026-09-12T02:30:00Z",
+		Task:    "T1",
+		Kind:    "inspected",
+		Attempt: "r1",
+		Verdict: "pass",
+		Session: "insp",
+		Persona: "inspector",
+		Tree:    readingTree,
+	}); err != nil {
+		t.Fatalf("AppendEvent(inspected) error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "other.go"), []byte("package other\n"), 0o644); err != nil {
+		t.Fatalf("write other.go: %v", err)
 	}
 
 	result2, err := Supervise(dir)
