@@ -244,6 +244,14 @@ func AppendLearningEvents(dir string, events []Event) error {
 	if _, err := CheckLearningsOwned(dir); err != nil {
 		return err
 	}
+	// In sharded layout, raise the logical clock so learning sorts after signals.
+	if sharded, err := ShardedLayout(dir); err != nil {
+		return err
+	} else if sharded {
+		if _, err := ReadEvents(dir); err != nil {
+			return err
+		}
+	}
 	for _, e := range events {
 		if err := Validate(e); err != nil {
 			return err

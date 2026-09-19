@@ -23,25 +23,21 @@ func lineHash(line []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// lastLineHash returns lineHash of the last COMPLETE, non-blank line of the
-// log at path ("" when the file is missing or has no such line) — exactly the
-// lines VerifyLogChain hashes, so a blank or unterminated tail never becomes
-// a predecessor (#299 review). It reads backwards in
-// 64 KiB chunks from the end, so a large log is never read whole. An
-// unterminated tail (a record still being appended) is not a complete line
-// and is skipped; the complete line before it is used.
-func lastLineHash(path string) (string, error) {
+// lastCompleteLineOf returns the last complete, non-blank line of the file
+// at path (without its newline) — the line lastLineHash hashes — and found
+// false when the file is missing or has none.
+func lastCompleteLineOf(path string) (line []byte, found bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return nil, false, nil
 		}
-		return "", fmt.Errorf("open %s: %w", path, err)
+		return nil, false, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", path, err)
+		return nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
 	// Walk backwards in chunks, prepending each chunk to tail, until tail
 	// holds the last complete line: the bytes between the last two newlines
@@ -56,17 +52,32 @@ func lastLineHash(path string) (string, error) {
 		off -= n
 		buf := make([]byte, n)
 		if _, err := f.ReadAt(buf, off); err != nil {
-			return "", fmt.Errorf("read %s: %w", path, err)
+			return nil, false, fmt.Errorf("read %s: %w", path, err)
 		}
 		tail = append(buf, tail...)
-		if line, found, ok := lastCompleteLine(tail, off == 0); ok {
-			if !found {
-				return "", nil
-			}
-			return lineHash(line), nil
+		if cand, foundLine, ok := lastCompleteLine(tail, off == 0); ok {
+			return cand, foundLine, nil
 		}
 	}
-	return "", nil
+	return nil, false, nil
+}
+
+// lastLineHash returns lineHash of the last COMPLETE, non-blank line of the
+// log at path ("" when the file is missing or has no such line) — exactly the
+// lines VerifyLogChain hashes, so a blank or unterminated tail never becomes
+// a predecessor (#299 review). It reads backwards in
+// 64 KiB chunks from the end, so a large log is never read whole. An
+// unterminated tail (a record still being appended) is not a complete line
+// and is skipped; the complete line before it is used.
+func lastLineHash(path string) (string, error) {
+	line, found, err := lastCompleteLineOf(path)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	return lineHash(line), nil
 }
 
 // lastCompleteLine returns the last newline-terminated, non-blank line in tail
