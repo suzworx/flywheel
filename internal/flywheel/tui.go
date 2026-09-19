@@ -64,6 +64,7 @@ var viewNames = map[string]string{
 	"workers": "Workers",
 	"andon":   "Andon",
 	"events":  "Events",
+	"lines":   "Lines",
 }
 
 // Update applies one key press to the model; d is the data the current frame
@@ -326,6 +327,11 @@ func (m *TUI) executeCommand() {
 		m.cursor = 0
 		m.filter = ""
 		m.statusMsg = ""
+	case "l", "lines":
+		m.view = "lines"
+		m.cursor = 0
+		m.filter = ""
+		m.statusMsg = ""
 	case "q", "quit":
 		m.quit = true
 	default:
@@ -372,22 +378,55 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 		return m.rowsAndon(d)
 	case "events":
 		return m.rowsEvents(d)
+	case "lines":
+		return m.rowsLines(d)
 	}
 	return []string{}, [][]string{}
 }
 
 // rowsUnits returns the header and filtered rows for the units view.
 func (m *TUI) rowsUnits(d TUIData) (header []string, rows [][]string) {
-	header = []string{"TASK", "STAGE", "ATT", "MODEL", "STEPS", "AGE", "STATE"}
+	hasLine := false
 	for _, u := range d.Floor.Units {
-		row := []string{
-			u.Task,
-			u.Stage,
-			u.Attempt,
-			u.Model,
-			fmt.Sprintf("%d", u.Steps),
-			HumanAge(u.LastAge),
-			u.RunState,
+		if u.Line != "" {
+			hasLine = true
+			break
+		}
+	}
+	if hasLine {
+		header = []string{"TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE"}
+	} else {
+		header = []string{"TASK", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE"}
+	}
+	for _, u := range d.Floor.Units {
+		var row []string
+		if hasLine {
+			row = []string{
+				u.Task,
+				u.Line,
+				u.Stage,
+				u.Attempt,
+				u.Session,
+				u.Model,
+				fmt.Sprintf("%d", u.Steps),
+				HumanAge(u.LastAge),
+				u.RunState,
+			}
+		} else {
+			row = []string{
+				u.Task,
+				u.Stage,
+				u.Attempt,
+				u.Session,
+				u.Model,
+				fmt.Sprintf("%d", u.Steps),
+				HumanAge(u.LastAge),
+				u.RunState,
+			}
+		}
+		// Capped unit with Peak > 0 shows peak reasoning in STATE.
+		if u.RunState == "capped" && u.Peak > 0 {
+			row[len(row)-1] = "capped " + tokensK(Tokens{Reasoning: u.Peak})
 		}
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
@@ -436,6 +475,26 @@ func (m *TUI) rowsEvents(d TUIData) (header []string, rows [][]string) {
 	// Newest first.
 	for i := len(d.Events) - 1; i >= 0; i-- {
 		row := []string{d.Events[i]}
+		if m.matchesFilter(row) {
+			rows = append(rows, row)
+		}
+	}
+	return header, rows
+}
+
+// rowsLines returns the header and filtered rows for the lines view.
+func (m *TUI) rowsLines(d TUIData) (header []string, rows [][]string) {
+	header = []string{"NAME", "WORKER", "UNITS", "BUILDING", "LANDED", "OWNS"}
+	for _, pl := range d.Floor.ProductLines {
+		owns := strings.Join(pl.Owns, ", ")
+		row := []string{
+			pl.Name,
+			pl.Worker,
+			fmt.Sprintf("%d", pl.Units),
+			fmt.Sprintf("%d", pl.Building),
+			fmt.Sprintf("%d", pl.Landed),
+			owns,
+		}
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
 		}
@@ -512,7 +571,8 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  PgDn    page down",
 			"  PgUp    page up",
 			"Prompts:",
-			"  :       open command prompt",
+			"  :       open command prompt: units (u), workers (w), andon (a),",
+			"          events (e), lines (l), quit (q)",
 			"  /       open filter prompt",
 			"  enter   explain (drill-down)",
 			"  l       show log (drill-down)",
@@ -599,7 +659,9 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			case isCursor:
 				rowLineCut = "\x1b[7m" + rowLineCut + "\x1b[0m"
 			case (m.view == "units" || m.view == "andon") && strings.HasSuffix(rowLineCut, state):
-				rowLineCut = strings.TrimSuffix(rowLineCut, state) + paint(true, stateColor(state), state)
+				// The colour comes from the state word: "capped 50k" is capped.
+				word, _, _ := strings.Cut(state, " ")
+				rowLineCut = strings.TrimSuffix(rowLineCut, state) + paint(true, stateColor(word), state)
 			}
 
 			lines = append(lines, rowLineCut)
