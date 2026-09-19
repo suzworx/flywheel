@@ -98,19 +98,22 @@ Whatever the adapter, the agent can edit files and run its own gates, but it can
 history: `flywheel run` puts a git guard first on the agent's PATH that refuses commit, push,
 stash, reset, checkout and the rest, and flags any attempt that moved HEAD anyway.
 
-### Add the guardrails you want
+### Commit the factory, then add the guardrails
+
+The event log is the source of truth, so it must be tracked; `.flywheel/runs/` (the agents'
+transcripts) stays ignored. `flywheel init --ci` writes a GitHub job that runs `flywheel verify`
+on every pull request. Commit both before you install the git hooks:
 
 ```sh
+flywheel init --ci
+git add flywheel.md .flywheel .github && git commit -m "chore: set up flywheel"
 flywheel init --git-hooks   # every commit names its unit; a push re-verifies the units it carries
-flywheel init --ci          # a GitHub job runs flywheel verify on every pull request
 ```
 
-Then commit the factory. The event log is the source of truth, so it must be tracked;
-`.flywheel/runs/` (the agents' transcripts) stays ignored.
-
-```sh
-git add flywheel.md .flywheel && git commit -m "chore: set up flywheel" --trailer "Flywheel-Task: setup"
-```
+From then on, every commit needs a `Flywheel-Task: <id>` trailer naming a unit that is on
+record, planned or later. A push re-verifies each unit its commits name, so a trailer naming a
+task that was never planned makes the push fail. Commit a brief with the trailer of the unit it
+plans.
 
 ### Sign in on the floor
 
