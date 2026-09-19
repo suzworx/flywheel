@@ -34,24 +34,24 @@ func NeedsMeasuring(events []Event) []string {
 }
 
 // ownedPathsChanged reports whether any path in owns differs between the git
-// tree readingTree (the tree a reading measured) and dir's current tree, as
-// treeHash computes it (flywheel's own bookkeeping excluded). A tree git cannot
-// read, or any git error, counts as "changed", so a unit is re-measured rather
-// than silently trusted.
-func ownedPathsChanged(dir, readingTree string, owns []string) bool {
-	cur, err := treeHash(dir)
-	if err != nil {
+// tree readingTree (the tree a reading measured) and curTree (dir's current
+// tree as treeHash computes it, flywheel's own bookkeeping excluded). An empty
+// curTree, a tree git cannot read, or any git error counts as "changed", so a
+// unit is re-measured rather than silently trusted. Paths are read NUL-
+// delimited (-z), so git never quotes an unusual file name (#303 review).
+func ownedPathsChanged(dir, readingTree, curTree string, owns []string) bool {
+	if curTree == "" {
 		return true
 	}
-	if cur == readingTree {
+	if curTree == readingTree {
 		return false
 	}
 	// No GIT_INDEX_FILE override: diff-tree compares two trees and reads no index.
-	rc, out, _, err := runCmdSplit(dir, gitArgs([]string{"diff-tree", "-r", "--name-only", readingTree, cur}), nil)
+	rc, out, _, err := runCmdSplit(dir, gitArgs([]string{"diff-tree", "-r", "-z", "--name-only", readingTree, curTree}), nil)
 	if err != nil || rc != 0 {
 		return true
 	}
-	for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, p := range strings.Split(string(out), "\x00") {
 		if p != "" && ownsContains(owns, p) {
 			return true
 		}
@@ -108,6 +108,9 @@ func measureTargets(dir string, events []Event) []measureTarget {
 	}
 
 	if dir != "" {
+		// The current tree is computed once per pass, not per unit (#303
+		// review); an error leaves it empty, which counts as changed.
+		curTree, _ := treeHash(dir)
 		for _, ts := range Derive(events).Tasks {
 			if ts.Status != "passed" && ts.Status != "needs-correction" {
 				continue
@@ -116,21 +119,30 @@ func measureTargets(dir string, events []Event) []measureTarget {
 			if cur == "" {
 				continue
 			}
-			header, _, err := AttemptBrief(dir, events, ts.ID)
-			if err != nil {
-				continue
-			}
-			// The tree the newest complete reading of this attempt measured.
-			var readingTree string
+			// The newest complete reading of this attempt, by timestamp.
+			var reading *Event
 			var newest time.Time
-			for _, e := range events {
+			for i := range events {
+				e := &events[i]
 				if e.Task == ts.ID && e.Kind == "owns_checked" && e.Attempt == cur && e.Tree != "" {
 					if t, ok := parseTS(e.TS); ok && !t.Before(newest) {
-						newest, readingTree = t, e.Tree
+						newest, reading = t, e
 					}
 				}
 			}
-			if readingTree != "" && ownedPathsChanged(dir, readingTree, header.Owns) {
+			// A unit measured in another checkout (--workdir) cannot be
+			// re-measured here; supervise would validate the wrong tree.
+			if reading == nil || reading.Workdir != "" {
+				continue
+			}
+			header, _, err := AttemptBrief(dir, events, ts.ID)
+			if err != nil {
+				// Never hide a unit: validate will report why its brief
+				// cannot be resolved.
+				out = append(out, measureTarget{task: ts.ID, attempt: cur})
+				continue
+			}
+			if ownedPathsChanged(dir, reading.Tree, curTree, header.Owns) {
 				out = append(out, measureTarget{task: ts.ID, attempt: cur})
 			}
 		}
