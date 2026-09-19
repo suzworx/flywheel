@@ -685,13 +685,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 			}
 		case "text":
-			if !planRecorded && strings.HasPrefix(obs.Text, "PLAN ") {
+			plan, isPlan := planText(obs.Text)
+			if !planRecorded && isPlan {
 				planRecorded = true
 				planPath := filepath.Join(runsDir, o.Task+"."+attempt+".plan.md")
-				if err := os.WriteFile(planPath, []byte(obs.Text), 0o644); err != nil {
+				if err := os.WriteFile(planPath, []byte(plan), 0o644); err != nil {
 					return Result{}, err
 				}
-				planSum := sha256.Sum256([]byte(obs.Text))
+				planSum := sha256.Sum256([]byte(plan))
 				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
 					return Result{}, err
 				}
@@ -1381,6 +1382,28 @@ func resolvePath(p string) string {
 		p = resolved
 	}
 	return strings.TrimSuffix(filepath.ToSlash(p), "/")
+}
+
+// planText returns the worker's plan from one text message, and whether the
+// message carries one (issue #284): the text from the first line that, once
+// leading whitespace, list and quote markers (-, *, +, >, #) and emphasis (*, _,
+// `) are stripped, starts with "PLAN ". Markdown-formatted plans (**PLAN
+// files-to-read:** ...) and plans preceded by a sentence of prose are
+// recognised; a message that only mentions a plan is not.
+func planText(text string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		t := strings.TrimLeft(line, " \t-*+>#_`")
+		if strings.HasPrefix(t, "PLAN ") {
+			stripped := strings.TrimLeft(line, " \t-+>#")
+			result := stripped
+			if len(lines) > i+1 {
+				result = stripped + "\n" + strings.Join(lines[i+1:], "\n")
+			}
+			return result, true
+		}
+	}
+	return "", false
 }
 
 // wroteProgressLine returns the extra progress line naming the files an

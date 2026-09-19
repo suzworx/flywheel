@@ -66,14 +66,14 @@ all.
   session — one an `inspected` event must never reuse.
 
 ### `worker_plan`
-- Written by: the CLI, the first time the run's text output has a line starting `PLAN `.
-- Carries: `task`, `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file.
+- Written by: the CLI, the first time the run's text output has a line that, after stripping leading whitespace, list/quote markers (-, *, +, >, #) and markdown emphasis (*, _, `), starts with `PLAN ` (issue #284).
+- Carries: `task`, `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file. The recorded plan is the text from that matched line onward, with leading whitespace and list markers stripped but emphasis markers preserved.
 - Effect: no status change. Its presence before step 20 is what a missing `no-plan` event
   certifies.
 
 ### `no-plan`
 - Written by: the CLI, at most once per attempt, at the 20th completed step, only if no `PLAN
-  `-prefixed line has appeared yet (issue #65).
+  `-prefixed line (as detected above) has appeared yet (issue #65, #284).
 - Carries: `task`, `attempt`.
 - Effect: `Derive` ignores it for status exactly like `worker_plan`; it never changes `rc` or
   `reason` — it is a flag, not a verdict.
