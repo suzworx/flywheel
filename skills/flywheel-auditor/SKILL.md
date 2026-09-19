@@ -73,7 +73,8 @@ unit — that is QC's call.
   clean tree and checks owns (exit 0 or 5), giving you a fresh supervisor reading rather than
   trusting the line's recorded one.
 - `flywheel audit <task> --session <your session>` — re-measure the unit in a clean copy and check its record; records `audited conforms`/`nonconformance` with the findings. You may not audit a unit your session planned, built or inspected.
-- `flywheel supervise` — planned (#55); today: read the run files directly.
+- `flywheel audit --first-article --session <your session>` then `flywheel audit --sample 0.2 --session <your session>` — pick the units yourself: the first article of every new worker line, then a seeded sample (`--list` to preview, `--seed` to reproduce); units your session touched are skipped, not audited.
+- `flywheel supervise --once` — measures every finished unit nobody has measured yet, and re-measures a passed unit whose owned files changed after its reading.
 - `flywheel explain <task>` — the unit's whole traveler from the ledger; `flywheel context` — the
   factory's state in one read (goals, in flight, what needs a verdict or triage, recent learnings).
 - `flywheel feedback add` — file a nonconformance as a learning (it is rendered into

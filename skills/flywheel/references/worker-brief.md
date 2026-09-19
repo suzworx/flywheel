@@ -21,7 +21,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   worktree instead of statting a literal path, so a pattern that currently matches nothing is
   reported the same as a missing path. A literal path the unit will create carries the annotation
   `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. List every
-  file a unit may create up front, in `owns:`, rather than inviting it to add one later.
+  file a unit may create up front, in `owns:`, rather than inviting it to add one later. (`needs:`
+  takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
+  dependencies).
 - **exclusive:** — an optional **named resource** this task alone may hold while it runs: a shared
   database, build cache or device. `flywheel run` refuses (exit 6) a dispatch whose `exclusive:`
   name an in-flight task already holds, before any event is recorded — the same guard `owns:`

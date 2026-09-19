@@ -36,8 +36,11 @@ func TestParseBriefHeaderOwnsContinuationAndAnnotations(t *testing.T) {
 			t.Errorf("owns[%d] = %q, want %q", i, h.Owns[i], want[i])
 		}
 	}
-	if len(h.Needs) != 1 || h.Needs[0] != "none" {
-		t.Errorf("needs = %v, want [none]", h.Needs)
+	if len(h.Needs) != 0 {
+		t.Errorf("needs = %v, want none", h.Needs)
+	}
+	if !h.NeedsDeclared {
+		t.Errorf("NeedsDeclared = %v, want true", h.NeedsDeclared)
 	}
 }
 
@@ -62,8 +65,11 @@ func TestParseBriefHeaderIndentedLineAfterNonOwnsKey(t *testing.T) {
 			t.Errorf("gates[%d] = %q, want %q", i, h.Gates[i], want[i])
 		}
 	}
-	if len(h.Needs) != 1 || h.Needs[0] != "none" {
-		t.Errorf("needs = %v, want [none]", h.Needs)
+	if len(h.Needs) != 0 {
+		t.Errorf("needs = %v, want none", h.Needs)
+	}
+	if !h.NeedsDeclared {
+		t.Errorf("NeedsDeclared = %v, want true", h.NeedsDeclared)
 	}
 }
 
@@ -160,8 +166,11 @@ func TestParseBriefHeaderNeedsState(t *testing.T) {
 	if len(h.Owns) != 1 || h.Owns[0] != "a.go" {
 		t.Errorf("owns = %v, want [a.go]", h.Owns)
 	}
-	if len(h.Needs) != 1 || h.Needs[0] != "none" {
-		t.Errorf("needs = %v, want [none]", h.Needs)
+	if len(h.Needs) != 0 {
+		t.Errorf("needs = %v, want none", h.Needs)
+	}
+	if !h.NeedsDeclared {
+		t.Errorf("NeedsDeclared = %v, want true", h.NeedsDeclared)
 	}
 	if len(h.Gates) != 1 || h.Gates[0] != "go build ./..." {
 		t.Errorf("gates = %v, want [go build ./...]", h.Gates)
