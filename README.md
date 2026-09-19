@@ -202,6 +202,7 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
 passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
 the first whose own breaker is closed).
+`limits.budget.wave_tokens` caps the wave's recorded tokens (input, output and reasoning — a cost budget cannot cap an adapter that reports no cost), and `limits.rate_per_minute` caps dispatches of one model in any 60 seconds; both are refused by `flywheel run` (exit 6, rules `budget` and `rate`) and respected by `flywheel next`.
 
 ## Quickstart
 
