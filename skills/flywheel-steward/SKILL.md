@@ -63,5 +63,5 @@ verdicts, and never write to a unit.
 
 - `flywheel feedback` — `add` records a learning (Observed / Evidence / Ask plus severity and title); `dismiss L-NN --reason WHY` dismisses one by id; `regen` rebuilds `.flywheel/learnings.md` from the event log without appending (exit 0 when the file already matches); `export` writes a sanitised report of undismissed learnings; `submit` sends it upstream only with the user's consent.
 - `flywheel status` — planned; today: read `flywheel.md` and `.flywheel/state.json`.
-- `flywheel explain` / `flywheel context` — planned (#58); today: read the briefs, run files and
-  state directly.
+- `flywheel explain <task>` — a unit's whole story from the ledger; `flywheel context` — the
+  factory's state in one read, including untriaged signals and recent learnings.
