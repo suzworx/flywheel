@@ -55,6 +55,94 @@ type Action struct {
 	Evidence string `json:"evidence,omitempty"`
 }
 
+// claims holds owns and exclusive resources from a task's latest planned,
+// amended or dispatched event (issue #322).
+type claims struct {
+	owns      []string
+	exclusive []string
+}
+
+// taskClaims returns each task's owns and exclusive resources from its latest
+// planned, amended or dispatched event (the event's Header when set, else its
+// Owns field; exclusive only via Header) — the same brief header run checks
+// collisions against, read from the log so Reconcile stays pure (issue #322).
+func taskClaims(events []Event) map[string]claims {
+	// The same rules AttemptBrief applies, from recorded headers only
+	// (#326 review): the base is the latest planned or amended header; a
+	// dispatch with a header (a correction's delta, or a fresh attempt's own
+	// header) adds to the base, and an amendment after a dispatch adds to what
+	// is in flight — claims only widen once work is dispatched. A dispatch
+	// without a header (a legacy ledger) keeps the base.
+	base := map[string]claims{}
+	cur := map[string]claims{}
+	dispatched := map[string]bool{}
+	for _, e := range events {
+		switch e.Kind {
+		case "planned", "amended":
+			c := eventClaims(e)
+			base[e.Task] = c
+			if dispatched[e.Task] {
+				cur[e.Task] = unionClaims(cur[e.Task], c)
+			} else {
+				cur[e.Task] = c
+			}
+		case "dispatched":
+			dispatched[e.Task] = true
+			if e.Header != nil {
+				cur[e.Task] = unionClaims(base[e.Task], eventClaims(e))
+			} else {
+				cur[e.Task] = base[e.Task]
+			}
+		}
+	}
+	return cur
+}
+
+// eventClaims reads one event's claims: its Header when set, else its Owns.
+func eventClaims(e Event) claims {
+	if e.Header != nil {
+		return claims{owns: e.Header.Owns, exclusive: e.Header.Exclusive}
+	}
+	return claims{owns: e.Owns}
+}
+
+// unionClaims returns a's claims plus b's, each entry once.
+func unionClaims(a, b claims) claims {
+	add := func(dst []string, src []string) []string {
+		for _, s := range src {
+			if !slices.Contains(dst, s) {
+				dst = append(dst, s)
+			}
+		}
+		return dst
+	}
+	return claims{
+		owns:      add(append([]string{}, a.owns...), b.owns),
+		exclusive: add(append([]string{}, a.exclusive...), b.exclusive),
+	}
+}
+
+// claimOverlap returns the first overlapping owns path (checked both ways
+// with ownsContains, as run's owns check does) or shared exclusive resource
+// between a and b, and whether there is one; kind is "owns" or "exclusive".
+func claimOverlap(a, b claims) (kind, what string, ok bool) {
+	for _, ap := range a.owns {
+		for _, bp := range b.owns {
+			if ownsContains([]string{ap}, bp) || ownsContains([]string{bp}, ap) {
+				return "owns", ap, true
+			}
+		}
+	}
+	for _, ae := range a.exclusive {
+		for _, be := range b.exclusive {
+			if ae == be {
+				return "exclusive", ae, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 // Reconcile computes the next actions from the derived state, the event log,
 // the observed leases, the policy and the clock. It is pure: no I/O, no clock
 // reads, no randomness; the same inputs give identical output.
@@ -75,9 +163,12 @@ type Action struct {
 //     names the first rejected target in brief order.
 //   - WAIT: a planned task with a needs target not yet passed or landed; the
 //     reason lists every unmet target in the order they appear in the brief.
+//     Also used for a ready task whose owns or exclusive resources overlap an
+//     in-flight task's or one already chosen this tick; the reason names the overlap.
 //   - DISPATCH: a planned task whose needs are all passed or landed, with no
-//     live lease, up to the free capacity (MaxParallel minus live leases, further
-//     capped by per_host if set, never below 0); the reason names the free capacity.
+//     live lease, no overlap with in-flight tasks or chosen tasks, up to the
+//     free capacity (MaxParallel minus live leases, further capped by per_host
+//     if set, never below 0); the reason names the free capacity.
 //   - HOLD: a task that would be DISPATCHed while the wave's budget is spent or
 //     the default model's breaker is open; the reason names which.
 func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) []Action {
@@ -177,7 +268,9 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	// lease) in planned-time order, up to the free capacity. The capacity is
 	// the smaller of MaxParallel and per_host (when set), minus live leases.
 	// It is computed once from the observed leases, so a tick never invents work
-	// and the same inputs give the same actions.
+	// and the same inputs give the same actions. A task whose owns overlap an
+	// in-flight task's or one already chosen in this tick is WAIT instead of
+	// DISPATCH (issue #322).
 	live := 0
 	for _, l := range obs.Leases {
 		if LeaseLive(l, now) {
@@ -235,6 +328,7 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		}
 	}
 
+	allClaims := taskClaims(events)
 	var ready []actionKey
 	for _, ts := range s.Tasks {
 		if ts.Status != "planned" {
@@ -276,10 +370,66 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 			Action: Action{Kind: kind, Task: ts.ID, Reason: reason}})
 	}
 	slices.SortStableFunc(ready, func(a, b actionKey) int { return keyCompare(a, b) })
-	if len(ready) > capacity {
-		ready = ready[:capacity]
+
+	// Walk ready in order, checking for overlaps with in-flight tasks and
+	// chosen tasks, separating them into chosen and wait actions.
+	var chosen []actionKey
+	for _, rk := range ready {
+		taskClaim := allClaims[rk.Action.Task]
+		overlap := false
+		var overlapKind, overlapWhat, overlapTask string
+
+		// Check overlap with dispatched or running tasks.
+		for _, ts := range s.Tasks {
+			if ts.Status != "dispatched" && ts.Status != "running" {
+				continue
+			}
+			if otherClaim, ok := allClaims[ts.ID]; ok {
+				if k, w, has := claimOverlap(taskClaim, otherClaim); has {
+					overlapKind = k
+					overlapWhat = w
+					overlapTask = ts.ID
+					overlap = true
+					break
+				}
+			}
+		}
+
+		// Check overlap with already chosen tasks in this tick.
+		if !overlap {
+			for _, ck := range chosen {
+				// Only a task recommended for dispatch will hold its
+				// claims; a HOLD never runs this tick (#326 review).
+				if ck.Action.Kind != "DISPATCH" {
+					continue
+				}
+				if otherClaim, ok := allClaims[ck.Action.Task]; ok {
+					if k, w, has := claimOverlap(taskClaim, otherClaim); has {
+						overlapKind = k
+						overlapWhat = w
+						overlapTask = ck.Action.Task
+						overlap = true
+						break
+					}
+				}
+			}
+		}
+
+		if overlap {
+			reason := fmt.Sprintf("%s %s overlaps %s", overlapKind, overlapWhat, overlapTask)
+			keys = append(keys, actionKey{Rank: 2, Valid: planned[rk.Action.Task], Time: pt[rk.Action.Task],
+				Action: Action{Kind: "WAIT", Task: rk.Action.Task, Reason: reason}})
+		} else if len(chosen) < capacity {
+			// Only a task that fits the capacity is chosen, so a later
+			// task never waits on one this tick does not dispatch.
+			chosen = append(chosen, rk)
+		}
 	}
-	keys = append(keys, ready...)
+
+	// When budget/breaker HOLDs, keep today's behavior for chosen ones.
+	for _, ck := range chosen {
+		keys = append(keys, ck)
+	}
 	slices.SortStableFunc(keys, func(a, b actionKey) int { return keyCompare(a, b) })
 	out := make([]Action, len(keys))
 	for i, k := range keys {
