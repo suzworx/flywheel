@@ -319,6 +319,13 @@ Three epics drive the factory:
   `feat` → minor; `fix`/`perf`/`docs`/`refactor`/`revert` → patch; anything else → no release.
   PRs are squash-merged, so the PR title decides the bump. The release PR is opened by GitHub
   Actions, so CI checks do not run on it (a `GITHUB_TOKEN` limitation).
+- **`watch`** monitors feedback channels persistently without checking out code: when
+  devin-ai-integration[bot] submits a review or comment on a PR, it adds the `review-findings`
+  label; when `ci` fails on `main`, it opens an issue titled "CI failing on main" with the run
+  URL and commit details, or comments on an existing open issue with that title; when a later
+  `ci` run on `main` succeeds and that issue is open, it comments with the recovery run URL so
+  the issue records the whole episode. (Watching a consumer project's local learnings file,
+  outside this repository, still requires a person or a persistent session.)
 
 ## Learnings
 

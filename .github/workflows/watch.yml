@@ -1,0 +1,77 @@
+name: watch
+
+on:
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  issues: write
+  pull-requests: write
+  actions: read
+
+env:
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  review-findings:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_review_comment' || github.event_name == 'pull_request_review'
+    steps:
+      - name: Add label on comment
+        if: github.event_name == 'pull_request_review_comment' && github.event.comment.user.login == 'devin-ai-integration[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create review-findings --description "PR has review-bot findings to address" --color FF6B6B || true
+          gh pr edit "$PR_NUMBER" --add-label review-findings
+      - name: Add label on review
+        if: github.event_name == 'pull_request_review' && github.event.review.user.login == 'devin-ai-integration[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create review-findings --description "PR has review-bot findings to address" --color FF6B6B || true
+          gh pr edit "$PR_NUMBER" --add-label review-findings
+
+  ci-failure:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Open or comment on issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+          COMMIT_SHA: ${{ github.event.workflow_run.head_commit.id }}
+          COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          ISSUE_TITLE="CI failing on main"
+          EXISTING=$(gh issue list --state open --limit 100 --json number,title \
+            --jq '[.[] | select(.title == "CI failing on main")][0].number // empty')
+          BODY=$(printf "Run: %s\nCommit: %s\nMessage: %s" "$RUN_URL" "$COMMIT_SHA" "$COMMIT_MESSAGE")
+          if [ -z "$EXISTING" ]; then
+            gh issue create --title "$ISSUE_TITLE" --body "$BODY"
+          else
+            gh issue comment "$EXISTING" --body "$BODY"
+          fi
+
+  ci-recovery:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Comment on issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+        run: |
+          ISSUE_TITLE="CI failing on main"
+          EXISTING=$(gh issue list --state open --limit 100 --json number,title \
+            --jq '[.[] | select(.title == "CI failing on main")][0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "CI recovered in run: $RUN_URL"
+          fi
