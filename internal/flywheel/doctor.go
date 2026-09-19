@@ -93,6 +93,21 @@ func DoctorAllOK(probes []DoctorProbe) bool {
 	return true
 }
 
+// RecordProbes appends one probed event per probe (Model, Reason = the
+// class, Note "flywheel doctor"), in one AppendEvents batch.
+func RecordProbes(dir string, probes []DoctorProbe) error {
+	events := make([]Event, len(probes))
+	for i, p := range probes {
+		events[i] = Event{
+			Kind:   "probed",
+			Model:  p.Model,
+			Reason: p.Class,
+			Note:   "flywheel doctor",
+		}
+	}
+	return AppendEvents(dir, events)
+}
+
 // probeModel runs one unrecorded probe of model through adap: the sim
 // adapter replays the fixture named by model, any other adapter is launched
 // exactly as Run launches it. The result classifies from the first error

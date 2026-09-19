@@ -187,6 +187,11 @@ all.
   cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
   The auditor's independence is checked again right before the event is appended. T7 gating is opt-in: see T7 below.
 
+### `probed`
+- Written by: `flywheel doctor --record`.
+- Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`).
+- Effect: an `ok` probe newer than the model's latest provider error closes its breaker at once instead of waiting for the cooldown to expire (issue #46).
+
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
   `--json`-ingested `amended` event lands through the same check.
