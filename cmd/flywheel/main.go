@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 var version = "dev" // release builds set it with -ldflags "-X main.version=<tag>"
@@ -115,6 +118,9 @@ func flywheelDirExists() bool {
 }
 
 func main() {
+	if strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe") == "git" {
+		os.Exit(flywheel.GitGuard(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) // issue #319
+	}
 	args := os.Args[1:]
 	if len(args) == 0 {
 		if bareAction(flywheelDirExists()) == "factory" {
