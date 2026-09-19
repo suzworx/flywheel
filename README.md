@@ -49,7 +49,7 @@ The house rules the workers follow are in [AGENTS.md](AGENTS.md).
 
 Flywheel is a factory for AI coding work: a small Go CLI plus agent skills that run a durable
 **orchestrator-to-worker loop**. A frontier lead agent plans, briefs and judges; cheap disposable
-worker agents (Claude Code, Codex or OpenCode) do the reading, writing and testing. The **control plane** dispatches
+worker agents (Claude Code or OpenCode) do the reading, writing and testing. The **control plane** dispatches
 work and enforces policy; the **data plane** keeps traceability, telemetry and accountability for
 every session.
 
@@ -85,7 +85,7 @@ flowchart LR
   (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
+  `flywheel run` dispatches it to a worker through the `claude` or `opencode` adapter and
   records the run automatically.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` renders
   the live floor, and `flywheel watch` streams every event as one readable line.
@@ -106,8 +106,10 @@ in-flight unit declares the same gate line.
 
 The goal is to ship with no human in the loop. That is only safe if every step is **recorded** (an
 append-only event log), **measured** by the machine (gauges run by the CLI, never self-reported by
-an agent), and **audited** by independent checkers. Today all three are in place: the append-only event log is hash-chained, so an edited or removed
-record is detected (`flywheel verify --log`); the gauges `validate`, `inspect` and `verify` measure
+an agent), and **audited** by independent checkers. Today all three are in place: the append-only
+event log is hash-chained, so an edited record, or one removed from the middle, is detected
+(`flywheel verify --log`; cutting records off the end needs an outside anchor such as a pushed
+commit); the gauges `validate`, `inspect` and `verify` measure
 every unit, with `flywheel supervise` measuring each finished unit nobody has measured yet; and
 `flywheel audit` re-measures a unit in a clean copy from a session that neither built nor inspected
 it, selecting first articles and seeded samples
