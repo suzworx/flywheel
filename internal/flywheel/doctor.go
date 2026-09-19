@@ -17,6 +17,7 @@ import (
 type DoctorProbe struct {
 	Model string
 	Class string
+	At    time.Time // when the probe finished; RecordProbes stamps its event with it (#334 review)
 }
 
 // Doctor classes.
@@ -78,7 +79,8 @@ func DoctorWorker(dir, name string) ([]DoctorProbe, error) {
 	}
 	probes := make([]DoctorProbe, len(order))
 	for i, m := range order {
-		probes[i] = DoctorProbe{Model: m, Class: probeModel(dir, worker, adap, m)}
+		class := probeModel(dir, worker, adap, m)
+		probes[i] = DoctorProbe{Model: m, Class: class, At: now()}
 	}
 	return probes, nil
 }
@@ -91,6 +93,26 @@ func DoctorAllOK(probes []DoctorProbe) bool {
 		}
 	}
 	return true
+}
+
+// RecordProbes appends one probed event per probe (Model, Reason = the
+// class, Note "flywheel doctor"), in one AppendEvents batch.
+func RecordProbes(dir string, probes []DoctorProbe) error {
+	events := make([]Event, len(probes))
+	for i, p := range probes {
+		ts := ""
+		if !p.At.IsZero() {
+			ts = p.At.UTC().Format(time.RFC3339Nano)
+		}
+		events[i] = Event{
+			TS:     ts,
+			Kind:   "probed",
+			Model:  p.Model,
+			Reason: p.Class,
+			Note:   "flywheel doctor",
+		}
+	}
+	return AppendEvents(dir, events)
 }
 
 // probeModel runs one unrecorded probe of model through adap: the sim

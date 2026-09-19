@@ -145,6 +145,7 @@ var kinds = map[string]bool{
 	"excepted":        true,
 	"allow_untriaged": true,
 	"audited":         true,
+	"probed":          true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -209,10 +210,11 @@ func attemptOK(s string) bool {
 
 // floorLevel reports whether kind may carry an empty task: staffed, lead_edit
 // and the three session kinds describe the floor itself rather than a task,
-// and goal events are validated against Goal instead of Task.
+// goal events are validated against Goal instead of Task, and probed events
+// come from the doctor probe run.
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed":
 		return true
 	default:
 		return false
@@ -222,10 +224,10 @@ func floorLevel(kind string) bool {
 // Validate enforces the task pattern, the attempt pattern, the kind set and
 // the reviewed-requires-verdict rule. A signal event must carry a Signal from
 // the exported Signals set, and no other kind may carry one. staffed,
-// lead_edit, session_start, session_command and session_end are floor-level
-// events: they may carry an empty task (every other kind requires one) but
-// staffed, lead_edit and the two session-boundary kinds must carry a session,
-// and session_command must also carry a note.
+// lead_edit, session_start, session_command, session_end and probed are
+// floor-level events: they may carry an empty task (every other kind requires
+// one) but staffed, lead_edit and the two session-boundary kinds must carry a
+// session, and session_command must also carry a note.
 func Validate(e Event) error {
 	if !floorLevel(e.Kind) && !taskOK(e.Task) {
 		return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
@@ -265,7 +267,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed", e.Kind)
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {
@@ -307,6 +309,11 @@ func Validate(e Event) error {
 	if e.Kind == "audited" {
 		if e.Task == "" || e.Session == "" || (e.Verdict != "conforms" && e.Verdict != "nonconformance") {
 			return fmt.Errorf("audited event must carry a task, a session and a verdict of conforms or nonconformance")
+		}
+	}
+	if e.Kind == "probed" {
+		if e.Model == "" || e.Reason == "" {
+			return fmt.Errorf("probed event must carry a model and a reason (the doctor class)")
 		}
 	}
 	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
