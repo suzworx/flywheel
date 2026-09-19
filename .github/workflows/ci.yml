@@ -30,6 +30,18 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
+  scale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: 1,000-task simulated wave
+        run: go test -count=1 -run TestScaleWave -timeout 30m -v ./internal/flywheel/
+        env:
+          FLYWHEEL_SCALE: "1000"
+
   install-check:
     runs-on: ubuntu-latest
     steps:
