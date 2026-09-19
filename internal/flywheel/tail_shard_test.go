@@ -423,3 +423,39 @@ func TestTailLogReReadsReplacedShard(t *testing.T) {
 		t.Errorf("TailLog() = %+v, want the rewritten file's single event", got)
 	}
 }
+
+// TestTailLogReEmitsSameSizeReplacement checks that a shard replaced by the
+// same number of bytes and events is still re-emitted: nothing in the offset
+// or the count shows the replacement, only the file's generation (#350 review).
+func TestTailLogReEmitsSameSizeReplacement(t *testing.T) {
+	dir := t.TempDir()
+	events := filepath.Join(dir, ".flywheel", "events")
+	if err := os.MkdirAll(events, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	shard := filepath.Join(events, "T1.jsonl")
+	write := func(kind string, mtime time.Time) {
+		t.Helper()
+		body := `{"ts":"2026-09-19T00:00:01Z","task":"T1","kind":"` + kind + `"}` + "\n" +
+			`{"ts":"2026-09-19T00:00:02Z","task":"T1","kind":"` + kind + `"}` + "\n"
+		if err := os.WriteFile(shard, []byte(body), 0o644); err != nil {
+			t.Fatalf("write shard: %v", err)
+		}
+		if err := os.Chtimes(shard, mtime, mtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+	}
+	write("planned", time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC))
+	got, cur, err := TailLog(dir, LogCursor{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("TailLog() = %d events, %v; want 2", len(got), err)
+	}
+	write("blocked", time.Date(2026, 9, 19, 2, 0, 0, 0, time.UTC)) // same size, same count
+	got, _, err = TailLog(dir, cur)
+	if err != nil {
+		t.Fatalf("TailLog() after the replacement: %v", err)
+	}
+	if len(got) != 2 || got[0].Kind != "blocked" {
+		t.Errorf("TailLog() = %+v, want both replacement events", got)
+	}
+}

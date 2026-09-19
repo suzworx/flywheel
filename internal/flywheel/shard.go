@@ -152,6 +152,11 @@ func logFilesOf(dir string) ([]logFile, error) {
 
 // fileState is what a logReader knows about one file.
 type fileState struct {
+	// gen counts how often this file was re-read from the start. A cursor
+	// from an older generation has consumed nothing of the current one, even
+	// when the replacement has the same size and the same number of events
+	// (#350 review).
+	gen    int
 	size   int64 // the file's size at the last refresh (off lags it by an unterminated tail)
 	off    int64
 	mtime  time.Time
@@ -254,7 +259,7 @@ func (r *logReader) refreshFile(lf logFile) (changed bool, err error) {
 	}
 	if reread {
 		r.Bytes -= state.off
-		*state = fileState{}
+		*state = fileState{gen: state.gen + 1}
 		changed = true
 	}
 	state.mtime = mtime
@@ -414,6 +419,7 @@ func (r *logReader) clone() *logReader {
 	}
 	for rel, state := range r.files {
 		newState := &fileState{
+			gen:    state.gen,
 			size:   state.size,
 			off:    state.off,
 			mtime:  state.mtime,
@@ -446,9 +452,10 @@ func (r *logReader) mergedSince(prev *logReader) []Event {
 		prevCount := 0
 		if prevState := prev.files[rel]; prevState != nil {
 			prevCount = len(prevState.events)
-			// A file re-read from the start (shrunk, or rewritten) has every
-			// event new again, and prev's count can exceed what it now holds.
-			if state.off < prevState.off || prevCount > len(state.events) {
+			// A file re-read from the start (shrunk, or rewritten — even to
+			// the same size with the same number of events) has every event
+			// new again: its generation moved on.
+			if prevState.gen != state.gen || prevCount > len(state.events) {
 				prevCount = 0
 			}
 		}
