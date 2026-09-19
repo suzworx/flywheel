@@ -650,3 +650,38 @@ func TestObserveLogIsMaxPerDir(t *testing.T) {
 		t.Errorf("observedLog(dir1) unchanged: got %v, want %v", observedLog(dir1), t2)
 	}
 }
+
+// TestLogReaderDetectsSameSizeRewriteWithPartialTail checks that a shard
+// rewritten to the same size while it ends in an unterminated tail is read
+// again (#347 review: off lags the size then).
+func TestLogReaderDetectsSameSizeRewriteWithPartialTail(t *testing.T) {
+	dir := t.TempDir()
+	events := filepath.Join(dir, ".flywheel", "events")
+	if err := os.MkdirAll(events, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	shard := filepath.Join(events, "T1.jsonl")
+	write := func(kind string, mtime time.Time) {
+		t.Helper()
+		body := `{"ts":"2026-09-19T00:00:01Z","task":"T1","kind":"` + kind + `"}` + "\n" + `{"partial`
+		if err := os.WriteFile(shard, []byte(body), 0o644); err != nil {
+			t.Fatalf("write shard: %v", err)
+		}
+		if err := os.Chtimes(shard, mtime, mtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+	}
+	write("planned", time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC))
+	r := newLogReader()
+	if _, err := r.refresh(dir); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	write("blocked", time.Date(2026, 9, 19, 2, 0, 0, 0, time.UTC)) // "blocked" and "planned" have the same length
+	if _, err := r.refresh(dir); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	got := r.merged()
+	if len(got) != 1 || got[0].Kind != "blocked" {
+		t.Errorf("merged = %+v, want the rewritten blocked event", got)
+	}
+}

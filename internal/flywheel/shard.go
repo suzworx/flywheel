@@ -113,7 +113,12 @@ func logFilesOf(dir string) ([]logFile, error) {
 
 	// Legacy file first
 	legacyPath := filepath.Join(dir, ".flywheel", legacyLogName)
-	if info, err := os.Stat(legacyPath); err == nil && !info.IsDir() {
+	info, err := os.Stat(legacyPath)
+	if err != nil && !os.IsNotExist(err) {
+		// Never read the shards without the legacy prefix (#347 review).
+		return nil, fmt.Errorf("stat %s: %w", legacyPath, err)
+	}
+	if err == nil && !info.IsDir() {
 		files = append(files, logFile{Rel: "events.jsonl", Path: legacyPath})
 	}
 
@@ -147,6 +152,7 @@ func logFilesOf(dir string) ([]logFile, error) {
 
 // fileState is what a logReader knows about one file.
 type fileState struct {
+	size   int64 // the file's size at the last refresh (off lags it by an unterminated tail)
 	off    int64
 	mtime  time.Time
 	last   time.Time
@@ -236,7 +242,9 @@ func (r *logReader) refreshFile(lf logFile) (changed bool, err error) {
 		r.files[lf.Rel] = state
 	}
 
-	reread := size < state.off || (state.off > 0 && size == state.off && !mtime.Equal(state.mtime))
+	// A same-size rewrite is detected against the size seen last time, not
+	// off: with an unterminated tail the two differ (#347 review).
+	reread := size < state.off || (state.size > 0 && size == state.size && !mtime.Equal(state.mtime))
 	if !reread && state.off > 0 && size > state.off {
 		var b [1]byte
 		if _, err := f.ReadAt(b[:], state.off-1); err != nil {
@@ -250,6 +258,7 @@ func (r *logReader) refreshFile(lf logFile) (changed bool, err error) {
 		changed = true
 	}
 	state.mtime = mtime
+	state.size = size
 	if size <= state.off {
 		return changed, nil
 	}
