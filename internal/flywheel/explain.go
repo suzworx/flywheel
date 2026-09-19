@@ -221,7 +221,7 @@ func Explain(events []Event, task string) (Explanation, error) {
 	if latestPlanOrAmend != nil {
 		explanation.Brief = latestPlanOrAmend.Brief
 		explanation.Owns = latestPlanOrAmend.Owns
-		explanation.Needs = latestPlanOrAmend.Needs
+		explanation.Needs = NeedTargets(latestPlanOrAmend.Needs...) // a legacy ["none"] is no dependency (#310 review)
 		if latestPlanOrAmend.Header != nil {
 			explanation.Gates = latestPlanOrAmend.Header.Gates
 			explanation.BriefSHA256 = latestPlanOrAmend.Header.SHA256

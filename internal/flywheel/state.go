@@ -173,7 +173,7 @@ func Derive(events []Event) State {
 		case "planned":
 			ts.Status = "planned"
 			ts.Brief = e.Brief
-			ts.Needs = e.Needs
+			ts.Needs = NeedTargets(e.Needs...)
 			ts.Owns = e.Owns
 		case "dispatched":
 			ts.Status = "dispatched"
@@ -215,7 +215,7 @@ func Derive(events []Event) State {
 			}
 		case "amended":
 			ts.Brief = e.Brief
-			ts.Needs = e.Needs
+			ts.Needs = NeedTargets(e.Needs...)
 			ts.Owns = e.Owns
 		}
 		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
