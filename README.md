@@ -49,7 +49,7 @@ The house rules the workers follow are in [AGENTS.md](AGENTS.md).
 
 Flywheel is a factory for AI coding work: a small Go CLI plus agent skills that run a durable
 **orchestrator-to-worker loop**. A frontier lead agent plans, briefs and judges; cheap disposable
-worker agents (Claude Code or OpenCode) do the reading, writing and testing. The **control plane** dispatches
+worker agents (Claude Code, Codex or OpenCode) do the reading, writing and testing. The **control plane** dispatches
 work and enforces policy; the **data plane** keeps traceability, telemetry and accountability for
 every session.
 
@@ -85,7 +85,7 @@ flowchart LR
   (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  `flywheel run` dispatches it to a worker through the `claude` or `opencode` adapter and
+  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
   records the run automatically.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` renders
   the live floor, and `flywheel watch` streams every event as one readable line.
