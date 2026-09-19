@@ -806,9 +806,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					progress(o.Progress, o.Task+" "+attempt+" off-course (paths outside the worktree)")
 				}
 			}
-			if (obs.Tool == "edit" || obs.Tool == "write") && obs.Path != "" && !wroteSeen[obs.Path] && len(wroteOrder) < 50 {
-				wroteSeen[obs.Path] = true
-				wroteOrder = append(wroteOrder, obs.Path)
+			if obs.Tool == "edit" || obs.Tool == "write" || obs.Tool == "delete" {
+				for _, p := range obsPaths(obs) {
+					if p != "" && !wroteSeen[p] && len(wroteOrder) < 50 {
+						wroteSeen[p] = true
+						wroteOrder = append(wroteOrder, p)
+					}
+				}
 			}
 		case "step":
 			if obs.Reason != "" {

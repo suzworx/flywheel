@@ -27,12 +27,13 @@ type Config struct {
 	Lease      *LeaseConfig      `json:"lease,omitempty"`
 	Controller *ControllerConfig `json:"controller,omitempty"`
 	Baseline   *Baseline         `json:"baseline,omitempty"`
+	Audit      *AuditPolicy      `json:"audit,omitempty"`
 }
 
 // Worker configures a single CLI worker.
 type Worker struct {
 	Name         string     `json:"name"`
-	Adapter      string     `json:"adapter"` // "opencode", "sim", or "claude"
+	Adapter      string     `json:"adapter"` // "opencode", "sim", "claude", or "codex"
 	Model        string     `json:"model"`
 	Variant      string     `json:"variant,omitempty"`
 	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
@@ -176,6 +177,14 @@ type Baseline struct {
 	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
 }
 
+// AuditPolicy opts a factory into audit gates (issue #61).
+type AuditPolicy struct {
+	// FirstArticle makes flywheel land refuse a unit (rule T7) until its
+	// worker line's first article is audited conforming, and while the
+	// line's latest audit is a nonconformance.
+	FirstArticle bool `json:"first_article,omitempty"`
+}
+
 // Cost prices t at the baseline: reasoning is billed at the output price.
 func (b Baseline) Cost(t Tokens) float64 {
 	return (float64(t.Input)*b.InputPerMTok +
@@ -293,8 +302,8 @@ func (c Config) Validate() error {
 			}
 			seen[w.Name] = true
 		}
-		if w.Adapter != "opencode" && w.Adapter != "sim" && w.Adapter != "claude" {
-			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", or \"claude\"", where, w.Adapter))
+		if w.Adapter != "opencode" && w.Adapter != "sim" && w.Adapter != "claude" && w.Adapter != "codex" {
+			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", \"claude\", or \"codex\"", where, w.Adapter))
 		}
 		if w.Model == "" {
 			problems = append(problems, where+": model must not be empty")
