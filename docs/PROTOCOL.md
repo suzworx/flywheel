@@ -304,6 +304,11 @@ working exactly as before.
 - Effect: floor-level; `Derive` skips it outright, the same way it skips `staffed`. `flywheel trace
   <session>` is its only reader.
 
+`flywheel init --git-hooks` adds the git layer (issue #56): a `commit-msg` hook refuses a commit
+without a `Flywheel-Task: <id>` trailer (merges, reverts and fixup/squash commits are exempt), and a
+`pre-push` hook refuses a push while a unit named in the pushed commits fails `flywheel verify`, or
+`flywheel verify --log` finds the event log's hash chain broken.
+
 ### `session_command`
 - Written by: the same hook or plugin, once for every `flywheel`-prefixed command the session runs.
 - Carries: `session` and `note` (the command line) — both required; `Validate` rejects the event if

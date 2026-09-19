@@ -26,6 +26,7 @@ type initOptions struct {
 	ignore   bool
 	agentsMD bool
 	hooks    bool
+	gitHooks bool
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -41,6 +42,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.BoolVar(&o.ignore, "ignore", false, "add flywheel.md to the target's root .gitignore so every worktree stays clean")
 	fs.BoolVar(&o.agentsMD, "agents-md", false, "write/refresh AGENTS.md with a flywheel:agents block naming the installed skills and the persona each plays")
 	fs.BoolVar(&o.hooks, "hooks", false, "write .claude/settings.json and .opencode/plugin/flywheel-session.mjs so every session records its start, its flywheel commands, and its end")
+	fs.BoolVar(&o.gitHooks, "git-hooks", false, "install a commit-msg hook requiring a Flywheel-Task trailer and a pre-push hook running flywheel verify")
 	return fs, o
 }
 
@@ -116,6 +118,20 @@ func runInit(args []string) {
 			os.Exit(1)
 		}
 		for _, p := range hpieces {
+			if p.Added {
+				fmt.Printf("added: %s\n", p.Path)
+			} else {
+				fmt.Printf("present: %s\n", p.Path)
+			}
+		}
+	}
+	if o.gitHooks {
+		_, ghpieces, gherr := flywheel.InitGitHooks(o.dir)
+		if gherr != nil {
+			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", gherr)
+			os.Exit(1)
+		}
+		for _, p := range ghpieces {
 			if p.Added {
 				fmt.Printf("added: %s\n", p.Path)
 			} else {
