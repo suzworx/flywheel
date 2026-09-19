@@ -16,13 +16,14 @@ import (
 // the config and the run files. Rendering never calls a model and never runs a
 // git write command.
 type Floor struct {
-	Dir       string    // repo directory the floor watches
-	Refreshed time.Time // the clock the floor was drawn at
-	Lines     []FloorLine
-	Staffing  Staffing
-	Units     []Unit
-	Andon     []Andon
-	Output    Output
+	Dir          string    // repo directory the floor watches
+	Refreshed    time.Time // the clock the floor was drawn at
+	Lines        []FloorLine
+	ProductLines []ProductLine
+	Staffing     Staffing
+	Units        []Unit
+	Andon        []Andon
+	Output       Output
 }
 
 // FloorLine is one config worker: a station on the floor. Busy is the number of
@@ -61,6 +62,7 @@ type Unit struct {
 	LastAge  int    // seconds since the unit's last event
 	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
+	Line     string // the product line from the latest dispatched event (issue #69); "" when none
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -74,6 +76,18 @@ func peakReasoningFor(events []Event, task, attempt string) int {
 		}
 	}
 	return peak
+}
+
+// lineFor returns the product line the task's latest dispatched event for
+// attempt recorded, scanning in order so the last one wins (issue #69).
+func lineFor(events []Event, task, attempt string) string {
+	line := ""
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Task == task && e.Attempt == attempt {
+			line = e.Line
+		}
+	}
+	return line
 }
 
 // wroteFor returns the task's latest finished event's wrote paths for its
@@ -99,6 +113,60 @@ func hasNoPlan(events []Event, task, attempt string) bool {
 		}
 	}
 	return false
+}
+
+// ProductLine is one configured product line on the floor (issue #69): who
+// builds it and how many of the floor's units are on it.
+type ProductLine struct {
+	Name     string
+	Worker   string
+	Owns     []string
+	Units    int // units whose Line is Name
+	Building int // of those, Stage "building"
+	Landed   int // of those, Stage "landed"
+}
+
+// buildProductLines returns one ProductLine per cfg.Lines entry, in config
+// order, counting units by Line; when any unit has a Line that is empty or
+// names no configured line and cfg.Lines is not empty, a last entry named
+// "(none)" (Worker "") counts those units. No configured lines: nil.
+func buildProductLines(cfg Config, units []Unit) []ProductLine {
+	if len(cfg.Lines) == 0 {
+		return nil
+	}
+	lineMap := map[string]*ProductLine{}
+	for _, cl := range cfg.Lines {
+		lineMap[cl.Name] = &ProductLine{Name: cl.Name, Worker: cl.Worker, Owns: cl.Owns}
+	}
+	noneEntry := &ProductLine{Name: "(none)", Worker: ""}
+	for _, u := range units {
+		pl, ok := lineMap[u.Line]
+		if ok {
+			pl.Units++
+			if u.Stage == "building" {
+				pl.Building++
+			}
+			if u.Stage == "landed" {
+				pl.Landed++
+			}
+		} else {
+			noneEntry.Units++
+			if u.Stage == "building" {
+				noneEntry.Building++
+			}
+			if u.Stage == "landed" {
+				noneEntry.Landed++
+			}
+		}
+	}
+	var result []ProductLine
+	for _, cl := range cfg.Lines {
+		result = append(result, *lineMap[cl.Name])
+	}
+	if noneEntry.Units > 0 {
+		result = append(result, *noneEntry)
+	}
+	return result
 }
 
 // Andon is one stopped-line condition: a unit in silent, stalled, no-writes,
@@ -283,6 +351,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	}
 	fl := Floor{Dir: dir, Refreshed: now}
 	fl.Lines = buildLines(cfg, byModel)
+	fl.ProductLines = buildProductLines(cfg, units)
 	fl.Staffing = buildStaffing(w.events)
 	fl.Units = units
 	fl.Andon = buildAndon(units)
@@ -479,6 +548,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote)
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
+			u.Line = lineFor(w.events, t.ID, t.Attempt)
 		}
 		if liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1

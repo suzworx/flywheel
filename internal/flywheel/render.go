@@ -25,6 +25,7 @@ const (
 	adapterW = 8
 	modelL   = 40
 	andonW   = 14
+	lineW    = 8 // the units table's LINE column, shown when a unit has a line
 )
 
 // ANSI colour codes. They are only emitted when colour is enabled (colour=true
@@ -59,6 +60,7 @@ func RenderText(w io.Writer, f Floor, width int, color bool) {
 	taskWd, modelWd, modelLineWd := tableWidths(width)
 	renderHeader(w, f, width)
 	renderFloor(w, f, modelLineWd)
+	renderProductLines(w, f, width)
 	renderUnits(w, f, taskWd, modelWd, color)
 	renderAndon(w, f, color)
 	renderOutput(w, f)
@@ -83,6 +85,24 @@ func renderFloor(w io.Writer, f Floor, modelLine int) {
 			truncate(l.Model, modelLine), l.MaxParallel, l.Busy)
 	}
 	fmt.Fprintf(w, "  lead  %s\n", f.Staffing.Lead)
+}
+
+// renderProductLines prints the product lines and their unit counts, each
+// line cut to the render width, or nothing when ProductLines is empty.
+func renderProductLines(w io.Writer, f Floor, width int) {
+	if len(f.ProductLines) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\nlines\n")
+	for _, pl := range f.ProductLines {
+		line := fmt.Sprintf("  %-12s  %-10s  units %d  building %d  landed %d",
+			truncate(pl.Name, 12), truncate(pl.Worker, 10),
+			pl.Units, pl.Building, pl.Landed)
+		if len(pl.Owns) > 0 {
+			line = line + "  owns " + strings.Join(pl.Owns, ", ")
+		}
+		fmt.Fprintf(w, "%s\n", truncate(line, width))
+	}
 }
 
 // truncate cuts s to at most n runes, marking overflow with a trailing "~".
@@ -145,26 +165,49 @@ func paint(color bool, code, s string) string {
 // and every cell is truncated to its column width.
 func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 	fmt.Fprintf(w, "\nunits (%d)\n", len(f.Units))
-	fmt.Fprintf(w, "  %-*s %-*s %-*s %-*s %-*s %*s %*s %-*s\n",
-		taskWd, "TASK", stageW, "STAGE", attW, "ATT", sessW, "SESSION",
-		modelWd, "MODEL", stepsW, "STEPS", ageW, "AGE", runW, "RUN")
+	hasLine := false
+	for _, u := range f.Units {
+		if u.Line != "" {
+			hasLine = true
+			break
+		}
+	}
+	sessWd := sessW
+	if hasLine {
+		// The LINE column's cells come out of MODEL, then TASK, then SESSION,
+		// so the table still fits the render width (issue #69).
+		need := lineW + 1
+		for _, c := range []struct {
+			wd    *int
+			floor int
+		}{{&modelWd, 6}, {&taskWd, 8}, {&sessWd, 6}} {
+			if n := min(need, *c.wd-c.floor); n > 0 {
+				*c.wd -= n
+				need -= n
+			}
+		}
+	}
+	row := func(task, line, stage, att, sess, model, steps, age, run string) {
+		cells := []string{fmt.Sprintf("%-*s", taskWd, task)}
+		if hasLine {
+			cells = append(cells, fmt.Sprintf("%-*s", lineW, line))
+		}
+		cells = append(cells,
+			fmt.Sprintf("%-*s", stageW, stage), fmt.Sprintf("%-*s", attW, att),
+			fmt.Sprintf("%-*s", sessWd, sess), fmt.Sprintf("%-*s", modelWd, model),
+			fmt.Sprintf("%*s", stepsW, steps), fmt.Sprintf("%*s", ageW, age), run)
+		fmt.Fprintf(w, "  %s\n", strings.Join(cells, " "))
+	}
+	row("TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN"))
 	for _, u := range f.Units {
 		cell := u.RunState
 		if u.RunState == "capped" && u.Peak > 0 {
 			cell = "capped " + tokensK(Tokens{Reasoning: u.Peak})
 		}
-		run := truncate(cell, runW)
-		run = padLeft(run, runW)
-		run = paint(color, stateColor(u.RunState), run)
-		fmt.Fprintf(w, "  %-*s %-*s %-*s %-*s %-*s %*s %*s %s\n",
-			taskWd, truncate(u.Task, taskWd),
-			stageW, truncate(u.Stage, stageW),
-			attW, truncate(u.Attempt, attW),
-			sessW, truncate(u.Session, sessW),
-			modelWd, truncate(u.Model, modelWd),
-			stepsW, fmt.Sprintf("%d", u.Steps),
-			ageW, HumanAge(u.LastAge),
-			run)
+		run := paint(color, stateColor(u.RunState), padLeft(truncate(cell, runW), runW))
+		row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(u.Stage, stageW),
+			truncate(u.Attempt, attW), truncate(u.Session, sessWd), truncate(u.Model, modelWd),
+			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run)
 	}
 }
 
@@ -205,6 +248,7 @@ type jStaff struct {
 
 type jUnit struct {
 	Task          string `json:"task"`
+	Line          string `json:"line,omitempty"`
 	Stage         string `json:"stage"`
 	Attempt       string `json:"attempt"`
 	Session       string `json:"session"`
@@ -231,14 +275,24 @@ type jOutput struct {
 	Cost          float64 `json:"cost"`
 }
 
+type jProductLine struct {
+	Name     string   `json:"name"`
+	Worker   string   `json:"worker"`
+	Owns     []string `json:"owns,omitempty"`
+	Units    int      `json:"units"`
+	Building int      `json:"building"`
+	Landed   int      `json:"landed"`
+}
+
 type jFloor struct {
-	Dir       string   `json:"dir"`
-	Refreshed string   `json:"refreshed"`
-	Lines     []jLine  `json:"lines"`
-	Staffing  jStaff   `json:"staffing"`
-	Units     []jUnit  `json:"units"`
-	Andon     []jAndon `json:"andon"`
-	Output    jOutput  `json:"output"`
+	Dir          string         `json:"dir"`
+	Refreshed    string         `json:"refreshed"`
+	Lines        []jLine        `json:"lines"`
+	ProductLines []jProductLine `json:"product_lines,omitempty"`
+	Staffing     jStaff         `json:"staffing"`
+	Units        []jUnit        `json:"units"`
+	Andon        []jAndon       `json:"andon"`
+	Output       jOutput        `json:"output"`
 }
 
 // RenderJSON writes the floor as indented JSON with stable field order. On a
@@ -250,9 +304,12 @@ func RenderJSON(w io.Writer, f Floor) {
 	for _, l := range f.Lines {
 		j.Lines = append(j.Lines, jLine{Name: l.Name, Adapter: l.Adapter, Model: l.Model, MaxParallel: l.MaxParallel, Busy: l.Busy})
 	}
+	for _, pl := range f.ProductLines {
+		j.ProductLines = append(j.ProductLines, jProductLine{Name: pl.Name, Worker: pl.Worker, Owns: pl.Owns, Units: pl.Units, Building: pl.Building, Landed: pl.Landed})
+	}
 	j.Staffing = jStaff{Lead: f.Staffing.Lead}
 	for _, u := range f.Units {
-		j.Units = append(j.Units, jUnit{Task: u.Task, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak})
+		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak})
 	}
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})
