@@ -79,4 +79,4 @@ You never record gauge readings, inspections or audits (a worker never records t
 - `flywheel supervise` — planned (#55); today: classify run states from the JSONL by hand.
 - `flywheel watch` — planned (#22); today: poll the run file size and the opencode log.
 - `flywheel status` — planned; today: read `flywheel.md` and `.flywheel/state.json`.
-- `flywheel feedback` — planned (#37-#39); today: record signals in `.flywheel/learnings.md`.
+- `flywheel feedback` — lists untriaged signals; triage each with `flywheel feedback add --task <id> ... --signals <signal>` before the session ends.

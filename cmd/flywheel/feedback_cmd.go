@@ -100,7 +100,7 @@ func runFeedback(args []string) {
 }
 
 // runFeedbackList prints one line per learning in log order, then the
-// untriaged-signals line.
+// untriaged signals computed from the log.
 func runFeedbackList(args []string) {
 	fs, o := feedbackFlags()
 	pos, err := parseArgs(fs, args)
@@ -126,7 +126,28 @@ func runFeedbackList(args []string) {
 		}
 		fmt.Println(line)
 	}
-	fmt.Println("untriaged signals: none")
+	printUntriaged(os.Stdout, flywheel.UntriagedSignals(events))
+}
+
+// printUntriaged prints the untriaged signals count and list to w.
+// When there are no untriaged signals, it prints "untriaged signals: none".
+// Otherwise it prints the count, then one line per signal with the task,
+// attempt and signal name, followed by the path when non-empty, then a hint
+// line showing how to triage it.
+func printUntriaged(w io.Writer, sigs []flywheel.SignalView) {
+	if len(sigs) == 0 {
+		fmt.Fprintln(w, "untriaged signals: none")
+		return
+	}
+	fmt.Fprintf(w, "untriaged signals: %d\n", len(sigs))
+	for _, sig := range sigs {
+		line := fmt.Sprintf("  %s %s %s", sig.Task, sig.Attempt, sig.Signal)
+		if sig.Path != "" {
+			line += fmt.Sprintf(" (%s)", sig.Path)
+		}
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintf(w, "  triage: flywheel feedback add --task %s ... --signals %s\n", sigs[0].Task, sigs[0].Signal)
 }
 
 // runFeedbackAdd appends a learning event and rewrites .flywheel/learnings.md.
