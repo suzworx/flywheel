@@ -115,7 +115,11 @@ every unit, with `flywheel supervise` measuring each finished unit nobody has me
 it, selecting first articles and seeded samples
 ([#61](https://github.com/suzworx/flywheel/issues/61)). Enforcement sits in more than one layer:
 the CLI refuses illegal transitions (exit 6), an agent Stop hook runs `flywheel gate`, and git
-hooks check every commit and push (`flywheel init --git-hooks`).
+hooks check every commit and push (`flywheel init --git-hooks`); whatever the worker's adapter,
+`flywheel run` flags an attempt that moved HEAD, switched branch or stashed with a `git-write`
+signal, which blocks landing until the lead triages it (it compares the attempt's end points, so a
+push or a write undone before exit needs the command-level guard,
+[#319](https://github.com/suzworx/flywheel/issues/319)).
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state
@@ -196,7 +200,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
-passes.
+passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
+the first whose own breaker is closed).
 
 ## Quickstart
 
