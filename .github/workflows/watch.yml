@@ -103,7 +103,7 @@ jobs:
           gh pr list --state open --json number --limit 100 -q '.[] | .number' | while read PR; do
             COUNT=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}' \
               -f o="$OWNER" -f r="$REPO" -F n="$PR" \
-              --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .comments.nodes[0].author.login == "devin-ai-integration[bot]")] | length')
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and ((.comments.nodes[0].author.login // "") | startswith("devin-ai-integration")))] | length')
             if [ "$COUNT" -ge 1 ]; then
               gh pr edit "$PR" --add-label review-findings
             else
