@@ -982,6 +982,30 @@ func TestWorktreesFieldRoundTrips(t *testing.T) {
 	}
 }
 
+// TestReadEventsIgnoresUnterminatedTail checks a reader racing a concurrent
+// append sees the complete lines only, not an error (#297 review).
+func TestReadEventsIgnoresUnterminatedTail(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, ".flywheel", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	if _, err := f.WriteString(`{"ts":"2026-09-18T10:01:00Z","task":"T1","ki`); err != nil {
+		t.Fatalf("write partial: %v", err)
+	}
+	f.Close()
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v, want the complete lines only", err)
+	}
+	if len(evs) != 1 || evs[0].Kind != "planned" {
+		t.Errorf("ReadEvents() = %+v, want the one complete planned event", evs)
+	}
+}
+
 // TestValidateIncrement checks only a dispatched event may carry an
 // increment, and it must be positive (#295 review).
 func TestValidateIncrement(t *testing.T) {

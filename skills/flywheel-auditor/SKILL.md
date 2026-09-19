@@ -73,7 +73,7 @@ unit — that is QC's call.
   clean tree and checks owns (exit 0 or 5), giving you a fresh supervisor reading rather than
   trusting the line's recorded one.
 - `flywheel supervise` — planned (#55); today: read the run files directly.
-- `flywheel explain` / `flywheel context` — planned (#58); today: reconstruct the traveler from
-  the briefs, run files and state.
+- `flywheel explain <task>` — the unit's whole traveler from the ledger; `flywheel context` — the
+  factory's state in one read (goals, in flight, what needs a verdict or triage, recent learnings).
 - `flywheel feedback add` — file a nonconformance as a learning (it is rendered into
   `.flywheel/learnings.md`; never hand-edit that file).

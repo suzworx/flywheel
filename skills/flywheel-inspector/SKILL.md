@@ -110,7 +110,7 @@ not just spoken — a confirmation that only lived in your head is not evidence.
   to be found).
 - `flywheel verify [<task>...|--all] [--json]` — cross-checks the event chain (T1/T3/T4/T5/T8;
   exit 0 or 6). Confirm the unit's readings are present and bound before you land a verdict.
-- `flywheel explain` / `flywheel context` — planned (#58); today: reconstruct the unit from the
-  briefs, run files and state.
+- `flywheel explain <task>` — the unit's whole story from the ledger; `flywheel context` — the
+  factory's state in one read (goals, in flight, what needs a verdict or triage, recent learnings).
 - `flywheel state` — status: derived task states; `flywheel factory --once` — the floor, units,
   andon.

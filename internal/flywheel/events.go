@@ -474,18 +474,23 @@ func AppendEvents(dir string, events []Event) error {
 
 // ReadEvents returns the events in .flywheel/events.jsonl. A missing file
 // means no events.
+// Only complete lines are read: an unterminated tail is a record another
+// process is still appending, and is left for the next read.
 func ReadEvents(dir string) ([]Event, error) {
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Event{}, nil
 		}
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	evs, err := ParseEvents(f, false)
-	f.Close()
-	return evs, err
+	// Read only complete lines: an unterminated tail is a record another
+	// process is still appending (#297 review), never a line to parse.
+	if i := bytes.LastIndexByte(b, '\n'); i < len(b)-1 {
+		b = b[:i+1]
+	}
+	return ParseEvents(bytes.NewReader(b), false)
 }
 
 // ParseEvents is the shared JSONL parser. Blank lines are skipped; a line
