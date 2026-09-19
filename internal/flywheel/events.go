@@ -149,6 +149,7 @@ var kinds = map[string]bool{
 	"allow_untriaged": true,
 	"audited":         true,
 	"probed":          true,
+	"sharded":         true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -213,11 +214,11 @@ func attemptOK(s string) bool {
 
 // floorLevel reports whether kind may carry an empty task: staffed, lead_edit
 // and the three session kinds describe the floor itself rather than a task,
-// goal events are validated against Goal instead of Task, and probed events
-// come from the doctor probe run.
+// goal events are validated against Goal instead of Task, probed events
+// come from the doctor probe run, and sharded events are seal records.
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded":
 		return true
 	default:
 		return false
@@ -270,7 +271,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded", e.Kind)
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {
@@ -282,6 +283,11 @@ func Validate(e Event) error {
 	}
 	if e.Signal != "" && e.Kind != "signal" {
 		return fmt.Errorf("event kind %q cannot carry a signal", e.Kind)
+	}
+	if e.Kind == "sharded" {
+		if e.Path != ".flywheel/events.jsonl" {
+			return fmt.Errorf("sharded event requires path .flywheel/events.jsonl (got %q)", e.Path)
+		}
 	}
 	if e.Kind == "learning" {
 		if !severities[e.Severity] {
@@ -438,7 +444,8 @@ func AppendEvents(dir string, events []Event) error {
 	if len(events) == 0 {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	nowT := time.Now().UTC()
+	now := nowT.Format(time.RFC3339Nano)
 	// Work on a copy: defaults, timestamps and prev are set here, never on
 	// the caller's events. Validate all of them before any write.
 	events = append([]Event(nil), events...)
@@ -452,16 +459,40 @@ func AppendEvents(dir string, events []Event) error {
 		if (events[i].Kind == "planned" || events[i].Kind == "amended") && events[i].Persona == "" {
 			events[i].Persona = "planner"
 		}
+		if events[i].Kind == "sharded" {
+			return fmt.Errorf("the sharded event is written by flywheel log --shard only")
+		}
 		if err := Validate(events[i]); err != nil {
 			return err
 		}
-		if events[i].TS == "" {
-			events[i].TS = now
-		}
 	}
+	// Check sharded layout and route if needed (before stamping TS)
+	if sharded, err := ShardedLayout(dir); err != nil {
+		return err
+	} else if sharded {
+		return appendSharded(dir, events, nowT)
+	}
+	// Legacy path: create .flywheel, take the lock, re-check the layout, and
+	// only then stamp (a diverted batch must reach the shard unstamped).
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dot, err)
+	}
+	release, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
+	if err != nil {
+		return err
+	}
+	defer release()
+	// Re-check layout after acquiring lock (migration may have happened)
+	if sharded, err := ShardedLayout(dir); err != nil {
+		return err
+	} else if sharded {
+		return appendSharded(dir, events, nowT)
+	}
+	for i := range events {
+		if events[i].TS == "" {
+			events[i].TS = now
+		}
 	}
 	path := filepath.Join(dot, "events.jsonl")
 	// Serialise "read the last line, then append" (#299 review): without it
@@ -469,11 +500,6 @@ func AppendEvents(dir string, events []Event) error {
 	// line references could be removed undetected. The lock is innermost —
 	// nothing takes another lock while holding it — and held for one read
 	// and one write.
-	release, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
-	if err != nil {
-		return err
-	}
-	defer release()
 	prev, err := lastLineHash(path)
 	if err != nil {
 		return err
