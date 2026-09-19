@@ -20,10 +20,10 @@ first line stops matching `^# flywheel protocol v`.
 
 ## 1. Required entries per task
 
-Twenty-one event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
+Twenty-two event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
 `Validate` rejects anything else. Nine of them carry a task's status (`state.go`'s `kindRank`
 orders them for replay); the rest — `worker_plan`, `no-plan`, `off-course`, `report`, `validated`,
-`owns_checked`, `amended` — change other fields but never the status itself. `staffed`, `goal`,
+`owns_checked`, `amended`, `sharded` — change other fields but never the status itself. `staffed`, `goal`,
 `session_start`, `session_command` and `session_end` are the five kinds that carry no `task` at
 all.
 
@@ -497,6 +497,26 @@ worker's own permission policy does not need to block commands it is never given
 record; and **the inspector never writes a `validated` event** because `flywheel inspect` never
 touches gate output — only `flywheel validate` does, and it always signs its own readings
 `"supervisor"`, never `"inspector"`.
+
+## Log layout
+
+The event log has two layouts, both append-only: the legacy single-file layout (`.flywheel/events.jsonl`) and the sharded layout (files under `.flywheel/events/`). Both are opt-in; `flywheel log --shard` is the only way to switch, and the switch is one-way: once a repository uses the sharded layout, older binaries cannot read it safely (they reject the unknown `log.shards` config field). The config key `log.shards` is written by `--shard` and fences out older binaries.
+
+### Legacy layout
+
+The legacy layout is a single `.flywheel/events.jsonl` file, one JSON event object per line, appended by `AppendEvent`.
+
+### Sharded layout
+
+The sharded layout puts events under `.flywheel/events/`:
+
+- **Per-task shards:** one file per task, named `<task>.jsonl`, holds all events for that task (every event with that task id in the `task` field).
+- **Global events:** `@floor.jsonl` holds events that have no task (`session_start`, `session_end`, `session_command`, `staffed`, `goal`, `lead_edit`, and `amended` events whose brief is in the global briefs directory).
+- **Session boundary events:** `@session-<id>.jsonl` holds every `session_start`, `session_command`, and `session_end` event for that session, so a reader can reconstruct a session's view efficiently.
+
+Readers merge events in this order: legacy file first, then stable by each shard's running-max timestamp (the timestamp of the last appended event in that shard), which preserves the global linearized order while allowing shards to operate concurrently. Each shard has its own hash chain with a genesis block (the first event appended to that shard) and a `sharded` event at the moment the layout is switched (kind `sharded`, with fields identical to other seal events). `flywheel verify --log` checks each shard's chain separately and also the merged order across shards.
+
+Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard, named `<task>.lock`); they are git-ignored. The locks enforce per-shard write order and are consulted by readers to detect in-flight appends, but readers never wait — a slow reader may observe partial state, and consistency is per-file, not cross-shard. Deletions and trimmed tails in a shard are not detected by the chain (the seal block lives at insertion time, not at mutation time); only appends are tracked.
 
 ## 5. `flywheel verify` and exit codes
 

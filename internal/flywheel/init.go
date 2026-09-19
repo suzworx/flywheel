@@ -247,7 +247,7 @@ func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (s
 			return "", nil, fmt.Errorf("write %s: %w", configPath, err)
 		}
 	}
-	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\nworktrees/\n"))
+	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\nworktrees/\nlocks/\n"))
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", gitignorePath, err)
@@ -450,6 +450,10 @@ func IgnoredStateFiles(dir string) []string {
 		if gitIgnores(dir, p) {
 			ignored = append(ignored, p)
 		}
+	}
+	shardedPath := filepath.ToSlash(filepath.Join(".flywheel", "events", "@floor.jsonl"))
+	if gitIgnores(dir, shardedPath) {
+		ignored = append(ignored, shardedPath)
 	}
 	return ignored
 }

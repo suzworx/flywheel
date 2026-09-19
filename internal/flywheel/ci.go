@@ -40,8 +40,8 @@ jobs:
         env:
           FLYWHEEL_DIR: @FLYWHEEL_DIR@
         run: |
-          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ]; then
-            echo "::error::$FLYWHEEL_DIR/.flywheel/events.jsonl is not committed; flywheel-audit needs the event log in the repository"
+          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ] && [ ! -d "$FLYWHEEL_DIR/.flywheel/events" ]; then
+            echo "::error::the event log is not committed; flywheel-audit needs the event log in the repository"
             exit 1
           fi
           export PATH="$(go env GOPATH)/bin:$PATH"

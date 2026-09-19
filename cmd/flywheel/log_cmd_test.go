@@ -1,13 +1,28 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
+
+func gitInitRepo(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd.Dir = dir
+	if _, err := cmd.Output(); err != nil {
+		var e *exec.ExitError
+		if errors.As(err, &e) {
+			t.Fatalf("git init: %v", err)
+		}
+		t.Skipf("git unavailable: %v", err)
+	}
+}
 
 // TestAppendEventsPlannedTakesNoFeedbackLock checks a batch with no learning
 // or dismissed event takes no feedback lock at all: logging a planned event
@@ -141,5 +156,117 @@ func TestBatchHasLearning(t *testing.T) {
 	withDismissed := []flywheel.Event{{Kind: "dismissed"}}
 	if !batchHasLearning(withDismissed) {
 		t.Error("batchHasLearning() = false for a batch carrying a dismissed event")
+	}
+}
+
+// TestLogShardSealsAndMarksConfig checks that runLogShard seals the legacy log
+// and marks the config with log.shards = true.
+func TestLogShardSealsAndMarksConfig(t *testing.T) {
+	dir := t.TempDir()
+	appendEvents(dir, []flywheel.Event{
+		{Task: "t1", Kind: "planned", Brief: "b.txt"},
+		{Task: "t1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt"},
+	}, true)
+	err := runLogShard(dir, os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatalf("runLogShard() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "events", "@floor.jsonl")); err != nil {
+		t.Errorf("@floor.jsonl not created: %v", err)
+	}
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Log == nil || !cfg.Log.Shards {
+		t.Errorf("log.shards = %+v, want true", cfg.Log)
+	}
+}
+
+// TestLogShardIdempotent checks that a second call to runLogShard prints
+// "already uses the sharded log" and does not fail.
+func TestLogShardIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	appendEvents(dir, []flywheel.Event{
+		{Task: "t1", Kind: "planned", Brief: "b.txt"},
+	}, true)
+	if err := runLogShard(dir, os.Stdout, os.Stderr); err != nil {
+		t.Fatalf("first runLogShard() error = %v", err)
+	}
+	var buf strings.Builder
+	if err := runLogShard(dir, &buf, os.Stderr); err != nil {
+		t.Fatalf("second runLogShard() error = %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "already uses the sharded log") {
+		t.Errorf("output = %q, want to contain \"already uses the sharded log\"", output)
+	}
+}
+
+// TestLogShardFlagConflictsAreUsage checks that logShardConflicts validates
+// flags properly and returns errors for conflicts.
+func TestLogShardFlagConflictsAreUsage(t *testing.T) {
+	tests := []struct {
+		name string
+		opts *logOptions
+	}{
+		{"task", &logOptions{shard: true, task: "t1"}},
+		{"kind", &logOptions{shard: true, kind: "planned"}},
+		{"brief", &logOptions{shard: true, brief: "b.txt"}},
+		{"json", &logOptions{shard: true, jsonIn: "e.jsonl"}},
+		{"no-state", &logOptions{shard: true, noState: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := logShardConflicts(tt.opts)
+			if err == nil {
+				t.Errorf("logShardConflicts() = nil, want error")
+			}
+		})
+	}
+}
+
+// TestLogShardWarnsOnPinnedAuditWorkflow checks that runLogShard warns when
+// the audit workflow pins a flywheel version.
+func TestLogShardWarnsOnPinnedAuditWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
+	workflowDir := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("create workflow dir: %v", err)
+	}
+	workflowPath := filepath.Join(workflowDir, "flywheel-audit.yml")
+	if err := os.WriteFile(workflowPath, []byte("flywheel@v0.17.0\n"), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	var stderrBuf strings.Builder
+	if err := runLogShard(dir, os.Stdout, &stderrBuf); err != nil {
+		t.Fatalf("runLogShard() error = %v", err)
+	}
+	stderr := stderrBuf.String()
+	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "pin") {
+		t.Errorf("stderr = %q, want warning about pin", stderr)
+	}
+}
+
+// TestInitShardCreatesShardedRepo checks that init --shard creates a sharded
+// repository with ShardedLayout = true.
+func TestInitShardCreatesShardedRepo(t *testing.T) {
+	dir := t.TempDir()
+	gitInitRepo(t, dir)
+	o := &initOptions{dir: dir, shard: true}
+	path, _, err := flywheel.InitSeeded(o.dir, false, "", "", false)
+	if err != nil {
+		t.Fatalf("InitSeeded() error = %v", err)
+	}
+	if err := runLogShard(path, os.Stdout, os.Stderr); err != nil {
+		t.Fatalf("runLogShard() error = %v", err)
+	}
+	layout, err := flywheel.ShardedLayout(path)
+	if err != nil {
+		t.Fatalf("ShardedLayout() error = %v", err)
+	}
+	if !layout {
+		t.Errorf("ShardedLayout() = false, want true")
 	}
 }

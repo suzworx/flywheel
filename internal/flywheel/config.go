@@ -37,6 +37,7 @@ type Config struct {
 	Controller *ControllerConfig `json:"controller,omitempty"`
 	Baseline   *Baseline         `json:"baseline,omitempty"`
 	Audit      *AuditPolicy      `json:"audit,omitempty"`
+	Log        *LogConfig        `json:"log,omitempty"`
 }
 
 // Worker configures a single CLI worker.
@@ -194,6 +195,16 @@ type AuditPolicy struct {
 	// worker line's first article is audited conforming, and while the
 	// line's latest audit is a nonconformance.
 	FirstArticle bool `json:"first_article,omitempty"`
+}
+
+// LogConfig configures the event log's layout (issue #47).
+type LogConfig struct {
+	// Shards records that this repository uses per-task shards under
+	// .flywheel/events/. It is written by flywheel log --shard; the layout
+	// itself is decided by that directory, never by this key, which also
+	// fences out binaries too old to read shards (they reject unknown
+	// config fields).
+	Shards bool `json:"shards,omitempty"`
 }
 
 // Cost prices t at the baseline: reasoning is billed at the output price.
@@ -485,6 +496,11 @@ func (c Config) Get(key string) (string, error) {
 		return c.Feedback.Submit, nil
 	case "limits.per_host":
 		return strconv.Itoa(c.Limits.PerHost), nil
+	case "log.shards":
+		if c.Log != nil && c.Log.Shards {
+			return "true", nil
+		}
+		return "false", nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -535,7 +551,7 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.per_host", "max_parallel", "model", "stall_timeout", "variant",
+		"feedback.upstream", "limits.per_host", "log.shards", "max_parallel", "model", "stall_timeout", "variant",
 	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
@@ -585,6 +601,8 @@ func (c *Config) Set(key, value string) error {
 		return nil
 	case "fallbacks", "fallbacks.all":
 		return fmt.Errorf("%s: not settable; edit .flywheel/config.json", key)
+	case "log.shards":
+		return fmt.Errorf("log.shards is not settable; run flywheel log --shard (the sharded layout is one-way)")
 	}
 	return c.settableErr(key)
 }

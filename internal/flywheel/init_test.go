@@ -517,8 +517,8 @@ func TestInitCreatesEventLogAndGitignore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	if string(b) != "runs/\nworktrees/\n" {
-		t.Errorf(".gitignore = %q, want runs/\\nworktrees/", b)
+	if string(b) != "runs/\nworktrees/\nlocks/\n" {
+		t.Errorf(".gitignore = %q, want runs/\\nworktrees/\\nlocks/", b)
 	}
 }
 
@@ -760,7 +760,7 @@ func TestIgnoredStateFilesReportsGitIgnored(t *testing.T) {
 
 	ignored := IgnoredStateFiles(dir)
 	sort.Strings(ignored)
-	want := []string{".flywheel/config.json", ".flywheel/events.jsonl", ".flywheel/state.json"}
+	want := []string{".flywheel/config.json", ".flywheel/events.jsonl", ".flywheel/events/@floor.jsonl", ".flywheel/state.json"}
 	if !reflect.DeepEqual(ignored, want) {
 		t.Errorf("IgnoredStateFiles() = %v, want %v", ignored, want)
 	}
