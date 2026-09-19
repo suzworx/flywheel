@@ -13,6 +13,9 @@ type LandMergeOptions struct {
 	Dir  string // flywheel root (the main worktree); default "."
 	Onto string // integration branch; default the branch checked out in Dir
 	Note string // optional landing note
+	// AllowUntriaged lands despite untriaged signals, recording this reason
+	// (rule T9), as land --allow-untriaged does.
+	AllowUntriaged string
 }
 
 // LandMergeResult reports a landing through the queue.
@@ -31,8 +34,10 @@ type LandMergeResult struct {
 //     a merge left in progress there by an earlier conflict → RuleRefusal
 //     Rule "land" saying how to finish it;
 //  2. its status must be "passed" (Derive) → else RuleRefusal Rule "T5";
-//  3. the worktree and Dir must be clean apart from .flywheel/ and
-//     flywheel.md, and Dir must have Onto checked out → else Rule "land";
+//  3. Onto must be a local branch (never an option-shaped name), the
+//     worktree must still have fw/<task> checked out, the worktree and Dir
+//     must be clean apart from .flywheel/ and flywheel.md, and Dir must have
+//     Onto checked out → else Rule "land";
 //  4. in the worktree: git rebase <onto>. When it stops on conflicts, the
 //     rebase is aborted and the unit's branch merges <onto> instead, leaving
 //     the conflict markers in the worktree with the branch still checked out
@@ -42,8 +47,11 @@ type LandMergeResult struct {
 //     a RuleRefusal Rule "land" says what to dispatch and how to finish;
 //  5. ValidateTask on the rebased worktree re-runs the gates; !OK() → Rule
 //     "land" (the branch stays rebased; fix and land again);
-//  6. git -C <Dir> merge --ff-only <branch>, then LandTaskWithException
-//     records the landing at Dir's new HEAD;
+//  6. every landing rule (T5, T7, T9 — AllowUntriaged as land
+//     --allow-untriaged —, already landed) is checked under the ledger
+//     locks, and only then, inside the same critical section, git -C <Dir>
+//     merge --ff-only fw/<task> moves the branch and the landing is
+//     recorded at its new HEAD (a failed append resets the branch back);
 //  7. git worktree remove and git branch -d (a failure here is returned,
 //     but the landing stands).
 func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
@@ -65,7 +73,7 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("task %s has no worktree: run it with flywheel run %s --worktree, or land a merged commit with --commit", task, task)}
 	}
 	if _, err := landGit(workdir, "rev-parse", "-q", "--verify", "MERGE_HEAD"); err == nil {
-		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("a merge is in progress in %s (an earlier landing stopped on conflicts): once the conflict markers are resolved (flywheel run %s --delta %s), finish it with git -C %s add -A && git -C %s commit --no-edit, then validate, inspect and land again", workdir, task, landDeltaRel(task), workdir, workdir)}
+		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("a merge is in progress in %s (an earlier landing stopped on conflicts): once the conflict markers are resolved (flywheel run %s --delta %s), the lead finishes it with git -C %s add -A && git -C %s commit --no-edit, then validates, inspects and lands again", workdir, task, landDeltaRel(task), workdir, workdir)}
 	}
 
 	status := ""
@@ -85,6 +93,21 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 			return LandMergeResult{}, fmt.Errorf("determine integration branch: %w", err)
 		}
 	}
+	// onto reaches git as an argument: it must name an existing local branch
+	// and can never be read as an option (#345 review).
+	if strings.HasPrefix(onto, "-") {
+		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("integration branch %q is not a branch name", onto)}
+	}
+	if _, err := landGit(o.Dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+onto); err != nil {
+		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("integration branch %q is not a local branch in %s", onto, o.Dir)}
+	}
+	// The worktree must still hold the task's own branch: a worktree switched
+	// to another branch would land that branch's commits as the task's
+	// (#345 review).
+	branch := "fw/" + task
+	if err := checkTaskWorktree(o.Dir, workdir, branch); err != nil {
+		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: err.Error()}
+	}
 	for _, wd := range []string{workdir, o.Dir} {
 		dirty, err := dirtyPaths(wd)
 		if err != nil {
@@ -98,10 +121,6 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 		return LandMergeResult{}, fmt.Errorf("check current branch in %s: %w", o.Dir, err)
 	} else if current != onto {
 		return LandMergeResult{}, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("%s has branch %q checked out; check out %s there first", o.Dir, current, onto)}
-	}
-	branch, err := currentBranch(workdir)
-	if err != nil {
-		return LandMergeResult{}, fmt.Errorf("branch of worktree %s: %w", workdir, err)
 	}
 
 	// A branch that already contains onto is not rebased: after a resolved
@@ -130,13 +149,27 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 		return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("gates fail after rebase onto %s (the branch in %s stays rebased): flywheel explain %s", onto, workdir, task)}
 	}
 
-	if out, err := landGit(o.Dir, "merge", "--ff-only", branch); err != nil {
-		return result, fmt.Errorf("fast-forward %s to %s: %w: %s", onto, branch, err, strings.TrimSpace(out))
+	// Every landing rule (T5, T7, T9, already landed) is checked under the
+	// ledger locks BEFORE the integration branch moves, and the fast-forward
+	// happens inside that same critical section, so a refused landing never
+	// advances the branch (#345 review); a failed append undoes it.
+	advance := func() (string, func() error, error) {
+		old := headCommit(o.Dir)
+		if out, err := landGit(o.Dir, "merge", "--ff-only", branch); err != nil {
+			return "", nil, fmt.Errorf("fast-forward %s to %s: %w: %s", onto, branch, err, strings.TrimSpace(out))
+		}
+		undo := func() error {
+			if out, err := landGit(o.Dir, "reset", "--keep", old); err != nil {
+				return fmt.Errorf("git reset --keep %s: %w: %s", old, err, strings.TrimSpace(out))
+			}
+			return nil
+		}
+		return headCommit(o.Dir), undo, nil
+	}
+	if err := landTask(o.Dir, task, "", o.Note, false, "", "", "", o.AllowUntriaged, advance); err != nil {
+		return result, err
 	}
 	result.Commit = headCommit(o.Dir)
-	if err := LandTaskWithException(o.Dir, task, result.Commit, o.Note, false, "", "", "", ""); err != nil {
-		return result, fmt.Errorf("record landing: %w", err)
-	}
 
 	var errs []string
 	if out, err := landGit(o.Dir, "worktree", "remove", workdir); err != nil {
@@ -174,7 +207,7 @@ func landConflict(dir, workdir, task, onto string, events []Event, result LandMe
 	}
 	result.Conflict = conflicts
 	result.Delta = landDeltaRel(task)
-	return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("merging %s into the unit stopped on conflicts in %s, left in progress in %s: dispatch the correction (flywheel run %s --delta %s), then git -C %s add -A && git -C %s commit --no-edit, validate, inspect and land again", onto, strings.Join(conflicts, ", "), workdir, task, result.Delta, workdir, workdir)}
+	return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("merging %s into the unit stopped on conflicts in %s, left in progress in %s: dispatch the correction (flywheel run %s --delta %s; the worker only edits files), then the lead runs git -C %s add -A && git -C %s commit --no-edit, validates, inspects and lands again", onto, strings.Join(conflicts, ", "), workdir, task, result.Delta, workdir, workdir)}
 }
 
 // landConflicts lists the unmerged paths in wd, NUL-delimited so no name is

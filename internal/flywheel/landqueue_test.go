@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -611,5 +612,110 @@ func TestLandMergeAlreadyUpToDate(t *testing.T) {
 	landed := landedEvents(t, dir, "T1")
 	if len(landed) != 1 {
 		t.Fatalf("landed events = %d, want 1", len(landed))
+	}
+}
+
+// landMergeSetup builds a repo with a flywheel dir, a passed task T1 that
+// ran in its worktree on fw/T1 and committed feature.go there, and main
+// advanced by an unrelated commit; it returns the root and the worktree.
+func landMergeSetup(t *testing.T) (dir, wt string) {
+	t.Helper()
+	dir = t.TempDir()
+	initRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte("owns: feature.go\nneeds: none\ngate: exit 0\n\n# TASK: test\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "brief"})
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var err error
+	if wt, err = TaskWorktree(dir, "T1"); err != nil {
+		t.Fatalf("TaskWorktree() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Workdir: wt}); err != nil {
+		t.Fatalf("append dispatched: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "feature.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write feature.go: %v", err)
+	}
+	git(t, wt, []string{"add", "-A"})
+	git(t, wt, []string{"commit", "-m", "feature"})
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:02:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "lead-1"}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write other.go: %v", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "other"})
+	return dir, wt
+}
+
+// TestLandMergeRefusalKeepsBranch checks that a landing rule refusing after
+// the gates (T9: an untriaged signal) leaves the integration branch where it
+// was, and that --allow-untriaged then lands (#345 review).
+func TestLandMergeRefusalKeepsBranch(t *testing.T) {
+	dir, _ := landMergeSetup(t)
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:03:00Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	before := git(t, dir, []string{"rev-parse", "HEAD"})
+	_, err := LandMerge("T1", LandMergeOptions{Dir: dir})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T9" {
+		t.Fatalf("LandMerge() error = %v, want a T9 refusal", err)
+	}
+	if after := git(t, dir, []string{"rev-parse", "HEAD"}); after != before {
+		t.Errorf("main moved from %s to %s on a refused landing", before, after)
+	}
+	res, err := LandMerge("T1", LandMergeOptions{Dir: dir, AllowUntriaged: "reviewed the no-plan signal"})
+	if err != nil {
+		t.Fatalf("LandMerge(AllowUntriaged) error = %v", err)
+	}
+	if got := git(t, dir, []string{"rev-parse", "HEAD"}); got != res.Commit || got == before {
+		t.Errorf("main HEAD = %s, want the landed commit %s", got, res.Commit)
+	}
+}
+
+// TestLandMergeWrongBranchRefused checks that a worktree switched away from
+// fw/<task> is refused instead of landing another branch (#345 review).
+func TestLandMergeWrongBranchRefused(t *testing.T) {
+	dir, wt := landMergeSetup(t)
+	git(t, wt, []string{"checkout", "-q", "-b", "experiment"})
+	before := git(t, dir, []string{"rev-parse", "HEAD"})
+	_, err := LandMerge("T1", LandMergeOptions{Dir: dir})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "land" || !strings.Contains(r.Fix, "fw/T1") {
+		t.Fatalf("LandMerge() error = %v, want a land refusal naming fw/T1", err)
+	}
+	if after := git(t, dir, []string{"rev-parse", "HEAD"}); after != before {
+		t.Errorf("main moved on a refused landing")
+	}
+}
+
+// TestLandMergeOntoMustBeABranch checks that --onto is never passed to git
+// as an option and must name a local branch (#345 review).
+func TestLandMergeOntoMustBeABranch(t *testing.T) {
+	dir, _ := landMergeSetup(t)
+	for _, onto := range []string{"--exec=touch pwned", "-x", "no-such-branch"} {
+		_, err := LandMerge("T1", LandMergeOptions{Dir: dir, Onto: onto})
+		var r *RuleRefusal
+		if !errors.As(err, &r) || r.Rule != "land" {
+			t.Errorf("Onto %q: error = %v, want a land refusal", onto, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Error("an option-shaped --onto reached git")
 	}
 }

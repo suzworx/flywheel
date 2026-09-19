@@ -95,7 +95,7 @@ func runLand(args []string) {
 
 	// Handle --merge path
 	if o.merge {
-		result, err := flywheel.LandMerge(task, flywheel.LandMergeOptions{Dir: o.dir, Onto: o.onto, Note: o.note})
+		result, err := flywheel.LandMerge(task, flywheel.LandMergeOptions{Dir: o.dir, Onto: o.onto, Note: o.note, AllowUntriaged: o.allowUntriaged})
 		if err != nil {
 			if len(result.Conflict) > 0 {
 				fmt.Fprintf(os.Stderr, "%s conflicts landing onto %s: %s\n", task, result.Onto, strings.Join(result.Conflict, ", "))
