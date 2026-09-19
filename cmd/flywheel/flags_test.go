@@ -42,6 +42,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"claims":     func() (*flag.FlagSet, any) { fs, o := claimsFlags(); return fs, o },
 	"claim-edit": func() (*flag.FlagSet, any) { fs, o := claimEditFlags(); return fs, o },
 	"review":     func() (*flag.FlagSet, any) { fs, o := reviewFlags(); return fs, o },
+	"audit":      func() (*flag.FlagSet, any) { fs, o := auditFlags(); return fs, o },
 	"doctor":     func() (*flag.FlagSet, any) { fs, o := doctorFlags(); return fs, o },
 	"feedback":   func() (*flag.FlagSet, any) { fs, o := feedbackFlags(); return fs, o },
 	"gate":       func() (*flag.FlagSet, any) { fs, o := gateFlags(); return fs, o },
