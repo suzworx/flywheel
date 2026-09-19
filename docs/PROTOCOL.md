@@ -377,7 +377,8 @@ Concretely, still design-only:
   nothing gates landing on it.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
   signals are recorded and `flywheel feedback` lists the untriaged ones (a signal is triaged once a
-  learning on the same task names it with `--signals`), but there is no `allow_untriaged` kind and
+  later learning on the same task names it with `--signals`; a recurrence after it is untriaged
+  again), but there is no `allow_untriaged` kind and
   `flywheel land`/`flywheel handoff` do not refuse.
 - **T10** (the log is append-only with a hash chain per shard) — the log is append-only in
   practice (`AppendEvent` only ever opens with `O_APPEND`, and `ParseEvents` treats an unresolved

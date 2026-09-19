@@ -747,6 +747,35 @@ func TestUntriagedSignalsOtherConditionDoesNotTriage(t *testing.T) {
 	}
 }
 
+// TestUntriagedSignalsRecurrenceAfterLearning checks a learning triages only
+// the occurrences recorded before it: the same condition recurring on a later
+// attempt is untriaged again.
+func TestUntriagedSignalsRecurrenceAfterLearning(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "c1", TS: "2026-09-16T02:00:00Z"},
+	}
+	got := UntriagedSignals(events)
+	if len(got) != 1 || got[0].Attempt != "c1" {
+		t.Fatalf("UntriagedSignals() = %+v, want only the c1 recurrence", got)
+	}
+}
+
+// TestUntriagedSignalsKeepLogOrder checks untriaged signals come back in log
+// order, whatever order the backward scan found them in.
+func TestUntriagedSignalsKeepLogOrder(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1"},
+		{Task: "t2", Kind: "signal", Signal: "stalled", Attempt: "r1"},
+		{Task: "t1", Kind: "signal", Signal: "stalled", Attempt: "c1"},
+	}
+	got := UntriagedSignals(events)
+	if len(got) != 3 || got[0].Task != "t1" || got[1].Task != "t2" || got[2].Attempt != "c1" {
+		t.Fatalf("UntriagedSignals() = %+v, want log order", got)
+	}
+}
+
 func TestUntriagedSignalsDismissedLearningStillTriages(t *testing.T) {
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},

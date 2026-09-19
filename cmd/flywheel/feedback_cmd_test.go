@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,5 +89,28 @@ func TestFeedbackAddReadFailureRecordedNotLost(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("failure message %q does not contain %q", msg, want)
 		}
+	}
+}
+
+// TestPrintUntriaged checks the untriaged section of `flywheel feedback`:
+// "none" when there are none; otherwise the count, one line per signal (the
+// run file only when recorded) and a triage hint naming the first signal.
+func TestPrintUntriaged(t *testing.T) {
+	var none bytes.Buffer
+	printUntriaged(&none, nil)
+	if got := none.String(); got != "untriaged signals: none\n" {
+		t.Errorf("printUntriaged(nil) = %q, want the none line", got)
+	}
+	var two bytes.Buffer
+	printUntriaged(&two, []flywheel.SignalView{
+		{Task: "T1", Attempt: "r1", Signal: "no-plan", Path: ".flywheel/runs/T1.r1.jsonl"},
+		{Task: "T2", Attempt: "c1", Signal: "stalled"},
+	})
+	want := "untriaged signals: 2\n" +
+		"  T1 r1 no-plan (.flywheel/runs/T1.r1.jsonl)\n" +
+		"  T2 c1 stalled\n" +
+		"  triage: flywheel feedback add --task T1 ... --signals no-plan\n"
+	if got := two.String(); got != want {
+		t.Errorf("printUntriaged() =\n%s\nwant\n%s", got, want)
 	}
 }
