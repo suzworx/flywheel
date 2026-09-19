@@ -150,6 +150,32 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return Result{}, fmt.Errorf("no worker named %q in .flywheel/config.json", o.Worker)
 		}
 	}
+	// Product line (issue #69): resolved from the task's brief header before
+	// anything reads the worker or model, so every check below (L-03,
+	// limits, budget, breaker, rate) sees the worker that will really run.
+	// The line's worker staffs the unit unless --worker was given; the line
+	// is recorded on the dispatch either way.
+	var usedLine string
+	if len(cfg.Lines) > 0 {
+		if evs, rerr := ReadEvents(dir); rerr == nil {
+			if header, _, herr := AttemptBrief(dir, evs, o.Task); herr == nil {
+				line, lineFound, lineErr := cfg.LineFor(header)
+				if lineErr != nil {
+					return Result{}, lineErr
+				}
+				if lineFound {
+					usedLine = line.Name
+					if o.Worker == "" {
+						lw, ok := cfg.Worker(line.Worker)
+						if !ok {
+							return Result{}, fmt.Errorf("line %q references worker %q, which is not in workers[]", line.Name, line.Worker)
+						}
+						worker = lw
+					}
+				}
+			}
+		}
+	}
 	model := o.Model
 	if model == "" {
 		model = worker.Model
@@ -501,6 +527,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
+		Line: usedLine,
 	}); err != nil {
 		return Result{}, err
 	}
