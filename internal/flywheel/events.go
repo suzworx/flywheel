@@ -525,6 +525,11 @@ func AppendEvents(dir string, events []Event) error {
 // Only complete lines are read: an unterminated tail is a record another
 // process is still appending, and is left for the next read.
 func ReadEvents(dir string) ([]Event, error) {
+	if sharded, err := ShardedLayout(dir); err != nil {
+		return nil, err
+	} else if sharded {
+		return readShardedEvents(dir)
+	}
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
 	b, err := os.ReadFile(path)
 	if err != nil {
