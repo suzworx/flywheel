@@ -111,7 +111,6 @@ func runInit(args []string) {
 		if o.ignore {
 			fmt.Println("ignored: flywheel.md")
 		}
-		fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")
 	}
 	if o.hooks {
 		_, hpieces, herr := flywheel.InitHooks(o.dir)
