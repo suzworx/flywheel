@@ -132,6 +132,7 @@ var kinds = map[string]bool{
 	"learning":        true,
 	"dismissed":       true,
 	"signal":          true,
+	"excepted":        true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -277,6 +278,11 @@ func Validate(e Event) error {
 		}
 		if e.Note == "" {
 			return fmt.Errorf("dismissed event must carry a note")
+		}
+	}
+	if e.Kind == "excepted" {
+		if e.Note == "" || e.Session == "" {
+			return fmt.Errorf("excepted event must carry a note (the evidence) and a session")
 		}
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {

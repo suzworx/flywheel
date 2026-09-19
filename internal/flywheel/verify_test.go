@@ -1475,3 +1475,65 @@ func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
 		t.Errorf("VerifyTasks() error = %q, want it to name %s", err, want)
 	}
 }
+
+// TestVerifyT5LandedOnException checks a landed event preceded by an excepted
+// event from a lead session passes T5 with the exception noted.
+func TestVerifyT5LandedOnException(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand", Reason: "status planned"}); err != nil {
+		t.Fatalf("append excepted: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:02:00Z", Task: "T1", Kind: "landed", Commit: "abc1234", Note: "exception: ran go test by hand"}); err != nil {
+		t.Fatalf("append landed: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	for _, item := range res.Items {
+		if item.Rule == "T5" {
+			if !item.Pass {
+				t.Errorf("T5 failed: %s", item.Reason)
+			}
+			if !strings.Contains(item.Reason, "exception") {
+				t.Errorf("T5 reason should mention exception: %s", item.Reason)
+			}
+			if !strings.Contains(item.Reason, "lead-1") {
+				t.Errorf("T5 reason should mention session lead-1: %s", item.Reason)
+			}
+			return
+		}
+	}
+	t.Errorf("VerifyTasks() items = %v, want a T5 item mentioning the exception", res.Items)
+}
+
+// TestVerifyT4ExceptionFromWorkerSession checks an excepted event whose
+// session wrote the task's finished event fails T4.
+func TestVerifyT4ExceptionFromWorkerSession(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "finished", Session: "w1"}); err != nil {
+		t.Fatalf("append finished: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:02:00Z", Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "w1", Note: "ran go test by hand", Reason: "status planned"}); err != nil {
+		t.Fatalf("append excepted: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	for _, item := range res.Items {
+		if item.Rule == "T4" && !item.Pass {
+			if !strings.Contains(item.Reason, "worker session") {
+				t.Errorf("T4 reason should mention worker session: %s", item.Reason)
+			}
+			return
+		}
+	}
+	t.Errorf("VerifyTasks() items = %v, want a failing T4 for worker session in excepted event", res.Items)
+}

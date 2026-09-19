@@ -423,8 +423,9 @@ func briefHeaderFor(dir, task string, events []Event) (BriefHeader, error) {
 	return header, err
 }
 
-// ruleT4 checks that no inspected event comes from a worker session.
-func ruleT4(task string, events []Event) []VerifyItem {
+// workerSessions returns the set of sessions that wrote the task's started,
+// finished, dispatched, report or worker_plan events.
+func workerSessions(events []Event, task string) map[string]bool {
 	workers := map[string]bool{}
 	for _, e := range events {
 		if e.Task == task && e.Session != "" {
@@ -434,38 +435,77 @@ func ruleT4(task string, events []Event) []VerifyItem {
 			}
 		}
 	}
+	return workers
+}
+
+// ruleT4 checks that no inspected or excepted event comes from a worker session.
+func ruleT4(task string, events []Event) []VerifyItem {
+	workers := workerSessions(events, task)
 	var items []VerifyItem
 	for _, e := range events {
-		if e.Task != task || e.Kind != "inspected" || e.Session == "" {
+		if e.Task != task || e.Session == "" {
 			continue
 		}
-		if workers[e.Session] {
+		if e.Kind == "inspected" && workers[e.Session] {
 			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
 				Reason: fmt.Sprintf("inspected event uses worker session %q", e.Session)})
 		}
+		if e.Kind == "excepted" && workers[e.Session] {
+			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
+				Reason: fmt.Sprintf("excepted event uses worker session %q", e.Session)})
+		}
 	}
 	if len(items) == 0 {
-		return []VerifyItem{{Task: task, Rule: "T4", Pass: true, Reason: "no inspected event from a worker session"}}
+		return []VerifyItem{{Task: task, Rule: "T4", Pass: true, Reason: "no inspected or excepted event from a worker session"}}
 	}
 	return items
 }
 
-// ruleT5 checks that every landed event has an earlier inspected pass.
+// ruleT5 checks that every landed event has an earlier inspected pass or a
+// recorded exception.
 func ruleT5(task string, events []Event) []VerifyItem {
+	workers := workerSessions(events, task)
 	var items []VerifyItem
 	for _, e := range events {
 		if e.Task != task || e.Kind != "landed" {
 			continue
 		}
-		if !earlierInspectedPass(events, task, e.TS) {
-			items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: false,
-				Reason: "landed event has no earlier inspected pass"})
+		if earlierInspectedPass(events, task, e.TS) {
+			continue
 		}
+		if ex := earlierException(events, task, e.TS, workers); ex != nil {
+			items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: true,
+				Reason: fmt.Sprintf("landed on a recorded exception by %s: %s", ex.Session, ex.Note)})
+			continue
+		}
+		items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: false,
+			Reason: "landed event has no earlier inspected pass"})
 	}
 	if len(items) == 0 {
 		return []VerifyItem{{Task: task, Rule: "T5", Pass: true, Reason: "no landed event without a prior inspected pass"}}
 	}
 	return items
+}
+
+// earlierException reports whether task has a valid excepted event at or before ts,
+// with a non-empty note and a non-worker session.
+func earlierException(events []Event, task, ts string, workers map[string]bool) *Event {
+	t0, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return nil
+	}
+	for _, e := range events {
+		if e.Task != task || e.Kind != "excepted" || e.Note == "" || e.Session == "" {
+			continue
+		}
+		if workers[e.Session] {
+			continue
+		}
+		if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil && !t.After(t0) {
+			return &e
+		}
+	}
+	return nil
 }
 
 // earlierInspectedPass reports whether task has an inspected pass before ts.

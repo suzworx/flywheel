@@ -142,9 +142,20 @@ all.
 - Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
 - Carries: `task`, `commit`, `note`.
 - Effect: `Derive` sets status `landed`. Verify's T5 (`ruleT5`) requires an earlier `inspected pass`
-  for the task; `LandTask` itself refuses **live** (exit 6) unless the task's derived status is
-  already `passed`, and refuses to re-land the same task under a different commit than it already
-  recorded.
+  or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6) unless
+  the task's derived status is already `passed` or an exception is provided, and refuses to re-land
+  the same task under a different commit than it already recorded. The read, the checks and the
+  append(s) run under `.flywheel/dispatch.lock` (the lock `run` and `amended` take), so two
+  concurrent landings of one task can never both pass the already-landed check.
+
+### `excepted`
+- Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.
+- Carries: `task`, `commit`, `session` (the lead), `note` (the evidence), `reason` (the status it
+  overrode).
+- Effect: no status change by itself. It permits the `landed` event written immediately after it,
+  and verify's T5 reports that landing as "landed on a recorded exception" (a deliberate, visible
+  exception to T5, never a silent bypass). T4 fails an `excepted` event from a worker session (one
+  that wrote the task's `started`, `finished`, `dispatched`, `report` or `worker_plan` event).
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path>`; a
@@ -331,14 +342,15 @@ gates (exit 5) without touching the log's legality.
   still runs on the ledger's own evidence (it needs no git): a complete reading passes T3, and an
   incomplete one is **inconclusive** (exit 8) rather than a violation — a verifier that cannot see
   the tree must not claim a violation it has not established.
-- **T4 — no self-inspection.** An `inspected` event's `session` must never be a session that wrote
-  that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event. `InspectTask`
-  checks this **before** T3, so a worker-session inspection is refused as T4 even when its readings
-  are also missing.
-- **T5 — no landing without a pass.** A `landed` event needs an earlier `inspected pass` for the
-  same task. `LandTask` additionally refuses to land a task whose derived status is not `passed`,
-  and refuses a second `landed` event for the same task under a different commit than the one
-  already recorded (the same commit is a silent no-op, exit 0).
+- **T4 — no self-inspection.** An `inspected` or `excepted` event's `session` must never be a session
+  that wrote that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event.
+  `InspectTask` checks this **before** T3, so a worker-session inspection is refused as T4 even when
+  its readings are also missing.
+- **T5 — no landing without a pass.** A `landed` event needs an earlier `inspected pass` or a
+  recorded `excepted` event for the same task. `LandTask` additionally refuses to land a task whose
+  derived status is not `passed` (unless an exception is provided), and refuses a second `landed`
+  event for the same task under a different commit than the one already recorded (the same commit is
+  a silent no-op, exit 0).
 - **T8 — personas write only their own kinds.** `validated` and `owns_checked` must carry `persona
   "supervisor"`; `inspected` must carry `"inspector"` or `"lead"`. No other kind is persona-checked
   by this rule (§4 has the full picture, including what is and is not mechanically enforced).
@@ -430,7 +442,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, or T8 and its fix | 2 usage, 1 other error |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
-| `flywheel land <task> --commit <sha>` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 | 2 usage, 1 other error |
+| `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 | 2 usage (e.g., --exception without --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
 `flywheel run`'s own three codes (3, 4, 7) are not part of the repo-wide list: they are
