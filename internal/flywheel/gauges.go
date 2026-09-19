@@ -487,6 +487,14 @@ func attributeOutside(dir, task, wd string, events, fresh []Event, candidates []
 // rule the sibling-task attribution uses. When several claims cover p, the
 // most recent one wins.
 func leadClaimingSession(wd string, events []Event, task, p string, reading time.Time) string {
+	return claimingSession(wd, events, p, reading, func(sess string) bool {
+		return workerSessionOf(task, events, sess)
+	})
+}
+
+// claimingSession is leadClaimingSession with the worker guard supplied by
+// the caller: isWorker reports a session that may never count as the lead.
+func claimingSession(wd string, events []Event, p string, reading time.Time, isWorker func(sess string) bool) string {
 	sess := ""
 	for _, e := range events {
 		if e.Kind != "lead_edit" || !ownsContains(e.Owns, p) {
@@ -496,7 +504,7 @@ func leadClaimingSession(wd string, events []Event, task, p string, reading time
 		if !ok || fileSHA(wd, p) != want {
 			continue
 		}
-		if workerSessionOf(task, events, e.Session) {
+		if isWorker(e.Session) {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339Nano, e.TS)
@@ -575,10 +583,23 @@ func worktreeOwner(W, p string, reading time.Time) string {
 			return other
 		}
 	}
-	for _, other := range owners {
-		if s := leadClaimingSession(W, wEvents, other, p, reading); s != "" {
-			return "lead " + s
+	// A claim counts only while a unit is in flight here, and never when its
+	// session is a worker session of ANY unit in flight here: checking owners
+	// one by one would let one unit's worker claim through another (#343
+	// review).
+	if len(owners) == 0 {
+		return ""
+	}
+	isWorker := func(sess string) bool {
+		for _, other := range owners {
+			if workerSessionOf(other, wEvents, sess) {
+				return true
+			}
 		}
+		return false
+	}
+	if s := claimingSession(W, wEvents, p, reading, isWorker); s != "" {
+		return "lead " + s
 	}
 	return ""
 }
