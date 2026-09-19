@@ -97,13 +97,23 @@ func runVerify(args []string) {
 		}
 		reason := ""
 		if chain.OK() {
-			if chain.Chained == 0 {
+			if chain.Files > 0 {
+				reason = fmt.Sprintf("%d of %d records chained across %d files, no break", chain.Chained, chain.Lines, chain.Files)
+			} else if chain.Chained == 0 {
 				reason = "no chained records yet"
 			} else {
 				reason = fmt.Sprintf("%d of %d records chained since line %d, no break", chain.Chained, chain.Lines, chain.FirstChained)
 			}
 		} else {
-			reason = fmt.Sprintf("line %d: prev %s matches no earlier line (an earlier record was edited or removed)", chain.BreakLine, chain.BreakPrev[:min(12, len(chain.BreakPrev))])
+			if chain.Files > 0 && chain.BreakReason != "" {
+				breakPrevStr := ""
+				if chain.BreakPrev != "" {
+					breakPrevStr = fmt.Sprintf(" (%s)", chain.BreakPrev[:min(12, len(chain.BreakPrev))])
+				}
+				reason = fmt.Sprintf("%s line %d: %s%s", chain.File, chain.BreakLine, chain.BreakReason, breakPrevStr)
+			} else {
+				reason = fmt.Sprintf("line %d: prev %s matches no earlier line (an earlier record was edited or removed)", chain.BreakLine, chain.BreakPrev[:min(12, len(chain.BreakPrev))])
+			}
 		}
 		res.Items = append(res.Items, flywheel.VerifyItem{Task: "-", Rule: "LOG", Pass: chain.OK(), Reason: reason})
 		if !chain.OK() {
