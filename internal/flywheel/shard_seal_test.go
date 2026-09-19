@@ -486,8 +486,87 @@ func TestVerifyLogChainShardedWrongGenesisBreaks(t *testing.T) {
 	if chain.OK() {
 		t.Fatal("expected chain to break")
 	}
-	if !strings.Contains(chain.BreakReason, "prev matches no earlier line") {
-		t.Fatalf("expected break reason about prev, got %q", chain.BreakReason)
+	if !strings.Contains(chain.BreakReason, "does not chain to the shard genesis") {
+		t.Fatalf("expected break reason about the genesis, got %q", chain.BreakReason)
+	}
+}
+
+// TestVerifyLogChainShardedLaterGenesisBreaks checks that only a shard's
+// FIRST line may carry the genesis hash: a later one would let every line
+// before it be deleted undetected (#349 review).
+func TestVerifyLogChainShardedLaterGenesisBreaks(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if _, _, err := EnableShards(dir, time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("EnableShards() error = %v", err)
+	}
+	for _, e := range []Event{
+		{Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{Task: "T1", Kind: "started", Attempt: "r1", Session: "s1"},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+	}
+	shard := filepath.Join(dir, ".flywheel", "events", "T1.jsonl")
+	line, err := marshalEvent(Event{TS: "2026-09-19T02:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop", Prev: shardGenesis})
+	if err != nil {
+		t.Fatalf("marshalEvent() error = %v", err)
+	}
+	f, err := os.OpenFile(shard, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open shard: %v", err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		f.Close()
+		t.Fatalf("append line: %v", err)
+	}
+	f.Close()
+	chain, err := VerifyLogChain(dir)
+	if err != nil {
+		t.Fatalf("VerifyLogChain() error = %v", err)
+	}
+	if chain.OK() || chain.BreakLine != 3 || chain.File != "events/T1.jsonl" {
+		t.Errorf("chain = %+v, want a break on line 3 of events/T1.jsonl", chain)
+	}
+}
+
+// TestEnableShardsRefusesToBlessAnEdit checks that resealing only records
+// append-only growth: an edited or truncated legacy log keeps its break
+// instead of being sealed again (#349 review).
+func TestEnableShardsRefusesToBlessAnEdit(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	for _, task := range []string{"T1", "T2", "T3"} {
+		if err := AppendEvent(dir, Event{Task: task, Kind: "planned", Brief: "b.txt"}); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+	}
+	now := time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC)
+	if _, _, err := EnableShards(dir, now); err != nil {
+		t.Fatalf("EnableShards() error = %v", err)
+	}
+	legacy := filepath.Join(dir, ".flywheel", "events.jsonl")
+	data, err := os.ReadFile(legacy)
+	if err != nil {
+		t.Fatalf("read legacy: %v", err)
+	}
+	cut := bytes.LastIndexByte(bytes.TrimRight(data, "\n"), '\n')
+	if err := os.WriteFile(legacy, data[:cut+1], 0o644); err != nil {
+		t.Fatalf("truncate legacy: %v", err)
+	}
+	if chain, err := VerifyLogChain(dir); err != nil || chain.OK() {
+		t.Fatalf("VerifyLogChain() = %+v, %v; want a break", chain, err)
+	}
+	if _, _, err := EnableShards(dir, now); err == nil {
+		t.Error("EnableShards() sealed a truncated legacy log, want a refusal")
+	}
+	if chain, err := VerifyLogChain(dir); err != nil || chain.OK() {
+		t.Errorf("VerifyLogChain() after the refused reseal = %+v, %v; want the break to stand", chain, err)
 	}
 }
 

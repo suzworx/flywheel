@@ -381,7 +381,7 @@ func verifyFileChain(path, rel string) (LogChain, error) {
 
 	lines := strings.Split(string(data), "\n")
 	seen := make(map[string]bool)
-	seen[shardGenesis] = true // Genesis is always valid
+	first := true // only the first line may chain to the genesis hash
 	var result LogChain
 	result.File = rel
 
@@ -412,7 +412,18 @@ func verifyFileChain(path, rel string) (LogChain, error) {
 		result.Chained++
 
 		// Check that prev matches some earlier line or genesis
-		if !seen[record.Prev] {
+		if first {
+			// The first line of a shard chains to the genesis hash and to
+			// nothing else.
+			if record.Prev != shardGenesis {
+				result.BreakLine = lineNum
+				result.BreakPrev = record.Prev
+				result.BreakReason = "first line does not chain to the shard genesis"
+				result.File = rel
+				return result, nil
+			}
+			first = false
+		} else if record.Prev == shardGenesis || !seen[record.Prev] {
 			result.BreakLine = lineNum
 			result.BreakPrev = record.Prev
 			result.BreakReason = "prev matches no earlier line"

@@ -91,6 +91,22 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 		if lastSeal != nil && lastSeal.SHA256 == legacyHash {
 			return false, legacyLines, nil
 		}
+		// A new seal may only record append-only growth: the sealed line must
+		// still be there with later lines after it (or the log was sealed
+		// empty and has lines now). Anything else — an edit, a truncation, a
+		// sealed line that is gone — keeps the break, so resealing can never
+		// bless tampering (#349 review).
+		if lastSeal != nil {
+			legacyData, rerr := os.ReadFile(legacyPath)
+			if rerr != nil && !os.IsNotExist(rerr) {
+				return false, legacyLines, fmt.Errorf("read %s: %w", legacyPath, rerr)
+			}
+			grown := countAppendedLines(legacyData, lastSeal.SHA256) > 0 ||
+				(lastSeal.SHA256 == "" && legacyLines > 0)
+			if !grown {
+				return false, legacyLines, fmt.Errorf("%s was edited or truncated after it was sealed: restore it (for instance git checkout -- .flywheel/events.jsonl) before sealing again", legacyPath)
+			}
+		}
 
 		// The legacy file grew after the seal, or there is none: seal it
 		// again. The timestamp is left empty so appendShardLines stamps it
