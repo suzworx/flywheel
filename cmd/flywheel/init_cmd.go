@@ -69,7 +69,13 @@ func runInit(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
-	if o.localURL != flywheel.DefaultLocalURL && o.local == "" {
+	localURLSet := false // explicitly passed, even with the default value (#327 review)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "local-url" {
+			localURLSet = true
+		}
+	})
+	if localURLSet && o.local == "" {
 		fmt.Fprintf(os.Stderr, "flywheel init: --local-url requires --local\n")
 		usage(os.Stderr)
 		os.Exit(2)

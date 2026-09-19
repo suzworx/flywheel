@@ -219,3 +219,50 @@ func TestInitLocalRejectsEmptyModel(t *testing.T) {
 		t.Fatal("InitLocal with empty model succeeded, want error")
 	}
 }
+
+// TestInitLocalNullPolicyIsAnError checks that a policy file holding JSON null
+// is reported, not a panic (#327 review).
+func TestInitLocalNullPolicyIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "opencode-worker.json"), []byte("null\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitLocal(dir, "m", DefaultLocalURL); err == nil {
+		t.Error("InitLocal with a null policy: no error")
+	}
+}
+
+// TestInitLocalKeepsTunedConcurrency checks that a rerun keeps a max_parallel
+// the operator tuned for the host, changing only the adapter and model.
+func TestInitLocalKeepsTunedConcurrency(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitLocal(dir, "m1", DefaultLocalURL); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range cfg.Workers {
+		if cfg.Workers[i].Name == "local" {
+			cfg.Workers[i].MaxParallel = 2
+		}
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitLocal(dir, "m2", DefaultLocalURL); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, _ = LoadConfig(dir)
+	w, ok := cfg.Worker("local")
+	if !ok || w.MaxParallel != 2 || w.Model != LocalProviderID+"/m2" {
+		t.Errorf("local worker after rerun = %+v, want model m2 and max_parallel 2 kept", w)
+	}
+}

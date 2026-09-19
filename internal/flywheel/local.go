@@ -39,6 +39,13 @@ func InitLocal(dir, model, baseURL string) ([]ScaffoldPiece, error) {
 		return nil, fmt.Errorf("url must have a host")
 	}
 
+	// Read the config before writing anything, so a bad config leaves both
+	// files untouched (#327 review).
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+
 	dotFlywheel := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dotFlywheel, 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", dotFlywheel, err)
@@ -55,10 +62,14 @@ func InitLocal(dir, model, baseURL string) ([]ScaffoldPiece, error) {
 		b = []byte(workerPermissionPolicy)
 		workerJSONAdded = true
 	}
+	prevPolicy := b // restored when the config write fails (#327 review)
 
 	var policy map[string]any
 	if err := json.Unmarshal(b, &policy); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", workerJSONPath, err)
+	}
+	if policy == nil {
+		return nil, fmt.Errorf("parse %s: the top level must be a JSON object", workerJSONPath)
 	}
 
 	if policy["provider"] == nil {
@@ -105,11 +116,6 @@ func InitLocal(dir, model, baseURL string) ([]ScaffoldPiece, error) {
 		return nil, fmt.Errorf("rename %s to %s: %w", tmpName, workerJSONPath, err)
 	}
 
-	cfg, _, err := LoadConfig(dir)
-	if err != nil {
-		return nil, err
-	}
-
 	modelStr := LocalProviderID + "/" + model
 	found := false
 	for i := range cfg.Workers {
@@ -130,6 +136,12 @@ func InitLocal(dir, model, baseURL string) ([]ScaffoldPiece, error) {
 	}
 
 	if err := WriteConfig(dir, cfg); err != nil {
+		// Not half-applied: put the policy back as it was (#327 review).
+		if workerJSONAdded {
+			_ = os.Remove(workerJSONPath)
+		} else {
+			_ = os.WriteFile(workerJSONPath, prevPolicy, 0o644)
+		}
 		return nil, err
 	}
 
