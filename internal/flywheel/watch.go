@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// oneLine folds line breaks inside an event's text into spaces.
+var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
 // HumanLine is one event as a readable line: its local time (HH:MM:SS; the raw
 // TS when it cannot be parsed), its task ("-" for floor-level events), and
@@ -25,7 +30,9 @@ func HumanLine(e Event) string {
 		task = "-"
 	}
 
-	return fmt.Sprintf("%s %s %s", clock, task, explainLine(e))
+	// One event, one physical line: a note or title with line breaks must not
+	// split it (#305 review).
+	return oneLine.Replace(fmt.Sprintf("%s %s %s", clock, task, explainLine(e)))
 }
 
 // TailEvents reads the complete lines of .flywheel/events.jsonl from byte
@@ -35,17 +42,26 @@ func HumanLine(e Event) string {
 // Malformed complete lines are an error naming the offset.
 func TailEvents(dir string, offset int64) ([]Event, int64, error) {
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
-	b, err := os.ReadFile(path)
+	// Read only what was appended since offset, never the whole log again
+	// (#305 review).
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []Event{}, offset, nil
 		}
+		return nil, offset, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, fmt.Errorf("seek %s: %w", path, err)
+	}
+	tail, err := io.ReadAll(f)
+	if err != nil {
 		return nil, offset, fmt.Errorf("read %s: %w", path, err)
 	}
-	if int64(len(b)) <= offset {
+	if len(tail) == 0 {
 		return []Event{}, offset, nil
 	}
-	tail := b[offset:]
 	end := bytes.LastIndexByte(tail, '\n')
 	if end < 0 {
 		return []Event{}, offset, nil // only a record still being appended

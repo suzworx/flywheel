@@ -3,6 +3,7 @@ package flywheel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +156,13 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestWatchHumanLineKeepsOneLine checks a note with line breaks never splits
+// an event across lines (#305 review).
+func TestWatchHumanLineKeepsOneLine(t *testing.T) {
+	e := Event{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "landed", Commit: "abc1234", Note: "merged\nmanually\r\nby hand"}
+	if got := HumanLine(e); strings.ContainsAny(got, "\n\r") {
+		t.Errorf("HumanLine() = %q, want a single line", got)
+	}
 }
