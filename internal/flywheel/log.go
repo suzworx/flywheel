@@ -175,6 +175,12 @@ func AppendAmendedEvent(dir string, e Event) error {
 	if r := inertAmendRefusal(dir, e.Task, resolved, events, header); r != nil {
 		return r
 	}
+	// Record the resolved header, owns and needs exactly as RecordAmendedBy
+	// does, so a headerless JSON amendment is measurable: AttemptBrief only
+	// unions amendments that carry a header (issue #281).
+	e.Header = &header
+	e.Owns = header.Owns
+	e.Needs = header.Needs
 	return AppendEvent(dir, e)
 }
 
@@ -240,14 +246,18 @@ func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefH
 	gateInert := gatesEqual(before.Gates, after.Gates) && gatesEqual(before.LiveGates, after.LiveGates) &&
 		(!gatesEqual(before.Gates, header.Gates) || !gatesEqual(before.LiveGates, header.LiveGates))
 
-	// Check if this would be an inert owns change on a fresh attempt: the
-	// amendment names an owns set different from the effective one but cannot
-	// move it (a narrowing). Since owns are unioned with every amendment after
-	// dispatch on fresh attempts (issue #281), narrowing has no effect. This
-	// check does not apply to correction attempts (c*), which have no owns
-	// amendments after their dispatch.
-	isFreshAttempt := attempt != "" && attempt[0] == 'r'
-	ownsInert := isFreshAttempt && sameSet(before.Owns, after.Owns) && !sameSet(before.Owns, header.Owns)
+	// Check if this would be an inert narrowing on a fresh attempt whose
+	// dispatched event recorded its header: owns and exclusive are unioned
+	// with every amendment after that dispatch (issue #281), so an amendment
+	// that stops covering anything the attempt already covers cannot take
+	// effect. Coverage uses ownsContains, the matching validation uses, so
+	// narrowing `src/` to `src/main.go` counts. A legacy dispatch without a
+	// header is measured against the latest amendment, where a narrowing does
+	// take effect, and a correction attempt (c*) replaces its base header;
+	// neither is refused here.
+	unioned := attempt[0] == 'r' && freshDispatchedHeader(events, task, attempt) != nil
+	ownsInert := unioned && !covers(header.Owns, before.Owns)
+	exclusiveInert := unioned && !covers(header.Exclusive, before.Exclusive)
 
 	if gateInert {
 		return &RuleRefusal{
@@ -257,13 +267,30 @@ func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefH
 				attempt, task, task),
 		}
 	}
-	if ownsInert {
+	if ownsInert || exclusiveInert {
+		field := "owns"
+		if !ownsInert {
+			field = "exclusive"
+		}
 		return &RuleRefusal{
 			Rule: "amended",
-			Fix:  fmt.Sprintf("attempt %s of task %s was already dispatched and owns are unioned with every later amendment, so an amendment cannot narrow them; widen owns with an amendment, or narrow them with a new plan for a new task", attempt, task),
+			Fix:  fmt.Sprintf("attempt %s of task %s was already dispatched and its %s are unioned with every later amendment, so an amendment cannot narrow them; keep every current entry and widen only, or narrow with a new plan for a new task", attempt, task, field),
 		}
 	}
 	return nil
+}
+
+// covers reports whether every entry of have is still covered by want, under
+// the matching the owns check uses (ownsContains: exact path, directory
+// prefix, or shell pattern), so a replacement that drops coverage is seen
+// even when it adds a new, narrower entry (issue #281).
+func covers(want, have []string) bool {
+	for _, e := range have {
+		if !ownsContains(want, e) {
+			return false
+		}
+	}
+	return true
 }
 
 // gatesEqual reports whether two gate lists are the same commands in the
@@ -278,21 +305,4 @@ func gatesEqual(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-// sameSet reports whether a and b hold the same strings, ignoring order and
-// duplicates.
-func sameSet(a, b []string) bool {
-	m := map[string]bool{}
-	for _, s := range a {
-		m[s] = true
-	}
-	n := map[string]bool{}
-	for _, s := range b {
-		if !m[s] {
-			return false
-		}
-		n[s] = true
-	}
-	return len(m) == len(n)
 }

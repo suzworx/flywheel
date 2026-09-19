@@ -580,3 +580,69 @@ func TestRecordAmendedRefusesInertOwnsNarrowingAfterDispatch(t *testing.T) {
 		t.Errorf("events = %d, want 2 (the refusal appends nothing)", len(evs))
 	}
 }
+
+// TestRecordAmendedRefusesPatternNarrowingAfterDispatch checks narrowing a
+// directory to one file is seen as a narrowing: the union would keep src/, so
+// the replacement cannot take effect and is refused (issue #281 review).
+func TestRecordAmendedRefusesPatternNarrowingAfterDispatch(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: src/\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: src/main.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	err := RecordAmended(dir, "t", brief, "narrow to one file")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("RecordAmended() error = %v, want a RuleRefusal for a pattern narrowing", err)
+	}
+}
+
+// TestRecordAmendedRefusesExclusiveRemovalAfterDispatch checks dropping an
+// exclusive resource after dispatch is refused like an owns narrowing: the
+// union keeps it held (issue #281 review).
+func TestRecordAmendedRefusesExclusiveRemovalAfterDispatch(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nexclusive: db\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	err := RecordAmended(dir, "t", brief, "drop the db lock")
+	var r *RuleRefusal
+	if !errors.As(err, &r) || !strings.Contains(r.Fix, "exclusive") {
+		t.Fatalf("RecordAmended() error = %v, want a RuleRefusal naming exclusive", err)
+	}
+}
+
+// TestAppendAmendedEventHeaderlessWidensOwns checks a JSON amendment without a
+// header is stored with the header parsed from its brief, so its widened owns
+// take effect on the dispatched attempt (issue #281 review).
+func TestAppendAmendedEventHeaderlessWidensOwns(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+	if err := RecordPlanned(dir, "t", brief); err != nil {
+		t.Fatalf("RecordPlanned() error = %v", err)
+	}
+	dispatchBrief(t, dir, "t", brief)
+	writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv2\n")
+	if err := AppendAmendedEvent(dir, Event{Task: "t", Kind: "amended", Brief: brief, Note: "widen"}); err != nil {
+		t.Fatalf("AppendAmendedEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	h, _, err := AttemptBrief(dir, evs, "t")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if !ownsContains(h.Owns, "b.go") {
+		t.Errorf("effective owns = %v, want b.go included", h.Owns)
+	}
+	last := evs[len(evs)-1]
+	if last.Header == nil || strings.Join(last.Owns, ",") != "a.go,b.go" {
+		t.Errorf("amended event header = %v owns = %v, want the parsed header and its owns", last.Header, last.Owns)
+	}
+}

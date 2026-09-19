@@ -183,8 +183,13 @@ all.
   a dispatched attempt with a correction delta: `flywheel run <task> --delta <file>`. An
   amendment that widens `owns:` after a fresh dispatch takes effect: the attempt's effective
   owns are the dispatched header's plus every later amendment's (issue #281). One that would
-  narrow `owns:` cannot take effect — owns are unioned — so it is refused (exit 6) like an
-  inert gate change; fixing prose is allowed.
+  narrow `owns:` or `exclusive:` cannot take effect — both are unioned — so it is refused (exit
+  6) like an inert gate change. Narrowing is judged by coverage, with the matching the owns check
+  uses: replacing `src/` with `src/main.go` stops covering `src/other.go`, so it is a narrowing.
+  A JSON-ingested amendment without a `header` is stored with the header parsed from its brief,
+  so it takes effect the same way. A legacy dispatch that recorded no header is measured against
+  the latest amendment, where a narrowing does take effect, and is not refused. Fixing prose is
+  allowed.
   The refusal and the append run under `.flywheel/dispatch.lock`, the same lock file `flywheel
   run` holds across its own read-check-append, so an amendment and a dispatch serialise.
 
