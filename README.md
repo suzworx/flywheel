@@ -123,7 +123,8 @@ push or a write undone before exit needs the command-level guard,
 puts a `git` shim first on the worker's PATH that passes only read-only commands (status, diff, log,
 show, grep, blame, rev-parse, … and the listing forms of branch, tag, config, stash) to the real
 git and refuses everything else — commit, push, stash, reset, checkout, add, rm, clean, an alias —
-and a run whose guard cannot be installed is refused; a worker that calls git by an absolute path
+in the unit's repository (git in a test's own temporary repository runs normally, and flywheel's
+temporary-index tree hashing is allowed), and a run whose guard cannot be installed is refused; a worker that calls git by an absolute path
 bypasses it, and the end-point check still applies.
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one

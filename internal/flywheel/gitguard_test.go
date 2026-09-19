@@ -3,8 +3,10 @@ package flywheel
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -165,12 +167,9 @@ func TestGitGuardInstall(t *testing.T) {
 		t.Errorf("%s not found in bin dir: %v", gitName, err)
 	}
 
-	if len(env) != 2 {
-		t.Errorf("installGitGuard returned %d env entries, want 2", len(env))
-	}
-
 	pathFound := false
 	guardFound := false
+	realFound := false
 	for _, e := range env {
 		if len(e) > 5 && e[:5] == "PATH=" {
 			pathFound = true
@@ -178,6 +177,12 @@ func TestGitGuardInstall(t *testing.T) {
 		if len(e) > len(GitGuardEnv) && e[:len(GitGuardEnv)+1] == GitGuardEnv+"=" {
 			guardFound = true
 		}
+		if strings.HasPrefix(e, GitRealEnv+"=") {
+			realFound = true
+		}
+	}
+	if !realFound {
+		t.Error(GitRealEnv + "= entry not found in env")
 	}
 
 	if !pathFound {
@@ -251,5 +256,55 @@ func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
 		if r, _ := GitGuardRefused(args); r {
 			t.Errorf("GitGuardRefused(%v) refused, want allowed", args)
 		}
+	}
+}
+
+// commonDir returns dir's absolute git common directory.
+func commonDir(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse in %s: %v", dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// newRepo makes a git repository with one commit in a fresh temp dir.
+func newRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"-c", "core.autocrlf=false", "init", "-q"},
+		{"-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir
+}
+
+// TestGitGuardScopedToUnitRepo checks that the guard protects the unit's
+// repository only: a gate's tests must be able to init and commit in their own
+// temporary repositories (#325).
+func TestGitGuardScopedToUnitRepo(t *testing.T) {
+	unit, other := newRepo(t), newRepo(t)
+	t.Setenv(GitGuardRepoEnv, commonDir(t, unit))
+	commit := func(dir string) int {
+		var out, errb bytes.Buffer
+		return GitGuard([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "--allow-empty", "-m", "x"}, nil, &out, &errb)
+	}
+	if rc := commit(unit); rc != 1 {
+		t.Errorf("commit in the unit's repository: rc %d, want 1 (refused)", rc)
+	}
+	if rc := commit(other); rc != 0 {
+		t.Errorf("commit in another repository: rc %d, want 0 (passed through)", rc)
+	}
+	fresh := t.TempDir()
+	var out, errb bytes.Buffer
+	if rc := GitGuard([]string{"-C", fresh, "init", "-q"}, nil, &out, &errb); rc != 0 {
+		t.Errorf("git init in a temp dir: rc %d, want 0 (%s)", rc, errb.String())
 	}
 }
