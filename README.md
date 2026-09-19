@@ -162,16 +162,16 @@ git still works.*
 
 ### Worker adapters
 
-`flywheel run` dispatches through one of three adapters: `opencode`, `claude`, or the offline
-`sim` adapter used by tests and this repo's own demo. Each worker in `.flywheel/config.json` names
-its adapter; `flywheel run --worker <name>` picks between several configured workers, so one
-factory can be all-OpenCode, all-Claude, or a mix. The `opencode` adapter is the original,
-most-used path. The `claude` adapter (issue [#49](https://github.com/suzworx/flywheel/issues/49))
-has been exercised against the live CLI: `flywheel run` dispatches it, parses the
-`--output-format stream-json` stream, captures the session id and the assistant text, and
-records the finish. That run did not get past authentication in the environment where it
-was tried, so a productive run — tool calls, file edits, token and cost accounting — is
-still unverified. Try one real run in your own environment before depending on it.
+`flywheel run` dispatches through one of four adapters: `claude`, `codex`, `opencode`, or the
+offline `sim` adapter used by tests and this repo's own demo. Each worker in
+`.flywheel/config.json` names its adapter; `flywheel run --worker <name>` picks between several
+configured workers, so one factory can mix them. The `claude` adapter (issue
+[#49](https://github.com/suzworx/flywheel/issues/49)) builds this repository: its units are
+dispatched to `claude-haiku-4-5` workers through it. The `codex` adapter (issue
+[#275](https://github.com/suzworx/flywheel/issues/275)) runs `codex exec --json --sandbox
+workspace-write`, points the worker at the brief file (the prompt stays one line, so the Windows
+npm shim cannot truncate it), and parses Codex's JSONL events; Codex reports tokens but no cost,
+so `limits.budget` does not count its spend. Resume uses `codex exec resume <thread id>`.
 
 On the `claude` adapter, a worker's only way to run its own gate lines is its Bash tool, and
 `--permission-mode acceptEdits` alone grants file edits — not commands. Each worker in

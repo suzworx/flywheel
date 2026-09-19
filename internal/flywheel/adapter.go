@@ -71,7 +71,7 @@ type Adapter interface {
 }
 
 // AdapterFor returns the adapter named name: opencode, the offline sim
-// adapter, or claude (issue #49).
+// adapter, claude (issue #49), or codex (issue #275).
 func AdapterFor(name string) (Adapter, error) {
 	switch name {
 	case "opencode":
@@ -80,8 +80,10 @@ func AdapterFor(name string) (Adapter, error) {
 		return simAdapter{}, nil
 	case "claude":
 		return claudeAdapter{}, nil
+	case "codex":
+		return codexAdapter{}, nil
 	}
-	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\", \"sim\", or \"claude\"", name)
+	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\", \"sim\", \"claude\", or \"codex\"", name)
 }
 
 // opencodeAdapter parses OpenCode's --format json JSONL run stream.
@@ -468,6 +470,168 @@ func (a simAdapter) Command(r RunRequest) (string, []string) {
 func (a simAdapter) Parse(line []byte) (Observation, bool) {
 	oc := opencodeAdapter{}
 	return oc.Parse(line)
+}
+
+// codexAdapter runs OpenAI Codex via `codex exec --json` (issue #275): parses
+// its JSONL event stream into Observations matching the claude and opencode
+// adapters' event shapes.
+type codexAdapter struct{}
+
+func (a codexAdapter) Name() string {
+	return "codex"
+}
+
+// Command builds the dispatch arguments for `codex exec --json`. The prompt
+// MUST be one line: on Windows, codex is an npm .cmd shim and cmd.exe cuts
+// multi-line arguments at the first newline, so the brief is never inlined.
+// Instead, the prompt names the brief file and codex reads it.
+func (a codexAdapter) Command(r RunRequest) (string, []string) {
+	msg := freshPrompt(r)
+	resuming := r.Resume && r.Session != ""
+	if resuming {
+		msg = resumeMessage
+	}
+	prompt := msg
+	if r.PromptFile != "" {
+		prompt += " The brief is the file " + r.PromptFile + "; read all of it before doing anything else."
+	}
+	args := []string{"exec", "--json", "--model", r.Model, "--sandbox", "workspace-write"}
+	if r.Variant != "" {
+		args = append(args, "-c", "model_reasoning_effort="+r.Variant)
+	}
+	if resuming {
+		args = append(args, "resume", r.Session)
+	}
+	args = append(args, prompt)
+	return "codex", args
+}
+
+// Parse decodes one line of `codex exec --json` JSONL output. Each line is
+// an object with a "type" field; the mapping to Observations follows the
+// Codex protocol (issue #275).
+func (a codexAdapter) Parse(line []byte) (Observation, bool) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(line, &m); err != nil {
+		return Observation{}, false
+	}
+	typ := rawString(m, "type")
+	var obs Observation
+	switch typ {
+	case "thread.started":
+		obs.Kind = "start"
+		obs.Session, _ = rawStringOK(m, "thread_id")
+		return obs, true
+	case "turn.started":
+		return Observation{}, false
+	case "item.started", "item.updated":
+		return Observation{}, false
+	case "item.completed":
+		itemRaw, ok := m["item"]
+		if !ok {
+			return Observation{}, false
+		}
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(itemRaw, &item); err != nil {
+			return Observation{}, false
+		}
+		itemType := rawString(item, "type")
+		switch itemType {
+		case "agent_message":
+			obs.Kind = "text"
+			obs.Text, _ = rawStringOK(item, "text")
+			obs.EndsTurn = true
+			return obs, true
+		case "command_execution":
+			obs.Kind = "tool"
+			obs.Tool = "bash"
+			obs.EndsTurn = true
+			return obs, true
+		case "file_change":
+			obs.Kind = "tool"
+			obs.EndsTurn = true
+			changesRaw, ok := item["changes"]
+			if !ok {
+				return Observation{}, false
+			}
+			var changes []map[string]json.RawMessage
+			if err := json.Unmarshal(changesRaw, &changes); err != nil {
+				return Observation{}, false
+			}
+			if len(changes) == 0 {
+				return Observation{}, false
+			}
+			firstKind := rawString(changes[0], "kind")
+			switch firstKind {
+			case "add":
+				obs.Tool = "write"
+			case "delete":
+				obs.Tool = "delete"
+			default:
+				obs.Tool = "edit"
+			}
+			obs.Path, _ = rawStringOK(changes[0], "path")
+			return obs, true
+		case "mcp_tool_call":
+			obs.Kind = "tool"
+			obs.Tool = "mcp_tool_call"
+			obs.EndsTurn = true
+			return obs, true
+		case "web_search":
+			obs.Kind = "tool"
+			obs.Tool = "web_search"
+			obs.EndsTurn = true
+			return obs, true
+		default:
+			return Observation{}, false
+		}
+	case "turn.completed":
+		obs.Kind = "step"
+		obs.Reason = "stop"
+		obs.Aggregate = true
+		obs.EndsTurn = false
+		usageRaw, ok := m["usage"]
+		if ok {
+			var usage map[string]json.RawMessage
+			if err := json.Unmarshal(usageRaw, &usage); err == nil {
+				input := rawInt(usage, "input_tokens")
+				cached := rawInt(usage, "cached_input_tokens")
+				output := rawInt(usage, "output_tokens")
+				reasoning := rawInt(usage, "reasoning_output_tokens")
+				t := &Tokens{
+					Input:     input - cached,
+					CacheRead: cached,
+					Output:    output - reasoning,
+					Reasoning: reasoning,
+				}
+				if t.Input < 0 {
+					t.Input = 0
+				}
+				if t.Output < 0 {
+					t.Output = 0
+				}
+				obs.Tokens = t
+			}
+		}
+		return obs, true
+	case "turn.failed":
+		obs.Kind = "step"
+		obs.Reason = "error"
+		obs.EndsTurn = false
+		errRaw, ok := m["error"]
+		if ok {
+			var errObj map[string]json.RawMessage
+			if err := json.Unmarshal(errRaw, &errObj); err == nil {
+				obs.Error, _ = rawStringOK(errObj, "message")
+			}
+		}
+		return obs, true
+	case "error":
+		obs.Kind = "error"
+		obs.Error, _ = rawStringOK(m, "message")
+		return obs, true
+	default:
+		return Observation{}, false
+	}
 }
 
 // claudeToolNames maps a Claude tool_use name to the lowercase Tool an
