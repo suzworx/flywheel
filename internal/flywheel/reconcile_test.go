@@ -331,6 +331,32 @@ func recCases() []recCase {
 			now:    "2026-09-14T00:10:00Z",
 			want:   []Action{},
 		},
+		{
+			name: "per-host-caps-capacity",
+			events: []Event{
+				{TS: "2026-09-14T00:00:00Z", Task: "busy", Kind: "planned", Brief: "b.txt"},
+				{TS: "2026-09-14T00:01:00Z", Task: "busy", Kind: "dispatched", Attempt: "r1"},
+				{TS: "2026-09-14T00:01:30Z", Task: "busy", Kind: "started"},
+				{TS: "2026-09-14T00:02:00Z", Task: "d", Kind: "planned", Brief: "b.txt"},
+			},
+			leases: []Lease{lease("busy", "r1", "2026-09-14T00:30:00Z")},
+			policy: Policy{MaxParallel: 5, PerHost: 1},
+			now:    "2026-09-14T00:10:00Z",
+			want:   []Action{},
+		},
+		{
+			name: "per-host-zero-allows-dispatch",
+			events: []Event{
+				{TS: "2026-09-14T00:00:00Z", Task: "busy", Kind: "planned", Brief: "b.txt"},
+				{TS: "2026-09-14T00:01:00Z", Task: "busy", Kind: "dispatched", Attempt: "r1"},
+				{TS: "2026-09-14T00:01:30Z", Task: "busy", Kind: "started"},
+				{TS: "2026-09-14T00:02:00Z", Task: "d", Kind: "planned", Brief: "b.txt"},
+			},
+			leases: []Lease{lease("busy", "r1", "2026-09-14T00:30:00Z")},
+			policy: Policy{MaxParallel: 5, PerHost: 0},
+			now:    "2026-09-14T00:10:00Z",
+			want:   []Action{{Kind: "DISPATCH", Task: "d", Reason: "ready, needs met, capacity 4 free"}},
+		},
 	}
 }
 
@@ -394,7 +420,22 @@ func TestReconcileIdempotent(t *testing.T) {
 	}
 }
 
-// TestPolicyFromConfig pins the max_parallel mapping: 0 means 1.
+// TestReconcilePerHostCapsCapacity checks that per_host caps the dispatch capacity.
+func TestReconcilePerHostCapsCapacity(t *testing.T) {
+	c := recCaseByName(t, "per-host-caps-capacity")
+	now, err := time.Parse(time.RFC3339, c.now)
+	if err != nil {
+		t.Fatalf("parse now %q: %v", c.now, err)
+	}
+	st := Derive(c.events)
+	obs := Observed{Leases: c.leases}
+	acts := Reconcile(st, c.events, obs, c.policy, now)
+	if len(acts) != 0 {
+		t.Errorf("per-host-caps-capacity: got %d actions, want 0 (dispatch should be refused by per_host cap)", len(acts))
+	}
+}
+
+// TestPolicyFromConfig pins the max_parallel mapping: 0 means 1, and checks PerHost is copied.
 func TestPolicyFromConfig(t *testing.T) {
 	if p := PolicyFromConfig(Config{Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m", MaxParallel: 0}}}); p.MaxParallel != 1 {
@@ -403,5 +444,9 @@ func TestPolicyFromConfig(t *testing.T) {
 	if p := PolicyFromConfig(Config{Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m", MaxParallel: 3}}}); p.MaxParallel != 3 {
 		t.Errorf("max_parallel 3 = %d, want 3", p.MaxParallel)
+	}
+	if p := PolicyFromConfig(Config{Version: 1, Limits: Limits{PerHost: 5},
+		Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m", MaxParallel: 3}}}); p.PerHost != 5 {
+		t.Errorf("PerHost = %d, want 5", p.PerHost)
 	}
 }

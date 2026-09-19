@@ -120,7 +120,7 @@ scratch — consumer repos commit theirs.
 | --- | --- |
 | `version` | Config schema version (1). |
 | `workers[]` | One entry per worker: `name`, `adapter` (`opencode` or `sim`), `model`, `variant`, `max_parallel` (0 means 1), `fallbacks[{model, approved}]` (fallback models, each with a standing `approved` OK to switch without asking). |
-| `limits` | Shared caps: `per_host` (parallel workers per host) and `budget{wave_cost_usd}` (spending cap per wave). |
+| `limits` | Shared caps, enforced by `flywheel run` (refused with exit 6, rule `limits`/`budget`) and respected by `flywheel next`: `per_host` (attempts in flight at once in this ledger; 0 = no cap) and `budget{wave_cost_usd}` (once the ledger's recorded spend reaches it, new dispatches are refused; the ledger is the wave). |
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
 
 Read and set it with the CLI:
