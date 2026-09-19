@@ -8,6 +8,10 @@ on:
   workflow_run:
     workflows: [ci]
     types: [completed]
+  schedule:
+    - cron: '17 * * * *'
+  pull_request:
+    types: [synchronize]
 
 permissions:
   issues: write
@@ -41,7 +45,10 @@ jobs:
 
   ci-failure:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main'
+    if: github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'failure'
+    concurrency:
+      group: watch-ci-incident
+      cancel-in-progress: false
     steps:
       - name: Open or comment on issue
         env:
@@ -62,16 +69,44 @@ jobs:
 
   ci-recovery:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    if: github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success'
+    concurrency:
+      group: watch-ci-incident
+      cancel-in-progress: false
     steps:
       - name: Comment on issue
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
         run: |
+          LATEST_CONCLUSION=$(gh run list --workflow ci --branch main --event push --status completed --limit 1 --json conclusion --jq '.[0].conclusion')
+          if [ "$LATEST_CONCLUSION" != "success" ]; then
+            exit 0
+          fi
           ISSUE_TITLE="CI failing on main"
           EXISTING=$(gh issue list --state open --limit 100 --json number,title \
             --jq '[.[] | select(.title == "CI failing on main")][0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --body "CI recovered in run: $RUN_URL"
           fi
+
+  reconcile-labels:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - name: Reconcile review-findings labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          gh pr list --state open --json number --limit 100 -q '.[] | .number' | while read PR; do
+            COUNT=$(gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}' \
+              -f o="$OWNER" -f r="$REPO" -F n="$PR" \
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .comments.nodes[0].author.login == "devin-ai-integration[bot]")] | length')
+            if [ "$COUNT" -ge 1 ]; then
+              gh pr edit "$PR" --add-label review-findings
+            else
+              gh pr edit "$PR" --remove-label review-findings || true
+            fi
+          done
