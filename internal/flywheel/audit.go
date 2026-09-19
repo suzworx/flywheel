@@ -132,6 +132,16 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		}
 	}
 
+	// Record under the dispatch lock — the lock flywheel land holds while it
+	// decides T7 and appends — so an audit can never land between a
+	// landing's read of the line's audits and its landed event (#317
+	// review). Lock order: dispatch.lock, then events.lock inside AppendEvent.
+	release, err := acquireRepoLock(o.Dir, "dispatch.lock", defaultRepoLockTimings())
+	if err != nil {
+		return AuditResult{}, err
+	}
+	defer release()
+
 	// Independence again, right before recording: the session may have
 	// acted on the unit while the gates ran (#301 review).
 	if fresh, err := ReadEvents(o.Dir); err != nil {

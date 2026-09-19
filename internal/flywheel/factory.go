@@ -341,10 +341,28 @@ func readEvents(dir string, w *Watcher) error {
 	return nil
 }
 
+// runAdapter returns the adapter that produced task's attempt: the Adapter
+// of its latest dispatched event for that attempt, resolved with AdapterFor;
+// opencode when the event names none (a legacy ledger) or names an unknown one.
+func runAdapter(events []Event, task, attempt string) Adapter {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Task == task && e.Attempt == attempt && e.Kind == "dispatched" {
+			adap, err := AdapterFor(e.Adapter)
+			if err != nil {
+				adap, _ = AdapterFor("opencode")
+			}
+			return adap
+		}
+	}
+	adap, _ := AdapterFor("opencode")
+	return adap
+}
+
 // readRun folds only the appended bytes of one run file into the watcher's
 // per-run accumulators and returns its size and mtime. A missing run file means
 // a zero-byte run at the epoch.
-func readRun(dir string, w *Watcher, rel string) (size int64, mtime time.Time, err error) {
+func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtime time.Time, err error) {
 	path := filepath.Join(dir, rel)
 	info, err := os.Stat(path)
 	if err != nil {
@@ -385,28 +403,34 @@ func readRun(dir string, w *Watcher, rel string) (size int64, mtime time.Time, e
 		return size, info.ModTime(), fmt.Errorf("read %s: %w", rel, rerr)
 	}
 	if idx := bytes.LastIndexByte(b, '\n'); idx >= 0 {
-		oc := opencodeAdapter{}
 		sc := bufio.NewScanner(bytes.NewReader(b[:idx+1]))
 		sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for sc.Scan() {
-			obs, ok := oc.Parse(sc.Bytes())
+			obs, ok := adap.Parse(sc.Bytes())
 			if !ok {
 				continue
 			}
-			switch obs.Kind {
-			case "step":
+			// Steps are turn-ending lines, as run.go counts them; the reason
+			// comes from any step line (codex's turn.failed ends no turn).
+			if obs.EndsTurn {
 				w.runSteps[rel] = w.runSteps[rel] + 1
-				if obs.Reason != "" {
-					w.runReason[rel] = obs.Reason
-				}
+			}
+			if obs.Kind == "step" && obs.Reason != "" {
+				w.runReason[rel] = obs.Reason
+			}
+			switch obs.Kind {
 			case "tool":
-				if obs.Tool == "read" && obs.Path != "" {
-					if _, ok := w.runFiles[rel]; !ok {
-						w.runFiles[rel] = map[string]bool{}
+				if obs.Tool == "read" {
+					for _, p := range obsPaths(obs) {
+						if p != "" {
+							if _, ok := w.runFiles[rel]; !ok {
+								w.runFiles[rel] = map[string]bool{}
+							}
+							w.runFiles[rel][p] = true
+						}
 					}
-					w.runFiles[rel][obs.Path] = true
 				}
-				if obs.Tool == "edit" || obs.Tool == "write" {
+				if obs.Tool == "edit" || obs.Tool == "write" || obs.Tool == "delete" {
 					w.runEdits[rel] = w.runEdits[rel] + 1
 				}
 			case "error":
@@ -437,7 +461,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 		}
 		if t.Attempt != "" {
 			rel := ".flywheel/runs/" + t.ID + "." + t.Attempt + ".jsonl"
-			size, mtime, rerr := readRun(dir, w, rel)
+			size, mtime, rerr := readRun(dir, w, rel, runAdapter(w.events, t.ID, t.Attempt))
 			if rerr != nil {
 				return nil, byModel, rerr
 			}

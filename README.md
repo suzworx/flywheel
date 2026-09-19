@@ -49,7 +49,7 @@ The house rules the workers follow are in [AGENTS.md](AGENTS.md).
 
 Flywheel is a factory for AI coding work: a small Go CLI plus agent skills that run a durable
 **orchestrator-to-worker loop**. A frontier lead agent plans, briefs and judges; cheap disposable
-worker agents (Claude Code or OpenCode) do the reading, writing and testing. The **control plane** dispatches
+worker agents (Claude Code, Codex or OpenCode) do the reading, writing and testing. The **control plane** dispatches
 work and enforces policy; the **data plane** keeps traceability, telemetry and accountability for
 every session.
 
@@ -85,7 +85,7 @@ flowchart LR
   (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  `flywheel run` dispatches it to a worker through the `claude` or `opencode` adapter and
+  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
   records the run automatically.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` renders
   the live floor, and `flywheel watch` streams every event as one readable line.
@@ -170,16 +170,16 @@ git still works.*
 
 ### Worker adapters
 
-`flywheel run` dispatches through one of three adapters: `opencode`, `claude`, or the offline
-`sim` adapter used by tests and this repo's own demo. Each worker in `.flywheel/config.json` names
-its adapter; `flywheel run --worker <name>` picks between several configured workers, so one
-factory can be all-OpenCode, all-Claude, or a mix. The `opencode` adapter is the original,
-most-used path. The `claude` adapter (issue [#49](https://github.com/suzworx/flywheel/issues/49))
-has been exercised against the live CLI: `flywheel run` dispatches it, parses the
-`--output-format stream-json` stream, captures the session id and the assistant text, and
-records the finish. That run did not get past authentication in the environment where it
-was tried, so a productive run — tool calls, file edits, token and cost accounting — is
-still unverified. Try one real run in your own environment before depending on it.
+`flywheel run` dispatches through one of four adapters: `claude`, `codex`, `opencode`, or the
+offline `sim` adapter used by tests and this repo's own demo. Each worker in
+`.flywheel/config.json` names its adapter; `flywheel run --worker <name>` picks between several
+configured workers, so one factory can mix them. The `claude` adapter (issue
+[#49](https://github.com/suzworx/flywheel/issues/49)) builds this repository: its units are
+dispatched to `claude-haiku-4-5` workers through it. The `codex` adapter (issue
+[#275](https://github.com/suzworx/flywheel/issues/275)) runs `codex exec --json --sandbox
+workspace-write`, points the worker at the brief file (the prompt stays one line, so the Windows
+npm shim cannot truncate it), and parses Codex's JSONL events; Codex reports tokens but no cost,
+so `limits.budget` does not count its spend. Resume uses `codex exec resume <thread id>`.
 
 On the `claude` adapter, a worker's only way to run its own gate lines is its Bash tool, and
 `--permission-mode acceptEdits` alone grants file edits — not commands. Each worker in
@@ -294,6 +294,7 @@ work orders, `owns:`, gates, the event log, and the poka-yoke rules.
 | `flywheel explain <task> [--json] [--dir DIR]` | available ([#58](https://github.com/suzworx/flywheel/issues/58)) | One task's whole story from the ledger — brief, planner, attempts with steps and cost, gate readings, verdicts, signals and landing — as Markdown or JSON. Read-only. |
 | `flywheel gate [--json] [--dir DIR]` | available ([#56](https://github.com/suzworx/flywheel/issues/56)) | Exit 6 while work is left unjudged — finished units not yet inspected, untriaged signals — listing each; exit 0 when clear. For agent Stop hooks. `flywheel init --hooks` installs it as a Claude Code Stop hook. Read-only. |
 | `flywheel init --git-hooks` | available ([#56](https://github.com/suzworx/flywheel/issues/56)) | Installs a `commit-msg` hook (every commit names its unit with a `Flywheel-Task: <id>` trailer; merges, reverts, fixup/squash exempt) and a `pre-push` hook (refuses a push while a unit named in the pushed commits fails `flywheel verify`, or the event log's chain is broken). Never overwrites an existing hook. |
+| `flywheel init --ci` | available ([#56](https://github.com/suzworx/flywheel/issues/56)) | Writes `.github/workflows/flywheel-audit.yml` at the repository root: a job that installs the matching flywheel release and runs `flywheel verify --all --log` on every pull request (violations fail it; an inconclusive check only warns). Make `flywheel-audit` a required status check in the branch ruleset; the event log must be committed. Never overwrites an existing file. |
 | `flywheel context [--json] [--learnings N] [--role R] [--dir DIR]` | available ([#58](https://github.com/suzworx/flywheel/issues/58)) | A compact pack of the factory's state for a joining agent: active goals, in-flight, blocked and ready tasks, what still needs a verdict or triage, and recent learnings. `--role` (lead, planner, foreman, inspector, steward, auditor) keeps only that role's open work. Read-only. |
 | `flywheel feedback` | available (add/list/dismiss/regen/export/submit) | Turn signals into learnings: lists the untriaged signals (a signal is triaged once a later learning on its task names it with `--signals`; a recurrence after that learning is untriaged again); `add`, list, `dismiss`, and a generated `learnings.md`; `regen` rebuilds `learnings.md` from the event log without appending; `export [--out PATH]` writes a sanitised Markdown report of undismissed learnings; `submit [--yes]` sends it upstream as a gh issue — consent-first, with an offline outbox when gh fails. |
 | `flywheel upgrade` | available ([#201](https://github.com/suzworx/flywheel/issues/201)) | Self-update to a release with checksum verification: `--check` prints current and latest and whether an upgrade is available; otherwise download, verify the SHA-256 and install atomically. |
