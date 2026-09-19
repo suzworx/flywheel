@@ -417,10 +417,15 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
   `--signals`, and they recur untriaged again if the condition reappears after the learning.
 - **T10** (the log is append-only with a hash chain per shard) — the log is append-only in
   practice (`AppendEvent` only ever opens with `O_APPEND`, and `ParseEvents` treats an unresolved
-  git conflict marker as a hard error), but there is no hash chain: nothing computes or checks a
-  per-record or per-shard digest, so a hand-edited historical line is not detected as tampering by
-  this rule (T1 still catches a brief that no longer matches its recorded hash, which is a
-  different check).
+  git conflict marker as a hard error). Every event carries `prev`, the SHA-256 of the log's last
+  complete line when it was appended (issue #57); `flywheel verify --log` checks that every `prev`
+  matches the hash of some earlier line, failing (exit 6) at the first line whose `prev` matches
+  none. Appends are serialised by `.flywheel/events.lock` (held only for the read of the last line
+  and the write), so within one ledger the chain is linear: every record but the last is the
+  predecessor of the next, and removing or editing any of them is detected. "Some earlier line" is
+  accepted so a git merge, which interleaves two branches' lines, stays valid. Limits: removing the
+  LAST line, or editing a line written before the chain existed, is not detected (issue #47 tracks
+  per-shard chains).
 
 Until these land, the factory-role table, the andon cord, sampling, and nonconformance handling in
 `docs/design/autonomous-shipping.md` and `skills/flywheel/references/factory.md` describe intent
@@ -461,19 +466,22 @@ touches gate output — only `flywheel validate` does, and it always signs its o
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json] [--workdir PATH]` runs T1/T3/T4/T5/T8 for the requested
+`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8 for the requested
 tasks (`--all` derives the task list from every `task` seen in the log) and prints one
 `PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
 "items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when
 false, so `--json` consumers of the existing fields keep working). `--workdir` names the
 repository to resolve tree objects in when the readings were taken in an external clone (issue
 #244); without it, a `workdir` recorded on the task's reading events is used when that path still
-exists. An `INCONCLUSIVE` item is `pass:false` with `inconclusive:true`: the pass's tree could not
-be resolved in any repository this verifier can see, so T3 can neither confirm the readings nor
-assert a breach. Naming a task explicitly still runs every rule for it even if the log has never
-heard of it — a missing planned brief, for instance, fails T3 by name rather than being skipped.
-An empty log verified with `--all` passes vacuously; verifying with no tasks and no `--all` is a
-usage error.
+exists. `--log` checks the event log's hash chain (T10, issue #57): every event's `prev` must match
+the SHA-256 of some earlier complete line; `--log` fails (exit 6) at the first line whose `prev`
+matches none, indicating a line was edited or removed. An `INCONCLUSIVE` item is `pass:false` with
+`inconclusive:true`: the pass's tree could not be resolved in any repository this verifier can
+see, so T3 can neither confirm the readings nor assert a breach. Naming a task explicitly still
+runs every rule for it even if the log has never heard of it — a missing planned brief, for
+instance, fails T3 by name rather than being skipped. An empty log verified with `--all` passes
+vacuously; verifying with no tasks and no `--all` is a usage error — except `--log` alone, which
+checks only the chain.
 
 Exit codes follow the repo-wide convention from `AGENTS.md`: 0 ok, 1 error, 2 usage, 5 gauges
 failed, 6 rule refusal, 8 inconclusive. The enforcing commands:

@@ -107,6 +107,10 @@ type Event struct {
 	Ask      string   `json:"ask,omitempty"`
 	Signals  []string `json:"signals,omitempty"`
 	ID       string   `json:"id,omitempty"`
+	// Prev is the lineHash of the log's last complete line when this event was
+	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
+	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
+	Prev string `json:"prev,omitempty"`
 }
 
 // kinds is the set of event kinds understood by Derive.
@@ -404,42 +408,66 @@ func AppendEvent(dir string, e Event) error {
 // same defaults and validation as AppendEvent before anything is written, so
 // one invalid event appends none; events without a timestamp share one
 // instant (kindRank orders same-instant kinds); and all the lines go out in
-// a single O_APPEND write. Records that must stand or fall together — an
-// excepted event and the landing it permits — can then never be split by a
-// failure between two separate appends.
+// a single O_APPEND write. Each event's Prev is set to the lineHash of the
+// log's last complete line when appended (issue #57), forming a tamper-evident
+// chain checked by `flywheel verify --log`; any Prev value a caller supplies is
+// overwritten. Records that must stand or fall together — an excepted event
+// and the landing it permits — can then never be split by a failure between
+// two separate appends.
 func AppendEvents(dir string, events []Event) error {
 	if len(events) == 0 {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var lines [][]byte
-	for _, e := range events {
-		if e.Kind == "staffed" && e.Persona == "" {
-			e.Persona = "lead"
+	// Work on a copy: defaults, timestamps and prev are set here, never on
+	// the caller's events. Validate all of them before any write.
+	events = append([]Event(nil), events...)
+	for i := range events {
+		if events[i].Kind == "staffed" && events[i].Persona == "" {
+			events[i].Persona = "lead"
 		}
 		// planned and amended events default to the planner persona, so every
 		// ingestion route — the JSON log path and the generic flag path included —
 		// records who decided. A value already set wins.
-		if (e.Kind == "planned" || e.Kind == "amended") && e.Persona == "" {
-			e.Persona = "planner"
+		if (events[i].Kind == "planned" || events[i].Kind == "amended") && events[i].Persona == "" {
+			events[i].Persona = "planner"
 		}
-		if err := Validate(e); err != nil {
+		if err := Validate(events[i]); err != nil {
 			return err
 		}
-		if e.TS == "" {
-			e.TS = now
+		if events[i].TS == "" {
+			events[i].TS = now
 		}
-		line, err := marshalEvent(e)
-		if err != nil {
-			return err
-		}
-		lines = append(lines, line)
 	}
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dot, err)
 	}
 	path := filepath.Join(dot, "events.jsonl")
+	// Serialise "read the last line, then append" (#299 review): without it
+	// two writers can chain to the same predecessor and a record no later
+	// line references could be removed undetected. The lock is innermost —
+	// nothing takes another lock while holding it — and held for one read
+	// and one write.
+	release, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
+	if err != nil {
+		return err
+	}
+	defer release()
+	prev, err := lastLineHash(path)
+	if err != nil {
+		return err
+	}
+	var lines [][]byte
+	for i := range events {
+		events[i].Prev = prev
+		line, err := marshalEvent(events[i])
+		if err != nil {
+			return err
+		}
+		lines = append(lines, line)
+		prev = lineHash(line)
+	}
 	prefix, err := needsNewlinePrefix(path)
 	if err != nil {
 		return err
