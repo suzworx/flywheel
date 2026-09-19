@@ -13,6 +13,8 @@ import (
 type BriefHeader struct {
 	Owns  []string // comma-separated, annotations stripped
 	Needs []string
+	// NeedsDeclared is true when the header has at least one needs: line, even needs: none (issue #307).
+	NeedsDeclared bool `json:",omitempty"`
 	// NeedsState lists repo-relative paths or directories (a trailing '/' for
 	// a directory) that the gates need but an isolated --workdir will not
 	// have: a database, a stack, git-ignored env files (issue #136).
@@ -76,7 +78,8 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 		case "owns":
 			owns = append(owns, val)
 		case "needs":
-			h.Needs = append(h.Needs, val)
+			h.NeedsDeclared = true
+			h.Needs = append(h.Needs, NeedTargets(val)...)
 		case "needs-state":
 			for _, entry := range strings.Split(val, ",") {
 				if e := strings.TrimSpace(entry); e != "" {
@@ -120,4 +123,29 @@ func stripAnnotation(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return s
+}
+
+// NeedTargets turns needs: values into task ids (issue #307): each value is
+// split on commas and trimmed; empty entries, "-" and "none" (any case) are
+// dropped, and a repeated id is kept once, in first-seen order. nil when
+// nothing remains.
+func NeedTargets(values ...string) []string {
+	var result []string
+	seen := make(map[string]bool)
+	for _, val := range values {
+		for _, entry := range strings.Split(val, ",") {
+			e := strings.TrimSpace(entry)
+			if e == "" || e == "-" || strings.EqualFold(e, "none") {
+				continue
+			}
+			if !seen[e] {
+				result = append(result, e)
+				seen[e] = true
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
