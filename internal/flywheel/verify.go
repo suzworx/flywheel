@@ -473,7 +473,7 @@ func ruleT5(task string, events []Event) []VerifyItem {
 		if earlierInspectedPass(events, task, e.TS) {
 			continue
 		}
-		if ex := earlierException(events, task, e.TS, workers); ex != nil {
+		if ex := earlierException(events, task, e.Commit, e.TS, workers); ex != nil {
 			items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: true,
 				Reason: fmt.Sprintf("landed on a recorded exception by %s: %s", ex.Session, ex.Note)})
 			continue
@@ -487,15 +487,17 @@ func ruleT5(task string, events []Event) []VerifyItem {
 	return items
 }
 
-// earlierException reports whether task has a valid excepted event at or before ts,
-// with a non-empty note and a non-worker session.
-func earlierException(events []Event, task, ts string, workers map[string]bool) *Event {
+// earlierException returns the task's valid excepted event at or before ts
+// that covers commit — the exception must name the landed commit, so evidence
+// for one commit never authorises another — with a non-empty note and a
+// non-worker session, or nil when there is none.
+func earlierException(events []Event, task, commit, ts string, workers map[string]bool) *Event {
 	t0, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		return nil
 	}
 	for _, e := range events {
-		if e.Task != task || e.Kind != "excepted" || e.Note == "" || e.Session == "" {
+		if e.Task != task || e.Kind != "excepted" || e.Note == "" || e.Session == "" || commit == "" || e.Commit != commit {
 			continue
 		}
 		if workers[e.Session] {

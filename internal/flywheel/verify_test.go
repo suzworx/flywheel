@@ -1537,3 +1537,31 @@ func TestVerifyT4ExceptionFromWorkerSession(t *testing.T) {
 	}
 	t.Errorf("VerifyTasks() items = %v, want a failing T4 for worker session in excepted event", res.Items)
 }
+
+// TestVerifyT5ExceptionForOtherCommitFails checks an exception covers only the
+// commit it names: a landing of a different commit fails T5.
+func TestVerifyT5ExceptionForOtherCommitFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand", Reason: "status planned"}); err != nil {
+		t.Fatalf("append excepted: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:02:00Z", Task: "T1", Kind: "landed", Commit: "def5678"}); err != nil {
+		t.Fatalf("append landed: %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	failed := false
+	for _, item := range res.Items {
+		if item.Rule == "T5" && !item.Pass {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Error("T5 passed a landing of def5678 on an exception that covers abc1234")
+	}
+}

@@ -113,13 +113,6 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 
-	// If exception is provided, append the excepted event first
-	if exception != "" {
-		if err := AppendEvent(dir, Event{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: "status " + status}); err != nil {
-			return fmt.Errorf("append excepted for %s: %w", task, err)
-		}
-	}
-
 	// Resolve the tree of the commit being landed with the same
 	// normalisation treeHash applies to a worktree — flywheel's own
 	// bookkeeping (.flywheel/ and flywheel.md) removed — so the landed tree
@@ -141,7 +134,14 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 
-	if err := AppendEvent(dir, Event{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}); err != nil {
+	// An exception and the landing it permits are appended in one write
+	// (AppendEvents): a failure can never leave an excepted event without its
+	// landing for a later landing to reuse.
+	batch := []Event{{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}}
+	if exception != "" {
+		batch = append([]Event{{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: "status " + status}}, batch...)
+	}
+	if err := AppendEvents(dir, batch); err != nil {
 		return fmt.Errorf("append landed for %s: %w", task, err)
 	}
 	if _, err := WriteState(dir); err != nil {

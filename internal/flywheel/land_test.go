@@ -400,8 +400,54 @@ func TestValidateExceptedRequiresNoteAndSession(t *testing.T) {
 		t.Error("Validate() accepted excepted event without session")
 	}
 	err = Validate(Event{Task: "T1", Kind: "excepted", Note: "evidence", Session: "lead-1"})
+	if err == nil {
+		t.Error("Validate() accepted excepted event without the commit it covers")
+	}
+	err = Validate(Event{Task: "T1", Kind: "excepted", Note: "evidence", Session: "lead-1", Commit: "abc1234"})
 	if err != nil {
 		t.Errorf("Validate() error = %v, want nil", err)
+	}
+}
+
+// TestAppendEventsExceptionBatchInvalidAppendsNone checks a batch is validated
+// whole before anything is written: one invalid event appends none.
+func TestAppendEventsExceptionBatchInvalidAppendsNone(t *testing.T) {
+	dir := t.TempDir()
+	err := AppendEvents(dir, []Event{
+		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
+		{Task: "T1", Kind: "no-such-kind"},
+	})
+	if err == nil {
+		t.Fatal("AppendEvents() error = nil, want a validation error")
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("events = %d, want 0: an invalid batch must append nothing", len(events))
+	}
+}
+
+// TestAppendEventsExceptionBatchSharesInstant checks a valid batch lands whole,
+// in order, and events without a timestamp share one instant.
+func TestAppendEventsExceptionBatchSharesInstant(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvents(dir, []Event{
+		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
+		{Task: "T1", Kind: "landed", Commit: "abc1234"},
+	}); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 2 || events[0].Kind != "excepted" || events[1].Kind != "landed" {
+		t.Fatalf("events = %+v, want excepted then landed", events)
+	}
+	if events[0].TS == "" || events[0].TS != events[1].TS {
+		t.Errorf("timestamps %q and %q, want one shared instant", events[0].TS, events[1].TS)
 	}
 }
 

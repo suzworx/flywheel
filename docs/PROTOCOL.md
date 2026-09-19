@@ -150,11 +150,14 @@ all.
 
 ### `excepted`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.
-- Carries: `task`, `commit`, `session` (the lead), `note` (the evidence), `reason` (the status it
-  overrode).
-- Effect: no status change by itself. It permits the `landed` event written immediately after it,
-  and verify's T5 reports that landing as "landed on a recorded exception" (a deliberate, visible
-  exception to T5, never a silent bypass). T4 fails an `excepted` event from a worker session (one
+- Carries: `task`, `commit` (the commit the evidence covers), `session` (the lead), `note` (the
+  evidence), `reason` (the status it overrode). `Validate` requires the note, the session and a
+  valid commit on every write path.
+- Effect: no status change by itself. It is appended in the same single write as the `landed`
+  event it permits (`AppendEvents`), so a failure never leaves an exception without its landing.
+  Verify's T5 accepts a landing on an exception only when the exception names the **same commit**
+  and reports it as "landed on a recorded exception" (a deliberate, visible exception to T5, never
+  a silent bypass). T4 fails an `excepted` event from a worker session (one
   that wrote the task's `started`, `finished`, `dispatched`, `report` or `worker_plan` event).
 
 ### `amended`
