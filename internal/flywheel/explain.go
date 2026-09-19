@@ -81,7 +81,7 @@ func explainLine(e Event) string {
 		} else {
 			rc = "?"
 		}
-		line := fmt.Sprintf("finished %s rc=%s reason=%s steps=%d cost=$%.2f", e.Attempt, rc, e.Reason, e.Steps, e.Cost)
+		line := fmt.Sprintf("finished %s rc=%s reason=%s steps=%d cost=$%.4f", e.Attempt, rc, e.Reason, e.Steps, e.Cost)
 		if len(e.Wrote) > 0 {
 			line += fmt.Sprintf(" wrote %d files", len(e.Wrote))
 		}
@@ -179,7 +179,7 @@ func explainLine(e Event) string {
 // Returns an error if there are no events for the task.
 func Explain(events []Event, task string) (Explanation, error) {
 	var taskEvents []Event
-	for _, e := range events {
+	for _, e := range derivationOrder(events) {
 		if e.Task == task {
 			taskEvents = append(taskEvents, e)
 		}
@@ -312,7 +312,7 @@ func RenderExplanation(w io.Writer, x Explanation) error {
 		fmt.Fprintf(&b, "- attempts: %s\n", strings.Join(x.Attempts, ", "))
 	}
 
-	fmt.Fprintf(&b, "- steps: %d, cost: $%.2f\n", x.Steps, x.Cost)
+	fmt.Fprintf(&b, "- steps: %d, cost: $%.4f\n", x.Steps, x.Cost)
 
 	if x.Commit != "" {
 		fmt.Fprintf(&b, "- landed: %s", x.Commit)

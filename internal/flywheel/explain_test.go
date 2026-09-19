@@ -253,3 +253,48 @@ func TestExplainJSON(t *testing.T) {
 func intPtr(i int) *int {
 	return &i
 }
+
+// TestExplainUsesDerivationOrder checks the summary follows the same order
+// Derive replays, not file position: an amendment appended to the file first
+// but stamped later is the current brief.
+func TestExplainUsesDerivationOrder(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T12:00:00Z", Task: "T1", Kind: "amended", Brief: "late.txt", Note: "later"},
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "first.txt"},
+		{TS: "2026-09-18T11:00:00Z", Task: "T1", Kind: "amended", Brief: "middle.txt", Note: "earlier"},
+	}
+	x, err := Explain(events, "T1")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if x.Brief != "late.txt" {
+		t.Errorf("Brief = %q, want late.txt (the chronologically latest amendment)", x.Brief)
+	}
+	if len(x.Timeline) != 3 || x.Timeline[0].Kind != "planned" || x.Timeline[2].TS != "2026-09-18T12:00:00Z" {
+		t.Errorf("timeline = %+v, want chronological order", x.Timeline)
+	}
+}
+
+// TestExplainSmallCostVisible checks a sub-cent cost is not rounded away: the
+// line and the total show four decimals, like flywheel cost.
+func TestExplainSmallCostVisible(t *testing.T) {
+	rc := 0
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "finished", Attempt: "r1", RC: &rc, Reason: "stop", Steps: 3, Cost: 0.004},
+	}
+	x, err := Explain(events, "T1")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if !strings.Contains(x.Timeline[1].Line, "cost=$0.0040") {
+		t.Errorf("finished line = %q, want cost=$0.0040", x.Timeline[1].Line)
+	}
+	var b bytes.Buffer
+	if err := RenderExplanation(&b, x); err != nil {
+		t.Fatalf("RenderExplanation() error = %v", err)
+	}
+	if !strings.Contains(b.String(), "cost: $0.0040") {
+		t.Errorf("summary lacks cost: $0.0040:\n%s", b.String())
+	}
+}

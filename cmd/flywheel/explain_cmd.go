@@ -38,8 +38,8 @@ func explainUsage(w io.Writer) {
 
 // runExplain implements `flywheel explain <task>`: one task's whole story
 // from the ledger, in Markdown by default or JSON with --json. It is
-// read-only: it never derives state or writes. Exit 2 on a missing task
-// argument, 1 on any other error.
+// read-only: it derives the task's status in memory and never writes
+// events or state. Exit 2 on a missing task argument, 1 on any other error.
 func runExplain(args []string) {
 	fs, o := explainFlags()
 	pos, err := parseArgs(fs, args)
