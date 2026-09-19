@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,6 +218,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	if brief == "" {
 		return Result{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", o.Task, o.Task)
+	}
+	// An increment must exist in the brief (#295 review): a worker told to do
+	// increment N of a brief without one would improvise.
+	if o.Increment > 0 {
+		text, rerr := os.ReadFile(resolveBriefPath(dir, brief))
+		if rerr != nil {
+			return Result{}, fmt.Errorf("read brief %s: %w", brief, rerr)
+		}
+		if !briefHasIncrement(string(text), o.Increment) {
+			return Result{}, &RuleRefusal{
+				Rule: "increment",
+				Fix:  fmt.Sprintf("brief %s has no increment %d: add an \"## Increments\" section whose list has item %d (or an \"Increment %d\" heading)", brief, o.Increment, o.Increment, o.Increment),
+			}
+		}
 	}
 
 	// Owns collision (issue #164): a dispatch whose owns: overlaps an
@@ -1576,4 +1591,37 @@ func costK(c float64) string {
 		return "0"
 	}
 	return fmt.Sprintf("%.4f", math.Floor(math.Round(c*1e5)/10)/1e4)
+}
+
+// briefHasIncrement reports whether a brief defines increment n (issue #83):
+// a heading naming "Increment <n>", or, inside a section whose heading
+// contains "Increments", a list item numbered n ("n." or "n)"). The section
+// runs until the next heading of the same or a higher level.
+func briefHasIncrement(text string, n int) bool {
+	num := strconv.Itoa(n)
+	inSection, level := false, 0
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+
+		t := strings.TrimSpace(line)
+		if h := len(t) - len(strings.TrimLeft(t, "#")); h > 0 {
+			title := strings.ToLower(strings.TrimSpace(t[h:]))
+			if title == "increment "+num || strings.HasPrefix(title, "increment "+num+" ") || strings.HasPrefix(title, "increment "+num+":") {
+				return true
+			}
+			if inSection && h <= level {
+				inSection = false
+			}
+			if strings.Contains(title, "increments") {
+				inSection, level = true, h
+			}
+			continue
+		}
+		if inSection {
+			item := strings.TrimLeft(t, "-* ")
+			if strings.HasPrefix(item, num+".") || strings.HasPrefix(item, num+")") {
+				return true
+			}
+		}
+	}
+	return false
 }

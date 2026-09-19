@@ -3407,6 +3407,9 @@ func TestRunIncrementRecordedOnDispatched(t *testing.T) {
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("brief\n\n## Increments\n1. first\n2. second\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
 	if _, err := Run(dir, RunOptions{Task: "T1", Increment: 2}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -3609,5 +3612,55 @@ func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
 	var rf *RuleRefusal
 	if !errors.As(err, &rf) || rf.Rule != "limits" {
 		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='limits' for a second attempt of a running task", err)
+	}
+}
+
+// TestRunIncrementMissingFromBriefRefused checks a brief without increment N
+// is refused before anything is dispatched (#295 review).
+func TestRunIncrementMissingFromBriefRefused(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1", Increment: 1})
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "increment" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal with Rule increment", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			t.Fatalf("dispatched event recorded despite the refusal: %+v", e)
+		}
+	}
+}
+
+// TestBriefHasIncrement checks where an increment may be defined: a numbered
+// item inside an Increments section, or an "Increment N" heading.
+func TestBriefHasIncrement(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		n    int
+		want bool
+	}{
+		{"list item", "# T\n## Increments\n1. a\n2. b\n", 2, true},
+		{"missing item", "# T\n## Increments\n1. a\n2. b\n", 3, false},
+		{"paren item", "## Increments\n- 1) a\n", 1, true},
+		{"heading", "## Increment 2: wire the flag\ntext\n", 2, true},
+		{"heading prefix only", "## Increment 20\n", 2, false},
+		{"list outside section", "## Steps\n1. a\n", 1, false},
+		{"section ended", "## Increments\n1. a\n## Notes\n2. b\n", 2, false},
+		{"crlf", "## Increments" + "\r\n1. a\r\n", 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := briefHasIncrement(c.text, c.n); got != c.want {
+				t.Errorf("briefHasIncrement(%q, %d) = %v, want %v", c.text, c.n, got, c.want)
+			}
+		})
 	}
 }

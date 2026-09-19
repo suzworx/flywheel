@@ -295,6 +295,9 @@ func Validate(e Event) error {
 			return fmt.Errorf("allow_untriaged event must carry a task, a note (the reason) and the commit it covers")
 		}
 	}
+	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
+		return fmt.Errorf("event increment %d: only a dispatched event may carry one, and it must be >= 1", e.Increment)
+	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)
 	}
