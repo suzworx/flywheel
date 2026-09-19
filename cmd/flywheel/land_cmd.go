@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 func init() {
 	register("land", "record a landing for a passed task", runLand)
-	registerHelp("land", "flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON] [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := landFlags(); return fs })
+	registerHelp("land", "flywheel land <task> [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := landFlags(); return fs })
 }
 
 // landOptions holds the parsed land flags.
@@ -25,6 +26,8 @@ type landOptions struct {
 	exception      string
 	session        string
 	allowUntriaged string
+	merge          bool
+	onto           string
 }
 
 // landFlags defines land's flags once, so help and run share them.
@@ -40,12 +43,14 @@ func landFlags() (*flag.FlagSet, *landOptions) {
 	fs.StringVar(&o.exception, "exception", "", "land a unit that is not passed on a recorded exception: the evidence the lead verified by hand (requires --session)")
 	fs.StringVar(&o.session, "session", "", "the lead session recording the exception (requires --exception)")
 	fs.StringVar(&o.allowUntriaged, "allow-untriaged", "", "land although the task has untriaged signals, recording this reason (rule T9)")
+	fs.BoolVar(&o.merge, "merge", false, "land a passed unit from its worktree through the local queue: rebase onto the integration branch, re-run the gates, fast-forward")
+	fs.StringVar(&o.onto, "onto", "", "integration branch (default: the branch checked out in --dir)")
 	return fs, o
 }
 
 // landUsage prints the flywheel land usage line.
 func landUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON] [--note TEXT] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel land <task> [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--note TEXT] [--dir DIR]")
 }
 
 // runLand implements `flywheel land <task>`. A malformed commit is a usage
@@ -65,6 +70,53 @@ func runLand(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
+
+	// Validate flag combinations
+	if o.merge && o.commit != "" {
+		fmt.Fprintf(os.Stderr, "flywheel land: --merge and --commit are mutually exclusive\n")
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.merge && o.byLead {
+		fmt.Fprintf(os.Stderr, "flywheel land: --merge and --by-lead are mutually exclusive\n")
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.merge && o.exception != "" {
+		fmt.Fprintf(os.Stderr, "flywheel land: --merge and --exception are mutually exclusive\n")
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if !o.merge && o.onto != "" {
+		fmt.Fprintf(os.Stderr, "flywheel land: --onto requires --merge\n")
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+
+	// Handle --merge path
+	if o.merge {
+		result, err := flywheel.LandMerge(task, flywheel.LandMergeOptions{Dir: o.dir, Onto: o.onto, Note: o.note})
+		if err != nil {
+			if len(result.Conflict) > 0 {
+				fmt.Fprintf(os.Stderr, "%s conflicts landing onto %s: %s\n", task, result.Onto, strings.Join(result.Conflict, ", "))
+				fmt.Fprintf(os.Stderr, "correction brief: %s\n", result.Delta)
+			}
+			fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
+			if flywheel.IsRuleRefusal(err) {
+				os.Exit(6)
+			}
+			os.Exit(1)
+		}
+		fmt.Printf("%s landed %s onto %s\n", task, result.Commit, result.Onto)
+		return
+	}
+
+	// Handle --commit path
+	if o.commit == "" {
+		fmt.Fprintf(os.Stderr, "flywheel land: --commit is required without --merge\n")
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
 	if !flywheel.CommitOK(o.commit) {
 		fmt.Fprintf(os.Stderr, "flywheel land: commit %q is not 7 to 40 hex characters\n", o.commit)
 		landUsage(os.Stderr)
