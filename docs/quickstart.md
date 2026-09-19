@@ -245,7 +245,7 @@ flywheel land hello --commit <sha>
 hello landed <sha>
 ```
 
-`flywheel land` refuses (exit 6, rule T5) unless the task has an `inspected pass` on record. When you verified the unit by hand but the gauges cannot run, use `--exception "<evidence>" --session <your session>` to land on a recorded exception.
+`flywheel land` refuses (exit 6, rule T5) unless the task has an `inspected pass` on record, and refuses (exit 6, rule T9) while the task has untriaged signals. When you verified the unit by hand but the gauges cannot run, use `--exception "<evidence>" --session <your session>` to land on a recorded exception.
 `flywheel verify --all` then checks the whole log against the poka-yoke rules, and
 `flywheel state` prints the floor derived from the log. The event log now holds the unit's whole
 story — planned, dispatched, started, finished, validated, owns_checked, inspected, landed —

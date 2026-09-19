@@ -12,18 +12,19 @@ import (
 
 func init() {
 	register("land", "record a landing for a passed task", runLand)
-	registerHelp("land", "flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := landFlags(); return fs })
+	registerHelp("land", "flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON] [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := landFlags(); return fs })
 }
 
 // landOptions holds the parsed land flags.
 type landOptions struct {
-	dir       string
-	commit    string
-	note      string
-	byLead    bool
-	reason    string
-	exception string
-	session   string
+	dir            string
+	commit         string
+	note           string
+	byLead         bool
+	reason         string
+	exception      string
+	session        string
+	allowUntriaged string
 }
 
 // landFlags defines land's flags once, so help and run share them.
@@ -38,12 +39,13 @@ func landFlags() (*flag.FlagSet, *landOptions) {
 	fs.StringVar(&o.reason, "reason", "", "why the lead implemented this unit directly (requires --by-lead)")
 	fs.StringVar(&o.exception, "exception", "", "land a unit that is not passed on a recorded exception: the evidence the lead verified by hand (requires --session)")
 	fs.StringVar(&o.session, "session", "", "the lead session recording the exception (requires --exception)")
+	fs.StringVar(&o.allowUntriaged, "allow-untriaged", "", "land although the task has untriaged signals, recording this reason (rule T9)")
 	return fs, o
 }
 
 // landUsage prints the flywheel land usage line.
 func landUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--note TEXT] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel land <task> --commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON] [--note TEXT] [--dir DIR]")
 }
 
 // runLand implements `flywheel land <task>`. A malformed commit is a usage
@@ -88,7 +90,7 @@ func runLand(args []string) {
 		landUsage(os.Stderr)
 		os.Exit(2)
 	}
-	err = flywheel.LandTaskWithException(o.dir, task, o.commit, o.note, o.byLead, o.reason, o.exception, o.session)
+	err = flywheel.LandTaskWithException(o.dir, task, o.commit, o.note, o.byLead, o.reason, o.exception, o.session, o.allowUntriaged)
 	if err != nil {
 		if errors.Is(err, flywheel.ErrAlreadyLanded) {
 			fmt.Printf("%s already landed %s\n", task, o.commit)

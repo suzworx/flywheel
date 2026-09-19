@@ -26,11 +26,13 @@ func CommitOK(s string) bool {
 	return true
 }
 
-// LandTaskWithException records a landed event for task after enforcing T5: only
+// LandTaskWithException records a landed event for task after enforcing T5 and T9: only
 // a task whose derived status is passed may land (unless an exception is provided),
 // and an already-landed task may only repeat its recorded commit. An exception
 // permits landing a task whose status is not passed, provided the exception is
-// recorded first. On success the excepted event (if any) followed by the landed
+// recorded first. T9 enforces that untriaged signals must be explicitly recorded via
+// --allow-untriaged with a reason, or the landing is refused (exit 6). On success the
+// excepted event (if any), allow_untriaged event (if any), followed by the landed
 // event is appended and the derived state refreshed.
 //
 // When leadImplemented is set, the landing is recorded as lead-implemented
@@ -41,7 +43,7 @@ func CommitOK(s string) bool {
 // An exception must carry evidence (the exception string) and a lead session;
 // it must not come from a worker session. If exception is non-empty but
 // the conditions are not met, a RuleRefusal or plain error is returned.
-func LandTaskWithException(dir, task, commit, note string, leadImplemented bool, reason, exception, session string) error {
+func LandTaskWithException(dir, task, commit, note string, leadImplemented bool, reason, exception, session, allowUntriaged string) error {
 	if dir == "" {
 		dir = "."
 	}
@@ -104,6 +106,20 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 
+	// T9: check untriaged signals on this task
+	var mine []SignalView
+	for _, s := range UntriagedSignals(events) {
+		if s.Task == task {
+			mine = append(mine, s)
+		}
+	}
+	if len(mine) > 0 && allowUntriaged == "" {
+		return &RuleRefusal{Rule: "T9", Fix: fmt.Sprintf("task %s has %d untriaged signal(s) (%s); triage them with flywheel feedback add --task %s ... --signals <signal>, or land with --allow-untriaged <reason>", task, len(mine), signalNames(mine), task)}
+	}
+	if len(mine) == 0 && allowUntriaged != "" {
+		return &RuleRefusal{Rule: "T9", Fix: fmt.Sprintf("task %s has no untriaged signals; land it without --allow-untriaged", task)}
+	}
+
 	if leadImplemented {
 		suffix := "lead-implemented: " + reason
 		if note != "" {
@@ -134,10 +150,13 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 
-	// An exception and the landing it permits are appended in one write
-	// (AppendEvents): a failure can never leave an excepted event without its
+	// An exception, allow_untriaged, and the landing it permits are appended in one write
+	// (AppendEvents): a failure can never leave events without their
 	// landing for a later landing to reuse.
 	batch := []Event{{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}}
+	if len(mine) > 0 && allowUntriaged != "" {
+		batch = append([]Event{{Task: task, Kind: "allow_untriaged", Commit: commit, Note: allowUntriaged, Signals: signalList(mine)}}, batch...)
+	}
 	if exception != "" {
 		batch = append([]Event{{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: "status " + status}}, batch...)
 	}
@@ -150,17 +169,41 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 	return nil
 }
 
-// LandTask records a landed event for task after enforcing T5: only a task
+// LandTask records a landed event for task after enforcing T5 and T9: only a task
 // whose derived status is passed may land, and an already-landed task may only
-// repeat its recorded commit. On success the landed event is appended and the
-// derived state refreshed.
+// repeat its recorded commit. T9 enforces that untriaged signals must be explicitly
+// recorded via --allow-untriaged with a reason, or the landing is refused (exit 6).
+// On success the landed event is appended and the derived state refreshed.
 //
 // When leadImplemented is set, the landing is recorded as lead-implemented
 // (the flag on the landed event) and the reason is put in the event's note,
 // prefixed "lead-implemented: "; an operator-supplied note, when present, is
 // kept first and the reason appended after "; " (issue #198).
 func LandTask(dir, task, commit, note string, leadImplemented bool, reason string) error {
-	return LandTaskWithException(dir, task, commit, note, leadImplemented, reason, "", "")
+	return LandTaskWithException(dir, task, commit, note, leadImplemented, reason, "", "", "")
+}
+
+// signalNames returns a human-readable list of untriaged signals in comma-separated
+// format: "<attempt> <signal>, <attempt> <signal>, ...".
+func signalNames(sigs []SignalView) string {
+	var parts []string
+	for _, s := range sigs {
+		parts = append(parts, s.Attempt+" "+s.Signal)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// signalList returns the condition names from signals, in order, without duplicates.
+func signalList(sigs []SignalView) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range sigs {
+		if !seen[s.Signal] {
+			seen[s.Signal] = true
+			out = append(out, s.Signal)
+		}
+	}
+	return out
 }
 
 // landedTree returns the tree id of commit with flywheel's own bookkeeping

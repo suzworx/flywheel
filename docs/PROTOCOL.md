@@ -144,11 +144,13 @@ all.
 - Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
 - Carries: `task`, `commit`, `note`.
 - Effect: `Derive` sets status `landed`. Verify's T5 (`ruleT5`) requires an earlier `inspected pass`
-  or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6) unless
-  the task's derived status is already `passed` or an exception is provided, and refuses to re-land
-  the same task under a different commit than it already recorded. The read, the checks and the
-  append(s) run under `.flywheel/dispatch.lock` (the lock `run` and `amended` take), so two
-  concurrent landings of one task can never both pass the already-landed check.
+  or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6, rule T5)
+  unless the task's derived status is already `passed` or an exception is provided, and refuses
+  (exit 6, rule T9) while the task has untriaged signals unless `--allow-untriaged <reason>`
+  records why, and refuses to re-land the same task under a different commit than it already
+  recorded. The read, the checks and the append(s) run under `.flywheel/dispatch.lock` (the lock
+  `run` and `amended` take), so two concurrent landings of one task can never both pass the
+  already-landed check.
 
 ### `excepted`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.
@@ -161,6 +163,17 @@ all.
   and reports it as "landed on a recorded exception" (a deliberate, visible exception to T5, never
   a silent bypass). T4 fails an `excepted` event from a worker session (one
   that wrote the task's `started`, `finished`, `dispatched`, `report` or `worker_plan` event).
+
+### `allow_untriaged`
+- Written by: the CLI only, via `flywheel land <task> --commit <sha> --allow-untriaged REASON`.
+- Carries: `task`, `commit` (the commit the landing covers), `note` (the reason), `signals` (the
+  condition names the landing allows — the untriaged signal names at the time the landing was
+  recorded). `Validate` requires the task, the note and a valid commit on every write path.
+- Effect: no status change by itself. It is appended in the same single write as the `landed`
+  event it permits (`AppendEvents`), so a failure never leaves an `allow_untriaged` without its
+  landing. T9 enforces that a landing refusing to triage signals must be recorded with this event;
+  the signals are not triaged by this event (they stay listed by `flywheel feedback` until a
+  learning names them), and the event is purely for auditability and transparency.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
@@ -365,11 +378,10 @@ gates (exit 5) without touching the log's legality.
 ## 3. Designed, not enforced
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
-vocabulary (`audited`, `signal`, `dismissed`, `learning`, `allow_untriaged`, "by" attribution
-blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the kinds in `events.go`'s
-known-kinds map exist at all — `Validate` rejects any other kind by name, so an event carrying
-`audited` or `allow_untriaged` today is simply a validation error, not a recognized-but-unchecked record.
-Concretely, still design-only:
+vocabulary (`audited`, `signal`, `dismissed`, `learning`, "by" attribution blocks). Only T1, T3, T4,
+T5 and T8 exist in `verify.go` (T9 is enforced live by `flywheel land`, below), and only the kinds in `events.go`'s known-kinds map exist
+at all — `Validate` rejects any other kind by name, so an event carrying `audited` today is simply a
+validation error, not a recognized-but-unchecked record. Concretely, still design-only:
 
 - **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); `flywheel run` now
   records a `signal` event for `no-plan` and the other conditions, but nothing treats one as a
@@ -380,10 +392,12 @@ Concretely, still design-only:
   nonconformance stops its kind of task) — there is no `audited` kind, no auditor command, and
   nothing gates landing on it.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
-  signals are recorded and `flywheel feedback` lists the untriaged ones (a signal is triaged once a
-  later learning on the same task names it with `--signals`; a recurrence after it is untriaged
-  again), but there is no `allow_untriaged` kind and
-  `flywheel land`/`flywheel handoff` do not refuse.
+  now enforced **live** by `flywheel land` for a task's own untriaged signals (refused with exit 6
+  unless `--allow-untriaged <reason>` records an `allow_untriaged` event). `flywheel handoff` does
+  not refuse yet, and `flywheel verify` does not re-check T9, because ledgers written before the
+  rule existed have landings with untriaged signals and would all fail. The signals are not triaged
+  by `allow_untriaged` — they stay listed by `flywheel feedback` until a learning names them with
+  `--signals`, and they recur untriaged again if the condition reappears after the learning.
 - **T10** (the log is append-only with a hash chain per shard) — the log is append-only in
   practice (`AppendEvent` only ever opens with `O_APPEND`, and `ParseEvents` treats an unresolved
   git conflict marker as a hard error), but there is no hash chain: nothing computes or checks a
