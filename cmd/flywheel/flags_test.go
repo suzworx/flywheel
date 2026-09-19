@@ -35,6 +35,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"handoff":    func() (*flag.FlagSet, any) { fs, o := handoffFlags(); return fs, o },
 	"cost":       func() (*flag.FlagSet, any) { fs, o := costFlags(); return fs, o },
 	"stats":      func() (*flag.FlagSet, any) { fs, o := statsFlags(); return fs, o },
+	"supervise":  func() (*flag.FlagSet, any) { fs, o := superviseFlags(); return fs, o },
 	"trace":      func() (*flag.FlagSet, any) { fs, o := traceFlags(); return fs, o },
 	"explain":    func() (*flag.FlagSet, any) { fs, o := explainFlags(); return fs, o },
 	"claim":      func() (*flag.FlagSet, any) { fs, o := claimFlags(); return fs, o },
