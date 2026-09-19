@@ -37,6 +37,7 @@ type TaskState struct {
 	Brief     string   `json:"brief,omitempty"`
 	Needs     []string `json:"needs,omitempty"`
 	Owns      []string `json:"owns,omitempty"`
+	Increment int      `json:"increment,omitempty"`
 	Attempts  int      `json:"attempts"`
 	UpdatedAt string   `json:"updated_at"`
 }
@@ -177,6 +178,7 @@ func Derive(events []Event) State {
 		case "dispatched":
 			ts.Status = "dispatched"
 			ts.Attempts++
+			ts.Increment = e.Increment
 			if e.Attempt != "" {
 				cur[e.Task] = e.Attempt
 				disp[e.Task] = true

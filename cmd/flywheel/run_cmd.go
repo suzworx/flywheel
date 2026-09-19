@@ -25,13 +25,14 @@ type runOptions struct {
 	delta        string
 	allowOverlap bool
 	strictBrief  bool
+	increment    int
 	startTimeout time.Duration
 	stallTimeout time.Duration
 }
 
 // runUsage prints the flywheel run usage line.
 func runUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--start-timeout DURATION] [--stall-timeout DURATION]")
+	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--start-timeout DURATION] [--stall-timeout DURATION]")
 }
 
 // runFlags defines run's flags once, so help and run share them.
@@ -47,6 +48,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.StringVar(&o.delta, "delta", "", "delta brief file; always sent as the prompt and dispatched as a correction c<N>; without --resume a fresh session is started")
 	fs.BoolVar(&o.allowOverlap, "allow-overlap", false, "skip the owns-collision refusal at dispatch; the dispatched event's note records the overlap")
 	fs.BoolVar(&o.strictBrief, "strict-brief", false, "refuse a dispatch whose brief has drifted from the hash its last dispatch recorded (RuleRefusal T1, exit 6) instead of warning")
+	fs.IntVar(&o.increment, "increment", 0, "dispatch only increment N of the brief as a fresh session (N >= 1); not with --resume or --delta")
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
 	return fs, o
@@ -74,9 +76,29 @@ func runRun(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
+
+	// Increment validation: --increment flag must be >= 1, and not combined with --resume or --delta
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "increment" {
+			set = true
+		}
+	})
+	if set && o.increment < 1 {
+		fmt.Fprintf(os.Stderr, "flywheel run: --increment must be >= 1\n")
+		runUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.increment > 0 && (o.resume || o.delta != "") {
+		fmt.Fprintf(os.Stderr, "flywheel run: --increment cannot be combined with --resume or --delta\n")
+		runUsage(os.Stderr)
+		os.Exit(2)
+	}
+
 	res, err := flywheel.Run(o.dir, flywheel.RunOptions{
 		Task: task, Worker: o.worker, Model: o.model, Resume: o.resume, ForceModel: o.forceModel,
-		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
+		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, Increment: o.increment,
+		StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
 		Progress: os.Stdout, Stderr: os.Stderr,
 	})
 	if err != nil {

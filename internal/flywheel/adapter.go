@@ -17,6 +17,7 @@ type RunRequest struct {
 	Session    string
 	Title      string
 	Resume     bool
+	Increment  int // > 0: a fresh run that does only this increment of the brief (issue #83)
 	// AllowedTools and DisallowedTools are the worker's resolved claude tool
 	// patterns (worker.allowedTools()/worker.disallowedTools(), populated by
 	// Run). The claude adapter passes them as --allowedTools/--disallowedTools;
@@ -33,6 +34,15 @@ const (
 	freshMessage  = "Follow the attached brief exactly."
 	resumeMessage = "Apply the attached correction to the same task."
 )
+
+// freshPrompt is the message a fresh dispatch leads with: freshMessage, plus
+// the increment instruction when r.Increment > 0 (issue #83).
+func freshPrompt(r RunRequest) string {
+	if r.Increment > 0 {
+		return fmt.Sprintf("%s Do increment %d only, then report and STOP.", freshMessage, r.Increment)
+	}
+	return freshMessage
+}
 
 // Observation is one decoded event from a run stream.
 type Observation struct {
@@ -86,7 +96,7 @@ func (a opencodeAdapter) Name() string {
 // after the message (it is an array option that swallows trailing
 // positionals). A resume adds --session before the message.
 func (a opencodeAdapter) Command(r RunRequest) (string, []string) {
-	msg := freshMessage
+	msg := freshPrompt(r)
 	if r.Resume {
 		msg = resumeMessage
 	}
@@ -324,11 +334,11 @@ func (a claudeAdapter) Name() string {
 // the worker permission policy ("workers never commit, stash, reset,
 // checkout or push") is enforced by the permission layer. An empty list
 // appends no flag. A resume (r.Resume with a non-empty r.Session) leads the
-// prompt with resumeMessage instead of freshMessage and adds
+// prompt with resumeMessage instead of freshPrompt and adds
 // --resume <session>, mirroring opencodeAdapter.Command.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	prompt, _ := os.ReadFile(r.PromptFile)
-	msg := freshMessage
+	msg := freshPrompt(r)
 	resuming := r.Resume && r.Session != ""
 	if resuming {
 		msg = resumeMessage

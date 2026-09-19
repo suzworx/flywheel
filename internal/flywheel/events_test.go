@@ -981,3 +981,17 @@ func TestWorktreesFieldRoundTrips(t *testing.T) {
 		t.Errorf("line 1 = %q, want worktrees omitted when unset", lines[1])
 	}
 }
+
+// TestValidateIncrement checks only a dispatched event may carry an
+// increment, and it must be positive (#295 review).
+func TestValidateIncrement(t *testing.T) {
+	if err := Validate(Event{Task: "T1", Kind: "dispatched", Attempt: "r1", Increment: 2}); err != nil {
+		t.Errorf("Validate(dispatched increment 2) = %v, want nil", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "dispatched", Attempt: "r1", Increment: -2}); err == nil {
+		t.Error("Validate(dispatched increment -2) = nil, want an error")
+	}
+	if err := Validate(Event{Task: "T1", Kind: "finished", Attempt: "r1", Increment: 1}); err == nil {
+		t.Error("Validate(finished increment 1) = nil, want an error")
+	}
+}
