@@ -48,7 +48,7 @@ all.
   correction attempt: the delta file's path), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
-  later owns check can excuse pre-existing dirt it didn't cause), `increment` (N when
+  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332), `increment` (N when
   `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
   attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
@@ -263,6 +263,11 @@ working exactly as before.
   are byte-identical now), `attributed` (changed paths blamed on another in-flight task instead —
   see below), `persona` (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside` on the same tree.
+- The changed paths are the unit's changes since the attempt was dispatched — uncommitted and untracked
+  files plus files touched by the branch's own commits since the `base` commit of the unit's first
+  dispatched event (a correction attempt's check still counts what an earlier attempt committed)
+  (files merged in from another branch are not the unit's) — so committing a stray edit does not hide
+  it (issue #332).
 - A changed path outside `owns:` and not baselined is **attributed** rather than outside when some
   other task's brief `owns:` it (`ownsContains`, the matching `flywheel validate` already uses) and
   that task is currently in flight (`Derive` status `dispatched`, `running`, or `finished` — never

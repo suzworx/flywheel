@@ -337,7 +337,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 // recorded on the event (or the path is still absent, for a deletion
 // marker): the lead declared that edit, not the file forever (issue #258).
 func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
-	changed, err := changedPaths(wd)
+	changed, err := unitChangedPaths(wd, dispatchBase(events, task, attempt))
 	if err != nil {
 		return GaugeResult{}, err
 	}
@@ -698,6 +698,58 @@ func runCmdSplit(wd string, argv, env []string) (rc int, stdout, stderr []byte, 
 		rc = cmd.ProcessState.ExitCode()
 	}
 	return rc, outBuf.Bytes(), errBuf.Bytes(), nil
+}
+
+// unitChangedPaths lists the paths the unit changed since its dispatch base
+// (issue #332): everything changedPaths reports (uncommitted and untracked),
+// plus every path touched by the branch's own commits since base —
+// `git log --first-parent --no-merges --format= --name-only <base>..HEAD` —
+// so a committed change still counts, while files that arrived by merging
+// another branch in do not. An empty base, or a base git cannot use,
+// falls back to changedPaths alone. Paths are slash-separated, each once.
+func unitChangedPaths(wd, base string) ([]string, error) {
+	changed, err := changedPaths(wd)
+	if err != nil {
+		return nil, err
+	}
+	if base == "" {
+		return changed, nil
+	}
+	logOut, err := gitRead(wd, []string{"log", "--first-parent", "--no-merges", "--format=", "--name-only", base + "..HEAD"})
+	if err != nil {
+		return changed, nil
+	}
+	seen := make(map[string]bool)
+	for _, p := range changed {
+		seen[p] = true
+	}
+	var result []string
+	for _, p := range changed {
+		result = append(result, p)
+	}
+	for _, line := range strings.Split(logOut, "\n") {
+		if p := strings.TrimSpace(line); p != "" && !seen[p] {
+			seen[p] = true
+			result = append(result, filepath.ToSlash(p))
+		}
+	}
+	return result, nil
+}
+
+// dispatchBase returns the unit's base: the Base of the task's FIRST
+// dispatched event that recorded one, or "". The owns check covers the whole
+// unit — every attempt shares its owns — so a correction attempt's check
+// still counts what an earlier attempt committed; this matches baselineFor,
+// which also reads the first dispatch. attempt is unused and kept for the
+// call site's clarity.
+func dispatchBase(events []Event, task, attempt string) string {
+	_ = attempt
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" && e.Base != "" {
+			return e.Base
+		}
+	}
+	return ""
 }
 
 // changedPaths lists every path that differs from HEAD plus untracked files,
