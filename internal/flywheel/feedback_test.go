@@ -695,6 +695,70 @@ func learningsFileOf(t *testing.T, dir string) string {
 	return string(b)
 }
 
+func TestUntriagedSignalsNoLearning(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z", Path: "runs/t1.r1.jsonl"},
+	}
+	sigs := UntriagedSignals(events)
+	if len(sigs) != 1 {
+		t.Fatalf("UntriagedSignals() = %d signals, want 1", len(sigs))
+	}
+	if sigs[0].Task != "t1" || sigs[0].Signal != "no-plan" || sigs[0].Attempt != "r1" {
+		t.Errorf("UntriagedSignals()[0] = %+v, want task=t1, signal=no-plan, attempt=r1", sigs[0])
+	}
+}
+
+func TestUntriagedSignalsTriagedBySameTaskLearning(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
+	}
+	sigs := UntriagedSignals(events)
+	if len(sigs) != 0 {
+		t.Fatalf("UntriagedSignals() = %d signals, want 0 (triaged by learning)", len(sigs))
+	}
+}
+
+func TestUntriagedSignalsOtherTaskLearningDoesNotTriage(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
+		{Task: "t2", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
+	}
+	sigs := UntriagedSignals(events)
+	if len(sigs) != 1 {
+		t.Fatalf("UntriagedSignals() = %d signals, want 1 (learning on different task does not triage)", len(sigs))
+	}
+	if sigs[0].Task != "t1" {
+		t.Errorf("UntriagedSignals()[0].Task = %q, want t1", sigs[0].Task)
+	}
+}
+
+func TestUntriagedSignalsOtherConditionDoesNotTriage(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Stalled", Observed: "stalled", Evidence: "e", Ask: "a", Signals: []string{"stalled"}},
+	}
+	sigs := UntriagedSignals(events)
+	if len(sigs) != 1 {
+		t.Fatalf("UntriagedSignals() = %d signals, want 1 (learning naming different condition does not triage)", len(sigs))
+	}
+	if sigs[0].Signal != "no-plan" {
+		t.Errorf("UntriagedSignals()[0].Signal = %q, want no-plan", sigs[0].Signal)
+	}
+}
+
+func TestUntriagedSignalsDismissedLearningStillTriages(t *testing.T) {
+	events := []Event{
+		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
+		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
+		{Task: "t1", Kind: "dismissed", ID: "L-01", Note: "fixed"},
+	}
+	sigs := UntriagedSignals(events)
+	if len(sigs) != 0 {
+		t.Fatalf("UntriagedSignals() = %d signals, want 0 (dismissed learning still triages)", len(sigs))
+	}
+}
+
 // TestAppendLearningEventsBatchAppendsAllAndRebuildsOnce checks the generic
 // log path's batch semantics (issue #260): a batch import of several
 // learnings appends them all in one transaction — the artifact is rebuilt

@@ -59,6 +59,45 @@ func Learnings(events []Event) []LearningView {
 	return out
 }
 
+// SignalView is one signal event: the task and attempt it was raised on, its
+// condition name, when, and the run file that holds the evidence.
+type SignalView struct {
+	Task    string `json:"task"`
+	Attempt string `json:"attempt,omitempty"`
+	Signal  string `json:"signal"`
+	TS      string `json:"ts"`
+	Path    string `json:"path,omitempty"`
+}
+
+// UntriagedSignals returns, in log order, every signal event that is not
+// triaged. A signal is triaged when any learning event with the same Task
+// lists the signal's condition name in its Signals slice (dismissed learnings
+// still count: someone looked at it).
+func UntriagedSignals(events []Event) []SignalView {
+	learnings := Learnings(events)
+	triaged := map[string]map[string]bool{}
+	for _, l := range learnings {
+		if triaged[l.Task] == nil {
+			triaged[l.Task] = make(map[string]bool)
+		}
+		for _, sig := range l.Signals {
+			triaged[l.Task][sig] = true
+		}
+	}
+	var out []SignalView
+	for _, e := range events {
+		if e.Kind != "signal" {
+			continue
+		}
+		if !triaged[e.Task][e.Signal] {
+			out = append(out, SignalView{
+				Task: e.Task, Attempt: e.Attempt, Signal: e.Signal, TS: e.TS, Path: e.Path,
+			})
+		}
+	}
+	return out
+}
+
 // NextLearningID returns the next L-NN id in log order.
 func NextLearningID(events []Event) string {
 	n := 0
