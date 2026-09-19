@@ -65,31 +65,31 @@ func SelectFirstArticles(events []Event) AuditSelection {
 	candidates := AuditCandidates(events)
 	// A unit's line is the adapter/model of its latest dispatch before its
 	// latest inspected pass: a unit retried on another model belongs to the
-	// line that built the passing attempt.
-	lastPass := map[string]int{}
-	for pos, e := range events {
-		if e.Kind == "inspected" && e.Verdict == "pass" {
-			lastPass[e.Task] = pos
-		}
-	}
+	// line that built the passing attempt. One chronological scan: an
+	// audited event credits the line of the pass it audited (the task's
+	// line at that point in the log), never a line a later retry moved the
+	// task to (#309 review).
 	type lineInfo struct {
 		pos  int
 		task string
 	}
-	unitLine := map[string]lineInfo{} // task -> its line's dispatch
+	lastDispatch := map[string]lineInfo{} // task -> its latest dispatch so far
+	unitLine := map[string]lineInfo{}     // task -> the dispatch behind its latest pass so far
+	linesWithAudits := map[string]bool{}  // every line one of whose passes was audited
 	for pos, e := range events {
-		if e.Kind != "dispatched" || e.Task == "" {
+		if e.Task == "" {
 			continue
 		}
-		if p, ok := lastPass[e.Task]; ok && pos > p {
-			continue
-		}
-		unitLine[e.Task] = lineInfo{pos: pos, task: e.Adapter + "/" + e.Model}
-	}
-	// linesWithAudits: every line one of whose units has been audited.
-	linesWithAudits := map[string]bool{}
-	for _, e := range events {
-		if e.Kind == "audited" {
+		switch {
+		case e.Kind == "dispatched":
+			lastDispatch[e.Task] = lineInfo{pos: pos, task: e.Adapter + "/" + e.Model}
+		case e.Kind == "inspected" && e.Verdict == "pass":
+			if d, ok := lastDispatch[e.Task]; ok {
+				unitLine[e.Task] = d
+			} else {
+				delete(unitLine, e.Task)
+			}
+		case e.Kind == "audited":
 			if li, ok := unitLine[e.Task]; ok && li.task != "/" {
 				linesWithAudits[li.task] = true
 			}

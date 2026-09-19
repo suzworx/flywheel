@@ -212,3 +212,22 @@ func TestAuditSelectFirstArticleUsesPassingAttemptLine(t *testing.T) {
 		t.Errorf("first articles = %v, want [T1 T2] (T1 is m2's, T2 is m1's)", got)
 	}
 }
+
+// TestAuditSelectRetryKeepsAuditOnItsLine checks that an audit credits the
+// line of the pass it audited: T1 passes on m1 and is audited, then retries
+// and passes on m2. m1 has had its first article; m2 has not (#309 review).
+func TestAuditSelectRetryKeepsAuditOnItsLine(t *testing.T) {
+	events := []Event{
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
+		{Task: "T1", Kind: "inspected", Verdict: "pass"},
+		{Task: "T1", Kind: "audited", Verdict: "conforms"},
+		{Task: "T2", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
+		{Task: "T2", Kind: "inspected", Verdict: "pass"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r2", Adapter: "claude", Model: "m2"},
+		{Task: "T1", Kind: "inspected", Verdict: "pass"},
+	}
+	got := SelectFirstArticles(events).Tasks
+	if len(got) != 1 || got[0] != "T1" {
+		t.Errorf("first articles = %v, want [T1] (m2's first article; m1 already audited)", got)
+	}
+}
