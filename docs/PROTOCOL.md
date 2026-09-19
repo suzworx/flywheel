@@ -309,6 +309,11 @@ without a `Flywheel-Task: <id>` trailer (merges, reverts and fixup/squash commit
 `pre-push` hook refuses a push while a unit named in the pushed commits fails `flywheel verify`, or
 `flywheel verify --log` finds the event log's hash chain broken.
 
+`flywheel init --ci` adds the CI layer: a `flywheel-audit` job running
+`flywheel verify --all --log` on every pull request. Made a required status check in the branch
+ruleset, it cannot be bypassed locally; it needs the event log committed, and an inconclusive check
+(exit 8) only warns.
+
 ### `session_command`
 - Written by: the same hook or plugin, once for every `flywheel`-prefixed command the session runs.
 - Carries: `session` and `note` (the command line) — both required; `Validate` rejects the event if
