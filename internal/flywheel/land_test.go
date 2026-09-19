@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -282,5 +283,209 @@ func TestLandTaskLeadImplementedComposesNote(t *testing.T) {
 	want := "merged; lead-implemented: script fix"
 	if landed[0].Note != want {
 		t.Errorf("Note = %q, want %q", landed[0].Note, want)
+	}
+}
+
+// TestLandTaskExceptionLandsUnpassedTask checks a planned-only task can land
+// on an exception, recording both excepted and landed events.
+func TestLandTaskExceptionLandsUnpassedTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1"); err != nil {
+		t.Fatalf("LandTaskWithException() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var excepted, landed *Event
+	for i, e := range events {
+		if e.Task == "T1" && e.Kind == "excepted" {
+			excepted = &events[i]
+		}
+		if e.Task == "T1" && e.Kind == "landed" {
+			landed = &events[i]
+		}
+	}
+	if excepted == nil {
+		t.Fatal("no excepted event found")
+	}
+	if landed == nil {
+		t.Fatal("no landed event found")
+	}
+	if excepted.Note != "ran go test by hand" {
+		t.Errorf("excepted Note = %q, want %q", excepted.Note, "ran go test by hand")
+	}
+	if excepted.Session != "lead-1" {
+		t.Errorf("excepted Session = %q, want %q", excepted.Session, "lead-1")
+	}
+	if excepted.Reason != "status planned" {
+		t.Errorf("excepted Reason = %q, want %q", excepted.Reason, "status planned")
+	}
+	landedNote := landedEvents(t, dir, "T1")[0].Note
+	if !bytes.HasPrefix([]byte(landedNote), []byte("exception: ")) {
+		t.Errorf("landed Note should start with 'exception: ', got %q", landedNote)
+	}
+}
+
+// TestLandTaskExceptionRefusedForWorkerSession checks an exception from a
+// worker session is refused with rule T4.
+func TestLandTaskExceptionRefusedForWorkerSession(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Session: "w1"}); err != nil {
+		t.Fatalf("append dispatched: %v", err)
+	}
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "w1")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T4" {
+		t.Errorf("refusal = %v, want rule T4", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 0 {
+		t.Error("landed event appended despite the refusal")
+	}
+}
+
+// TestLandTaskExceptionRefusedWhenPassed checks an exception is refused when
+// the task is already passed.
+func TestLandTaskExceptionRefusedWhenPassed(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T5" {
+		t.Errorf("refusal = %v, want rule T5", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 0 {
+		t.Error("landed event appended despite the refusal")
+	}
+}
+
+// TestLandTaskExceptionRefusedForUnknownTask checks an exception is refused
+// for a task with no events.
+func TestLandTaskExceptionRefusedForUnknownTask(t *testing.T) {
+	dir := t.TempDir()
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T5" {
+		t.Errorf("refusal = %v, want rule T5", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 0 {
+		t.Error("landed event appended despite the refusal")
+	}
+}
+
+// TestValidateExceptedRequiresNoteAndSession checks Validate rejects excepted
+// events without a note or session.
+func TestValidateExceptedRequiresNoteAndSession(t *testing.T) {
+	err := Validate(Event{Task: "T1", Kind: "excepted", Note: "", Session: "lead-1"})
+	if err == nil {
+		t.Error("Validate() accepted excepted event without note")
+	}
+	err = Validate(Event{Task: "T1", Kind: "excepted", Note: "evidence", Session: ""})
+	if err == nil {
+		t.Error("Validate() accepted excepted event without session")
+	}
+	err = Validate(Event{Task: "T1", Kind: "excepted", Note: "evidence", Session: "lead-1"})
+	if err == nil {
+		t.Error("Validate() accepted excepted event without the commit it covers")
+	}
+	err = Validate(Event{Task: "T1", Kind: "excepted", Note: "evidence", Session: "lead-1", Commit: "abc1234"})
+	if err != nil {
+		t.Errorf("Validate() error = %v, want nil", err)
+	}
+}
+
+// TestAppendEventsExceptionBatchInvalidAppendsNone checks a batch is validated
+// whole before anything is written: one invalid event appends none.
+func TestAppendEventsExceptionBatchInvalidAppendsNone(t *testing.T) {
+	dir := t.TempDir()
+	err := AppendEvents(dir, []Event{
+		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
+		{Task: "T1", Kind: "no-such-kind"},
+	})
+	if err == nil {
+		t.Fatal("AppendEvents() error = nil, want a validation error")
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("events = %d, want 0: an invalid batch must append nothing", len(events))
+	}
+}
+
+// TestAppendEventsExceptionBatchSharesInstant checks a valid batch lands whole,
+// in order, and events without a timestamp share one instant.
+func TestAppendEventsExceptionBatchSharesInstant(t *testing.T) {
+	dir := t.TempDir()
+	if err := AppendEvents(dir, []Event{
+		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
+		{Task: "T1", Kind: "landed", Commit: "abc1234"},
+	}); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 2 || events[0].Kind != "excepted" || events[1].Kind != "landed" {
+		t.Fatalf("events = %+v, want excepted then landed", events)
+	}
+	if events[0].TS == "" || events[0].TS != events[1].TS {
+		t.Errorf("timestamps %q and %q, want one shared instant", events[0].TS, events[1].TS)
+	}
+}
+
+// TestLandTaskConcurrentDifferentCommitsLandOnce races two landings of one
+// passed task under different commits: the dispatch lock serialises the
+// read-check-append, so exactly one lands and the other is refused by T5.
+func TestLandTaskConcurrentDifferentCommitsLandOnce(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	commits := []string{"abc1234", "def5678"}
+	errs := make([]error, len(commits))
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i, c := range commits {
+		wg.Add(1)
+		go func(i int, c string) {
+			defer wg.Done()
+			<-start
+			errs[i] = LandTask(dir, "T1", c, "", false, "")
+		}(i, c)
+	}
+	close(start)
+	wg.Wait()
+	ok, refused := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case IsRuleRefusal(err):
+			refused++
+		default:
+			t.Errorf("LandTask() unexpected error = %v", err)
+		}
+	}
+	if ok != 1 || refused != 1 {
+		t.Errorf("landings ok=%d refused=%d, want exactly one of each (errs %v)", ok, refused, errs)
+	}
+	if n := len(landedEvents(t, dir, "T1")); n != 1 {
+		t.Errorf("landed events = %d, want 1", n)
 	}
 }

@@ -44,10 +44,10 @@ type TaskState struct {
 // kindRank orders same-instant events so the status machine replays in the
 // intended order: planned < amended < dispatched < started < worker_plan <
 // finished < report < validated < owns_checked < inspected < reviewed <
-// blocked < lost < landed. worker_plan, report, validated and owns_checked
-// carry no status; the ranks keep a same-timestamp dispatched, started,
-// worker_plan, report, finished sequence deriving finished, and gauge kinds
-// after a same-timestamp inspected deriving its verdict.
+// blocked < lost < excepted < landed. worker_plan, report, validated and
+// owns_checked carry no status; the ranks keep a same-timestamp dispatched,
+// started, worker_plan, report, finished sequence deriving finished, and
+// gauge kinds after a same-timestamp inspected deriving its verdict.
 var kindRank = map[string]int{
 	"planned":      0,
 	"amended":      1,
@@ -62,7 +62,8 @@ var kindRank = map[string]int{
 	"reviewed":     10,
 	"blocked":      11,
 	"lost":         12,
-	"landed":       13,
+	"excepted":     13,
+	"landed":       14,
 }
 
 // staleKinds are the result-bearing event kinds whose attempt must match the
