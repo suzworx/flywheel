@@ -1740,7 +1740,9 @@ func briefHasIncrement(text string, n int) bool {
 // b.Errors finished attempts across the ledger (newest first, by timestamp,
 // only events whose Model is model) all ended with reason "error", and the
 // newest of them is less than the cooldown ago. It also returns when the
-// circuit closes again.
+// circuit closes again. If a probed event with Reason "ok" exists for the
+// model and its timestamp is after the newest error, the breaker is fully
+// closed (not half-open) at once, bypassing the cooldown.
 func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open bool, until time.Time) {
 	if b.Errors <= 0 {
 		return false, time.Time{}
@@ -1753,12 +1755,24 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 		at     time.Time
 		reason string
 	}
+	// The newest ok probe of the model is a reset boundary (issue #46, #334
+	// review): the circuit it closed counts only the finishes after it, so a
+	// single later error cannot reopen it on the strength of older ones.
+	var probeAt time.Time
+	for _, e := range events {
+		if e.Kind != "probed" || e.Model != model || e.Reason != "ok" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(probeAt) {
+			probeAt = t
+		}
+	}
 	var finished []finish
 	for _, e := range events {
 		if e.Kind != "finished" || e.Model != model {
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil {
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(probeAt) {
 			finished = append(finished, finish{at: t, reason: e.Reason})
 		}
 	}
@@ -1771,7 +1785,8 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 			return false, time.Time{}
 		}
 	}
-	until = finished[0].at.Add(cooldown)
+	newestError := finished[0].at
+	until = newestError.Add(cooldown)
 	if now.Before(until) {
 		return true, until
 	}
@@ -1790,7 +1805,7 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 		if e.Kind != "dispatched" || e.Model != model || done[e.Task+"/"+e.Attempt] {
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(finished[0].at) {
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(newestError) {
 			return true, until
 		}
 	}

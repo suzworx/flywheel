@@ -12,18 +12,19 @@ import (
 
 func init() {
 	register("doctor", "probe every configured model and classify its availability", runDoctor)
-	registerHelp("doctor", "flywheel doctor [--worker NAME] [--dir DIR]", func() *flag.FlagSet { fs, _ := doctorFlags(); return fs })
+	registerHelp("doctor", "flywheel doctor [--worker NAME] [--record] [--dir DIR]", func() *flag.FlagSet { fs, _ := doctorFlags(); return fs })
 }
 
 // doctorOptions holds the parsed `flywheel doctor` flags.
 type doctorOptions struct {
 	dir    string
 	worker string
+	record bool
 }
 
 // doctorUsage prints the flywheel doctor usage line.
 func doctorUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel doctor [--worker NAME] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel doctor [--worker NAME] [--record] [--dir DIR]")
 }
 
 // doctorFlags defines doctor's flags once, so help and run share them.
@@ -33,6 +34,7 @@ func doctorFlags() (*flag.FlagSet, *doctorOptions) {
 	o := &doctorOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.worker, "worker", "", "probe this worker's model and fallbacks (default: the default worker)")
+	fs.BoolVar(&o.record, "record", false, "record each probe as a probed event; an ok probe closes the model's breaker")
 	return fs, o
 }
 
@@ -74,6 +76,12 @@ func runDoctor(args []string) {
 	}
 	for _, p := range probes {
 		fmt.Printf("%s: %s\n", p.Model, p.Class)
+	}
+	if o.record {
+		if err := flywheel.RecordProbes(o.dir, probes); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel doctor: record probes: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	if !flywheel.DoctorAllOK(probes) {
 		os.Exit(1)
