@@ -84,7 +84,7 @@ func TestRenderTextWidth(t *testing.T) {
 	task := strings.Repeat("t", 16)
 	fl := Floor{
 		Refreshed: time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC),
-		Lines:     []Line{{Name: "default", Adapter: "opencode", Model: model40, MaxParallel: 4, Busy: 1}},
+		Lines:     []FloorLine{{Name: "default", Adapter: "opencode", Model: model40, MaxParallel: 4, Busy: 1}},
 		Units:     []Unit{{Task: task, Stage: "building", Model: model40, RunState: "running"}},
 	}
 	var b80, b120 bytes.Buffer
