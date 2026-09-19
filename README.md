@@ -28,6 +28,11 @@ development as a dark factory.
   `verify`, the `flywheel factory` view), the CLI help and flag fixes, and the factory design
   docs were built as work orders by disposable OpenCode workers on DeepSeek v4 flash (variant
   max).
+- Since September 2026 the workers are `claude-haiku-4-5` agents dispatched through the `claude`
+  adapter, and the lead is Claude. Across 30 units (33 attempts) a unit cost a median $0.55
+  (range $0.27-1.63) and took a median 14 minutes; every attempt finished cleanly, yet the
+  lead's review and an independent PR reviewer still caught defects in most units, which is
+  why every claim is re-measured rather than trusted.
 - Each work order is a brief with `owns:`, `needs:` and `gate:` lines. flywheel's own gauges
   re-run the gates on the exact tree hash and check `owns:`; inspection and `flywheel verify`
   (rules T1, T3, T4, T5 and T8) gate every commit. Workers never commit.
@@ -44,7 +49,7 @@ The house rules the workers follow are in [AGENTS.md](AGENTS.md).
 
 Flywheel is a factory for AI coding work: a small Go CLI plus agent skills that run a durable
 **orchestrator-to-worker loop**. A frontier lead agent plans, briefs and judges; cheap disposable
-worker agents (OpenCode) do the reading, writing and testing. The **control plane** dispatches
+worker agents (Claude Code, Codex or OpenCode) do the reading, writing and testing. The **control plane** dispatches
 work and enforces policy; the **data plane** keeps traceability, telemetry and accountability for
 every session.
 
@@ -55,7 +60,7 @@ every session.
 | Plant manager | lead | sets goals and policy, handles escalations, signs off | implements |
 | Production planner | planner | turns a spec into work orders (`owns:`/`needs:`/gates) | dispatches or inspects |
 | Line supervisor | foreman | runs a line of workers, retries by policy, pulls the cord | plans or implements |
-| Line worker | worker (OpenCode) | builds one work order at its own station | plans, inspects, commits |
+| Line worker | worker (any agent CLI) | builds one work order at its own station | plans, inspects, commits |
 | Machine gauges | supervisor (CLI, no model) | measures every unit: runs gates, checks `owns:` | judges intent |
 | QC inspector | inspector | inspects a unit against its work order | runs gauges or fixes units |
 | External auditor | auditor | audits first articles and samples, files nonconformances | works the line |
@@ -66,7 +71,7 @@ every session.
 
 ```mermaid
 flowchart LR
-    WO["Work order"] --> W["Worker (OpenCode)"]
+    WO["Work order"] --> W["Worker (agent CLI)"]
     W --> G["Machine gauges"]
     G --> I["QC inspector"]
     I --> A["Auditor (first articles, samples)"]
@@ -80,10 +85,10 @@ flowchart LR
   (available in v0.2.0). Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  [flywheel run #20](https://github.com/suzworx/flywheel/issues/20) dispatches OpenCode workers
-  and records their runs automatically (v0.3.0).
-- **Watch** — `flywheel state` derives the floor from the event log (available in v0.2.0); the live
-  floor is the [flywheel factory #63](https://github.com/suzworx/flywheel/issues/63) view.
+  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
+  records the run automatically.
+- **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` renders
+  the live floor, and `flywheel watch` streams every event as one readable line.
 
 Design priorities, in order: **efficiency and consistency**, then **speed, reliability and
 recoverability** — the lead spends tokens only where judgment is needed, gauges and telemetry cost
@@ -101,13 +106,14 @@ in-flight unit declares the same gate line.
 
 The goal is to ship with no human in the loop. That is only safe if every step is **recorded** (an
 append-only event log), **measured** by the machine (gauges run by the CLI, never self-reported by
-an agent), and **audited** by independent checkers. Today the repo has the event log with
-`flywheel log` / `flywheel state`, the project config, the worker deny policy, and the persona
-skills; the gauges ([#55](https://github.com/suzworx/flywheel/issues/55)) — `validate`, `inspect`
-and `verify`, with `inspect` refusing a worker inspecting its own unit
-([#24](https://github.com/suzworx/flywheel/issues/24)) — and the run dispatcher
-([#20](https://github.com/suzworx/flywheel/issues/20)) shipped in v0.3.0; external audit
-([#61](https://github.com/suzworx/flywheel/issues/61)) is still planned.
+an agent), and **audited** by independent checkers. Today all three are in place: the append-only event log is hash-chained, so an edited or removed
+record is detected (`flywheel verify --log`); the gauges `validate`, `inspect` and `verify` measure
+every unit, with `flywheel supervise` measuring each finished unit nobody has measured yet; and
+`flywheel audit` re-measures a unit in a clean copy from a session that neither built nor inspected
+it, selecting first articles and seeded samples
+([#61](https://github.com/suzworx/flywheel/issues/61)). Enforcement sits in more than one layer:
+the CLI refuses illegal transitions (exit 6), an agent Stop hook runs `flywheel gate`, and git
+hooks check every commit and push (`flywheel init --git-hooks`).
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state
@@ -296,7 +302,7 @@ Each role ships as a skill folder any agent can load:
 
 - [`flywheel`](skills/flywheel/SKILL.md) — the lead: drive the loop, judge evidence, never implement.
 - [`flywheel-planner`](skills/flywheel-planner/SKILL.md) — write work orders; never dispatch.
-- [`flywheel-foreman`](skills/flywheel-foreman/SKILL.md) — run a line of OpenCode workers; retry by policy.
+- [`flywheel-foreman`](skills/flywheel-foreman/SKILL.md) — run a line of workers; retry by policy.
 - [`flywheel-worker`](skills/flywheel-worker/SKILL.md) — execute one brief, run its gates, report evidence.
 - [`flywheel-inspector`](skills/flywheel-inspector/SKILL.md) — QC verdicts: pass, rework, scrap, escalate.
 - [`flywheel-auditor`](skills/flywheel-auditor/SKILL.md) — independent audit of first articles and samples.
