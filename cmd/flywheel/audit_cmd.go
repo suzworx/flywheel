@@ -201,6 +201,7 @@ func runAudit(args []string) {
 	for _, task := range selection.Tasks {
 		res, err := flywheel.AuditTask(o.dir, task, flywheel.AuditOptions{
 			Dir: o.dir, Workdir: o.workdir, Session: o.session, Note: o.note,
+			RequireCandidate: true,
 		})
 		if err != nil {
 			if flywheel.IsRuleRefusal(err) {

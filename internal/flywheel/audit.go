@@ -12,6 +12,24 @@ type AuditOptions struct {
 	Workdir string // git working tree whose current tree is audited; default Dir
 	Session string // the auditor's session: required, and independent of the unit
 	Note    string
+	// RequireCandidate (selection modes) refuses the audit when the unit is
+	// no longer an audit candidate — audited since it was selected, or its
+	// latest inspection no longer a pass — checked before the gates run and
+	// again under the lock the audit records under (#323 review). A single
+	// named task leaves it off, so a re-audit that clears a nonconformance
+	// stays possible.
+	RequireCandidate bool
+}
+
+// notCandidate returns the refusal RequireCandidate reports, or nil when task
+// is still an audit candidate in events.
+func notCandidate(events []Event, task string) *RuleRefusal {
+	for _, c := range AuditCandidates(events) {
+		if c == task {
+			return nil
+		}
+	}
+	return &RuleRefusal{Rule: "audit", Fix: fmt.Sprintf("task %s is no longer an audit candidate (audited since it was selected, or its latest inspection is not a pass); select again", task)}
 }
 
 // AuditResult is what one audit found.
@@ -43,6 +61,11 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 
 	if r := auditIndependence(events, task, o.Session); r != nil {
 		return AuditResult{}, r
+	}
+	if o.RequireCandidate {
+		if r := notCandidate(events, task); r != nil {
+			return AuditResult{}, r
+		}
 	}
 
 	// Task must have events.
@@ -148,6 +171,10 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 		return AuditResult{}, err
 	} else if r := auditIndependence(fresh, task, o.Session); r != nil {
 		return AuditResult{}, r
+	} else if o.RequireCandidate {
+		if r := notCandidate(fresh, task); r != nil {
+			return AuditResult{}, r
+		}
 	}
 
 	// Append the audited event.
