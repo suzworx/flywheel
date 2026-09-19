@@ -36,16 +36,20 @@ const (
 
 // Observation is one decoded event from a run stream.
 type Observation struct {
-	Kind     string // "start", "text", "tool", "step", "error"
-	Session  string
-	Text     string
-	Tool     string
-	Path     string
-	Reason   string // step finish reason
-	Error    string
-	Tokens   *Tokens
-	Cost     float64
-	EndsTurn bool // true when this line completes one model turn; run.go counts turns with it
+	Kind    string // "start", "text", "tool", "step", "error"
+	Session string
+	Text    string
+	Tool    string
+	Path    string
+	Reason  string // step finish reason
+	Error   string
+	Tokens  *Tokens
+	// Aggregate marks Tokens as a session total (the claude result line),
+	// not one model call's usage: it counts toward totals but never toward
+	// the per-call reasoning peak (issue #286).
+	Aggregate bool
+	Cost      float64
+	EndsTurn  bool // true when this line completes one model turn; run.go counts turns with it
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -357,8 +361,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 // "text" from the first text block (message.usage supplies Tokens either
 // way); a "result" line, or any line carrying a top-level is_error, becomes
 // "step" (Reason from stop_reason/subtype/is_error — see claudeReason; Cost
-// from total_cost_usd). Anything else — hook events, user echoes — returns
-// false, and unparseable JSON never panics.
+// from total_cost_usd; Tokens from the top-level usage, the session total).
+// Anything else — hook events, user echoes — returns false, and unparseable
+// JSON never panics.
 func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -384,6 +389,10 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		}
 		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"), isError)
 		obs.Cost, _ = rawFloat(m, "total_cost_usd")
+		// The result line's top-level usage is the session total (issue
+		// #286); claudeTokens reads m["usage"], the same shape as a message's.
+		obs.Tokens = claudeTokens(m)
+		obs.Aggregate = true
 	default:
 		return Observation{}, false
 	}

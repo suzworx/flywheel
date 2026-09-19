@@ -322,6 +322,65 @@ func TestClaudeParseLimitFixture(t *testing.T) {
 	}
 }
 
+// TestClaudeParseResultUsage parses a result line with a top-level usage
+// field, checking that the result observation's step carries Tokens from that
+// session total (issue #286).
+func TestClaudeParseResultUsage(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","total_cost_usd":1.12,"session_id":"s1","usage":{"input_tokens":673,"cache_creation_input_tokens":95706,"cache_read_input_tokens":7912520,"output_tokens":28634,"output_tokens_details":{"thinking_tokens":5343}}}`)
+	obs, ok := a.Parse(line)
+	if !ok {
+		t.Fatalf("Parse() rejected a valid result line")
+	}
+	if obs.Kind != "step" {
+		t.Errorf("Kind = %q, want step", obs.Kind)
+	}
+	if obs.Cost != 1.12 {
+		t.Errorf("Cost = %v, want 1.12", obs.Cost)
+	}
+	if obs.Tokens == nil {
+		t.Fatalf("Tokens = nil, want non-nil")
+	}
+	if obs.Tokens.Input != 673 {
+		t.Errorf("Tokens.Input = %d, want 673", obs.Tokens.Input)
+	}
+	if obs.Tokens.Output != 28634 {
+		t.Errorf("Tokens.Output = %d, want 28634", obs.Tokens.Output)
+	}
+	if obs.Tokens.CacheRead != 7912520 {
+		t.Errorf("Tokens.CacheRead = %d, want 7912520", obs.Tokens.CacheRead)
+	}
+	if obs.Tokens.CacheWrite != 95706 {
+		t.Errorf("Tokens.CacheWrite = %d, want 95706", obs.Tokens.CacheWrite)
+	}
+	if obs.Tokens.Reasoning != 5343 {
+		t.Errorf("Tokens.Reasoning = %d, want 5343", obs.Tokens.Reasoning)
+	}
+	if !obs.Aggregate {
+		t.Error("Aggregate = false, want true: the result line's usage is the session total, not one call's")
+	}
+}
+
+// TestClaudeParseResultWithoutUsage parses a result line without a top-level
+// usage field, checking that Tokens is nil (issue #286).
+func TestClaudeParseResultWithoutUsage(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","total_cost_usd":1.12,"session_id":"s1"}`)
+	obs, ok := a.Parse(line)
+	if !ok {
+		t.Fatalf("Parse() rejected a valid result line")
+	}
+	if obs.Kind != "step" {
+		t.Errorf("Kind = %q, want step", obs.Kind)
+	}
+	if obs.Cost != 1.12 {
+		t.Errorf("Cost = %v, want 1.12", obs.Cost)
+	}
+	if obs.Tokens != nil {
+		t.Errorf("Tokens = %v, want nil", obs.Tokens)
+	}
+}
+
 // TestClaudeParseStopSequenceWithoutIsError checks that a result line
 // carrying stop_reason stop_sequence with no top-level is_error still reads
 // as a clean stop.
