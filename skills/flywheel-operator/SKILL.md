@@ -30,7 +30,7 @@ land.
 
 | Command | Status | What it does |
 | --- | --- | --- |
-| `flywheel init [--track\|--ignore] [--agents-md] [--hooks] [--force]` | **implemented** | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/events.jsonl` + `.flywheel/briefs/`; `--track` (default) keeps `flywheel.md` a committed file, `--ignore` adds it to the target's root `.gitignore` instead; `--agents-md` writes/refreshes an AGENTS.md block naming the installed skills; `--hooks` writes the Claude/OpenCode session-logging hooks; refuses an existing state file unless `--force`. |
+| `flywheel init [--track\|--ignore] [--agents-md] [--hooks] [--force]` | **implemented** | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/events.jsonl` + `.flywheel/briefs/`; `--track` (default) keeps `flywheel.md` a committed file, `--ignore` adds it to the target's root `.gitignore` instead; `--agents-md` writes/refreshes an AGENTS.md block naming the installed skills; `--hooks` writes the Claude/OpenCode session-logging hooks and a Claude Code Stop hook that runs `flywheel gate` (blocks ending the session while work is left unjudged; an existing .claude/settings.json is never overwritten, so add the Stop entry by hand there); refuses an existing state file unless `--force`. |
 | `flywheel version` | **implemented** | Print the flywheel version. |
 | `flywheel config` | **implemented** | Read and validate `.flywheel/config.json`. |
 | `flywheel doctor [--dir DIR]` | **implemented** | Probe the configured worker's model, then its fallbacks, through the worker's own adapter and print one `<model>: <class>` line per probe; exit 0 when every probe is ok, 1 when any is not. |

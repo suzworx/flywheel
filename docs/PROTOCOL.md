@@ -289,7 +289,7 @@ working exactly as before.
 ### `session_start`
 - Written by: `flywheel log --kind session_start --session <id>`, invoked by the Claude Code hook
   or the OpenCode plugin (`flywheel-session.mjs`) that `flywheel init --hooks` installs, on a
-  session's first turn (issue #157).
+  session's first turn (issue #157). The same `--hooks` also installs a Claude Code `Stop` hook that runs `flywheel gate` and blocks ending the session while units are finished but not inspected or signals are untriaged (issue #56).
 - Carries: `session` (required, like `staffed`) and no `task`.
 - Effect: floor-level; `Derive` skips it outright, the same way it skips `staffed`. `flywheel trace
   <session>` is its only reader.
