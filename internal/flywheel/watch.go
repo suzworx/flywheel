@@ -14,6 +14,10 @@ import (
 // oneLine folds line breaks inside an event's text into spaces.
 var oneLine = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
+// LogCursor remembers how far a tail has read each file of the log. The
+// zero value reads from the start.
+type LogCursor struct{ r *logReader } // unexported field; never mutated by TailLog
+
 // HumanLine is one event as a readable line: its local time (HH:MM:SS; the raw
 // TS when it cannot be parsed), its task ("-" for floor-level events), and
 // explainLine's summary.
@@ -40,7 +44,16 @@ func HumanLine(e Event) string {
 // complete line. An unterminated tail (a record still being appended) is left
 // for the next call; a missing log returns no events and offset unchanged.
 // Malformed complete lines are an error naming the offset.
+// In a sharded log, it returns an error directing the caller to TailLog.
 func TailEvents(dir string, offset int64) ([]Event, int64, error) {
+	sharded, err := ShardedLayout(dir)
+	if err != nil {
+		return nil, offset, err
+	}
+	if sharded {
+		return nil, offset, fmt.Errorf("sharded log: use TailLog")
+	}
+
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
 	// Read only what was appended since offset, never the whole log again
 	// (#305 review).
@@ -79,4 +92,31 @@ func TailEvents(dir string, offset int64) ([]Event, int64, error) {
 		pos += int64(len(line)) + 1
 	}
 	return events, offset + int64(end) + 1, nil
+}
+
+// TailLog returns the events the log gained since cur, merged among
+// themselves in the log's order, and the cursor to pass next time. It works
+// in both layouts: legacy reads one file, sharded reads every shard. The
+// returned cursor is a new value; cur is left untouched, so an unchanged
+// cursor can be reused after an error. A file replaced wholesale (shrunk,
+// or rewritten to the same size) is re-read from the start and its events
+// are returned again.
+func TailLog(dir string, cur LogCursor) ([]Event, LogCursor, error) {
+	prev := cur.r
+	next := newLogReader()
+	if prev != nil {
+		next = prev.clone()
+	}
+
+	changed, err := next.refresh(dir)
+	if err != nil {
+		return nil, cur, err
+	}
+
+	var events []Event
+	if changed {
+		events = next.mergedSince(prev)
+	}
+
+	return events, LogCursor{r: next}, nil
 }

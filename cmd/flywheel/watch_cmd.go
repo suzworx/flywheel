@@ -69,7 +69,7 @@ func runWatch(args []string) {
 		os.Exit(2)
 	}
 
-	events, off, err := flywheel.TailEvents(o.dir, 0)
+	events, cur, err := flywheel.TailLog(o.dir, flywheel.LogCursor{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel watch: %v\n", err)
 		os.Exit(1)
@@ -91,7 +91,7 @@ func runWatch(args []string) {
 	for {
 		time.Sleep(o.interval)
 
-		newEvents, newOff, err := flywheel.TailEvents(o.dir, off)
+		newEvents, newCur, err := flywheel.TailLog(o.dir, cur)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel watch: %v\n", err)
 			os.Exit(1)
@@ -101,6 +101,6 @@ func runWatch(args []string) {
 			fmt.Println(flywheel.HumanLine(e))
 		}
 
-		off = newOff
+		cur = newCur
 	}
 }
