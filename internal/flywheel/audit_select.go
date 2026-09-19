@@ -209,3 +209,16 @@ func SelectSample(events []Event, rate float64, seed int64) AuditSelection {
 		Tasks: selected,
 	}
 }
+
+// SelectWave returns every audit candidate — every passed, unaudited unit in
+// the ledger, which is the wave (issue #61) — in log order.
+func SelectWave(events []Event) AuditSelection {
+	tasks := AuditCandidates(events)
+	if tasks == nil {
+		tasks = []string{}
+	}
+	return AuditSelection{
+		Mode:  "wave",
+		Tasks: tasks,
+	}
+}
