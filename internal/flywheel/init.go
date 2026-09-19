@@ -503,7 +503,7 @@ func gitIgnores(dir, path string) bool {
 
 // claudeSettings, claudeHooks, claudeHookGroup and claudeHookCmd mirror just
 // enough of Claude Code's .claude/settings.json hook schema to describe the
-// three hooks InitHooks installs.
+// four Claude Code hooks InitHooks installs.
 type claudeSettings struct {
 	Hooks claudeHooks `json:"hooks"`
 }
@@ -512,6 +512,7 @@ type claudeHooks struct {
 	SessionStart []claudeHookGroup `json:"SessionStart"`
 	PostToolUse  []claudeHookGroup `json:"PostToolUse"`
 	SessionEnd   []claudeHookGroup `json:"SessionEnd"`
+	Stop         []claudeHookGroup `json:"Stop"`
 }
 
 type claudeHookGroup struct {
@@ -524,27 +525,35 @@ type claudeHookCmd struct {
 	Command string `json:"command"`
 }
 
-// The three hook scripts below each read the hook payload Claude Code sends
+// The four hook scripts below each read the hook payload Claude Code sends
 // as one line of JSON on stdin and pull a field out with sed, so the hook
 // depends on nothing beyond a POSIX shell and the flywheel binary on PATH —
 // no jq, no Node. sessionCommandHook additionally checks the tool's command
 // text starts with "flywheel" before logging it, since the PostToolUse
-// matcher can only select by tool name (Bash), not by command text.
+// matcher can only select by tool name (Bash), not by command text. The Stop
+// hook allows the stop when stop_hook_active is true (no loop), runs
+// `flywheel gate` with its report on stderr, and blocks (exit 2, which Claude
+// Code shows to the agent) only on gate's exit 6 — never on a gate error.
+// It points gate at $CLAUDE_PROJECT_DIR (the project Claude Code opened), not the
+// hook's working directory, which can be a subdirectory with no ledger.
+// OpenCode has no way to block ending a session, so gate is Claude-only for now.
 const (
 	claudeSessionStartHook   = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_start --session "$s"'`
 	claudeSessionEndHook     = `sh -c 'j=$(cat); s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_end --session "$s"'`
 	claudeSessionCommandHook = `sh -c 'j=$(cat); c=$(printf "%s" "$j" | sed -n "s/.*\"command\":\"\([^\"]*\)\".*/\1/p"); case "$c" in flywheel*) s=$(printf "%s" "$j" | sed -n "s/.*\"session_id\":\"\([^\"]*\)\".*/\1/p"); flywheel log --kind session_command --session "$s" --note "$c";; esac'`
+	claudeStopGateHook       = `sh -c 'j=$(cat); printf "%s" "$j" | grep -q "\"stop_hook_active\" *: *true" && exit 0; flywheel gate --dir "${CLAUDE_PROJECT_DIR:-.}" >&2; [ $? -eq 6 ] && exit 2; exit 0'`
 )
 
 // claudeSettingsPayload renders the .claude/settings.json bytes InitHooks
-// writes: SessionStart and SessionEnd record the session boundary, and a
+// writes: SessionStart and SessionEnd record the session boundary, a
 // PostToolUse hook matched on the Bash tool records any flywheel command the
-// session ran.
+// session ran, and a Stop hook blocks ending the session while work is left unjudged.
 func claudeSettingsPayload() ([]byte, error) {
 	cfg := claudeSettings{Hooks: claudeHooks{
 		SessionStart: []claudeHookGroup{{Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionStartHook}}}},
 		PostToolUse:  []claudeHookGroup{{Matcher: "Bash", Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionCommandHook}}}},
 		SessionEnd:   []claudeHookGroup{{Hooks: []claudeHookCmd{{Type: "command", Command: claudeSessionEndHook}}}},
+		Stop:         []claudeHookGroup{{Hooks: []claudeHookCmd{{Type: "command", Command: claudeStopGateHook}}}},
 	}}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -593,9 +602,10 @@ export const FlywheelSession = async () => {
 // .opencode/plugin/flywheel-session.mjs (an OpenCode plugin). Both invoke
 // `flywheel log --kind <kind> --session <id> [--note <command>]` — session_start
 // on a session's first turn, session_command for a flywheel command the
-// session runs, session_end when the session ends — resolving the flywheel
-// binary from PATH and the session id from the platform's own hook
-// environment. Like every InitSeeded piece, each file is created only when
+// session runs, session_end when the session ends, and on Claude Code a fourth
+// Stop hook blocks ending the session while work is left unjudged — resolving
+// the flywheel binary from PATH and the session id from the platform's own
+// hook environment. Like every InitSeeded piece, each file is created only when
 // missing and never overwritten; a failure after one file is written rolls
 // back exactly what this call created, so a retry starts clean.
 func InitHooks(dir string) (string, []ScaffoldPiece, error) {
