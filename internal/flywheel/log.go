@@ -52,7 +52,9 @@ func RecordPlannedBy(dir, task, brief string, meta PlanMeta) error {
 }
 
 // RecordAmended is RecordAmendedBy without the planner's identity: the
-// amended event carries no session or model.
+// amended event carries no session or model. It widens owns: on a dispatched
+// attempt (taking effect per issue #281); refuses narrowing owns: or any gate
+// change on a dispatched attempt (exit 6); and permits fixing prose.
 func RecordAmended(dir, task, brief, note string) error {
 	return RecordAmendedBy(dir, task, brief, note, PlanMeta{})
 }
@@ -70,14 +72,12 @@ func RecordAmended(dir, task, brief, note string) error {
 // (issue #272): the same lock file, ordering and timings Run uses, so an
 // amendment and a dispatch serialise instead of each deciding from a ledger
 // missing the other's event. When the
-// task's current attempt was already dispatched and the amendment would
-// change the gate set the attempt is effectively measured against without
-// succeeding in changing it, the amendment is refused as a RuleRefusal before
-// anything is written: a pass is measured against the attempt's effective
-// header, so the amendment would be inert. The fix is a correction delta —
-// `flywheel run <task> --delta <file>` — while amending before dispatch, or
-// changing anything but the gates of a dispatched attempt (widening owns:,
-// fixing prose), still works exactly as before.
+// task's current attempt was already dispatched, widening owns: takes effect
+// on the dispatched attempt (issue #281) while narrowing owns: or changing
+// gates is refused as a RuleRefusal before anything is written: a pass is
+// measured against the attempt's effective header, so the amendment would be
+// inert. The fix is a correction delta — `flywheel run <task> --delta <file>`
+// — while amending before dispatch or fixing prose still works exactly as before.
 func RecordAmendedBy(dir, task, brief, note string, meta PlanMeta) error {
 	// The dispatch lock (issue #272): the log is read, the inert-amendment
 	// check is run and the amended event is appended under
@@ -175,6 +175,12 @@ func AppendAmendedEvent(dir string, e Event) error {
 	if r := inertAmendRefusal(dir, e.Task, resolved, events, header); r != nil {
 		return r
 	}
+	// Record the resolved header, owns and needs exactly as RecordAmendedBy
+	// does, so a headerless JSON amendment is measurable: AttemptBrief only
+	// unions amendments that carry a header (issue #281).
+	e.Header = &header
+	e.Owns = header.Owns
+	e.Needs = header.Needs
 	return AppendEvent(dir, e)
 }
 
@@ -195,7 +201,8 @@ func amendedHeaderAt(dir, path string, h *BriefHeader) (BriefHeader, error) {
 // inertAmendRefusal returns a RuleRefusal when the amendment carried by
 // header would change the gate set — gate: and live-gate: lines, compared as
 // parsed lists, not file bytes — that task's current attempt is effectively
-// measured against, without succeeding in changing it, and nil otherwise
+// measured against, without succeeding in changing it, or would narrow the
+// owns set that has already been dispatched (issue #281), and nil otherwise
 // (issue #272). The comparison is between the amendment and the attempt's
 // EFFECTIVE gate set, AttemptBrief's resolution, not the dispatched header
 // alone: a correction whose delta declares no gate: lines inherits the base
@@ -210,11 +217,12 @@ func amendedHeaderAt(dir, path string, h *BriefHeader) (BriefHeader, error) {
 // base's live gates are always inherited — a correction's delta never
 // replaces them — so an amendment touching only live-gate: lines takes
 // effect on a correction attempt while it stays inert on a fresh dispatched
-// one. Amending before dispatch, or changing anything but the gates of a
-// dispatched attempt, is not inert and is not refused. An attempt whose
-// effective set cannot be resolved (a legacy delta file that is gone, for
-// instance) is never refused: the check must not block on evidence it
-// cannot read.
+// one. Owns are unioned with every amendment after dispatch (issue #281), so
+// an amendment cannot narrow them; it can only widen them. Amending before
+// dispatch, or changing anything but the gates of a dispatched attempt, is
+// not inert and is not refused. An attempt whose effective set cannot be
+// resolved (a legacy delta file that is gone, for instance) is never refused:
+// the check must not block on evidence it cannot read.
 func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefHeader) error {
 	_, attempt, _ := latestBaseBriefAndAttempt(events, task)
 	if attempt == "" {
@@ -231,22 +239,58 @@ func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefH
 	if err != nil {
 		return nil
 	}
-	// Refuse only when the amendment would not move the effective gate set:
-	// the set after the amendment is what it was before (the dispatched
-	// header or the delta's own gates win), and the amendment's gates differ
-	// from that set (the amendment tries to change them).
-	if !gatesEqual(before.Gates, after.Gates) || !gatesEqual(before.LiveGates, after.LiveGates) {
-		return nil
+
+	// Check if this would be an inert gate change: the amendment would not
+	// move the effective gate set (the set after the amendment is what it was
+	// before, and the amendment's gates differ from that set).
+	gateInert := gatesEqual(before.Gates, after.Gates) && gatesEqual(before.LiveGates, after.LiveGates) &&
+		(!gatesEqual(before.Gates, header.Gates) || !gatesEqual(before.LiveGates, header.LiveGates))
+
+	// Check if this would be an inert narrowing on a fresh attempt whose
+	// dispatched event recorded its header: owns and exclusive are unioned
+	// with every amendment after that dispatch (issue #281), so an amendment
+	// that stops covering anything the attempt already covers cannot take
+	// effect. Coverage uses ownsContains, the matching validation uses, so
+	// narrowing `src/` to `src/main.go` counts. A legacy dispatch without a
+	// header is measured against the latest amendment, where a narrowing does
+	// take effect, and a correction attempt (c*) replaces its base header;
+	// neither is refused here.
+	unioned := attempt[0] == 'r' && freshDispatchedHeader(events, task, attempt) != nil
+	ownsInert := unioned && !covers(header.Owns, before.Owns)
+	exclusiveInert := unioned && !covers(header.Exclusive, before.Exclusive)
+
+	if gateInert {
+		return &RuleRefusal{
+			Rule: "amended",
+			Fix: fmt.Sprintf(
+				"attempt %s of task %s was already dispatched with these gates, and a pass is measured against the dispatched header, so an amendment cannot change them; dispatch a correction delta instead: flywheel run %s --delta <file>",
+				attempt, task, task),
+		}
 	}
-	if gatesEqual(before.Gates, header.Gates) && gatesEqual(before.LiveGates, header.LiveGates) {
-		return nil
+	if ownsInert || exclusiveInert {
+		field := "owns"
+		if !ownsInert {
+			field = "exclusive"
+		}
+		return &RuleRefusal{
+			Rule: "amended",
+			Fix:  fmt.Sprintf("attempt %s of task %s was already dispatched and its %s are unioned with every later amendment, so an amendment cannot narrow them; keep every current entry and widen only, or narrow with a new plan for a new task", attempt, task, field),
+		}
 	}
-	return &RuleRefusal{
-		Rule: "amended",
-		Fix: fmt.Sprintf(
-			"attempt %s of task %s was already dispatched with these gates, and a pass is measured against the dispatched header, so an amendment cannot change them; dispatch a correction delta instead: flywheel run %s --delta <file>",
-			attempt, task, task),
+	return nil
+}
+
+// covers reports whether every entry of have is still covered by want, under
+// the matching the owns check uses (ownsContains: exact path, directory
+// prefix, or shell pattern), so a replacement that drops coverage is seen
+// even when it adds a new, narrower entry (issue #281).
+func covers(want, have []string) bool {
+	for _, e := range have {
+		if !ownsContains(want, e) {
+			return false
+		}
 	}
+	return true
 }
 
 // gatesEqual reports whether two gate lists are the same commands in the
