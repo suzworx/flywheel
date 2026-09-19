@@ -106,7 +106,12 @@ func canonical(e Event) string {
 // status; amended only updates brief/needs/owns. A result-bearing event whose
 // non-empty attempt differs from the task's latest dispatched attempt is
 // stale: it changes no field and is recorded in Stale.
-func Derive(events []Event) State {
+// derivationOrder returns events in the order Derive replays them: by parsed
+// TS (an unparseable TS sorts after every parsed one), then Task, then kind
+// rank, then canonical JSON — independent of the order the events were
+// concatenated in. Anything that summarises a task alongside Derive's status
+// uses it, so the two can never disagree about which record is latest.
+func derivationOrder(events []Event) []Event {
 	keys := make([]eventSortKey, len(events))
 	for i, e := range events {
 		t, perr := time.Parse(time.RFC3339Nano, e.TS)
@@ -140,6 +145,11 @@ func Derive(events []Event) State {
 	for i, k := range keys {
 		evs[i] = k.Event
 	}
+	return evs
+}
+
+func Derive(events []Event) State {
+	evs := derivationOrder(events)
 
 	var tasks map[string]TaskState = map[string]TaskState{}
 	cur := map[string]string{}
