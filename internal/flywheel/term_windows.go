@@ -23,11 +23,13 @@ func EnableANSI() bool {
 	setMode := k32.NewProc("SetConsoleMode")
 	h := uintptr(syscall.Handle(os.Stdout.Fd()))
 	var mode uintptr
-	if _, _, err := getMode.Call(h, uintptr(unsafe.Pointer(&mode))); err != nil {
+	r1, _, _ := getMode.Call(h, uintptr(unsafe.Pointer(&mode)))
+	if r1 == 0 {
 		return false
 	}
 	const vt = 0x0004 // ENABLE_VIRTUAL_TERMINAL_PROCESSING
-	if _, _, err := setMode.Call(h, mode|vt); err != nil {
+	r1, _, _ = setMode.Call(h, mode|vt)
+	if r1 == 0 {
 		return false
 	}
 	return true
