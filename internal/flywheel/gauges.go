@@ -362,7 +362,8 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err != nil {
 		return GaugeResult{}, fmt.Errorf("re-read %s before owns check: %w", dir, err)
 	}
-	attributed, outside := attributeOutside(dir, task, wd, events, fresh, candidates, now())
+	reading := now()
+	attributed, outside := attributeOutside(dir, task, wd, events, fresh, candidates, reading)
 	if snap := worktreesFor(events, task); snap != nil {
 		wtPaths := make([]string, 0, len(snap))
 		for p := range snap {
@@ -380,7 +381,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 					continue
 				}
 				if bh, ok := wtBase[p]; !ok || fileSHA(wtPath, p) != bh {
-					if owner := worktreeOwner(wtPath, p); owner != "" {
+					if owner := worktreeOwner(wtPath, p, reading); owner != "" {
 						attributed = append(attributed, wtPath+": "+p+" -> "+owner)
 						continue
 					}
@@ -486,6 +487,14 @@ func attributeOutside(dir, task, wd string, events, fresh []Event, candidates []
 // rule the sibling-task attribution uses. When several claims cover p, the
 // most recent one wins.
 func leadClaimingSession(wd string, events []Event, task, p string, reading time.Time) string {
+	return claimingSession(wd, events, p, reading, func(sess string) bool {
+		return workerSessionOf(task, events, sess)
+	})
+}
+
+// claimingSession is leadClaimingSession with the worker guard supplied by
+// the caller: isWorker reports a session that may never count as the lead.
+func claimingSession(wd string, events []Event, p string, reading time.Time, isWorker func(sess string) bool) string {
 	sess := ""
 	for _, e := range events {
 		if e.Kind != "lead_edit" || !ownsContains(e.Owns, p) {
@@ -495,7 +504,7 @@ func leadClaimingSession(wd string, events []Event, task, p string, reading time
 		if !ok || fileSHA(wd, p) != want {
 			continue
 		}
-		if workerSessionOf(task, events, e.Session) {
+		if isWorker(e.Session) {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339Nano, e.TS)
@@ -553,13 +562,19 @@ func unlandedOwners(events []Event) []string {
 // attribution is trustworthy. An unreadable sibling log is never an error: it attributes
 // nothing. Owners are tried in unlandedOwners' sorted order, matching
 // attributeOutside, and a task whose brief cannot be read is skipped, never
-// treated as an owner.
-func worktreeOwner(W, p string) string {
+// treated as an owner. A path no brief owner claims is attributed "lead <session>"
+// when a lead_edit event covers it in W's ledger, the claim's session is not a
+// worker session of that owner, the claim predates the reading, and the path's
+// current content still hashes to the claim's Baseline (issue #339). A claim
+// counts only while W still has a dispatched, unlanded unit — a claim in a
+// worktree with nothing in flight excuses nothing.
+func worktreeOwner(W, p string, reading time.Time) string {
 	wEvents, err := ReadEvents(W)
 	if err != nil {
 		return ""
 	}
-	for _, other := range unlandedOwners(wEvents) {
+	owners := unlandedOwners(wEvents)
+	for _, other := range owners {
 		header, _, err := AttemptBrief(W, wEvents, other)
 		if err != nil {
 			continue
@@ -567,6 +582,24 @@ func worktreeOwner(W, p string) string {
 		if ownsContains(header.Owns, p) {
 			return other
 		}
+	}
+	// A claim counts only while a unit is in flight here, and never when its
+	// session is a worker session of ANY unit in flight here: checking owners
+	// one by one would let one unit's worker claim through another (#343
+	// review).
+	if len(owners) == 0 {
+		return ""
+	}
+	isWorker := func(sess string) bool {
+		for _, other := range owners {
+			if workerSessionOf(other, wEvents, sess) {
+				return true
+			}
+		}
+		return false
+	}
+	if s := claimingSession(W, wEvents, p, reading, isWorker); s != "" {
+		return "lead " + s
 	}
 	return ""
 }
