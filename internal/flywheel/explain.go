@@ -59,10 +59,10 @@ func explainLine(e Event) string {
 		return line
 
 	case "dispatched":
-		return fmt.Sprintf("dispatched %s to %s %s", e.Attempt, e.Adapter, e.Model)
+		return words("dispatched", e.Attempt, "to", e.Adapter, e.Model)
 
 	case "started":
-		return fmt.Sprintf("started %s session %s", e.Attempt, e.Session)
+		return words("started", e.Attempt, "session", e.Session)
 
 	case "worker_plan":
 		return fmt.Sprintf("worker plan recorded (%s)", e.Path)
@@ -88,7 +88,11 @@ func explainLine(e Event) string {
 		return line
 
 	case "report":
-		return fmt.Sprintf("report %s (%s)", e.Attempt, e.Path)
+		path := ""
+		if e.Path != "" {
+			path = "(" + e.Path + ")"
+		}
+		return words("report", e.Attempt, path)
 
 	case "validated":
 		var line string
@@ -137,7 +141,7 @@ func explainLine(e Event) string {
 		return line
 
 	case "signal":
-		return fmt.Sprintf("signal %s on %s", e.Signal, e.Attempt)
+		return words("signal", e.Signal, "on", e.Attempt)
 
 	case "learning":
 		return fmt.Sprintf("learning %s %s", e.Severity, e.Title)
@@ -338,4 +342,17 @@ func hash8(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+// words joins the non-empty parts with single spaces, so a line never shows a
+// double space where an event lacks a field (a started event carries no
+// attempt, for instance).
+func words(parts ...string) string {
+	out := parts[:0:0]
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " ")
 }
