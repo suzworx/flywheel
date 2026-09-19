@@ -47,7 +47,7 @@ land.
 | `flywheel factory [--once\|--json]` | **implemented** | Render the floor — workers, units with run states, andon, output; bare `flywheel` opens it, one shot when stdout is not a terminal. |
 | `flywheel status [--dir DIR] [--now RFC3339] [--json]` | **implemented** | Summarize the factory deterministically: task counts per status, live and stale attempts, last event and last meaningful progress, andon count. |
 | `flywheel cost [--dir DIR] [--json]` | **implemented** | Sum finished events' tokens and cost per task and per model; a finished task without a dispatch is listed under `unknown`. |
-| `flywheel stats [--dir DIR] [--json]` | **implemented** | The factory's own numbers from the event log: first-pass rate, corrections per task, finish reasons and unclean rate, mean attempt seconds, cost per landed task. |
+| `flywheel stats [--dir DIR] [--json]` | **implemented** | The factory's own numbers from the event log: first-pass rate, corrections per task, finish reasons and unclean rate, mean attempt seconds, cost per landed task, token totals, spend, and spend against a frontier-only baseline priced from `baseline` in config. |
 | `flywheel next [--dir DIR] [--now RFC3339] [--json]` | **implemented** | Print the reconciler's next actions read-only: lost attempts, inspection requests, blocks, waits and dispatches; nothing executes them yet. |
 | `flywheel goal add "<title>" --id <id> [--accept CMD]... [--require TASK]...` | **implemented** | Record a factory goal; later add, list, show and set its status with `flywheel goal <add\|list\|show\|set>`. |
 | `flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]` | **implemented** | The controller loop: acquire `.flywheel/controller.lock`, tick (mark lost attempts, block tasks whose needs were scrapped), renew the lock each tick; `--once` runs one tick and releases the lock, a live lock held elsewhere exits 6. |
@@ -59,6 +59,7 @@ land.
 | `flywheel plan`, `retry` | **planned** | Control plane: create tasks, resume, transfer between agents. |
 | `flywheel trace <session> [--dir DIR]` | **implemented** | Everything one session did, across tasks: one line per event whose session matches, in log order; read-only, never derives state. |
 | `flywheel explain <task> [--json] [--dir DIR]` | **implemented** | One task's whole story folded from the event log: a summary (brief, owns, needs, gates, planner, goal, attempts, steps, cost, landing) and a timeline with one line per event; `--json` for machines. Read-only; exit 1 for a task with no events, 2 for a missing task id. |
+| `flywheel gate [--json] [--dir DIR]` | **implemented** | Lists what blocks ending the session — tasks finished but not inspected, and untriaged signals — and exits 6 while any exist (0 when clear); `--json` for hooks. Read-only. |
 | `flywheel artifacts` | **planned** | Data plane: worker outputs. |
 | `flywheel feedback [--dir DIR]` | **implemented** | List learnings, one line per learning in log order, then the untriaged signals computed from the log (each one `<task> <attempt> <signal>`; a later learning on the same task naming it with `--signals` triages it; a recurrence after that learning is untriaged again); `add --task ID --severity P0\|P1\|P2 --title T --observed O --evidence E --ask A [--signals a,b]` records a learning and rewrites `.flywheel/learnings.md`; `dismiss L-NN --reason WHY` dismisses one by id without renumbering; `regen` rebuilds `.flywheel/learnings.md` from the event log without appending anything (exit 0 when the file already matches); `export [--out PATH]` writes a sanitised Markdown report of every undismissed learning (absolute paths and tokens redacted) to stdout or a file; `submit [--yes]` sends the report upstream as a gh issue — without `--yes` it shows the exact text and refuses, and when gh is missing or fails the report is parked in `.flywheel/feedback/outbox/` and the command still exits 0. |
 | `flywheel upgrade [--check] [--to VERSION] [--repo REPO]` | **implemented** | Self-update to a release with checksum verification: `--check` prints `current:`/`latest:` then `upgrade available` or `up to date` (exit 0 either way); otherwise download the host's zip, verify its SHA-256 against `checksums.txt` and install it atomically over the running binary. |
@@ -120,8 +121,9 @@ scratch — consumer repos commit theirs.
 | --- | --- |
 | `version` | Config schema version (1). |
 | `workers[]` | One entry per worker: `name`, `adapter` (`opencode` or `sim`), `model`, `variant`, `max_parallel` (0 means 1), `fallbacks[{model, approved}]` (fallback models, each with a standing `approved` OK to switch without asking). |
-| `limits` | Shared caps: `per_host` (parallel workers per host) and `budget{wave_cost_usd}` (spending cap per wave). |
+| `limits` | Shared caps, enforced by `flywheel run` (refused with exit 6, rule `limits`/`budget`) and respected by `flywheel next`: `per_host` (attempts in flight at once in this ledger; 0 = no cap) and `budget{wave_cost_usd}` (once the ledger's recorded spend reaches it, new dispatches are refused; the ledger is the wave). |
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
+| `baseline` | Frontier prices for `flywheel stats`'s cost comparison: `model`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_write_per_mtok` (USD per million tokens; reasoning is priced as output). |
 
 Read and set it with the CLI:
 

@@ -89,4 +89,13 @@ func printStats(rep flywheel.StatsReport) {
 	fmt.Printf(" (unclean %.2f per 100)\n", rep.UncleanPer100)
 	fmt.Printf("Mean attempt seconds: %d\n", rep.MeanAttemptSeconds)
 	fmt.Printf("Cost per landed task: $%.4f\n", rep.CostPerLandedTask)
+	fmt.Printf("Tokens: input %d, output %d, reasoning %d, cache read %d, cache write %d\n",
+		rep.Tokens.Input, rep.Tokens.Output, rep.Tokens.Reasoning, rep.Tokens.CacheRead, rep.Tokens.CacheWrite)
+	fmt.Printf("Spend: $%.4f\n", rep.Spend)
+	if rep.Baseline != nil {
+		fmt.Printf("Frontier baseline (%s): $%.4f for the same tokens; spend is %.1f%% of it\n",
+			rep.Baseline.Model, rep.Baseline.Cost, rep.Baseline.Ratio*100)
+	} else {
+		fmt.Printf("Frontier baseline: not configured (add \"baseline\" to .flywheel/config.json)\n")
+	}
 }
