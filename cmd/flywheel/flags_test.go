@@ -167,7 +167,7 @@ func TestInitFlagsBindEveryOption(t *testing.T) {
 	if err := fs.Parse([]string{"--dir", "X", "--force"}); err != nil {
 		t.Fatalf("initFlags: %v", err)
 	}
-	want := initOptions{dir: "X", force: true}
+	want := initOptions{dir: "X", force: true, localURL: "http://localhost:11434/v1"}
 	if *o != want {
 		t.Errorf("initFlags parsed = %#v, want %#v", *o, want)
 	}

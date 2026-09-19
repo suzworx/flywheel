@@ -28,6 +28,8 @@ type initOptions struct {
 	hooks    bool
 	gitHooks bool
 	ci       bool
+	local    string
+	localURL string
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -45,6 +47,8 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.BoolVar(&o.hooks, "hooks", false, "write .claude/settings.json and .opencode/plugin/flywheel-session.mjs so every session records its start, its flywheel commands, and its end")
 	fs.BoolVar(&o.gitHooks, "git-hooks", false, "install a commit-msg hook requiring a Flywheel-Task trailer and a pre-push hook running flywheel verify")
 	fs.BoolVar(&o.ci, "ci", false, "write .github/workflows/flywheel-audit.yml: a CI job running flywheel verify --all --log on every pull request")
+	fs.StringVar(&o.local, "local", "", "point OpenCode workers at a local OpenAI-compatible server serving this model, as worker \"local\"")
+	fs.StringVar(&o.localURL, "local-url", flywheel.DefaultLocalURL, "the local server's OpenAI-compatible base URL (with --local)")
 	return fs, o
 }
 
@@ -62,6 +66,17 @@ func runInit(args []string) {
 	}
 	if o.track && o.ignore {
 		fmt.Fprintf(os.Stderr, "flywheel init: --track and --ignore are mutually exclusive\n")
+		usage(os.Stderr)
+		os.Exit(2)
+	}
+	localURLSet := false // explicitly passed, even with the default value (#327 review)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "local-url" {
+			localURLSet = true
+		}
+	})
+	if localURLSet && o.local == "" {
+		fmt.Fprintf(os.Stderr, "flywheel init: --local-url requires --local\n")
 		usage(os.Stderr)
 		os.Exit(2)
 	}
@@ -153,6 +168,17 @@ func runInit(args []string) {
 				fmt.Printf("present: %s\n", p.Path)
 			}
 		}
+	}
+	if o.local != "" {
+		lpieces, lerr := flywheel.InitLocal(o.dir, o.local, o.localURL)
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", lerr)
+			os.Exit(1)
+		}
+		for _, p := range lpieces {
+			fmt.Printf("updated: %s\n", p.Path)
+		}
+		fmt.Println("next: flywheel doctor, then flywheel run <task> --worker local")
 	}
 	if configExisted && (o.model != "" || o.variant != "") {
 		fmt.Println("config.json exists; change it with: flywheel config set model|variant <value>")
