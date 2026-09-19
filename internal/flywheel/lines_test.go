@@ -431,3 +431,36 @@ func TestLinesExplicitWorkerKeepsLine(t *testing.T) {
 		t.Errorf("dispatched line %q model %q, want docs on the explicit worker's %q", e.Line, e.Model, defaultModel)
 	}
 }
+
+// TestLinesUnknownLineWithoutConfiguredLines checks that a brief naming a line
+// is refused when the config has no lines at all (#340 review).
+func TestLinesUnknownLineWithoutConfiguredLines(t *testing.T) {
+	dir := setupTask(t)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nline: docs\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "line" {
+		t.Errorf("Run with line: docs and no lines = %v, want rule line", err)
+	}
+}
+
+// TestLinesEditedBriefUsesCurrentLine checks that the line comes from the
+// brief as it is now, not the header recorded when it was planned (#340
+// review): planned on no line, edited to line: docs before the run.
+func TestLinesEditedBriefUsesCurrentLine(t *testing.T) {
+	dir, _, docsModel := linesRunDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: other/x.md\nline: docs\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := dispatchedT1(t, dir); e.Line != "docs" || e.Model != docsModel {
+		t.Errorf("dispatched line %q model %q, want docs on %q", e.Line, e.Model, docsModel)
+	}
+}
