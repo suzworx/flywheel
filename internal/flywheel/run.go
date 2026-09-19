@@ -631,7 +631,18 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
 		cmd.Dir = dir
+		guardBin, guardEnv, err := installGitGuard(dir, o.Task, attempt)
+		if err != nil {
+			// Fail closed: a worker never runs without the git guard (#325
+			// review). The attempt is recorded as failed like any other
+			// launch error.
+			return Result{}, fmt.Errorf("git guard not installed (%w); workers never run git unguarded", err)
+		}
+		defer os.RemoveAll(guardBin)
 		cmd.Env = workerEnv(dir)
+		if len(guardEnv) > 0 {
+			cmd.Env = append(cmd.Env, guardEnv...)
+		}
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			return Result{}, fmt.Errorf("stdout pipe: %w", err)
