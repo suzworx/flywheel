@@ -337,7 +337,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 // recorded on the event (or the path is still absent, for a deletion
 // marker): the lead declared that edit, not the file forever (issue #258).
 func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
-	changed, err := unitChangedPaths(wd, dispatchBase(events, task, attempt))
+	changed, err := unitChangedPaths(wd, dispatchBase(events, task, attempt), task)
 	if err != nil {
 		return GaugeResult{}, err
 	}
@@ -702,12 +702,19 @@ func runCmdSplit(wd string, argv, env []string) (rc int, stdout, stderr []byte, 
 
 // unitChangedPaths lists the paths the unit changed since its dispatch base
 // (issue #332): everything changedPaths reports (uncommitted and untracked),
-// plus every path touched by the branch's own commits since base —
-// `git log --first-parent --no-merges --format= --name-only <base>..HEAD` —
-// so a committed change still counts, while files that arrived by merging
-// another branch in do not. An empty base, or a base git cannot use,
-// falls back to changedPaths alone. Paths are slash-separated, each once.
-func unitChangedPaths(wd, base string) ([]string, error) {
+// plus the paths the branch's own commits since base touched, walking the
+// first-parent chain base..HEAD commit by commit (#338 review):
+//   - a commit whose Flywheel-Task trailer names other units only is theirs
+//     and is skipped (units sharing one branch);
+//   - an ordinary commit contributes every path it adds, changes or deletes,
+//     with rename detection off so a renamed source counts as deleted;
+//   - a merge commit contributes only what differs from all its parents
+//     (git diff-tree --cc: conflict resolutions and evil merges), never the
+//     files the merged branch brought in.
+//
+// Paths come NUL-delimited (-z), so git never quotes an unusual name. An
+// empty base, or a base git cannot use, falls back to changedPaths alone.
+func unitChangedPaths(wd, base, task string) ([]string, error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
 		return nil, err
@@ -715,22 +722,50 @@ func unitChangedPaths(wd, base string) ([]string, error) {
 	if base == "" {
 		return changed, nil
 	}
-	logOut, err := gitRead(wd, []string{"log", "--first-parent", "--no-merges", "--format=", "--name-only", base + "..HEAD"})
+	revs, err := gitRead(wd, []string{"rev-list", "--first-parent", "--parents", base + "..HEAD"})
 	if err != nil {
 		return changed, nil
 	}
-	seen := make(map[string]bool)
+	seen := make(map[string]bool, len(changed))
+	result := append([]string(nil), changed...)
 	for _, p := range changed {
 		seen[p] = true
 	}
-	var result []string
-	for _, p := range changed {
-		result = append(result, p)
+	add := func(out string) {
+		for _, p := range strings.Split(out, "\x00") {
+			if p = strings.TrimSpace(p); p != "" && !seen[p] {
+				seen[p] = true
+				result = append(result, filepath.ToSlash(p))
+			}
+		}
 	}
-	for _, line := range strings.Split(logOut, "\n") {
-		if p := strings.TrimSpace(line); p != "" && !seen[p] {
-			seen[p] = true
-			result = append(result, filepath.ToSlash(p))
+	for _, line := range strings.Split(strings.TrimSpace(revs), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		sha := fields[0]
+		if owners, err := gitRead(wd, []string{"log", "-1", "--format=%(trailers:key=Flywheel-Task,valueonly,separator=%x2C)", sha}); err == nil {
+			if names := strings.TrimSpace(owners); names != "" {
+				mine := false
+				for _, n := range strings.Split(names, ",") {
+					if strings.TrimSpace(n) == task {
+						mine = true
+					}
+				}
+				if !mine {
+					continue
+				}
+			}
+		}
+		var out string
+		if len(fields) > 2 { // a merge: sha plus two or more parents
+			out, err = gitRead(wd, []string{"diff-tree", "-r", "-z", "--cc", "--name-only", "--no-commit-id", sha})
+		} else {
+			out, err = gitRead(wd, []string{"diff-tree", "-r", "-z", "--no-renames", "--name-only", "--no-commit-id", "--root", sha})
+		}
+		if err == nil {
+			add(out)
 		}
 	}
 	return result, nil
@@ -756,22 +791,21 @@ func dispatchBase(events []Event, task, attempt string) string {
 // using read-only git commands. Paths are normalised to forward slashes.
 func changedPaths(wd string) ([]string, error) {
 	var paths []string
-	diff, err := gitRead(wd, []string{"diff", "--name-only", "HEAD"})
+	// NUL-delimited and rename detection off (#338 review): exact names, and
+	// a renamed file's source is reported as deleted.
+	diff, err := gitRead(wd, []string{"diff", "-z", "--no-renames", "--name-only", "HEAD"})
 	if err != nil {
 		return nil, err
 	}
-	untracked, err := gitRead(wd, []string{"ls-files", "--others", "--exclude-standard"})
+	untracked, err := gitRead(wd, []string{"ls-files", "-z", "--others", "--exclude-standard"})
 	if err != nil {
 		return nil, err
 	}
-	for _, line := range strings.Split(diff, "\n") {
-		if p := strings.TrimSpace(line); p != "" {
-			paths = append(paths, filepath.ToSlash(p))
-		}
-	}
-	for _, line := range strings.Split(untracked, "\n") {
-		if p := strings.TrimSpace(line); p != "" {
-			paths = append(paths, filepath.ToSlash(p))
+	for _, out := range []string{diff, untracked} {
+		for _, p := range strings.Split(out, "\x00") {
+			if p != "" {
+				paths = append(paths, filepath.ToSlash(p))
+			}
 		}
 	}
 	return paths, nil
