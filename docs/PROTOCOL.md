@@ -48,7 +48,9 @@ all.
   correction attempt: the delta file's path), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
-  later owns check can excuse pre-existing dirt it didn't cause), `note`.
+  later owns check can excuse pre-existing dirt it didn't cause), `increment` (N when
+  `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
+  attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
   `owns_checked` or `lost` event whose own `attempt` differs is stale and ignored (listed under
@@ -287,7 +289,7 @@ working exactly as before.
 ### `session_start`
 - Written by: `flywheel log --kind session_start --session <id>`, invoked by the Claude Code hook
   or the OpenCode plugin (`flywheel-session.mjs`) that `flywheel init --hooks` installs, on a
-  session's first turn (issue #157).
+  session's first turn (issue #157). The same `--hooks` also installs a Claude Code `Stop` hook that runs `flywheel gate` and blocks ending the session while units are finished but not inspected or signals are untriaged (issue #56).
 - Carries: `session` (required, like `staffed`) and no `task`.
 - Effect: floor-level; `Derive` skips it outright, the same way it skips `staffed`. `flywheel trace
   <session>` is its only reader.

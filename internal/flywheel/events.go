@@ -94,6 +94,9 @@ type Event struct {
 	Persona   string                       `json:"persona,omitempty"`
 	GoalID    string                       `json:"goal_id,omitempty"`
 	Goal      *GoalSpec                    `json:"goal,omitempty"`
+	// Increment is a dispatched event's increment number when `flywheel run --increment N` sent only
+	// increment N of the brief (issue #83); 0 means the whole brief.
+	Increment int `json:"increment,omitempty"`
 	// Learning fields (issue #38): a learning event carries severity, title,
 	// observed, evidence, ask and signals; a dismissed event carries id
 	// (the learning it targets, ^L-[0-9]+$) and reuses Note for the reason.
@@ -291,6 +294,9 @@ func Validate(e Event) error {
 		if e.Note == "" || e.Task == "" || !CommitOK(e.Commit) {
 			return fmt.Errorf("allow_untriaged event must carry a task, a note (the reason) and the commit it covers")
 		}
+	}
+	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
+		return fmt.Errorf("event increment %d: only a dispatched event may carry one, and it must be >= 1", e.Increment)
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)

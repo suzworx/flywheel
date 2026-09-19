@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1069,6 +1070,44 @@ func TestInitHooksRollbackRemovesCreatedFile(t *testing.T) {
 	}
 }
 
+// TestInitHooksStopRunsGate checks InitHooks creates a Stop hook that runs
+// flywheel gate and blocks ending the session while work is left unjudged.
+func TestInitHooksStopRunsGate(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := InitHooks(dir); err != nil {
+		t.Fatalf("InitHooks() error = %v", err)
+	}
+
+	settingsPath := filepath.Join(dir, ".claude", "settings.json")
+	b, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var cfg claudeSettings
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatalf("unmarshal settings.json: %v", err)
+	}
+
+	if len(cfg.Hooks.Stop) != 1 {
+		t.Fatalf("Stop hook groups = %d, want 1", len(cfg.Hooks.Stop))
+	}
+	if len(cfg.Hooks.Stop[0].Hooks) != 1 {
+		t.Fatalf("Stop hook commands = %d, want 1", len(cfg.Hooks.Stop[0].Hooks))
+	}
+
+	cmd := cfg.Hooks.Stop[0].Hooks[0].Command
+	if cmd != claudeStopGateHook {
+		t.Errorf("Stop hook command = %q, want %q", cmd, claudeStopGateHook)
+	}
+
+	for _, want := range []string{"flywheel gate", "stop_hook_active", "exit 2"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("Stop hook missing %q, got %q", want, cmd)
+		}
+	}
+}
+
 func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
@@ -1100,5 +1139,61 @@ func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
 	}
 	if string(b) != string(custom) {
 		t.Errorf("AGENTS.md not restored after failed init: got %q, want %q", b, custom)
+	}
+}
+
+// TestInitHooksStopHookRunsGate executes the installed Stop command with a
+// stub flywheel on PATH (#296 review): gate's exit 6 blocks (exit 2) with the
+// report on stderr and gate pointed at CLAUDE_PROJECT_DIR; a clear floor and
+// a gate error both allow the stop; stop_hook_active allows it without
+// running gate at all.
+func TestInitHooksStopHookRunsGate(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on PATH")
+	}
+	bin := t.TempDir()
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$STUB_ARGS\"\necho gate-report\nexit ${STUB_RC:-0}\n"
+	if err := os.WriteFile(filepath.Join(bin, "flywheel"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	project := t.TempDir()
+	run := func(rc, stdin string) (int, string, string) {
+		t.Helper()
+		argsFile := filepath.Join(t.TempDir(), "args")
+		cmd := exec.Command(sh, "-c", claudeStopGateHook)
+		cmd.Env = append(os.Environ(),
+			"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"STUB_RC="+rc, "STUB_ARGS="+argsFile, "CLAUDE_PROJECT_DIR="+project)
+		cmd.Stdin = strings.NewReader(stdin)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		code := 0
+		if err := cmd.Run(); err != nil {
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("run hook: %v", err)
+			}
+			code = ee.ExitCode()
+		}
+		args, _ := os.ReadFile(argsFile)
+		return code, stderr.String(), string(args)
+	}
+	code, stderr, args := run("6", `{"session_id":"s1","stop_hook_active":false}`)
+	if code != 2 || !strings.Contains(stderr, "gate-report") {
+		t.Errorf("gate exit 6: hook exit %d stderr %q, want 2 with the report", code, stderr)
+	}
+	if !strings.Contains(args, "gate --dir "+project) {
+		t.Errorf("gate args = %q, want gate --dir %s", args, project)
+	}
+	if code, _, _ := run("0", `{"stop_hook_active":false}`); code != 0 {
+		t.Errorf("gate exit 0: hook exit %d, want 0", code)
+	}
+	if code, _, _ := run("1", `{"stop_hook_active":false}`); code != 0 {
+		t.Errorf("gate error (exit 1): hook exit %d, want 0 — an error must never trap the session", code)
+	}
+	code, _, args = run("6", `{"session_id":"s1","stop_hook_active": true}`)
+	if code != 0 || args != "" {
+		t.Errorf("stop_hook_active: hook exit %d, gate args %q, want 0 without running gate", code, args)
 	}
 }

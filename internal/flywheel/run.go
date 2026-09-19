@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ type RunOptions struct {
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
 	AllowOverlap bool   // skip the owns- and exclusive-collision refusals; the dispatched note records the overlap
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
+	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -156,6 +158,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, err
 	}
 
+	// Increment validation (issue #83): --increment dispatches a fresh session
+	// of the brief; it cannot be combined with --resume or --delta.
+	if o.Increment < 0 || (o.Increment > 0 && (o.Resume || o.DeltaPath != "")) {
+		return Result{}, fmt.Errorf("--increment dispatches a fresh session of the brief; it cannot be combined with --resume or --delta")
+	}
+
 	// L-03: a resume that switches the worker's model onto one nobody
 	// approved is refused before any event is read or recorded, unless
 	// --force-model overrides it. A fresh run's model choice is unrestricted.
@@ -210,6 +218,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	if brief == "" {
 		return Result{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", o.Task, o.Task)
+	}
+	// An increment must exist in the brief (#295 review): a worker told to do
+	// increment N of a brief without one would improvise.
+	if o.Increment > 0 {
+		text, rerr := os.ReadFile(resolveBriefPath(dir, brief))
+		if rerr != nil {
+			return Result{}, fmt.Errorf("read brief %s: %w", brief, rerr)
+		}
+		if !briefHasIncrement(string(text), o.Increment) {
+			return Result{}, &RuleRefusal{
+				Rule: "increment",
+				Fix:  fmt.Sprintf("brief %s has no increment %d: add an \"## Increments\" section whose list has item %d (or an \"Increment %d\" heading)", brief, o.Increment, o.Increment, o.Increment),
+			}
+		}
 	}
 
 	// Owns collision (issue #164): a dispatch whose owns: overlaps an
@@ -419,7 +441,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	worktrees := otherWorktrees(dir)
 
 	if err := AppendEvent(dir, Event{
-		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
+		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
@@ -432,7 +454,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// opposite of what this repository is for.
 	releaseDispatchLock()
 	dispatchLockHeld = false
-	progress(o.Progress, o.Task+" "+attempt+" dispatched "+worker.Adapter+" "+model)
+	progressLine := o.Task + " " + attempt + " dispatched " + worker.Adapter + " " + model
+	if o.Increment > 0 {
+		progressLine += fmt.Sprintf(" increment %d", o.Increment)
+	}
+	progress(o.Progress, progressLine)
 
 	// The lease records that this run holds this attempt while the worker
 	// runs; the renewer moves renewed_at and expires_at forward every
@@ -560,7 +586,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	req := RunRequest{
 		Task: o.Task, Attempt: attempt, PromptFile: promptSrc, Model: model,
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
-		Resume:       o.Resume,
+		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
 	}
 	if commandHook != nil {
@@ -1565,4 +1591,37 @@ func costK(c float64) string {
 		return "0"
 	}
 	return fmt.Sprintf("%.4f", math.Floor(math.Round(c*1e5)/10)/1e4)
+}
+
+// briefHasIncrement reports whether a brief defines increment n (issue #83):
+// a heading naming "Increment <n>", or, inside a section whose heading
+// contains "Increments", a list item numbered n ("n." or "n)"). The section
+// runs until the next heading of the same or a higher level.
+func briefHasIncrement(text string, n int) bool {
+	num := strconv.Itoa(n)
+	inSection, level := false, 0
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+
+		t := strings.TrimSpace(line)
+		if h := len(t) - len(strings.TrimLeft(t, "#")); h > 0 {
+			title := strings.ToLower(strings.TrimSpace(t[h:]))
+			if title == "increment "+num || strings.HasPrefix(title, "increment "+num+" ") || strings.HasPrefix(title, "increment "+num+":") {
+				return true
+			}
+			if inSection && h <= level {
+				inSection = false
+			}
+			if strings.Contains(title, "increments") {
+				inSection, level = true, h
+			}
+			continue
+		}
+		if inSection {
+			item := strings.TrimLeft(t, "-* ")
+			if strings.HasPrefix(item, num+".") || strings.HasPrefix(item, num+")") {
+				return true
+			}
+		}
+	}
+	return false
 }

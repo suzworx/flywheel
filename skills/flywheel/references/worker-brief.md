@@ -126,7 +126,7 @@ and each increment's first edit came within three steps.
 
 The first choice is `flywheel run <task>` after `flywheel log --task <id> --kind planned --brief
 <path>`: it attaches the brief with `--file`, applies the deny policy, and records every event
-(`flywheel run <task> -h` for its flags). Keep the worker adapter's own CLI as the hand-built
+(`flywheel run <task> -h` for its flags). Dispatch each increment with `flywheel run <task> --increment N`: a fresh session told to do increment N only; the attempt is an ordinary r<n> and the dispatched event records the increment. The brief must define increment N (an `## Increments` list with item N, or an `Increment N` heading), or the dispatch is refused. Keep the worker adapter's own CLI as the hand-built
 fallback — e.g. dispatching one increment of a brief. Hand-built dispatches add `--variant low`:
 on large increments the default reasoning variant spent 17-30 k reasoning tokens planning in one
 step and hit the output cap with nothing written (3 of 3 attempts); `--variant low` did the same
