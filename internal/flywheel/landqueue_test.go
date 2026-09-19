@@ -13,7 +13,7 @@ import (
 // by an unrelated commit meanwhile.
 func TestLandMergeFastForwards(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestLandMergeFastForwards(t *testing.T) {
 // correction brief and returns the correct status.
 func TestLandMergeConflictWritesDelta(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestLandMergeConflictWritesDelta(t *testing.T) {
 // is refused.
 func TestLandMergeNotPassedRefused(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestLandMergeNotPassedRefused(t *testing.T) {
 // refused.
 func TestLandMergeNoWorktreeRefused(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestLandMergeNoWorktreeRefused(t *testing.T) {
 // changes is refused.
 func TestLandMergeDirtyWorktreeRefused(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestLandMergeDirtyWorktreeRefused(t *testing.T) {
 // refused.
 func TestLandMergeGateFailsRefused(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestLandMergeGateFailsRefused(t *testing.T) {
 // is false but the landing succeeds.
 func TestLandMergeAlreadyUpToDate(t *testing.T) {
 	dir := t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestLandMergeAlreadyUpToDate(t *testing.T) {
 func landMergeSetup(t *testing.T) (dir, wt string) {
 	t.Helper()
 	dir = t.TempDir()
-	initRepo(t, dir)
+	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
@@ -718,4 +718,13 @@ func TestLandMergeOntoMustBeABranch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
 		t.Error("an option-shaped --onto reached git")
 	}
+}
+
+// landRepo is initRepo plus a repo-local test identity: LandMerge runs plain
+// git (rebase, merge) that commits, and CI machines have no global identity.
+func landRepo(t *testing.T, dir string) {
+	t.Helper()
+	initRepo(t, dir)
+	git(t, dir, []string{"config", "user.name", "test"})
+	git(t, dir, []string{"config", "user.email", "test@example.com"})
 }
