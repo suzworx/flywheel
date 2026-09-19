@@ -506,6 +506,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// from the lead's or another worker's pre-existing ones. Not a git repo:
 	// no baseline.
 	baseline := computeBaseline(wt)
+	base := headCommit(wt)
 
 	// Snapshot the worktree's git history state before the worker runs (issue #314).
 	histBefore, histOK := gitHistoryState(wt)
@@ -522,7 +523,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
-		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
+		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
 		Line: usedLine,
 	}); err != nil {
 		return Result{}, err

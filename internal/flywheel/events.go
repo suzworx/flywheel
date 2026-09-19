@@ -55,7 +55,10 @@ type Event struct {
 	// HEAD commit of the workdir a validated/owns_checked reading was taken
 	// at (issue #196): "which commit" has one name in the ledger.
 	Commit string `json:"commit,omitempty"`
-	Note   string `json:"note,omitempty"`
+	// Base is the commit HEAD pointed at in the worker's tree when the attempt was
+	// dispatched (issue #332).
+	Base string `json:"base,omitempty"`
+	Note string `json:"note,omitempty"`
 	// LeadImplemented marks a landed event whose unit the lead implemented
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`
