@@ -60,8 +60,9 @@ func runSupervise(args []string) {
 	}
 
 	// Exactly one of --once or --interval D must be given
-	if (!o.once && o.interval == 0) || (o.once && o.interval != 0) {
-		fmt.Fprintf(os.Stderr, "flywheel supervise: exactly one of --once or --interval D must be given\n")
+	// A zero or negative interval would spin without sleeping (#298 review).
+	if (!o.once && o.interval <= 0) || (o.once && o.interval != 0) {
+		fmt.Fprintf(os.Stderr, "flywheel supervise: exactly one of --once or --interval D (D > 0) must be given\n")
 		superviseUsage(os.Stderr)
 		os.Exit(2)
 	}

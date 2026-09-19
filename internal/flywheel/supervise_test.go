@@ -26,11 +26,45 @@ func TestSuperviseNeedsMeasuringSkipsMeasured(t *testing.T) {
 		{TS: "2026-09-12T00:30:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Session: "w1"},
 		{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1", RC: &rc},
 		{TS: "2026-09-12T02:00:00Z", Task: "T1", Kind: "validated", Attempt: "r1", Gate: "1", Tree: "t", RC: &rc},
+		{TS: "2026-09-12T02:00:01Z", Task: "T1", Kind: "owns_checked", Attempt: "r1", Tree: "t"},
 	}
 
 	result := NeedsMeasuring(events)
 	if len(result) != 0 {
 		t.Errorf("NeedsMeasuring = %v, want []", result)
+	}
+}
+
+// TestSuperviseNeedsMeasuringPartialPassIsNotMeasured checks a validate pass
+// that recorded a gate but never reached owns_checked (it was interrupted) is
+// measured again (#298 review).
+func TestSuperviseNeedsMeasuringPartialPassIsNotMeasured(t *testing.T) {
+	rc := 0
+	events := []Event{
+		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{TS: "2026-09-12T00:30:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Session: "w1"},
+		{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1", RC: &rc},
+		{TS: "2026-09-12T02:00:00Z", Task: "T1", Kind: "validated", Attempt: "r1", Gate: "1", Tree: "t", RC: &rc},
+	}
+	if got := NeedsMeasuring(events); len(got) != 1 || got[0] != "T1" {
+		t.Errorf("NeedsMeasuring = %v, want [T1] (the pass never completed)", got)
+	}
+}
+
+// TestSuperviseNeedsMeasuringUsesNewestFinish checks the finish cutoff is the
+// newest finish by timestamp, not the last line: a reading after an older
+// finish but before the newest does not count (#298 review).
+func TestSuperviseNeedsMeasuringUsesNewestFinish(t *testing.T) {
+	rc := 0
+	events := []Event{
+		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{TS: "2026-09-12T00:30:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Session: "w1"},
+		{TS: "2026-09-12T03:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1", RC: &rc},
+		{TS: "2026-09-12T02:00:01Z", Task: "T1", Kind: "owns_checked", Attempt: "r1", Tree: "t"},
+		{TS: "2026-09-12T01:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "w1", RC: &rc},
+	}
+	if got := NeedsMeasuring(events); len(got) != 1 || got[0] != "T1" {
+		t.Errorf("NeedsMeasuring = %v, want [T1] (the newest finish is after the reading)", got)
 	}
 }
 
