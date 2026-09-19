@@ -734,7 +734,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				tok.Reasoning += obs.Tokens.Reasoning
 				tok.CacheRead += obs.Tokens.CacheRead
 				tok.CacheWrite += obs.Tokens.CacheWrite
-				if obs.Tokens.Reasoning > peak {
+				if !obs.Aggregate && obs.Tokens.Reasoning > peak {
 					peak = obs.Tokens.Reasoning
 				}
 			}

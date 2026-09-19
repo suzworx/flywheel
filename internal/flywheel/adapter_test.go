@@ -356,6 +356,9 @@ func TestClaudeParseResultUsage(t *testing.T) {
 	if obs.Tokens.Reasoning != 5343 {
 		t.Errorf("Tokens.Reasoning = %d, want 5343", obs.Tokens.Reasoning)
 	}
+	if !obs.Aggregate {
+		t.Error("Aggregate = false, want true: the result line's usage is the session total, not one call's")
+	}
 }
 
 // TestClaudeParseResultWithoutUsage parses a result line without a top-level

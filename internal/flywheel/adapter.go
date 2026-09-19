@@ -36,16 +36,20 @@ const (
 
 // Observation is one decoded event from a run stream.
 type Observation struct {
-	Kind     string // "start", "text", "tool", "step", "error"
-	Session  string
-	Text     string
-	Tool     string
-	Path     string
-	Reason   string // step finish reason
-	Error    string
-	Tokens   *Tokens
-	Cost     float64
-	EndsTurn bool // true when this line completes one model turn; run.go counts turns with it
+	Kind    string // "start", "text", "tool", "step", "error"
+	Session string
+	Text    string
+	Tool    string
+	Path    string
+	Reason  string // step finish reason
+	Error   string
+	Tokens  *Tokens
+	// Aggregate marks Tokens as a session total (the claude result line),
+	// not one model call's usage: it counts toward totals but never toward
+	// the per-call reasoning peak (issue #286).
+	Aggregate bool
+	Cost      float64
+	EndsTurn  bool // true when this line completes one model turn; run.go counts turns with it
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -388,6 +392,7 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		// The result line's top-level usage is the session total (issue
 		// #286); claudeTokens reads m["usage"], the same shape as a message's.
 		obs.Tokens = claudeTokens(m)
+		obs.Aggregate = true
 	default:
 		return Observation{}, false
 	}
