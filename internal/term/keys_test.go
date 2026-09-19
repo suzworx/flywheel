@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReadKeyArrows(t *testing.T) {
@@ -190,10 +191,11 @@ func TestIsTerminalFile(t *testing.T) {
 
 // TestReadKeyModifiedAndAltSequences checks that a modified arrow's
 // parameters are consumed (Ctrl-Up is Up, nothing leaks as runes) and that an
-// Alt-modified key does not swallow the key after it.
+// Alt-modified key is that key with Alt set and does not swallow the key
+// after it.
 func TestReadKeyModifiedAndAltSequences(t *testing.T) {
 	r := bufio.NewReader(strings.NewReader("\x1b[1;5Aj\x1bxk"))
-	want := []Key{{Kind: KeyUp}, {Kind: KeyRune, Rune: 'j'}, {Kind: KeyEsc}, {Kind: KeyRune, Rune: 'k'}}
+	want := []Key{{Kind: KeyUp}, {Kind: KeyRune, Rune: 'j'}, {Kind: KeyRune, Rune: 'x', Alt: true}, {Kind: KeyRune, Rune: 'k'}}
 	for i, w := range want {
 		got, err := ReadKey(r)
 		if err != nil {
@@ -202,5 +204,82 @@ func TestReadKeyModifiedAndAltSequences(t *testing.T) {
 		if got != w {
 			t.Errorf("key %d = %+v, want %+v", i, got, w)
 		}
+	}
+}
+
+// TestReadKeyAltKeys checks the Alt contract: ESC then a key in the same
+// burst is that key with Alt set; ESC ESC is Alt-Esc; Alt-Enter is Enter.
+func TestReadKeyAltKeys(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader("\x1b\x1b\x1b\r\x1bé"))
+	want := []Key{{Kind: KeyEsc, Alt: true}, {Kind: KeyEnter, Alt: true}, {Kind: KeyRune, Rune: 'é', Alt: true}}
+	for i, w := range want {
+		got, err := ReadKey(r)
+		if err != nil {
+			t.Fatalf("key %d: %v", i, err)
+		}
+		if got != w {
+			t.Errorf("key %d = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// TestReaderFragmentedSequence checks that a Reader waits for the rest of an
+// escape sequence that arrives in pieces (#341 review): ESC, then "[A" a
+// moment later, is Up, not Esc followed by '[' and 'A'.
+func TestReaderFragmentedSequence(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	r := NewReader(pr, 2*time.Second)
+	go func() {
+		pw.Write([]byte("\x1b"))
+		time.Sleep(20 * time.Millisecond)
+		pw.Write([]byte("["))
+		time.Sleep(20 * time.Millisecond)
+		pw.Write([]byte("6~j"))
+	}()
+	for i, w := range []Key{{Kind: KeyPgDn}, {Kind: KeyRune, Rune: 'j'}} {
+		got, err := r.ReadKey()
+		if err != nil {
+			t.Fatalf("key %d: %v", i, err)
+		}
+		if got != w {
+			t.Errorf("key %d = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+// TestReaderLoneEscAfterDelay checks that a Reader reports a lone ESC once
+// the delay passes with nothing more, then keeps decoding.
+func TestReaderLoneEscAfterDelay(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	r := NewReader(pr, 10*time.Millisecond)
+	go pw.Write([]byte("\x1b"))
+	got, err := r.ReadKey()
+	if err != nil || got != (Key{Kind: KeyEsc}) {
+		t.Fatalf("ReadKey() = %+v, %v, want KeyEsc", got, err)
+	}
+	go pw.Write([]byte("q"))
+	got, err = r.ReadKey()
+	if err != nil || got != (Key{Kind: KeyRune, Rune: 'q'}) {
+		t.Fatalf("ReadKey() = %+v, %v, want q", got, err)
+	}
+}
+
+// TestReaderEOF checks that a Reader decodes what it read, multi-byte runes
+// included, and then returns the reader's error.
+func TestReaderEOF(t *testing.T) {
+	r := NewReader(strings.NewReader("é\x1b[Bz"), 0)
+	for i, w := range []Key{{Kind: KeyRune, Rune: 'é'}, {Kind: KeyDown}, {Kind: KeyRune, Rune: 'z'}} {
+		got, err := r.ReadKey()
+		if err != nil {
+			t.Fatalf("key %d: %v", i, err)
+		}
+		if got != w {
+			t.Errorf("key %d = %+v, want %+v", i, got, w)
+		}
+	}
+	if _, err := r.ReadKey(); err != io.EOF {
+		t.Errorf("ReadKey() at end: err = %v, want io.EOF", err)
 	}
 }
