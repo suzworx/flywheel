@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // appendPassed records the events a task needs to derive status passed.
@@ -627,5 +628,35 @@ func TestLandTaskUntriagedSameCommitStillNoOp(t *testing.T) {
 	}
 	if len(landedEvents(t, dir, "T1")) != 1 {
 		t.Errorf("landed events = %d, want 1 (no-op must not append)", len(landedEvents(t, dir, "T1")))
+	}
+}
+
+// TestLandTaskUntriagedWaitsForFeedbackLock checks land decides T9 under the
+// feedback lock: while a learning writer holds it, the landing waits, so a
+// learning can never change the signals between land's read and its append
+// (#287 review).
+func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	release, err := acquireFeedbackLock(dir)
+	if err != nil {
+		t.Fatalf("acquireFeedbackLock() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- LandTask(dir, "T1", "abc1234", "", false, "") }()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("LandTask() returned %v while the feedback lock was held, want it to wait", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("LandTask() error = %v after the feedback lock was released", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("LandTask() still waiting 10s after the feedback lock was released")
 	}
 }

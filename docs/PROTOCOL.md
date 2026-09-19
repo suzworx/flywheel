@@ -149,8 +149,9 @@ all.
   (exit 6, rule T9) while the task has untriaged signals unless `--allow-untriaged <reason>`
   records why, and refuses to re-land the same task under a different commit than it already
   recorded. The read, the checks and the append(s) run under `.flywheel/dispatch.lock` (the lock
-  `run` and `amended` take), so two concurrent landings of one task can never both pass the
-  already-landed check.
+  `run` and `amended` take) and then `.flywheel/feedback.lock` (the lock learning writers take;
+  always in that order), so two concurrent landings of one task can never both pass the
+  already-landed check, and no learning can change the task's signals mid-decision.
 
 ### `excepted`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.

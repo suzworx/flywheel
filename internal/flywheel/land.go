@@ -60,6 +60,18 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		return err
 	}
 	defer release()
+	// The feedback lock too, so T9 decides from a ledger no learning can
+	// change mid-decision (a learning appended between the read and the
+	// append would otherwise make the refusal, or the recorded override,
+	// stale). Lock order: dispatch.lock, then feedback.lock — no code path
+	// takes them the other way round (feedback writers never take the
+	// dispatch lock, and a mixed log --json batch takes them one after the
+	// other, never nested).
+	releaseFeedback, err := acquireFeedbackLock(dir)
+	if err != nil {
+		return err
+	}
+	defer releaseFeedback()
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return err
