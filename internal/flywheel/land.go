@@ -44,10 +44,24 @@ func CommitOK(s string) bool {
 // it must not come from a worker session. If exception is non-empty but
 // the conditions are not met, a RuleRefusal or plain error is returned.
 func LandTaskWithException(dir, task, commit, note string, leadImplemented bool, reason, exception, session, allowUntriaged string) error {
+	return landTask(dir, task, commit, note, leadImplemented, reason, exception, session, allowUntriaged, nil)
+}
+
+// landAdvance moves the integration branch for a landing whose commit is
+// not known yet (the land queue's fast-forward, #345 review). landTask calls
+// it under the dispatch and feedback locks, after every landing rule has
+// passed and before anything is appended; it returns the landed commit and
+// an undo that restores the branch should the append fail.
+type landAdvance func() (commit string, undo func() error, err error)
+
+// landTask is LandTaskWithException with an optional advance: when advance
+// is set, commit is ignored and the landing records the commit advance
+// returns, so no rule can refuse a landing after the branch has moved.
+func landTask(dir, task, commit, note string, leadImplemented bool, reason, exception, session, allowUntriaged string, advance landAdvance) error {
 	if dir == "" {
 		dir = "."
 	}
-	if !CommitOK(commit) {
+	if advance == nil && !CommitOK(commit) {
 		return fmt.Errorf("commit %q is not 7 to 40 hex characters", commit)
 	}
 	// The dispatch lock: the log is read, T5/T4 are checked and the excepted
@@ -83,7 +97,7 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 	if landed != "" {
-		if landed == commit {
+		if advance == nil && landed == commit {
 			return fmt.Errorf("%s already landed %s: %w", task, commit, ErrAlreadyLanded)
 		}
 		return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s already landed with commit %s; refusing to re-land with %s", task, landed, commit)}
@@ -149,6 +163,13 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		return &RuleRefusal{Rule: "T9", Fix: fmt.Sprintf("task %s has no untriaged signals; land it without --allow-untriaged", task)}
 	}
 
+	var undo func() error
+	if advance != nil {
+		if commit, undo, err = advance(); err != nil {
+			return err
+		}
+	}
+
 	if leadImplemented {
 		suffix := "lead-implemented: " + reason
 		if note != "" {
@@ -194,6 +215,11 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		batch = append([]Event{{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: excReason}}, batch...)
 	}
 	if err := AppendEvents(dir, batch); err != nil {
+		if undo != nil {
+			if uerr := undo(); uerr != nil {
+				return fmt.Errorf("append landed for %s: %w (and restoring the branch failed: %v)", task, err, uerr)
+			}
+		}
 		return fmt.Errorf("append landed for %s: %w", task, err)
 	}
 	if _, err := WriteState(dir); err != nil {
