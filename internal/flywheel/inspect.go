@@ -58,7 +58,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	var tree string
 	note := o.Note
 	if o.Verdict == "pass" {
-		res := requireReadings(o.Dir, wd(o.Workdir, o.Dir), task, events)
+		res := requireReadings(o.Dir, wd(o.Workdir, o.Dir, events, task), task, events)
 		if res.err != nil {
 			return res.err
 		}
@@ -78,7 +78,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 			}
 		}
 	} else {
-		tree, err = hashTree(wd(o.Workdir, o.Dir))
+		tree, err = hashTree(wd(o.Workdir, o.Dir, events, task))
 		if err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
 		Tree: tree, Session: o.Session, Note: note, Persona: "inspector",
-		Workdir: workdirField(wd(o.Workdir, o.Dir), o.Dir),
+		Workdir: workdirField(wd(o.Workdir, o.Dir, events, task), o.Dir),
 	}); err != nil {
 		return err
 	}
@@ -94,9 +94,13 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	return nil
 }
 
-// wd returns the working tree to hash, defaulting to dir.
-func wd(workdir, dir string) string {
+// wd returns the working tree to hash, using recordedWorkdir when workdir is empty,
+// defaulting to dir if no workdir was recorded.
+func wd(workdir, dir string, events []Event, task string) string {
 	if workdir == "" {
+		if recorded := recordedWorkdir(events, task); recorded != "" {
+			return recorded
+		}
 		return dir
 	}
 	return workdir

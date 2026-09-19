@@ -44,7 +44,6 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 	if o.Dir == "" {
 		o.Dir = "."
 	}
-	workdir := wd(o.Workdir, o.Dir)
 	switch o.Verdict {
 	case "pass", "correct", "reject":
 	default:
@@ -57,6 +56,7 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 	if err != nil {
 		return ReviewResult{}, err
 	}
+	workdir := wd(o.Workdir, o.Dir, events, task)
 	if r := sessionClash(task, events, o.Session); r != "" {
 		return ReviewResult{}, &RuleRefusal{Rule: "T4", Fix: r}
 	}

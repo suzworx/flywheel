@@ -47,7 +47,6 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 	if o.Dir == "" {
 		o.Dir = "."
 	}
-	workdir := wd(o.Workdir, o.Dir)
 
 	// T4: session is required.
 	if o.Session == "" {
@@ -58,6 +57,10 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 	if err != nil {
 		return AuditResult{}, err
 	}
+
+	// An audit measures the product where the auditor points it — by default
+	// the flywheel root, not the unit's own (possibly removed) worktree.
+	workdir := wd(o.Workdir, o.Dir, nil, task)
 
 	if r := auditIndependence(events, task, o.Session); r != nil {
 		return AuditResult{}, r

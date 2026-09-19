@@ -517,8 +517,8 @@ func TestInitCreatesEventLogAndGitignore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	if string(b) != "runs/\n" {
-		t.Errorf(".gitignore = %q, want runs/", b)
+	if string(b) != "runs/\nworktrees/\n" {
+		t.Errorf(".gitignore = %q, want runs/\\nworktrees/", b)
 	}
 }
 
