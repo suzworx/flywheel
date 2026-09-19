@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // lineHash is the chain hash of one log line: SHA-256, hex, of its bytes
@@ -166,4 +167,17 @@ func VerifyLogChain(dir string) (LogChain, error) {
 	}
 
 	return result, nil
+}
+
+// eventsLockTimings are the append lock's timings: it is held for one read of
+// the log's last line and one write, so it retries often and waits long —
+// an append must never fail because other appends were busy (TestAppendConcurrent
+// runs fifty at once) — and a lock left by a crashed writer goes stale fast.
+func eventsLockTimings() repoLockTimings {
+	return repoLockTimings{
+		staleAfter: 10 * time.Second,
+		wait:       30 * time.Second,
+		retry:      5 * time.Millisecond,
+		heartbeat:  2 * time.Second,
+	}
 }

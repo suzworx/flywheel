@@ -449,7 +449,7 @@ func AppendEvents(dir string, events []Event) error {
 	// line references could be removed undetected. The lock is innermost —
 	// nothing takes another lock while holding it — and held for one read
 	// and one write.
-	release, err := acquireRepoLock(dir, "events.lock", feedbackLockTimings())
+	release, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
 	if err != nil {
 		return err
 	}
