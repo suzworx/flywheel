@@ -27,6 +27,7 @@ type Config struct {
 	Lease      *LeaseConfig      `json:"lease,omitempty"`
 	Controller *ControllerConfig `json:"controller,omitempty"`
 	Baseline   *Baseline         `json:"baseline,omitempty"`
+	Audit      *AuditPolicy      `json:"audit,omitempty"`
 }
 
 // Worker configures a single CLI worker.
@@ -174,6 +175,14 @@ type Baseline struct {
 	OutputPerMTok     float64 `json:"output_per_mtok"`
 	CacheReadPerMTok  float64 `json:"cache_read_per_mtok"`
 	CacheWritePerMTok float64 `json:"cache_write_per_mtok"`
+}
+
+// AuditPolicy opts a factory into audit gates (issue #61).
+type AuditPolicy struct {
+	// FirstArticle makes flywheel land refuse a unit (rule T7) until its
+	// worker line's first article is audited conforming, and while the
+	// line's latest audit is a nonconformance.
+	FirstArticle bool `json:"first_article,omitempty"`
 }
 
 // Cost prices t at the baseline: reasoning is billed at the output price.

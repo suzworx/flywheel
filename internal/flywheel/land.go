@@ -26,14 +26,14 @@ func CommitOK(s string) bool {
 	return true
 }
 
-// LandTaskWithException records a landed event for task after enforcing T5 and T9: only
+// LandTaskWithException records a landed event for task after enforcing T5, T7 and T9: only
 // a task whose derived status is passed may land (unless an exception is provided),
-// and an already-landed task may only repeat its recorded commit. An exception
-// permits landing a task whose status is not passed, provided the exception is
-// recorded first. T9 enforces that untriaged signals must be explicitly recorded via
-// --allow-untriaged with a reason, or the landing is refused (exit 6). On success the
-// excepted event (if any), allow_untriaged event (if any), followed by the landed
-// event is appended and the derived state refreshed.
+// and an already-landed task may only repeat its recorded commit. T7 gating on first-article
+// audits is enforced when enabled in config. An exception permits landing a task whose status
+// is not passed, provided the exception is recorded first. T9 enforces that untriaged signals
+// must be explicitly recorded via --allow-untriaged with a reason, or the landing is refused
+// (exit 6). On success the excepted event (if any), allow_untriaged event (if any), followed
+// by the landed event is appended and the derived state refreshed.
 //
 // When leadImplemented is set, the landing is recorded as lead-implemented
 // (the flag on the landed event) and the reason is put in the event's note,
@@ -97,9 +97,19 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 	}
 
 	if exception == "" {
-		// Normal landing: require passed status
+		// Normal landing: require passed status and T7 audit gating
 		if status != "passed" {
 			return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s is not passed (status %q); land only after a passing inspection: flywheel inspect %s --verdict pass --session <session>", task, status, task)}
+		}
+		// T7: check first-article audit gating when enabled
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			return err
+		}
+		if cfg.Audit != nil && cfg.Audit.FirstArticle {
+			if r := T7Refusal(events, task); r != nil {
+				return r
+			}
 		}
 	} else {
 		// Exception landing
