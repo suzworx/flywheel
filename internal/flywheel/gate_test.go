@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,21 @@ func TestGateTriagedSignalIsClear(t *testing.T) {
 	}
 	if len(result.Blockers) != 0 {
 		t.Errorf("triaged signal: len(Blockers) = %d, want 0", len(result.Blockers))
+	}
+}
+
+// TestGateUninspectedNamesCurrentAttempt checks a late stale finish of an older
+// attempt does not replace the current attempt in the blocker (#291 review).
+func TestGateUninspectedNamesCurrentAttempt(t *testing.T) {
+	events := []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-18T10:02:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2"},
+		{TS: "2026-09-18T10:03:00Z", Task: "T1", Kind: "finished", Attempt: "r2"},
+		{TS: "2026-09-18T10:04:00Z", Task: "T1", Kind: "finished", Attempt: "r1"},
+	}
+	g := Gate(events)
+	if len(g.Blockers) != 1 || !strings.Contains(g.Blockers[0].Detail, "r2") {
+		t.Fatalf("blockers = %+v, want one naming the current attempt r2", g.Blockers)
 	}
 }

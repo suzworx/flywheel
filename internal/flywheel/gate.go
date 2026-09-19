@@ -24,17 +24,12 @@ func (g GateResult) OK() bool { return len(g.Blockers) == 0 }
 func Gate(events []Event) GateResult {
 	var blockers []GateBlocker
 
+	// The attempt comes from the derived state, which ignores stale results,
+	// so a late finish of an older attempt never names the wrong unit.
 	state := Derive(events)
-	taskAttempt := map[string]string{}
-	for _, e := range events {
-		if e.Kind == "finished" && e.Task != "" && e.Attempt != "" {
-			taskAttempt[e.Task] = e.Attempt
-		}
-	}
-
 	for _, task := range state.Tasks {
 		if task.Status == "finished" {
-			attempt := taskAttempt[task.ID]
+			attempt := task.Attempt
 			if attempt == "" {
 				attempt = "?"
 			}
