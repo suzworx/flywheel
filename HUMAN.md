@@ -458,11 +458,24 @@ Here `color` waits because it would write `greet.sh` while `lang` does, and `tes
 `lang` to land. `flywheel run` itself refuses (exit 6) a unit whose `owns:` overlaps one that is
 still running.
 
-Dispatch each ready unit in its own terminal tab, or in the background:
+Dispatch each ready unit in its own terminal tab, or in the background. `--worktree` gives each
+agent its own git worktree (`.flywheel/worktrees/<task>`, on branch `fw/<task>`), so no agent
+sees another's half-written files:
 
 ```sh
-for t in usage-doc bye lang; do flywheel run "$t" > ".flywheel/runs/$t.out" 2>&1 & done
+for t in usage-doc bye lang; do flywheel run "$t" --worktree > ".flywheel/runs/$t.out" 2>&1 & done
 flywheel      # watch the floor while they work
+```
+
+The attempt records its worktree, so `flywheel validate <id>` and `flywheel inspect <id>`
+measure that tree with no extra flags. To land a unit, commit in its worktree, merge its branch,
+and record the landing:
+
+```sh
+git -C .flywheel/worktrees/lang add -A
+git -C .flywheel/worktrees/lang commit -m "feat: greet.sh --lang" --trailer "Flywheel-Task: lang"
+git merge fw/lang
+flywheel land lang --commit "$(git rev-parse --short HEAD)"
 ```
 
 `max_parallel` in `.flywheel/config.json` is how many dispatches `flywheel next` offers at once.
@@ -488,15 +501,15 @@ $ flywheel context --role inspector
 Worker model: claude-haiku-4-5
 ```
 
-When several agents share one checkout, a repo-wide gate can go red on another unit's
-half-written files. Keep gates scoped to the unit, or give each unit its own git worktree and
-measure it there with `flywheel validate <id> --workdir <tree>` and
-`flywheel inspect <id> --verdict pass --workdir <tree> --session "$ME"`.
+Without `--worktree`, the agents share your checkout, and a repo-wide gate can go red on another
+unit's half-written files. In that case keep each unit's gates scoped to the unit.
 
 To cap spend and pace, set `limits` in `.flywheel/config.json`: `budget.wave_tokens` stops new
 dispatches once a wave has used that many tokens, `rate_per_minute` limits dispatches of one
 model, and `breaker` pauses a model after repeated provider errors (switching to an approved
-fallback if you listed one). `flywheel cost` and `flywheel stats` report where the money went.
+fallback if you listed one); once the provider is back, a passing `flywheel doctor --record`
+closes the breaker without waiting out the cooldown. `flywheel cost` and `flywheel stats`
+report where the money went.
 
 ## Rehearse for free
 
