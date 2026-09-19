@@ -44,9 +44,14 @@ type repoLockTimings struct {
 func defaultRepoLockTimings() repoLockTimings {
 	return repoLockTimings{
 		staleAfter: 15 * time.Second,
-		wait:       5 * time.Second,
-		retry:      50 * time.Millisecond,
-		heartbeat:  5 * time.Second,
+		// A dispatch, amendment or landing holds the lock for a few
+		// milliseconds, so a caller queues rather than fails: with eight
+		// concurrent dispatchers a 5s wait at 50ms polling let one starve
+		// and exit "held by another command" (the #48 scale test). A crashed
+		// holder is still taken over after staleAfter.
+		wait:      60 * time.Second,
+		retry:     10 * time.Millisecond,
+		heartbeat: 5 * time.Second,
 	}
 }
 

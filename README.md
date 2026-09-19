@@ -187,6 +187,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
 mid-stream stall (no run-file line for the stall timeout while the process is still alive).
+`limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
+passes.
 
 ## Quickstart
 
@@ -315,6 +317,9 @@ Three epics drive the factory:
 
 - **`ci`** runs on every PR and push to main: build, vet and tests on Linux, Windows and macOS,
   gofmt, a cross-compile of all release targets, a JSON parse check, and a PR-title check.
+- **`scale`** CI job drives a 1,000-task simulated wave through `flywheel run` in one ledger and checks
+  that no task is dispatched twice, every task finishes, and the event log's hash chain stays intact
+  (`FLYWHEEL_SCALE=1000 go test -run TestScaleWave ./internal/flywheel/`).
 - **`release`** keeps one release PR open; merging it tags `vX.Y.Z`, publishes the GitHub release,
   and attaches binaries for five platforms plus `checksums.txt`.
 - Bump rules, highest wins: `type!` or `BREAKING CHANGE:` → major (minor while major is 0);
