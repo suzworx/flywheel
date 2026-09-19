@@ -267,3 +267,49 @@ func TestProbeSummaryShowsTokensAndRate(t *testing.T) {
 		t.Errorf("FactorySummary does not contain 'rate 3/min':\n%s", summary)
 	}
 }
+
+// TestProbeResetsErrorCount checks that an ok probe is a reset boundary: with
+// Errors 3, one error after the probe does not reopen the breaker on the
+// strength of the three before it (#334 review).
+func TestProbeResetsErrorCount(t *testing.T) {
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
+	events := []Event{
+		{TS: ts(1), Task: "A", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: ts(2), Task: "B", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: ts(3), Task: "C", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: ts(4), Kind: "probed", Model: "m1", Reason: "ok"},
+		{TS: ts(5), Task: "D", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+	}
+	b := Breaker{Errors: 3, Cooldown: "1h"}
+	if open, _ := breakerOpen(events, "m1", b, base.Add(6*time.Minute)); open {
+		t.Error("breaker reopened after one error following an ok probe, want closed")
+	}
+}
+
+// TestProbeRecordUsesProbeTime checks that a probed event carries the time
+// its probe finished, not the time the batch was appended (#334 review).
+func TestProbeRecordUsesProbeTime(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 19, 11, 0, 0, 0, time.UTC)
+	if err := RecordProbes(dir, []DoctorProbe{{Model: "m1", Class: "ok", At: at}}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind == "probed" {
+			got, err := time.Parse(time.RFC3339Nano, e.TS)
+			if err != nil || !got.Equal(at) {
+				t.Errorf("probed TS = %q, want %s", e.TS, at.Format(time.RFC3339Nano))
+			}
+			return
+		}
+	}
+	t.Error("no probed event recorded")
+}
