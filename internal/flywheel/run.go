@@ -672,6 +672,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
 			}
 		}
+		// Per-message usage on non-step observations (the claude adapter's
+		// tool and text lines) feeds only the per-call reasoning peak; totals
+		// come from step observations, so nothing is counted twice (#286).
+		if obs.Kind != "step" && obs.Tokens != nil && obs.Tokens.Reasoning > peak {
+			peak = obs.Tokens.Reasoning
+		}
 		switch obs.Kind {
 		case "start":
 			if !started {

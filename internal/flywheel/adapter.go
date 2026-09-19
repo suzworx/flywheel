@@ -357,8 +357,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 // "text" from the first text block (message.usage supplies Tokens either
 // way); a "result" line, or any line carrying a top-level is_error, becomes
 // "step" (Reason from stop_reason/subtype/is_error — see claudeReason; Cost
-// from total_cost_usd). Anything else — hook events, user echoes — returns
-// false, and unparseable JSON never panics.
+// from total_cost_usd; Tokens from the top-level usage, the session total).
+// Anything else — hook events, user echoes — returns false, and unparseable
+// JSON never panics.
 func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -384,6 +385,9 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		}
 		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"), isError)
 		obs.Cost, _ = rawFloat(m, "total_cost_usd")
+		// The result line's top-level usage is the session total (issue
+		// #286); claudeTokens reads m["usage"], the same shape as a message's.
+		obs.Tokens = claudeTokens(m)
 	default:
 		return Observation{}, false
 	}
