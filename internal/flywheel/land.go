@@ -96,30 +96,37 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		}
 	}
 
+	// T7 (opt-in): the unit's worker line must have a conforming audit and
+	// no open nonconformance. Decided here, under the dispatch lock that
+	// AuditTask also takes to append, so no audit can slip in between this
+	// read and the landing (#317 review).
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return err
+	}
+	var t7 *RuleRefusal
+	if cfg.Audit != nil && cfg.Audit.FirstArticle {
+		t7 = T7Refusal(events, task)
+	}
+
 	if exception == "" {
 		// Normal landing: require passed status and T7 audit gating
 		if status != "passed" {
 			return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s is not passed (status %q); land only after a passing inspection: flywheel inspect %s --verdict pass --session <session>", task, status, task)}
 		}
-		// T7: check first-article audit gating when enabled
-		cfg, _, err := LoadConfig(dir)
-		if err != nil {
-			return err
-		}
-		if cfg.Audit != nil && cfg.Audit.FirstArticle {
-			if r := T7Refusal(events, task); r != nil {
-				return r
-			}
+		if t7 != nil {
+			return t7
 		}
 	} else {
-		// Exception landing
+		// Exception landing: covers a task that is not passed (T5), or a
+		// passed task T7 refuses (#317 review).
 		if status == "" {
 			return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s has no events; an exception only covers a task in the ledger", task)}
 		}
 		if session == "" {
 			return fmt.Errorf("an exception requires a session")
 		}
-		if status == "passed" {
+		if status == "passed" && t7 == nil {
 			return &RuleRefusal{Rule: "T5", Fix: fmt.Sprintf("task %s is passed; land it without --exception", task)}
 		}
 		workers := workerSessions(events, task)
@@ -180,7 +187,11 @@ func LandTaskWithException(dir, task, commit, note string, leadImplemented bool,
 		batch = append([]Event{{Task: task, Kind: "allow_untriaged", Commit: commit, Note: allowUntriaged, Signals: signalList(mine)}}, batch...)
 	}
 	if exception != "" {
-		batch = append([]Event{{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: "status " + status}}, batch...)
+		excReason := "status " + status
+		if status == "passed" && t7 != nil {
+			excReason = "status passed; T7 refused"
+		}
+		batch = append([]Event{{Task: task, Kind: "excepted", Commit: commit, Session: session, Note: exception, Reason: excReason}}, batch...)
 	}
 	if err := AppendEvents(dir, batch); err != nil {
 		return fmt.Errorf("append landed for %s: %w", task, err)

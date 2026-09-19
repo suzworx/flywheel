@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -189,5 +190,52 @@ func TestT7LaterConformingAuditReopensLine(t *testing.T) {
 	}
 	if r := T7Refusal(events, "T1"); r != nil {
 		t.Errorf("T7Refusal = %v, want nil (the latest audit on the line conforms)", r)
+	}
+}
+
+// TestT7ExceptionCoversPassedUnit checks that a lead exception can land a
+// passed unit T7 refuses, recorded as such, while an exception on a passed
+// unit nothing refuses is still rejected (#317 review).
+func TestT7ExceptionCoversPassedUnit(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	enabled := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "claude", Model: "m1"}}, Audit: &AuditPolicy{FirstArticle: true}}
+	if err := WriteConfig(dir, enabled); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	for _, e := range []Event{
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
+		{TS: "2026-09-18T10:02:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "lead-1"},
+		{TS: "2026-09-18T10:03:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T10:04:00Z", Task: "T2", Kind: "inspected", Verdict: "pass", Session: "lead-1"},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+	}
+	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "audited by hand", "lead-2", ""); err != nil {
+		t.Fatalf("exception landing of a T7-refused passed unit: %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "excepted" && strings.Contains(e.Reason, "T7") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no excepted event naming T7 for T1")
+	}
+	// T2 has no dispatch, so no line and no T7: an exception is unnecessary.
+	err = LandTaskWithException(dir, "T2", "abc1234", "", false, "", "evidence", "lead-2", "")
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T5" {
+		t.Errorf("exception on a passed unit T7 does not refuse = %v, want T5 refusal", err)
 	}
 }
