@@ -220,3 +220,65 @@ func TestReconcileOverlapCapacityCountsChosenOnly(t *testing.T) {
 		t.Errorf("T3: want no action, got %s", t3Action.Kind)
 	}
 }
+
+// actionFor returns the action for task in acts (zero Action when absent).
+func actionFor(acts []Action, task string) Action {
+	for _, a := range acts {
+		if a.Task == task {
+			return a
+		}
+	}
+	return Action{}
+}
+
+// TestReconcileOverlapCorrectionKeepsBaseOwns checks that a correction whose
+// delta owns only b.go still holds its base brief's a.go, as AttemptBrief
+// resolves it for run's collision check (#326 review).
+func TestReconcileOverlapCorrectionKeepsBaseOwns(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
+	events := []Event{
+		{TS: ts(1), Task: "T1", Kind: "planned", Brief: "b1", Header: &BriefHeader{Owns: []string{"a.go"}}},
+		{TS: ts(2), Task: "T1", Kind: "dispatched", Attempt: "c1", Header: &BriefHeader{Owns: []string{"b.go"}}},
+		{TS: ts(3), Task: "T2", Kind: "planned", Brief: "b2", Header: &BriefHeader{Owns: []string{"a.go"}}},
+	}
+	acts := Reconcile(Derive(events), events, Observed{}, Policy{MaxParallel: 4}, now.Add(time.Hour))
+	if a := actionFor(acts, "T2"); a.Kind != "WAIT" || a.Reason != "owns a.go overlaps T1" {
+		t.Errorf("T2 = %+v, want WAIT owns a.go overlaps T1", a)
+	}
+}
+
+// TestReconcileOverlapHeadlessDispatchKeepsPlannedOwns checks that a legacy
+// dispatched event without a header does not erase the planned owns.
+func TestReconcileOverlapHeadlessDispatchKeepsPlannedOwns(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
+	events := []Event{
+		{TS: ts(1), Task: "T1", Kind: "planned", Brief: "b1", Header: &BriefHeader{Owns: []string{"a.go"}}},
+		{TS: ts(2), Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts(3), Task: "T2", Kind: "planned", Brief: "b2", Header: &BriefHeader{Owns: []string{"a.go"}}},
+	}
+	acts := Reconcile(Derive(events), events, Observed{}, Policy{MaxParallel: 4}, now.Add(time.Hour))
+	if a := actionFor(acts, "T2"); a.Kind != "WAIT" {
+		t.Errorf("T2 = %+v, want WAIT on T1's planned a.go", a)
+	}
+}
+
+// TestReconcileOverlapHoldMakesNoFalseWait checks that a task HELD by policy
+// does not make an overlapping task WAIT: neither runs this tick, and both
+// keep the hold (#326 review).
+func TestReconcileOverlapHoldMakesNoFalseWait(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
+	events := []Event{
+		{TS: ts(1), Task: "T0", Kind: "finished", Attempt: "r1", Cost: 5},
+		{TS: ts(2), Task: "T1", Kind: "planned", Brief: "b1", Header: &BriefHeader{Owns: []string{"a.go"}}},
+		{TS: ts(3), Task: "T2", Kind: "planned", Brief: "b2", Header: &BriefHeader{Owns: []string{"a.go"}}},
+	}
+	acts := Reconcile(Derive(events), events, Observed{}, Policy{MaxParallel: 2, BudgetUSD: 1}, now.Add(time.Hour))
+	for _, task := range []string{"T1", "T2"} {
+		if a := actionFor(acts, task); a.Kind != "HOLD" {
+			t.Errorf("%s = %+v, want HOLD (budget spent)", task, a)
+		}
+	}
+}

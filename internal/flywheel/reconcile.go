@@ -67,21 +67,59 @@ type claims struct {
 // Owns field; exclusive only via Header) — the same brief header run checks
 // collisions against, read from the log so Reconcile stays pure (issue #322).
 func taskClaims(events []Event) map[string]claims {
-	result := make(map[string]claims)
+	// The same rules AttemptBrief applies, from recorded headers only
+	// (#326 review): the base is the latest planned or amended header; a
+	// dispatch with a header (a correction's delta, or a fresh attempt's own
+	// header) adds to the base, and an amendment after a dispatch adds to what
+	// is in flight — claims only widen once work is dispatched. A dispatch
+	// without a header (a legacy ledger) keeps the base.
+	base := map[string]claims{}
+	cur := map[string]claims{}
+	dispatched := map[string]bool{}
 	for _, e := range events {
-		if e.Kind != "planned" && e.Kind != "amended" && e.Kind != "dispatched" {
-			continue
+		switch e.Kind {
+		case "planned", "amended":
+			c := eventClaims(e)
+			base[e.Task] = c
+			if dispatched[e.Task] {
+				cur[e.Task] = unionClaims(cur[e.Task], c)
+			} else {
+				cur[e.Task] = c
+			}
+		case "dispatched":
+			dispatched[e.Task] = true
+			if e.Header != nil {
+				cur[e.Task] = unionClaims(base[e.Task], eventClaims(e))
+			} else {
+				cur[e.Task] = base[e.Task]
+			}
 		}
-		c := claims{}
-		if e.Header != nil {
-			c.owns = e.Header.Owns
-			c.exclusive = e.Header.Exclusive
-		} else {
-			c.owns = e.Owns
-		}
-		result[e.Task] = c
 	}
-	return result
+	return cur
+}
+
+// eventClaims reads one event's claims: its Header when set, else its Owns.
+func eventClaims(e Event) claims {
+	if e.Header != nil {
+		return claims{owns: e.Header.Owns, exclusive: e.Header.Exclusive}
+	}
+	return claims{owns: e.Owns}
+}
+
+// unionClaims returns a's claims plus b's, each entry once.
+func unionClaims(a, b claims) claims {
+	add := func(dst []string, src []string) []string {
+		for _, s := range src {
+			if !slices.Contains(dst, s) {
+				dst = append(dst, s)
+			}
+		}
+		return dst
+	}
+	return claims{
+		owns:      add(append([]string{}, a.owns...), b.owns),
+		exclusive: add(append([]string{}, a.exclusive...), b.exclusive),
+	}
 }
 
 // claimOverlap returns the first overlapping owns path (checked both ways
@@ -360,6 +398,11 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		// Check overlap with already chosen tasks in this tick.
 		if !overlap {
 			for _, ck := range chosen {
+				// Only a task recommended for dispatch will hold its
+				// claims; a HOLD never runs this tick (#326 review).
+				if ck.Action.Kind != "DISPATCH" {
+					continue
+				}
 				if otherClaim, ok := allClaims[ck.Action.Task]; ok {
 					if k, w, has := claimOverlap(taskClaim, otherClaim); has {
 						overlapKind = k
