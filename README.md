@@ -321,11 +321,15 @@ Three epics drive the factory:
   Actions, so CI checks do not run on it (a `GITHUB_TOKEN` limitation).
 - **`watch`** monitors feedback channels persistently without checking out code: when
   devin-ai-integration[bot] submits a review or comment on a PR, it adds the `review-findings`
-  label; when `ci` fails on `main`, it opens an issue titled "CI failing on main" with the run
-  URL and commit details, or comments on an existing open issue with that title; when a later
-  `ci` run on `main` succeeds and that issue is open, it comments with the recovery run URL so
-  the issue records the whole episode. (Watching a consumer project's local learnings file,
-  outside this repository, still requires a person or a persistent session.)
+  label, and an hourly reconcile (also run on every push to a PR from this repository) adds or
+  removes that label so it matches whether the bot still has unresolved review threads. When a
+  `ci` run for a push to `main` in this repository fails, it opens an issue titled "CI failing on
+  main" with the run URL and commit details, or comments on the open one; when a later push run
+  succeeds and is still the latest completed run on `main`, it closes that issue with the recovery
+  run URL, so the issue records the whole episode. Incident jobs are serialised, so a failure and
+  a recovery never race. PR runs and branches named `main` in forks never open an incident.
+  (Watching a consumer project's local learnings file, outside this repository, still requires a
+  person or a persistent session.)
 
 ## Learnings
 

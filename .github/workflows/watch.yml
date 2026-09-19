@@ -87,7 +87,7 @@ jobs:
           EXISTING=$(gh issue list --state open --limit 100 --json number,title \
             --jq '[.[] | select(.title == "CI failing on main")][0].number // empty')
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body "CI recovered in run: $RUN_URL"
+            gh issue close "$EXISTING" --comment "CI recovered in run: $RUN_URL"
           fi
 
   reconcile-labels:
