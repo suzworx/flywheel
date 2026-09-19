@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGitWriteStateDescribesHead checks gitHistoryState of a repo with one
@@ -221,5 +222,75 @@ func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
 
 	if !hasGitWriteSignal {
 		t.Errorf("no git-write signal found for T1 after stash")
+	}
+}
+
+// gitRepoWithCommit makes dir a git repository with one empty commit.
+func gitRepoWithCommit(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"-c", "core.autocrlf=false", "init", "-q"},
+		{"-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// TestGitWriteSilentRunStillFlagged checks that the check runs on the silent
+// (timed-out) exit path too, not only after a normal finish (#318 review).
+func TestGitWriteSilentRunStillFlagged(t *testing.T) {
+	dir := setupTask(t)
+	gitRepoWithCommit(t, dir)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	commandHook = func(RunRequest) {
+		cmd := exec.Command("git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "worker-commit")
+		cmd.Dir = dir
+		_ = cmd.Run()
+	}
+	t.Cleanup(func() { commandHook = nil })
+	res, err := Run(dir, RunOptions{Task: "T1", StartTimeout: 50 * time.Millisecond, SimDelay: time.Second})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "silent" {
+		t.Fatalf("reason = %q, want silent", res.Reason)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind == "signal" && e.Signal == "git-write" && e.Task == "T1" {
+			return
+		}
+	}
+	t.Error("no git-write signal after a silent run whose worker committed")
+}
+
+// TestGitWriteUnreadableFinalStateCounts checks that a final state git can no
+// longer read is a change, not a clean attempt (#318 review).
+func TestGitWriteUnreadableFinalStateCounts(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
+	gitRepoWithCommit(t, dir)
+	before, ok := gitHistoryState(dir)
+	if !ok {
+		t.Fatal("gitHistoryState of a fresh repo: not ok")
+	}
+	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	changed, note := gitWriteNote(dir, before, true)
+	if !changed || !strings.Contains(note, "(unreadable)") {
+		t.Errorf("gitWriteNote = %v %q, want a change to (unreadable)", changed, note)
+	}
+	if changed, _ := gitWriteNote(dir, before, false); changed {
+		t.Error("gitWriteNote with nothing captured reported a change")
 	}
 }

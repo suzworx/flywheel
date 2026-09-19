@@ -117,7 +117,9 @@ it, selecting first articles and seeded samples
 the CLI refuses illegal transitions (exit 6), an agent Stop hook runs `flywheel gate`, and git
 hooks check every commit and push (`flywheel init --git-hooks`); whatever the worker's adapter,
 `flywheel run` flags an attempt that moved HEAD, switched branch or stashed with a `git-write`
-signal, which blocks landing until the lead triages it.
+signal, which blocks landing until the lead triages it (it compares the attempt's end points, so a
+push or a write undone before exit needs the command-level guard,
+[#319](https://github.com/suzworx/flywheel/issues/319)).
 
 Any agent can lead. The loop lives in repository files and shell commands, not inside any one
 vendor's session, so a new head — Claude Code, Codex, OpenCode, or a human — reads the same state

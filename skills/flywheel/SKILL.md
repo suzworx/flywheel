@@ -172,7 +172,9 @@ Never kill opencode processes by name.
 
 To check on running workers, read the floor with `flywheel factory --once` (or `--json` for
 machine use) instead of asking workers or reading run files by hand; its andon lists the units
-that need you (silent, stalled, capped, provider-error, git-write).
+that need you (silent, stalled, capped, provider-error). A `git-write` signal (the worker moved
+HEAD, switched branch or stashed) is not an andon state: `flywheel gate` lists it, and `flywheel land`
+refuses the unit (T9) until you triage it.
 
 ### 4. Review — judge evidence, never trust self-report
 - **Actual exit status** (`rc`): nonzero means the run failed to execute — investigate, don't
