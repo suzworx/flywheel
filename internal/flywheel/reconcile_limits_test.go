@@ -117,6 +117,27 @@ func TestReconcileLimitsDispatchAfterCooldown(t *testing.T) {
 	}
 }
 
+// TestReconcileLimitsHalfOpenRecommendsOneProbe checks that after the
+// cooldown, with capacity for more, next recommends a single probe dispatch:
+// run admits only one while the breaker is half-open (#311 review).
+func TestReconcileLimitsHalfOpenRecommendsOneProbe(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 40, 0, 0, time.UTC)
+	e1 := now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
+	e2 := now.Add(-20 * time.Minute).Format(time.RFC3339Nano)
+	events := []Event{
+		{TS: e1, Task: "t1", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: e2, Task: "t2", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},
+		{TS: "2026-09-14T00:38:00Z", Task: "t3", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T00:38:01Z", Task: "t4", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-14T00:38:02Z", Task: "t5", Kind: "planned", Brief: "b.txt"},
+	}
+	p := Policy{MaxParallel: 4, Model: "m1", Breaker: &Breaker{Errors: 2, Cooldown: "10m"}}
+	acts := Reconcile(Derive(events), events, Observed{}, p, now)
+	if len(acts) != 1 || acts[0].Kind != "DISPATCH" || acts[0].Task != "t3" {
+		t.Errorf("got %v, want one DISPATCH (the probe) for t3", acts)
+	}
+}
+
 // TestReconcileLimitsPolicyFromConfig checks PolicyFromConfig fills Model, BudgetUSD, and Breaker.
 func TestReconcileLimitsPolicyFromConfig(t *testing.T) {
 	cfg := Config{

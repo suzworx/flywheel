@@ -201,6 +201,10 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	if holdReason == "" && p.Breaker != nil && p.Model != "" {
 		if open, until := breakerOpen(events, p.Model, *p.Breaker, now); open {
 			holdReason = fmt.Sprintf("breaker: model %s is open until %s; dispatch another model with flywheel run <task> --model <m>", p.Model, until.UTC().Format(time.RFC3339))
+		} else if !until.IsZero() && capacity > 1 {
+			// Half-open: the cooldown is over and no probe is in flight;
+			// run admits exactly one probe, so recommend one (#311 review).
+			capacity = 1
 		}
 	}
 
