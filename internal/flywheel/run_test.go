@@ -3595,6 +3595,138 @@ func TestRunBudgetBelowCapDispatches(t *testing.T) {
 	}
 }
 
+// TestBreakerOpenAfterConsecutiveErrors checks that breakerOpen returns open=true
+// when the newest b.Errors finished events for a model all have reason "error".
+func TestBreakerOpenAfterConsecutiveErrors(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
+	events := []Event{
+		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+	}
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	open, until := breakerOpen(events, "m", b, now)
+	if !open {
+		t.Errorf("breakerOpen() open = %v, want true", open)
+	}
+	expectedUntil, _ := time.Parse(time.RFC3339, "2026-09-12T23:59:00Z")
+	expectedUntil = expectedUntil.Add(10 * time.Minute)
+	if until != expectedUntil {
+		t.Errorf("breakerOpen() until = %v, want %v", until, expectedUntil)
+	}
+}
+
+// TestBreakerClosedWhenLatestSucceeded checks that breakerOpen returns open=false
+// when the latest finished event for a model has reason other than "error".
+func TestBreakerClosedWhenLatestSucceeded(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
+	events := []Event{
+		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+		{TS: "2026-09-12T23:59:30Z", Task: "T1", Kind: "finished", Model: "m", Reason: "stop"},
+	}
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	open, _ := breakerOpen(events, "m", b, now)
+	if open {
+		t.Errorf("breakerOpen() open = %v, want false", open)
+	}
+}
+
+// TestBreakerClosedAfterCooldown checks that breakerOpen returns open=false
+// when the cooldown has passed since the newest error.
+func TestBreakerClosedAfterCooldown(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-09-13T00:06:00Z")
+	events := []Event{
+		{TS: "2026-09-12T23:40:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+		{TS: "2026-09-12T23:45:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+	}
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	open, _ := breakerOpen(events, "m", b, now)
+	if open {
+		t.Errorf("breakerOpen() open = %v, want false", open)
+	}
+}
+
+// TestBreakerIgnoresOtherModels checks that breakerOpen ignores errors for
+// models other than the one being checked.
+func TestBreakerIgnoresOtherModels(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
+	events := []Event{
+		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "other", Reason: "error"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T1", Kind: "finished", Model: "other", Reason: "error"},
+	}
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	open, _ := breakerOpen(events, "m", b, now)
+	if open {
+		t.Errorf("breakerOpen() open = %v, want false", open)
+	}
+}
+
+// TestRunBreakerRefusesDispatch checks that Run refuses a dispatch when the
+// circuit breaker for the model is open due to consecutive provider errors.
+func TestRunBreakerRefusesDispatch(t *testing.T) {
+	dir := setupTask(t)
+	fixture := noPlanFixture(t, 5, false)
+	cfg := simConfig(fixture)
+	cfg.Limits.Breaker = &Breaker{Errors: 2, Cooldown: "1h"}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	model := cfg.DefaultWorker().Model
+	now := time.Now()
+	// Add another task T2 with two recent finished events with reason "error" for the same model.
+	t1 := now.Add(-2 * time.Minute)
+	t2 := now.Add(-1 * time.Minute)
+	if err := AppendEvent(dir, Event{TS: now.Add(-3 * time.Minute).Format(time.RFC3339), Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() planned T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: t1.Format(time.RFC3339), Task: "T2", Kind: "dispatched", Attempt: "r1", Model: model}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: t1.Format(time.RFC3339), Task: "T2", Kind: "finished", Attempt: "r1", Model: model, Reason: "error"}); err != nil {
+		t.Fatalf("AppendEvent() finished T2 r1: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: t2.Format(time.RFC3339), Task: "T2", Kind: "dispatched", Attempt: "r2", Model: model}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T2 r2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: t2.Format(time.RFC3339), Task: "T2", Kind: "finished", Attempt: "r2", Model: model, Reason: "error"}); err != nil {
+		t.Fatalf("AppendEvent() finished T2 r2: %v", err)
+	}
+	// Verify the events were written
+	readEvs, rerr := ReadEvents(dir)
+	if rerr != nil {
+		t.Fatalf("ReadEvents() error = %v", rerr)
+	}
+	var errorCount int
+	for _, e := range readEvs {
+		if e.Kind == "finished" && e.Model == model && e.Reason == "error" {
+			errorCount++
+		}
+	}
+	if errorCount < 2 {
+		t.Fatalf("expected at least 2 finished events with reason=error for model %q, got %d", model, errorCount)
+	}
+	// Try to run T1; should be refused with breaker RuleRefusal.
+	var err error
+	_, err = Run(dir, RunOptions{Task: "T1"})
+	if err == nil {
+		t.Fatal("Run() expected error, got nil")
+	}
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "breaker" {
+		t.Errorf("Run() error = %v, want RuleRefusal with Rule='breaker'", err)
+	}
+	// Verify no dispatched event was recorded for T1.
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded for T1 despite breaker refusal: %v", e)
+		}
+	}
+}
+
 // TestRunLimitsPerHostCountsSameTask checks a second fresh run of a task that
 // is already running counts toward limits.per_host: it is another attempt on
 // the host (#293 review).
