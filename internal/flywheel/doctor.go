@@ -2,11 +2,15 @@ package flywheel
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // DoctorProbe is one configured model's classification from a doctor run.
@@ -35,7 +39,27 @@ func Doctor(dir string) ([]DoctorProbe, error) {
 	if err != nil {
 		return nil, err
 	}
-	worker := cfg.DefaultWorker()
+	return DoctorWorker(dir, cfg.DefaultWorker().Name)
+}
+
+// ErrUnknownWorker is wrapped by DoctorWorker when no worker has the name, so
+// the command can tell a usage error from a broken config.
+var ErrUnknownWorker = errors.New("unknown worker")
+
+// DoctorWorker probes the named worker's model, then its fallbacks, in config
+// order — an exact duplicate model string is probed once, at its first
+// position — through the worker's own adapter exactly as Run dispatches: the
+// sim adapter replays the fixture named by the model string. No events are
+// recorded. Returns an error if the worker is not found.
+func DoctorWorker(dir, name string) ([]DoctorProbe, error) {
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	worker, ok := cfg.Worker(name)
+	if !ok {
+		return nil, fmt.Errorf("no worker named %q in .flywheel/config.json: %w", name, ErrUnknownWorker)
+	}
 	adap, err := AdapterFor(worker.Adapter)
 	if err != nil {
 		return nil, err
@@ -76,6 +100,10 @@ func DoctorAllOK(probes []DoctorProbe) bool {
 // no error was seen; a probe that fails to open or start classifies
 // ClassError.
 func probeModel(dir string, worker Worker, adap Adapter, model string) string {
+	if class, ok := localEndpointClass(dir, model, &http.Client{Timeout: 3 * time.Second}); !ok {
+		return class
+	}
+
 	req := RunRequest{Task: "doctor", Attempt: "probe", Model: model, Variant: worker.Variant, Title: "doctor-probe"}
 	var stream io.Reader
 	var cmd *exec.Cmd
