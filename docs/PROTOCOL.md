@@ -366,21 +366,24 @@ gates (exit 5) without touching the log's legality.
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, `allow_untriaged`, "by" attribution
-blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the twenty-five kinds in
-`events.go` exist at all — `Validate` rejects any other kind by name, so an event carrying
-`audited` or `signal` today is simply a validation error, not a recognized-but-unchecked record.
+blocks). Only T1, T3, T4, T5 and T8 exist in `verify.go`, and only the kinds in `events.go`'s
+known-kinds map exist at all — `Validate` rejects any other kind by name, so an event carrying
+`audited` or `allow_untriaged` today is simply a validation error, not a recognized-but-unchecked record.
 Concretely, still design-only:
 
-- **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); nothing reads a
-  `no-plan` event as a rule violation today, and there is no signal kind for it to raise.
+- **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); `flywheel run` now
+  records a `signal` event for `no-plan` and the other conditions, but nothing treats one as a
+  rule violation.
 - **T6** (sensitive domains need the lead's sign-off and an audit before landing) — nothing detects
   a "sensitive domain," and no command asks for a sign-off.
 - **T7** (a wave's first article needs `audited conforms` before the rest lands; an open
   nonconformance stops its kind of task) — there is no `audited` kind, no auditor command, and
   nothing gates landing on it.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
-  there is no `signal`, `dismissed`, or `allow_untriaged` kind, and `flywheel land`/`flywheel
-  handoff` do not check for one.
+  signals are recorded and `flywheel feedback` lists the untriaged ones (a signal is triaged once a
+  later learning on the same task names it with `--signals`; a recurrence after it is untriaged
+  again), but there is no `allow_untriaged` kind and
+  `flywheel land`/`flywheel handoff` do not refuse.
 - **T10** (the log is append-only with a hash chain per shard) — the log is append-only in
   practice (`AppendEvent` only ever opens with `O_APPEND`, and `ParseEvents` treats an unresolved
   git conflict marker as a hard error), but there is no hash chain: nothing computes or checks a

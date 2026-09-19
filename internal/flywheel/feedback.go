@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -56,6 +57,47 @@ func Learnings(events []Event) []LearningView {
 			out[i].Reason = e.Note
 		}
 	}
+	return out
+}
+
+// SignalView is one signal event: the task and attempt it was raised on, its
+// condition name, when, and the run file that holds the evidence.
+type SignalView struct {
+	Task    string `json:"task"`
+	Attempt string `json:"attempt,omitempty"`
+	Signal  string `json:"signal"`
+	TS      string `json:"ts"`
+	Path    string `json:"path,omitempty"`
+}
+
+// UntriagedSignals returns, in log order, every signal event that is not
+// triaged. A signal is triaged when a learning event on the same Task,
+// recorded LATER in the log, lists the signal's condition name in its Signals
+// slice (dismissed learnings still count: someone looked at it). A learning
+// only covers the occurrences that existed when it was written, so a
+// condition that recurs after its learning — a new attempt, new evidence — is
+// untriaged again until another learning names it.
+func UntriagedSignals(events []Event) []SignalView {
+	// Scan backward, remembering which (task, condition) pairs a later
+	// learning names; then restore log order.
+	later := map[[2]string]bool{}
+	var out []SignalView
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		switch e.Kind {
+		case "learning":
+			for _, sig := range e.Signals {
+				later[[2]string{e.Task, sig}] = true
+			}
+		case "signal":
+			if !later[[2]string{e.Task, e.Signal}] {
+				out = append(out, SignalView{
+					Task: e.Task, Attempt: e.Attempt, Signal: e.Signal, TS: e.TS, Path: e.Path,
+				})
+			}
+		}
+	}
+	slices.Reverse(out)
 	return out
 }
 
