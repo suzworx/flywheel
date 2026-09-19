@@ -235,10 +235,15 @@ Its exit code says how the attempt went:
 ### Watch it from a second terminal
 
 ```sh
-flywheel                 # the live floor, redrawn every 2s
+flywheel                 # the live floor, interactive
 flywheel watch           # every event as one line, as it happens
 flywheel factory --once  # one snapshot of the floor
 ```
+
+In a terminal the floor is interactive, like k9s: `:` switches view (`:units`, `:workers`,
+`:andon`, `:events`, `:lines`), `/` filters, <kbd>enter</kbd> explains the unit under the cursor,
+`l` shows its log, `?` lists the keys and `q` quits. `flywheel factory --plain` keeps the plain
+redraw, and a piped or redirected run prints one snapshot and exits.
 
 ```text
 flywheel factory
@@ -477,9 +482,15 @@ and record the landing:
 ```sh
 git -C .flywheel/worktrees/lang add -A
 git -C .flywheel/worktrees/lang commit -m "feat: greet.sh --lang" --trailer "Flywheel-Task: lang"
-git merge fw/lang
-flywheel land lang --commit "$(git rev-parse --short HEAD)"
+flywheel land lang --merge
 ```
+
+`land --merge` is the local queue: one unit at a time, it rebases `fw/lang` onto your branch,
+re-runs the unit's gates on the rebased tree, fast-forwards, records the landing and removes the
+worktree. A conflict is refused with a correction brief to dispatch
+(`.flywheel/briefs/lang.land-delta.txt`) and the conflict markers left in the unit's worktree for
+the agent to resolve; you then commit the merge and land again. To land by hand instead, merge the
+branch yourself and use `flywheel land lang --commit "$(git rev-parse --short HEAD)"`.
 
 `max_parallel` in `.flywheel/config.json` is how many dispatches `flywheel next` offers at once.
 `flywheel run` itself does not count, so staying under it when you launch by hand is up to you.
