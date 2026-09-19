@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // appendPassed records the events a task needs to derive status passed.
@@ -293,7 +294,7 @@ func TestLandTaskExceptionLandsUnpassedTask(t *testing.T) {
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
 	}
-	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1"); err != nil {
+	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1", ""); err != nil {
 		t.Fatalf("LandTaskWithException() error = %v", err)
 	}
 	events, err := ReadEvents(dir)
@@ -340,7 +341,7 @@ func TestLandTaskExceptionRefusedForWorkerSession(t *testing.T) {
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Session: "w1"}); err != nil {
 		t.Fatalf("append dispatched: %v", err)
 	}
-	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "w1")
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "w1", "")
 	if !IsRuleRefusal(err) {
 		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
 	}
@@ -358,7 +359,7 @@ func TestLandTaskExceptionRefusedForWorkerSession(t *testing.T) {
 func TestLandTaskExceptionRefusedWhenPassed(t *testing.T) {
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
-	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1")
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1", "")
 	if !IsRuleRefusal(err) {
 		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
 	}
@@ -375,7 +376,7 @@ func TestLandTaskExceptionRefusedWhenPassed(t *testing.T) {
 // for a task with no events.
 func TestLandTaskExceptionRefusedForUnknownTask(t *testing.T) {
 	dir := t.TempDir()
-	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1")
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1", "")
 	if !IsRuleRefusal(err) {
 		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
 	}
@@ -487,5 +488,175 @@ func TestLandTaskConcurrentDifferentCommitsLandOnce(t *testing.T) {
 	}
 	if n := len(landedEvents(t, dir, "T1")); n != 1 {
 		t.Errorf("landed events = %d, want 1", n)
+	}
+}
+
+// TestLandTaskUntriagedSignalRefused checks a passed task with an untriaged
+// signal is refused with rule T9 unless --allow-untriaged is provided.
+func TestLandTaskUntriagedSignalRefused(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	err := LandTask(dir, "T1", "abc1234", "", false, "")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("LandTask() error = %v, want a rule refusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T9" {
+		t.Errorf("refusal = %v, want rule T9", err)
+	}
+	if !bytes.Contains([]byte(r.Fix), []byte("no-plan")) {
+		t.Errorf("fix = %q, want to mention no-plan", r.Fix)
+	}
+	if len(landedEvents(t, dir, "T1")) != 0 {
+		t.Error("landed event appended despite the refusal")
+	}
+}
+
+// TestLandTaskUntriagedAllowedRecordsReason checks an untriaged signal can be
+// overridden with --allow-untriaged, recording both allow_untriaged and landed
+// events.
+func TestLandTaskUntriagedAllowedRecordsReason(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "", "", "brief lacked plan block"); err != nil {
+		t.Fatalf("LandTaskWithException() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var allowUntriaged, landed *Event
+	for i, e := range events {
+		if e.Task == "T1" && e.Kind == "allow_untriaged" {
+			allowUntriaged = &events[i]
+		}
+		if e.Task == "T1" && e.Kind == "landed" {
+			landed = &events[i]
+		}
+	}
+	if allowUntriaged == nil {
+		t.Fatal("no allow_untriaged event found")
+	}
+	if landed == nil {
+		t.Fatal("no landed event found")
+	}
+	if allowUntriaged.Note != "brief lacked plan block" {
+		t.Errorf("allow_untriaged Note = %q, want %q", allowUntriaged.Note, "brief lacked plan block")
+	}
+	if len(allowUntriaged.Signals) != 1 || allowUntriaged.Signals[0] != "no-plan" {
+		t.Errorf("allow_untriaged Signals = %v, want [no-plan]", allowUntriaged.Signals)
+	}
+	if allowUntriaged.TS != landed.TS {
+		t.Errorf("timestamps %q and %q, want one shared instant", allowUntriaged.TS, landed.TS)
+	}
+}
+
+// TestLandTaskUntriagedTriagedSignalLands checks a task with a signal that is
+// triaged by a later learning event lands without requiring --allow-untriaged.
+func TestLandTaskUntriagedTriagedSignalLands(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "learning", Severity: "P2", Title: "t", Observed: "o", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}}); err != nil {
+		t.Fatalf("append learning: %v", err)
+	}
+	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 1 {
+		t.Errorf("landed events = %d, want 1", len(landedEvents(t, dir, "T1")))
+	}
+}
+
+// TestLandTaskUntriagedOtherTaskSignalIgnored checks landing task T1 succeeds
+// even when task T2 has an untriaged signal.
+func TestLandTaskUntriagedOtherTaskSignalIgnored(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T2", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 1 {
+		t.Errorf("landed events = %d, want 1", len(landedEvents(t, dir, "T1")))
+	}
+}
+
+// TestLandTaskUntriagedAllowWithNothingRefused checks --allow-untriaged is
+// refused when the task has no untriaged signals.
+func TestLandTaskUntriagedAllowWithNothingRefused(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "", "", "nothing")
+	if !IsRuleRefusal(err) {
+		t.Fatalf("LandTaskWithException() error = %v, want a rule refusal", err)
+	}
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T9" {
+		t.Errorf("refusal = %v, want rule T9", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 0 {
+		t.Error("landed event appended despite the refusal")
+	}
+}
+
+// TestLandTaskUntriagedSameCommitStillNoOp checks that landing the same task
+// with the same commit twice is still a silent no-op, even when the first
+// landing used --allow-untriaged.
+func TestLandTaskUntriagedSameCommitStillNoOp(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
+		t.Fatalf("append signal: %v", err)
+	}
+	if err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "", "", "brief lacked plan block"); err != nil {
+		t.Fatalf("first LandTaskWithException() error = %v", err)
+	}
+	err := LandTask(dir, "T1", "abc1234", "", false, "")
+	if !errors.Is(err, ErrAlreadyLanded) {
+		t.Fatalf("second LandTask() error = %v, want ErrAlreadyLanded", err)
+	}
+	if len(landedEvents(t, dir, "T1")) != 1 {
+		t.Errorf("landed events = %d, want 1 (no-op must not append)", len(landedEvents(t, dir, "T1")))
+	}
+}
+
+// TestLandTaskUntriagedWaitsForFeedbackLock checks land decides T9 under the
+// feedback lock: while a learning writer holds it, the landing waits, so a
+// learning can never change the signals between land's read and its append
+// (#287 review).
+func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
+	dir := t.TempDir()
+	appendPassed(t, dir, "T1")
+	release, err := acquireFeedbackLock(dir)
+	if err != nil {
+		t.Fatalf("acquireFeedbackLock() error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- LandTask(dir, "T1", "abc1234", "", false, "") }()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("LandTask() returned %v while the feedback lock was held, want it to wait", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("LandTask() error = %v after the feedback lock was released", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("LandTask() still waiting 10s after the feedback lock was released")
 	}
 }

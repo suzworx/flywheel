@@ -133,6 +133,7 @@ var kinds = map[string]bool{
 	"dismissed":       true,
 	"signal":          true,
 	"excepted":        true,
+	"allow_untriaged": true,
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -251,7 +252,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged", e.Kind)
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {
@@ -283,6 +284,11 @@ func Validate(e Event) error {
 	if e.Kind == "excepted" {
 		if e.Note == "" || e.Session == "" || !CommitOK(e.Commit) {
 			return fmt.Errorf("excepted event must carry a note (the evidence), a session and the commit it covers")
+		}
+	}
+	if e.Kind == "allow_untriaged" {
+		if e.Note == "" || e.Task == "" || !CommitOK(e.Commit) {
+			return fmt.Errorf("allow_untriaged event must carry a task, a note (the reason) and the commit it covers")
 		}
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
