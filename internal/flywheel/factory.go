@@ -309,7 +309,7 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 // EventsBytes and RunBytes count the bytes actually read, for tests.
 type Watcher struct {
 	events      []Event
-	eventsOff   int64
+	log         *logReader
 	runSteps    map[string]int
 	runFiles    map[string]map[string]bool
 	runEdits    map[string]int
@@ -324,6 +324,7 @@ type Watcher struct {
 func NewWatcher() Watcher {
 	return Watcher{
 		events:    []Event{},
+		log:       newLogReader(),
 		runSteps:  map[string]int{},
 		runFiles:  map[string]map[string]bool{},
 		runEdits:  map[string]int{},
@@ -362,50 +363,13 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 // readEvents folds only the bytes appended since the last refresh into the
 // watcher's accumulated event list.
 func readEvents(dir string, w *Watcher) error {
-	path := filepath.Join(dir, ".flywheel", "events.jsonl")
-	info, err := os.Stat(path)
+	changed, err := w.log.refresh(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat %s: %w", path, err)
+		return err
 	}
-	size := info.Size()
-	if size < w.eventsOff {
-		w.events = []Event{}
-		w.eventsOff = 0
-	}
-	if size == w.eventsOff {
-		return nil
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
-	}
-	if w.eventsOff > 0 {
-		if _, err := f.Seek(w.eventsOff, io.SeekStart); err != nil {
-			f.Close()
-			return fmt.Errorf("seek %s: %w", path, err)
-		}
-	}
-	b, rerr := io.ReadAll(f)
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
-	}
-	if rerr != nil {
-		return fmt.Errorf("read %s: %w", path, rerr)
-	}
-	if idx := bytes.LastIndexByte(b, '\n'); idx >= 0 {
-		from := w.eventsOff
-		evs, perr := ParseEvents(bytes.NewReader(b[:idx+1]), false)
-		if perr != nil {
-			return perr
-		}
-		w.EventsBytes += int64(idx + 1)
-		for _, e := range evs {
-			w.events = append(w.events, e)
-		}
-		w.eventsOff = from + int64(idx+1)
+	w.EventsBytes = w.log.Bytes
+	if changed {
+		w.events = w.log.merged()
 	}
 	return nil
 }
