@@ -253,6 +253,41 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Limits (issue #46): refuse before anything is recorded when this host
+	// already runs limits.per_host attempts, or when the ledger's recorded
+	// spend has reached limits.budget.wave_cost_usd (the ledger is the wave).
+	if cfg.Limits.PerHost > 0 {
+		inFlight := 0
+		for _, ts := range Derive(events).Tasks {
+			// Every task in flight counts, this one included: a second fresh
+			// run of a task already running is another attempt on the host
+			// (a correction dispatches from needs-correction, not in flight).
+			if ts.Status == "dispatched" || ts.Status == "running" {
+				inFlight++
+			}
+		}
+		if inFlight >= cfg.Limits.PerHost {
+			return Result{}, &RuleRefusal{
+				Rule: "limits",
+				Fix:  fmt.Sprintf("%d attempt(s) already in flight and limits.per_host is %d; wait for one to finish, or raise it: flywheel config set limits.per_host <n>", inFlight, cfg.Limits.PerHost),
+			}
+		}
+	}
+	if b := cfg.Limits.Budget; b != nil && b.WaveCostUSD > 0 {
+		spent := 0.0
+		for _, e := range events {
+			if e.Kind == "finished" {
+				spent += e.Cost
+			}
+		}
+		if spent >= b.WaveCostUSD {
+			return Result{}, &RuleRefusal{
+				Rule: "budget",
+				Fix:  fmt.Sprintf("recorded spend $%.4f has reached limits.budget.wave_cost_usd $%.4f; raise the budget in .flywheel/config.json or start a new wave (a new ledger)", spent, b.WaveCostUSD),
+			}
+		}
+	}
+
 	// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
 	// delta, not the resume flag, makes a dispatch a correction: a given
 	// --delta is always the prompt, with or without --resume.

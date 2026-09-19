@@ -13,6 +13,7 @@ import (
 )
 
 // Tokens is a run's token accounting, summed across the run's steps.
+// Output never includes reasoning tokens: Reasoning is counted separately for every adapter.
 type Tokens struct {
 	Input      int `json:"input"`
 	Output     int `json:"output"`

@@ -501,8 +501,9 @@ func claudeToolPath(block map[string]json.RawMessage) string {
 }
 
 // claudeTokens decodes message.usage into a Tokens pointer, or nil when
-// usage is absent. Reasoning is output_tokens_details.thinking_tokens when
-// present, else 0.
+// usage is absent. Claude's output_tokens includes thinking; Output is
+// stored without it, so Tokens means the same for every adapter: Output is
+// the non-reasoning output, and Reasoning is counted separately.
 func claudeTokens(msg map[string]json.RawMessage) *Tokens {
 	usageRaw, ok := msg["usage"]
 	if !ok {
@@ -523,6 +524,10 @@ func claudeTokens(msg map[string]json.RawMessage) *Tokens {
 		if json.Unmarshal(detailsRaw, &details) == nil {
 			t.Reasoning = rawInt(details, "thinking_tokens")
 		}
+	}
+	t.Output -= t.Reasoning
+	if t.Output < 0 {
+		t.Output = 0
 	}
 	return t
 }

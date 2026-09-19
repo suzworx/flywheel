@@ -344,8 +344,8 @@ func TestClaudeParseResultUsage(t *testing.T) {
 	if obs.Tokens.Input != 673 {
 		t.Errorf("Tokens.Input = %d, want 673", obs.Tokens.Input)
 	}
-	if obs.Tokens.Output != 28634 {
-		t.Errorf("Tokens.Output = %d, want 28634", obs.Tokens.Output)
+	if obs.Tokens.Output != 23291 {
+		t.Errorf("Tokens.Output = %d, want 23291 (output_tokens 28634 minus thinking_tokens 5343)", obs.Tokens.Output)
 	}
 	if obs.Tokens.CacheRead != 7912520 {
 		t.Errorf("Tokens.CacheRead = %d, want 7912520", obs.Tokens.CacheRead)
@@ -390,6 +390,55 @@ func TestClaudeParseStopSequenceWithoutIsError(t *testing.T) {
 	obs, ok := a.Parse(line)
 	if !ok || obs.Kind != "step" || obs.Reason != "stop" {
 		t.Errorf("result line = %v, %v, want step stop", obs, ok)
+	}
+}
+
+// TestClaudeTokensOutputExcludesThinking checks that Output never includes
+// thinking_tokens, so Output and Reasoning are counted separately as they are
+// for every adapter (issue #59).
+func TestClaudeTokensOutputExcludesThinking(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	cases := []struct {
+		name          string
+		line          string
+		wantOutput    int
+		wantReasoning int
+	}{
+		{
+			name:          "thinking less than output",
+			line:          `{"type":"assistant","session_id":"ses_x","message":{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":100,"output_tokens_details":{"thinking_tokens":30}}}}`,
+			wantOutput:    70,
+			wantReasoning: 30,
+		},
+		{
+			name:          "thinking equals output",
+			line:          `{"type":"assistant","session_id":"ses_x","message":{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":50,"output_tokens_details":{"thinking_tokens":50}}}}`,
+			wantOutput:    0,
+			wantReasoning: 50,
+		},
+		{
+			name:          "thinking greater than output",
+			line:          `{"type":"assistant","session_id":"ses_x","message":{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":40,"output_tokens_details":{"thinking_tokens":60}}}}`,
+			wantOutput:    0,
+			wantReasoning: 60,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obs, ok := a.Parse([]byte(tc.line))
+			if !ok {
+				t.Fatalf("Parse() rejected the line")
+			}
+			if obs.Tokens == nil {
+				t.Fatalf("Tokens = nil, want non-nil")
+			}
+			if obs.Tokens.Output != tc.wantOutput {
+				t.Errorf("Output = %d, want %d", obs.Tokens.Output, tc.wantOutput)
+			}
+			if obs.Tokens.Reasoning != tc.wantReasoning {
+				t.Errorf("Reasoning = %d, want %d", obs.Tokens.Reasoning, tc.wantReasoning)
+			}
+		})
 	}
 }
 
