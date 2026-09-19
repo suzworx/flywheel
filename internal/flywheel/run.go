@@ -32,6 +32,7 @@ type RunOptions struct {
 	DeltaPath    string // correction prompt; on a resume the default is .flywheel/briefs/<task>.delta.txt
 	AllowOverlap bool   // skip the owns- and exclusive-collision refusals; the dispatched note records the overlap
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
+	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -154,6 +155,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	adap, err := AdapterFor(worker.Adapter)
 	if err != nil {
 		return Result{}, err
+	}
+
+	// Increment validation (issue #83): --increment dispatches a fresh session
+	// of the brief; it cannot be combined with --resume or --delta.
+	if o.Increment < 0 || (o.Increment > 0 && (o.Resume || o.DeltaPath != "")) {
+		return Result{}, fmt.Errorf("--increment dispatches a fresh session of the brief; it cannot be combined with --resume or --delta")
 	}
 
 	// L-03: a resume that switches the worker's model onto one nobody
@@ -384,7 +391,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	worktrees := otherWorktrees(dir)
 
 	if err := AppendEvent(dir, Event{
-		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt,
+		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Worktrees: worktrees, Header: &promptHeader,
@@ -397,7 +404,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// opposite of what this repository is for.
 	releaseDispatchLock()
 	dispatchLockHeld = false
-	progress(o.Progress, o.Task+" "+attempt+" dispatched "+worker.Adapter+" "+model)
+	progressLine := o.Task + " " + attempt + " dispatched " + worker.Adapter + " " + model
+	if o.Increment > 0 {
+		progressLine += fmt.Sprintf(" increment %d", o.Increment)
+	}
+	progress(o.Progress, progressLine)
 
 	// The lease records that this run holds this attempt while the worker
 	// runs; the renewer moves renewed_at and expires_at forward every
@@ -525,7 +536,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	req := RunRequest{
 		Task: o.Task, Attempt: attempt, PromptFile: promptSrc, Model: model,
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
-		Resume:       o.Resume,
+		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
 	}
 	if commandHook != nil {

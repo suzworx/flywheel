@@ -93,6 +93,9 @@ type Event struct {
 	Persona   string                       `json:"persona,omitempty"`
 	GoalID    string                       `json:"goal_id,omitempty"`
 	Goal      *GoalSpec                    `json:"goal,omitempty"`
+	// Increment is a dispatched event's increment number when `flywheel run --increment N` sent only
+	// increment N of the brief (issue #83); 0 means the whole brief.
+	Increment int `json:"increment,omitempty"`
 	// Learning fields (issue #38): a learning event carries severity, title,
 	// observed, evidence, ask and signals; a dismissed event carries id
 	// (the learning it targets, ^L-[0-9]+$) and reuses Note for the reason.

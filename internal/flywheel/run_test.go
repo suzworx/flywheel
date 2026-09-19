@@ -3399,3 +3399,71 @@ func TestRunDispatchedHeaderMatchesRecordedSHA256(t *testing.T) {
 		t.Errorf("header sha256 = %q, want it to equal the dispatched sha256 %q (same prompt bytes)", d.Header.SHA256, d.SHA256)
 	}
 }
+
+// TestRunIncrementRecordedOnDispatched checks that Increment is recorded on
+// the dispatched event and derived into TaskState (issue #83).
+func TestRunIncrementRecordedOnDispatched(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Increment: 2}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var d Event
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			d = e
+		}
+	}
+	if d.Increment != 2 {
+		t.Errorf("dispatched event increment = %d, want 2", d.Increment)
+	}
+	if d.Attempt != "r1" {
+		t.Errorf("dispatched event attempt = %q, want r1", d.Attempt)
+	}
+	st := Derive(evs)
+	if len(st.Tasks) != 1 {
+		t.Fatalf("Derive() produced %d tasks, want 1", len(st.Tasks))
+	}
+	if st.Tasks[0].Increment != 2 {
+		t.Errorf("task state increment = %d, want 2", st.Tasks[0].Increment)
+	}
+}
+
+// TestRunIncrementRejectsResumeAndDelta checks that --increment cannot be
+// combined with --resume or --delta (issue #83).
+func TestRunIncrementRejectsResumeAndDelta(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+
+	// Increment with Resume should error
+	_, err := Run(dir, RunOptions{Task: "T1", Increment: 1, Resume: true})
+	if err == nil {
+		t.Error("Run with Increment and Resume = nil error, want an error")
+	}
+
+	// Increment with DeltaPath should error
+	_, err = Run(dir, RunOptions{Task: "T1", Increment: 1, DeltaPath: filepath.Join(dir, ".flywheel", "briefs", "T1.delta.txt")})
+	if err == nil {
+		t.Error("Run with Increment and DeltaPath = nil error, want an error")
+	}
+
+	// No events should have been dispatched
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Kind == "dispatched" {
+			t.Error("unexpected dispatched event; increment validation should have prevented it")
+		}
+	}
+}

@@ -625,3 +625,58 @@ func TestOpenCodeCommandUnchangedByToolPolicy(t *testing.T) {
 		t.Errorf("opencode args changed by the tool policy:\n got %v\nwant %v", args, want)
 	}
 }
+
+// TestClaudeCommandIncrement checks that a dispatch with Increment > 0
+// leads the prompt with freshMessage plus the increment instruction (issue #83).
+func TestClaudeCommandIncrement(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	if err := os.WriteFile(briefPath, []byte("do the thing"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	bin, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "r1", Model: "claude-sonnet-5", PromptFile: briefPath, Increment: 2,
+	})
+	if bin != "claude" {
+		t.Errorf("bin = %q, want claude", bin)
+	}
+	if len(args) < 2 {
+		t.Fatalf("args too short: %v", args)
+	}
+	want := freshMessage + " Do increment 2 only, then report and STOP."
+	if !strings.HasPrefix(args[1], want) {
+		t.Errorf("args[1] = %q, want to start with %q", args[1], want)
+	}
+}
+
+// TestOpencodeCommandIncrement checks that a dispatch with Increment > 0
+// leads the prompt with freshMessage plus the increment instruction (issue #83).
+func TestOpencodeCommandIncrement(t *testing.T) {
+	a, _ := AdapterFor("opencode")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	bin, args := a.Command(RunRequest{
+		Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath, Increment: 3,
+	})
+	if bin != "opencode" {
+		t.Errorf("bin = %q, want opencode", bin)
+	}
+	want := freshMessage + " Do increment 3 only, then report and STOP."
+	found := false
+	for _, arg := range args {
+		if arg == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("args = %v, want to contain %q", args, want)
+	}
+}
+
+// TestFreshPromptNoIncrement checks that freshPrompt with no increment returns freshMessage.
+func TestFreshPromptNoIncrement(t *testing.T) {
+	result := freshPrompt(RunRequest{})
+	if result != freshMessage {
+		t.Errorf("freshPrompt(empty request) = %q, want %q", result, freshMessage)
+	}
+}
