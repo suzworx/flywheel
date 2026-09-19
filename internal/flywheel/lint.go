@@ -84,7 +84,7 @@ func LintBrief(dir, path string) (LintResult, error) {
 			res.Problems = append(res.Problems, "exclusive: entry is empty")
 		}
 	}
-	if len(header.Needs) == 0 {
+	if !header.NeedsDeclared {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}
 	if !strings.Contains(content, "At most one write per response") {

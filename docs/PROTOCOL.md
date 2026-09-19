@@ -426,8 +426,8 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
 - **T6** (sensitive domains need the lead's sign-off and an audit before landing) — nothing detects
   a "sensitive domain," and no command asks for a sign-off.
 - **T7** (a wave's first article needs `audited conforms` before the rest lands; an open
-  nonconformance stops its kind of task) — `flywheel audit` now records `audited`
-  (issue #61), but nothing selects first articles or samples yet and nothing gates landing on it.
+  nonconformance stops its kind of task) — `flywheel audit` now records `audited` (issue #61),
+  and `flywheel audit --first-article` / `--sample RATE` select first articles and a seeded sample (issue #61), but nothing gates landing on an audit yet.
 - **T9** (checkpoint/land/handoff refuse while signals are untriaged, unless `allow_untriaged`) —
   now enforced **live** by `flywheel land` for a task's own untriaged signals (refused with exit 6
   unless `--allow-untriaged <reason>` records an `allow_untriaged` event). `flywheel handoff` does
