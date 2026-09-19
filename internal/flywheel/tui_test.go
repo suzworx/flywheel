@@ -715,3 +715,86 @@ func TestTUIHelpScrolls(t *testing.T) {
 		t.Error("help scrolled to the end does not show its last line (q quit)")
 	}
 }
+
+// TestTUILinesView checks that :lines command switches to lines view and shows product lines.
+func TestTUILinesView(t *testing.T) {
+	m := NewTUI()
+	d := makeTestTUIData()
+
+	// Open command prompt.
+	m.Update(term.Key{Kind: term.KeyRune, Rune: ':'}, d)
+	if m.promptKind != "command" {
+		t.Errorf("expected command prompt")
+	}
+
+	// Type "lines".
+	for _, r := range "lines" {
+		m.Update(term.Key{Kind: term.KeyRune, Rune: r}, d)
+	}
+
+	// Enter.
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	if m.view != "lines" {
+		t.Errorf("expected view 'lines', got %q", m.view)
+	}
+
+	// Check title contains "Lines" with count.
+	view := m.View(d, 100, 20, false)
+	if !strings.Contains(view, "Lines(all)") {
+		t.Errorf("expected 'Lines(all)' in view, got:\n%s", view)
+	}
+}
+
+// TestTUILinesUnitsLineColumn checks that units with Line set include a LINE column, and without do not.
+func TestTUILinesUnitsLineColumn(t *testing.T) {
+	// Test with Line set.
+	m := NewTUI()
+	d := makeTestTUIData()
+	d.Floor.Units[0].Line = "frontend"
+	d.Floor.Units[1].Line = "backend"
+
+	view := m.View(d, 100, 20, false)
+	lines := strings.Split(view, "\n")
+
+	// Find the header row (should have "LINE" when Line is set).
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "TASK") && strings.Contains(line, "LINE") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'LINE' column header when units have Line set, got:\n%s", view)
+	}
+
+	// Test without Line set.
+	m2 := NewTUI()
+	d2 := makeTestTUIData()
+	// Don't set Line on any unit.
+
+	view2 := m2.View(d2, 100, 20, false)
+	lines2 := strings.Split(view2, "\n")
+
+	// Header should NOT have "LINE" when no units have Line set.
+	notFound := true
+	for _, line := range lines2 {
+		if strings.Contains(line, "TASK") && strings.Contains(line, "LINE") {
+			notFound = false
+			break
+		}
+	}
+	if !notFound {
+		t.Errorf("expected no 'LINE' column header when units have empty Line, got:\n%s", view2)
+	}
+}
+
+// TestTUICappedPeakColoured checks that a capped unit's STATE cell shows its
+// peak and is coloured as capped (#336 review).
+func TestTUICappedPeakColoured(t *testing.T) {
+	d := makeTestTUIData() // T3 is capped with Peak 50000
+	frame := NewTUI().View(d, 120, 12, true)
+	if !strings.Contains(frame, stateColor("capped")+"capped 50k") {
+		t.Errorf("frame lacks a coloured \"capped 50k\" cell:\n%q", frame)
+	}
+}
