@@ -23,6 +23,15 @@ func gitInitRepo(t *testing.T, dir string) {
 		}
 		t.Skipf("git unavailable: %v", err)
 	}
+	// Recorded in the repository as well: -c applies to the init command
+	// alone, so a later commit could still start git's background
+	// maintenance and race t.TempDir's cleanup (issue #352, #356 review).
+	for _, kv := range [][2]string{{"core.autocrlf", "false"}, {"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		cmd := exec.Command("git", "-C", dir, "config", kv[0], kv[1])
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config %s: %v: %s", kv[0], err, out)
+		}
+	}
 }
 
 // TestAppendEventsPlannedTakesNoFeedbackLock checks a batch with no learning

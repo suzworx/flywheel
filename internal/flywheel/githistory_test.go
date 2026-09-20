@@ -228,8 +228,8 @@ func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
 // gitRepoWithCommit makes dir a git repository with one empty commit.
 func gitRepoWithCommit(t *testing.T, dir string) {
 	t.Helper()
+	initGitRepoAt(t, dir)
 	for _, args := range [][]string{
-		{"-c", "core.autocrlf=false", "init", "-q"},
 		{"-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "init"},
 	} {
 		cmd := exec.Command("git", args...)
