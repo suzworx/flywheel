@@ -31,11 +31,35 @@ func git(t *testing.T, wd string, args []string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitInitFlags are the -c settings every test repository is created with:
+// no CRLF translation, and no automatic gc or maintenance, so git never
+// leaves a background process writing in a temp directory (issue #352).
+func gitInitFlags() []string {
+	return []string{"-c", "core.autocrlf=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
+}
+
+// initGitRepoAt creates a throwaway git repository at dir and RECORDS the
+// no-maintenance settings in it: -c applies to the init command alone, so
+// without this a later commit could still start the background work that
+// races t.TempDir's cleanup (issue #352, #356 review).
+func initGitRepoAt(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init %s: %v: %s", dir, err, out)
+	}
+	for _, kv := range [][2]string{{"core.autocrlf", "false"}, {"gc.auto", "0"}, {"maintenance.auto", "false"}} {
+		cmd := exec.Command("git", "-C", dir, "config", kv[0], kv[1])
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config %s in %s: %v: %s", kv[0], dir, err, out)
+		}
+	}
+}
+
 // initRepo makes a throwaway git repo in dir with one committed file a.go.
 func initRepo(t *testing.T, dir string) {
 	t.Helper()
-	git(t, dir, []string{"init", "-q"})
-	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	initGitRepoAt(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\n"), 0o644); err != nil {
 		t.Fatalf("write a.go: %v", err)
 	}

@@ -2,7 +2,6 @@ package flywheel
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,10 +10,7 @@ import (
 // TestInitCIWritesAtRepoRoot tests that InitCI writes the file at the repository root
 func TestInitCIWritesAtRepoRoot(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	initGitRepoAt(t, root)
 
 	_, pieces, err := InitCI(root, "dev")
 	if err != nil {
@@ -57,10 +53,7 @@ func TestInitCIWritesAtRepoRoot(t *testing.T) {
 // even when called from a subdirectory
 func TestInitCISubdirTargetsFactory(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	initGitRepoAt(t, root)
 
 	svcDir := filepath.Join(root, "svc", "api")
 	if err := os.MkdirAll(svcDir, 0o755); err != nil {
@@ -108,12 +101,9 @@ func TestInitCIPinsReleaseVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
 			root := t.TempDir()
-			err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
-			if err != nil {
-				t.Fatalf("git init: %v", err)
-			}
+			initGitRepoAt(t, root)
 
-			_, _, err = InitCI(root, tt.version)
+			_, _, err := InitCI(root, tt.version)
 			if err != nil {
 				t.Fatalf("InitCI: %v", err)
 			}
@@ -134,10 +124,7 @@ func TestInitCIPinsReleaseVersion(t *testing.T) {
 // TestInitCINeverOverwrites tests that InitCI never overwrites an existing file
 func TestInitCINeverOverwrites(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
-	if err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	initGitRepoAt(t, root)
 
 	// Pre-write the file with custom content
 	workflowDir := filepath.Join(root, ".github", "workflows")
@@ -187,9 +174,7 @@ func TestInitCINotARepo(t *testing.T) {
 // written safely: YAML-quoted in env, used as "$FLYWHEEL_DIR" (#315 review).
 func TestInitCIPathWithSpace(t *testing.T) {
 	root := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run(); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	initGitRepoAt(t, root)
 	sub := filepath.Join(root, "order api")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)

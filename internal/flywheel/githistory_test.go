@@ -13,7 +13,7 @@ import (
 // commit contains ok=true and the expected format with HEAD, branch and stash.
 func TestGitWriteStateDescribesHead(t *testing.T) {
 	dir := t.TempDir()
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git init: %v", err)
@@ -63,7 +63,7 @@ func TestGitWriteCommitDuringRunRecordsSignal(t *testing.T) {
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git init: %v", err)
@@ -122,7 +122,7 @@ func TestGitWriteCleanRunRecordsNoSignal(t *testing.T) {
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git init: %v", err)
@@ -161,7 +161,7 @@ func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git init: %v", err)
@@ -228,8 +228,8 @@ func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
 // gitRepoWithCommit makes dir a git repository with one empty commit.
 func gitRepoWithCommit(t *testing.T, dir string) {
 	t.Helper()
+	initGitRepoAt(t, dir)
 	for _, args := range [][]string{
-		{"-c", "core.autocrlf=false", "init", "-q"},
 		{"-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "init"},
 	} {
 		cmd := exec.Command("git", args...)
