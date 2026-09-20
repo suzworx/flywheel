@@ -450,6 +450,25 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 			rows = append(rows, row)
 		}
 	}
+	for _, r := range d.Floor.Staffing.Roles {
+		// A role the config does not name has nothing to split (#355 review:
+		// slicing its empty field list panicked).
+		adapter, model := "-", ""
+		if fields := strings.Fields(r.Configured); len(fields) > 0 {
+			adapter, model = fields[0], strings.Join(fields[1:], " ")
+		}
+		busy := r.Session
+		if busy == "" {
+			busy = "not registered"
+		}
+		if r.Mismatch {
+			busy += " !"
+		}
+		row := []string{r.Name, adapter, model, "-", busy}
+		if m.matchesFilter(row) {
+			rows = append(rows, row)
+		}
+	}
 	return header, rows
 }
 
