@@ -15,11 +15,13 @@ import (
 
 // git runs a git command in wd with a test identity and CRLF handling off, so
 // trees hash the same on every OS. The commit helpers build the args here.
+// gc.auto and maintenance.auto stay off so git does not spawn background
+// writers into a t.TempDir that Go then tries to RemoveAll (#352).
 func git(t *testing.T, wd string, args []string) string {
 	t.Helper()
 	cmd := exec.Command("git")
 	cmd.Dir = wd
-	full := []string{"git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "core.autocrlf=false"}
+	full := []string{"git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "core.autocrlf=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	for _, a := range args {
 		full = append(full, a)
 	}
@@ -36,6 +38,10 @@ func initRepo(t *testing.T, dir string) {
 	t.Helper()
 	git(t, dir, []string{"init", "-q"})
 	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	// Persist the no-maintenance settings for git processes the gates spawn
+	// themselves (they do not go through git()).
+	git(t, dir, []string{"config", "gc.auto", "0"})
+	git(t, dir, []string{"config", "maintenance.auto", "false"})
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\n"), 0o644); err != nil {
 		t.Fatalf("write a.go: %v", err)
 	}
@@ -70,6 +76,30 @@ func initTask(t *testing.T, gates []string) (string, error) {
 	git(t, dir, []string{"add", "-A"})
 	git(t, dir, []string{"commit", "-m", "brief"})
 	return dir, nil
+}
+
+// TestInitRepoDisablesGitMaintenance checks that throwaway repos pin gc and
+// maintenance off so a later git from a gate cannot start background writers
+// that race t.TempDir cleanup (#352).
+func TestInitRepoDisablesGitMaintenance(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir)
+	if got := git(t, dir, []string{"config", "--get", "gc.auto"}); got != "0" {
+		t.Errorf("gc.auto = %q, want 0", got)
+	}
+	if got := git(t, dir, []string{"config", "--get", "maintenance.auto"}); got != "false" {
+		t.Errorf("maintenance.auto = %q, want false", got)
+	}
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	if got := git(t, dir, []string{"config", "--get", "gc.auto"}); got != "0" {
+		t.Errorf("initTask gc.auto = %q, want 0", got)
+	}
+	if got := git(t, dir, []string{"config", "--get", "maintenance.auto"}); got != "false" {
+		t.Errorf("initTask maintenance.auto = %q, want false", got)
+	}
 }
 
 // initTaskLive is initTask plus live-gate: lines in the brief header
