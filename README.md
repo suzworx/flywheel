@@ -226,6 +226,8 @@ the first whose own breaker is closed).
 
 **Product lines.** `.flywheel/config.json` `lines` names the parts of the product and who builds them — `{"name": "cli", "worker": "default", "owns": ["internal/", "cmd/"]}`. A unit belongs to the line its brief names (`line: cli`) or the first line whose `owns` cover all of its `owns:`; `flywheel run` staffs it with that line's worker (an explicit `--worker` wins) and records the line on the dispatch. `flywheel factory` shows each product line — its worker, how many units are on it, building and landed — and a LINE column in the units table.
 
+**Staffing.** `.flywheel/config.json` `staffing` declares the factory's roles — `lead` (the agent that writes briefs and lands units), `inspector` (audits units before landing), and `auditor` (audits after landing). Each role names an adapter (opencode, claude, sim, codex, or cli for a person), model, and optional session (the name used with `flywheel staff`). `flywheel init` validates the independence rule: the auditor must not be the same agent and model as the lead or inspector (an audit is only independent when it is). `flywheel factory` shows the configured roles and flags any floor whose registered session does not match.
+
 ## Quickstart
 
 New here? Start with the two pages that close the gap between "I have a binary" and "I have

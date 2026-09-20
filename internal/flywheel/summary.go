@@ -47,6 +47,14 @@ func FactorySummary(dir string) (string, error) {
 	}
 	lines = append(lines, fmt.Sprintf("  workers: %s", strings.Join(workerStrs, "; ")))
 
+	// Staffing lines
+	var staffingLines []string
+	for _, role := range cfg.Staffing.roles() {
+		if line := StaffingLine(role.Name, role.Cfg); line != "" {
+			staffingLines = append(staffingLines, "  "+line)
+		}
+	}
+
 	// Limits line
 	var limitStrs []string
 	if cfg.Limits.PerHost > 0 {
@@ -82,6 +90,18 @@ func FactorySummary(dir string) (string, error) {
 		limitStrs = append(limitStrs, "rate none")
 	}
 	lines = append(lines, fmt.Sprintf("  limits: %s", strings.Join(limitStrs, " · ")))
+
+	// Add staffing lines
+	lines = append(lines, staffingLines...)
+
+	// Load events to check staffing mismatches
+	events, err := ReadEvents(dir)
+	if err == nil {
+		mismatches := StaffingMismatch(cfg, events)
+		for _, m := range mismatches {
+			lines = append(lines, fmt.Sprintf("  ! %s", m))
+		}
+	}
 
 	// Audit line
 	auditStatus := "off"

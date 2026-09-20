@@ -72,5 +72,22 @@ func runStaff(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel staff: %v\n", err)
 		os.Exit(1)
 	}
+
+	cfg, _, err := flywheel.LoadConfig(o.dir)
+	if err == nil && cfg.Staffing != nil {
+		var role *flywheel.RoleConfig
+		switch o.role {
+		case "lead":
+			role = cfg.Staffing.Lead
+		case "inspector":
+			role = cfg.Staffing.Inspector
+		case "auditor":
+			role = cfg.Staffing.Auditor
+		}
+		if role != nil && role.Session != "" && role.Session != o.session {
+			fmt.Fprintf(os.Stderr, "warning: .flywheel/config.json staffing.%s names session %s, registering %s\n", o.role, role.Session, o.session)
+		}
+	}
+
 	fmt.Printf("%s %s\n", o.role, o.session)
 }

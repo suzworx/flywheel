@@ -26,6 +26,22 @@ type Line struct {
 	Owns   []string `json:"owns,omitempty"` // path entries, matched like a brief's owns:
 }
 
+// RoleConfig is who holds one factory role (issue #69): the agent CLI and model
+// that act as lead, inspector or auditor. Session is optional: the name the
+// holder registers with flywheel staff.
+type RoleConfig struct {
+	Adapter string `json:"adapter,omitempty"` // opencode, claude, codex, sim, or "cli" for a person
+	Model   string `json:"model,omitempty"`
+	Session string `json:"session,omitempty"`
+}
+
+// StaffingConfig names the factory's roles.
+type StaffingConfig struct {
+	Lead      *RoleConfig `json:"lead,omitempty"`
+	Inspector *RoleConfig `json:"inspector,omitempty"`
+	Auditor   *RoleConfig `json:"auditor,omitempty"`
+}
+
 // Config is the project configuration stored in .flywheel/config.json.
 type Config struct {
 	Version    int               `json:"version"`
@@ -38,6 +54,7 @@ type Config struct {
 	Baseline   *Baseline         `json:"baseline,omitempty"`
 	Audit      *AuditPolicy      `json:"audit,omitempty"`
 	Log        *LogConfig        `json:"log,omitempty"`
+	Staffing   *StaffingConfig   `json:"staffing,omitempty"`
 }
 
 // Worker configures a single CLI worker.
@@ -324,7 +341,7 @@ func (c Config) Validate() error {
 			}
 			seen[w.Name] = true
 		}
-		if w.Adapter != "opencode" && w.Adapter != "sim" && w.Adapter != "claude" && w.Adapter != "codex" {
+		if !adapterKnown(w.Adapter, false) {
 			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", \"claude\", or \"codex\"", where, w.Adapter))
 		}
 		if w.Model == "" {
@@ -449,6 +466,25 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.Staffing != nil {
+		for _, role := range c.Staffing.roles() {
+			if role.Cfg != nil && role.Cfg.Adapter != "" && !adapterKnown(role.Cfg.Adapter, true) {
+				problems = append(problems, fmt.Sprintf("staffing.%s: adapter %q must be %s, or \"cli\"", role.Name, role.Cfg.Adapter, strings.Join(quoted(workerAdapters), ", ")))
+			}
+		}
+		// An audit is independent only when the auditor is not the agent and
+		// model that led or inspected the work.
+		if a := c.Staffing.Auditor; a != nil && a.Adapter != "" && a.Model != "" {
+			for _, role := range c.Staffing.roles() {
+				if role.Name == "auditor" || role.Cfg == nil {
+					continue
+				}
+				if role.Cfg.Adapter == a.Adapter && role.Cfg.Model == a.Model {
+					problems = append(problems, fmt.Sprintf("staffing.auditor: must not be the same agent and model as the %s (an audit is only independent when it is)", role.Name))
+				}
+			}
+		}
+	}
 	if len(problems) == 0 {
 		return nil
 	}
@@ -485,6 +521,28 @@ func (c Config) Get(key string) (string, error) {
 			if w, ok := c.Worker(rest[:dot]); ok {
 				if v, ok := workerValue(w, rest[dot+1:]); ok {
 					return v, nil
+				}
+			}
+		}
+	}
+	if rest, ok := strings.CutPrefix(key, "staffing."); ok {
+		if name, field, found := strings.Cut(rest, "."); found {
+			for _, role := range c.Staffing.roles() {
+				if role.Name != name {
+					continue
+				}
+				switch field {
+				case "adapter", "model", "session":
+					if role.Cfg == nil {
+						return "", nil
+					}
+					switch field {
+					case "adapter":
+						return role.Cfg.Adapter, nil
+					case "model":
+						return role.Cfg.Model, nil
+					}
+					return role.Cfg.Session, nil
 				}
 			}
 		}
@@ -552,6 +610,9 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.per_host", "log.shards", "max_parallel", "model", "stall_timeout", "variant",
+		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
+		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
+		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
 	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
@@ -579,6 +640,47 @@ func (c *Config) Set(key, value string) error {
 			}
 		}
 		return c.settableErr(key)
+	}
+	if rest, ok := strings.CutPrefix(key, "staffing."); ok {
+		if dot := strings.IndexByte(rest, '.'); dot > 0 {
+			roleField := rest[:dot]
+			roleKey := rest[dot+1:]
+			if c.Staffing == nil {
+				c.Staffing = &StaffingConfig{}
+			}
+			var role *RoleConfig
+			switch roleField {
+			case "lead":
+				if c.Staffing.Lead == nil {
+					c.Staffing.Lead = &RoleConfig{}
+				}
+				role = c.Staffing.Lead
+			case "inspector":
+				if c.Staffing.Inspector == nil {
+					c.Staffing.Inspector = &RoleConfig{}
+				}
+				role = c.Staffing.Inspector
+			case "auditor":
+				if c.Staffing.Auditor == nil {
+					c.Staffing.Auditor = &RoleConfig{}
+				}
+				role = c.Staffing.Auditor
+			default:
+				return c.settableErr(key)
+			}
+			switch roleKey {
+			case "adapter":
+				role.Adapter = value
+				return nil
+			case "model":
+				role.Model = value
+				return nil
+			case "session":
+				role.Session = value
+				return nil
+			}
+			return c.settableErr(key)
+		}
 	}
 	switch key {
 	case "model", "variant", "adapter", "max_parallel", "stall_timeout":
@@ -644,6 +746,9 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.per_host",
 		"max_parallel", "model", "stall_timeout", "variant",
+		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
+		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
+		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
 	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "max_parallel", "model", "stall_timeout", "variant"} {
