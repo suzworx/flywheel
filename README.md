@@ -140,6 +140,16 @@ worker plans, reports — not inside any vendor session. That is what makes agen
 loop crash-safe: run out of tokens, hit a host timeout, lose a watcher; the next head reads the
 same files and continues, and nothing is lost.
 
+**Sharded log.** By default the event log is a single `.flywheel/events.jsonl` file. For large factories
+with many parallel tasks, `flywheel log --shard` switches to per-task shards under `.flywheel/events/`:
+one file per task plus `@floor.jsonl` for global events (goals, feedback, etc.) and `@session-<id>.jsonl`
+for session boundary events. The sharded layout is one-way — the legacy file is sealed and kept — and
+opt-in via config so older binaries are fenced out. Readers merge the legacy file first, then stable by
+each shard's running-max timestamp, preserving the linearized order. Each shard has its own hash chain
+with a genesis block and a `sharded` seal (with the kind's fields), and `flywheel verify --log` checks
+them all. Transient shard locks under `.flywheel/locks/` guard concurrent writes per shard and are
+git-ignored.
+
 Two design docs define the factory:
 
 - [Autonomous shipping: the flywheel factory](docs/design/autonomous-shipping.md) — the factory
@@ -282,7 +292,7 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
 | --- | --- | --- |
 | `flywheel version` | available (v0.2.0) | Print the flywheel version. |
 | `flywheel init` | available (v0.2.0) | Scaffold `flywheel.md` + `.flywheel/state.json` + `.flywheel/events.jsonl` + `.flywheel/briefs/`. |
-| `flywheel log` | available (v0.2.0) | Append an event to `.flywheel/events.jsonl` and re-derive state. |
+| `flywheel log` | available (v0.2.0) | Append an event to `.flywheel/events.jsonl` and re-derive state. `--shard` switches the event log to per-task shards under `.flywheel/events/` (one-way; the legacy file is sealed and kept) ([#47](https://github.com/suzworx/flywheel/issues/47)). |
 | `flywheel state` | available (v0.2.0) | Derive and print state from the event log. |
 | `flywheel config` | available | Read, validate and `set` `.flywheel/config.json` (config package merged). |
 | `flywheel doctor [--worker NAME]` | available | Probe every configured model and classify its availability (exit 0/1). |

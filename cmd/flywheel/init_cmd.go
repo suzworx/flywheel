@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -30,6 +31,7 @@ type initOptions struct {
 	ci       bool
 	local    string
 	localURL string
+	shard    bool
 }
 
 // initFlags defines init's flags once, so help and run share them.
@@ -49,6 +51,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.BoolVar(&o.ci, "ci", false, "write .github/workflows/flywheel-audit.yml: a CI job running flywheel verify --all --log on every pull request")
 	fs.StringVar(&o.local, "local", "", "point OpenCode workers at a local OpenAI-compatible server serving this model, as worker \"local\"")
 	fs.StringVar(&o.localURL, "local-url", flywheel.DefaultLocalURL, "the local server's OpenAI-compatible base URL (with --local)")
+	fs.BoolVar(&o.shard, "shard", false, "start with the sharded event log")
 	return fs, o
 }
 
@@ -191,6 +194,13 @@ func runInit(args []string) {
 		fmt.Fprintln(os.Stderr, "add to .gitignore:")
 		for _, p := range ignored {
 			fmt.Fprintln(os.Stderr, "!"+p)
+		}
+	}
+
+	if o.shard {
+		if err := runLogShard(o.dir, os.Stdout, os.Stderr, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
+			os.Exit(1)
 		}
 	}
 

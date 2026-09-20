@@ -35,7 +35,7 @@ while read -r lref lsha rref rsha; do
     flywheel verify --dir "$d" "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify; fix its record before pushing" >&2; fail=1; }
   done
 done
-if [ -f "$d/.flywheel/events.jsonl" ]; then
+if [ -f "$d/.flywheel/events.jsonl" ] || [ -d "$d/.flywheel/events" ]; then
   flywheel verify --dir "$d" --log >&2 || fail=1
 fi
 exit $fail

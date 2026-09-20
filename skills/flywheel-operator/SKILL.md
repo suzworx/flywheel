@@ -34,7 +34,7 @@ land.
 | `flywheel version` | **implemented** | Print the flywheel version. |
 | `flywheel config` | **implemented** | Read and validate `.flywheel/config.json`. |
 | `flywheel doctor [--worker NAME] [--record] [--dir DIR]` | **implemented** | Probe the configured worker's model, then its fallbacks, through the worker's own adapter and print one `<model>: <class>` line per probe; exit 0 when every probe is ok, 1 when any is not. A `flywheel-local/<model>` is checked against its server first (`local endpoint down`, `model not pulled`). `--record` appends a `probed` event per model; an `ok` probe closes that model's breaker. |
-| `flywheel log --task <id> --kind planned --brief <path>` | **implemented** | Record a planned brief to the event log before dispatch. |
+| `flywheel log --task <id> --kind planned --brief <path>` | **implemented** | Record a planned brief to the event log before dispatch. `--shard` switches the event log to per-task shards under `.flywheel/events/` (one-way; the legacy file is sealed and kept) ([#47](https://github.com/suzworx/flywheel/issues/47)). |
 | `flywheel state` | **implemented** | Derive and print state from the event log. |
 | `flywheel run <task> [--worker NAME] [--stall-timeout D] [--increment N] [--worktree]` | **implemented** | Canonical dispatch: pick a worker from `.flywheel/config.json`, or `--worker NAME` to choose among several configured workers; attach the brief, apply the deny policy, record every event; `--stall-timeout` bounds a mid-stream gap (0 = the worker's configured `stall_timeout`, itself 600s). `--increment N` sends only increment N of a brief with an `## Increments` list, as a fresh session, and records it on the dispatched event. `--worktree` runs the worker in `.flywheel/worktrees/<task>` on branch `fw/<task>`; validate and inspect then default to that tree. |
 | `flywheel validate <task> [--workdir]` | **implemented** | Run the brief header's `gate:` lines on the exact tree and check `owns`; exit 0, or 5 on a failing gate or a file outside owns. |
@@ -133,6 +133,7 @@ scratch — consumer repos commit theirs.
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
 | `baseline` | Frontier prices for `flywheel stats`'s cost comparison: `model`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_write_per_mtok` (USD per million tokens; reasoning is priced as output). |
 | `audit` | `first_article` (bool): opt into rule T7 — `flywheel land` refuses a unit (exit 6, rule `T7`) until its worker line (adapter/model of the passing attempt) has a conforming audit, and while the line's latest audit is a nonconformance; an `--exception` landing is not gated. Set it in .flywheel/config.json as `"audit": {"first_article": true}` (`audit.first_article`). |
+| `log` | `shards` (bool): opt into per-task shards under `.flywheel/events/` instead of a single `.flywheel/events.jsonl` file (issue [#47](https://github.com/suzworx/flywheel/issues/47)). Written by `flywheel log --shard`; the layout is one-way. Read-only: use `flywheel log --shard` to switch. |
 
 Read and set it with the CLI:
 

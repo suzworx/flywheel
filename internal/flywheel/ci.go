@@ -40,8 +40,8 @@ jobs:
         env:
           FLYWHEEL_DIR: @FLYWHEEL_DIR@
         run: |
-          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ]; then
-            echo "::error::$FLYWHEEL_DIR/.flywheel/events.jsonl is not committed; flywheel-audit needs the event log in the repository"
+          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ] && [ ! -d "$FLYWHEEL_DIR/.flywheel/events" ]; then
+            echo "::error::the event log is not committed; flywheel-audit needs the event log in the repository"
             exit 1
           fi
           export PATH="$(go env GOPATH)/bin:$PATH"
@@ -64,6 +64,21 @@ jobs:
 // unless version looks like a release, e.g. "v0.17.0" or "0.17.0", which pins
 // "v0.17.0"). It returns the repository root and one piece whose Path is
 // ".github/workflows/flywheel-audit.yml".
+// RepoRoot is the top level of the git repository containing dir
+// (git rev-parse --show-toplevel). A directory outside a repository, or a
+// git that cannot answer, is an error.
+func RepoRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", dir, err)
+	}
+	out, err := exec.Command("git", "-C", abs, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func InitCI(dir, version string) (string, []ScaffoldPiece, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {

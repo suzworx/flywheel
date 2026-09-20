@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -33,6 +36,7 @@ type logOptions struct {
 	note    string
 	goal    string
 	noState bool
+	shard   bool
 }
 
 // logFlags defines log's flags once, so help and run share them.
@@ -55,7 +59,111 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	fs.StringVar(&o.note, "note", "", "free-form note")
 	fs.StringVar(&o.goal, "goal", "", "goal id a planned event links to")
 	fs.BoolVar(&o.noState, "no-state", false, "skip state derivation after appending")
+	fs.BoolVar(&o.shard, "shard", false, "switch this repository's event log to per-task shards under .flywheel/events/ (one-way)")
 	return fs, o
+}
+
+// logShardConflicts checks that no incompatible flags were passed with --shard.
+func logShardConflicts(o *logOptions) error {
+	conflicting := []struct {
+		field string
+		val   string
+	}{
+		{"--task", o.task},
+		{"--kind", o.kind},
+		{"--brief", o.brief},
+		{"--json", o.jsonIn},
+		{"--commit", o.commit},
+		{"--note", o.note},
+		{"--session", o.session},
+		{"--model", o.model},
+		{"--rc", o.rc},
+		{"--reason", o.reason},
+		{"--goal", o.goal},
+		{"--verdict", o.verdict},
+		{"--attempt", o.attempt},
+	}
+	for _, c := range conflicting {
+		if c.val != "" {
+			return fmt.Errorf("%s cannot be used with --shard", c.field)
+		}
+	}
+	if o.noState {
+		return fmt.Errorf("--no-state cannot be used with --shard")
+	}
+	return nil
+}
+
+// runLogShard switches dir to the sharded log layout and marks it in the
+// config: EnableShards, then LoadConfig/WriteConfig with Log.Shards = true
+// (creating the Log section when missing). It prints
+// "sealed <dir>/.flywheel/events.jsonl at N lines; new events go to .flywheel/events/"
+// (or "<dir> already uses the sharded log" when nothing was sealed), and
+// warns on stderr when .github/workflows/flywheel-audit.yml pins a flywheel
+// version (a line containing "version:" under the flywheel action/step, or
+// any "flywheel@v" reference): an older binary in CI verifies only the
+// legacy file.
+func runLogShard(dir string, stdout, stderr io.Writer, now time.Time) error {
+	// Everything that can fail happens BEFORE the layout changes: a config
+	// that does not parse, a config that cannot be written, or an ignore file
+	// that cannot be updated must not leave a migrated repository without its
+	// fence (#351 review). The config is restored when the migration fails.
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil {
+		return err
+	}
+	if err := flywheel.EnsureLocksIgnored(dir); err != nil {
+		return err
+	}
+	had := cfg.Log
+	if cfg.Log == nil {
+		cfg.Log = &flywheel.LogConfig{}
+	}
+	cfg.Log.Shards = true
+	if err := flywheel.WriteConfig(dir, cfg); err != nil {
+		return err
+	}
+	sealed, legacyLines, err := flywheel.EnableShards(dir, now)
+	if err != nil {
+		cfg.Log = had
+		if werr := flywheel.WriteConfig(dir, cfg); werr != nil {
+			return fmt.Errorf("%w (and restoring the config failed: %v)", err, werr)
+		}
+		return err
+	}
+	if sealed {
+		fmt.Fprintf(stdout, "sealed %s/.flywheel/events.jsonl at %d lines; new events go to .flywheel/events/\n", dir, legacyLines)
+	} else {
+		fmt.Fprintf(stdout, "%s already uses the sharded log\n", dir)
+	}
+	warnPinnedAuditWorkflow(dir, stderr)
+	return nil
+}
+
+// pinnedFlywheel matches an audit workflow that installs a PINNED flywheel
+// release (…/cmd/flywheel@v0.17.0), as opposed to @latest. The workflow always
+// carries a go-version line, so the word "version" alone means nothing.
+var pinnedFlywheel = regexp.MustCompile(`flywheel@v?[0-9]`)
+
+// warnPinnedAuditWorkflow warns on stderr when
+// .github/workflows/flywheel-audit.yml installs a pinned flywheel release:
+// that binary may be older than the shards and would verify only the legacy
+// log, reporting a pass over records it cannot see.
+func warnPinnedAuditWorkflow(dir string, stderr io.Writer) {
+	// The workflow lives at the repository root, which a nested factory does
+	// not share (#351 review); fall back to dir when git cannot say.
+	root := dir
+	if r, err := flywheel.RepoRoot(dir); err == nil {
+		root = r
+	}
+	auditPath := filepath.Join(root, ".github", "workflows", "flywheel-audit.yml")
+	b, err := os.ReadFile(auditPath)
+	if err != nil {
+		return // no audit workflow, or unreadable: nothing to warn about
+	}
+	if m := pinnedFlywheel.FindString(string(b)); m != "" {
+		fmt.Fprintf(stderr, "warning: %s pins a flywheel release (%s...); a binary older than the sharded log verifies only .flywheel/events.jsonl — bump the pin\n", auditPath, m)
+	}
 }
 
 // appendEvents appends each event and then derives state unless noState. A
@@ -175,6 +283,18 @@ func runLog(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel log: unexpected argument %q\n", fs.Arg(0))
 		usage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.shard {
+		if err := logShardConflicts(o); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+			usage(os.Stderr)
+			os.Exit(2)
+		}
+		if err := runLogShard(o.dir, os.Stdout, os.Stderr, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if o.jsonIn != "" {
 		runLogJSON(o.dir, o.jsonIn, o.noState)
