@@ -69,10 +69,12 @@ func StaffingLine(role string, r *RoleConfig) string {
 		parts = append(parts, r.Model)
 	}
 	line := strings.Join(parts, " ")
-	if line == "" {
+	switch {
+	case line == "" && r.Session == "":
 		return ""
-	}
-	if r.Session != "" {
+	case line == "": // known only by the session it registers with
+		line = "session " + r.Session
+	case r.Session != "":
 		line = fmt.Sprintf("%s (session %s)", line, r.Session)
 	}
 	return fmt.Sprintf("%s: %s", role, line)

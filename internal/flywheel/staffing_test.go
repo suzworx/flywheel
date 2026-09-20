@@ -173,7 +173,7 @@ func TestStaffingLine(t *testing.T) {
 		{"only adapter", "inspector", &RoleConfig{Adapter: "claude"}, "inspector: claude"},
 		{"only model", "auditor", &RoleConfig{Model: "m2"}, "auditor: m2"},
 		{"adapter and model", "lead", &RoleConfig{Adapter: "sim", Model: "m3"}, "lead: sim m3"},
-		{"only session", "lead", &RoleConfig{Session: "s2"}, ""},
+		{"only session", "lead", &RoleConfig{Session: "s2"}, "lead: session s2"}, // #354 review: a role known only by its session still shows
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,5 +279,42 @@ func TestStaffingUnknownKeyIsAnError(t *testing.T) {
 	}
 	if got, err := cfg.Get("staffing.lead.model"); err != nil || got != "" {
 		t.Errorf("Get(staffing.lead.model) on an unstaffed config = %q, %v; want \"\", nil", got, err)
+	}
+}
+
+// TestStaffingAuditorSessionIndependence checks that one session cannot hold
+// the auditor role and the lead or inspector role, whatever the models are
+// (#354 review).
+func TestStaffingAuditorSessionIndependence(t *testing.T) {
+	base := func(s *StaffingConfig) Config {
+		return Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}, Staffing: s}
+	}
+	same := base(&StaffingConfig{
+		Lead:    &RoleConfig{Adapter: "claude", Model: "m1", Session: "s1"},
+		Auditor: &RoleConfig{Adapter: "claude", Model: "m2", Session: "s1"},
+	})
+	err := same.Validate()
+	if err == nil || !strings.Contains(err.Error(), "also holds the lead role") {
+		t.Errorf("Validate() = %v, want a refusal naming the shared session", err)
+	}
+	apart := base(&StaffingConfig{
+		Lead:      &RoleConfig{Adapter: "claude", Model: "m1", Session: "s1"},
+		Inspector: &RoleConfig{Adapter: "cli", Session: "s2"},
+		Auditor:   &RoleConfig{Adapter: "codex", Model: "m2", Session: "s3"},
+	})
+	if err := apart.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil for three separate sessions", err)
+	}
+}
+
+// TestStaffingSetLeavesNothingBehindOnError checks that a rejected Set does
+// not create an empty staffing section (#354 review).
+func TestStaffingSetLeavesNothingBehindOnError(t *testing.T) {
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}}
+	if err := cfg.Set("staffing.lead.agent", "claude"); err == nil {
+		t.Fatal("Set(staffing.lead.agent) succeeded, want an unknown-key error")
+	}
+	if cfg.Staffing != nil {
+		t.Errorf("Staffing = %+v after a rejected Set, want nil", cfg.Staffing)
 	}
 }

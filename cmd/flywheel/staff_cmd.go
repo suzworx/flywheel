@@ -62,6 +62,14 @@ func runStaff(args []string) {
 		staffUsage(os.Stderr)
 		os.Exit(2)
 	}
+	// The config is read (and so validated) BEFORE the append: an invalid
+	// staffing section must not be recorded on the floor and reported as a
+	// success (#354 review).
+	cfg, _, err := flywheel.LoadConfig(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel staff: %v\n", err)
+		os.Exit(1)
+	}
 	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
 		Kind: "staffed", Session: o.session, Persona: o.role, Model: o.model, Note: o.note,
 	}); err != nil {
@@ -73,8 +81,7 @@ func runStaff(args []string) {
 		os.Exit(1)
 	}
 
-	cfg, _, err := flywheel.LoadConfig(o.dir)
-	if err == nil && cfg.Staffing != nil {
+	if cfg.Staffing != nil {
 		var role *flywheel.RoleConfig
 		switch o.role {
 		case "lead":

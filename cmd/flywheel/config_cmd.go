@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	register("config", "read and validate the flywheel config\n    get <key>          print a config value (bare keys use the default worker)\n    set <key> <value>  set a config value (model, variant, adapter, max_parallel,\n                       feedback.upstream, feedback.submit, limits.per_host)\n    show               print the effective config as JSON\n    validate           check the config and list every problem", runConfig)
+	register("config", "read and validate the flywheel config\n    get <key>          print a config value (bare keys use the default worker)\n    set <key> <value>  set a config value (model, variant, adapter, max_parallel,\n                       feedback.upstream, feedback.submit, limits.per_host,\n                       staffing.<lead|inspector|auditor>.<adapter|model|session>)\n    show               print the effective config as JSON\n    validate           check the config and list every problem", runConfig)
 	registerHelp("config", "flywheel config <get|set|show|validate> [--dir DIR]", nil)
 }
 

@@ -472,14 +472,18 @@ func (c Config) Validate() error {
 				problems = append(problems, fmt.Sprintf("staffing.%s: adapter %q must be %s, or \"cli\"", role.Name, role.Cfg.Adapter, strings.Join(quoted(workerAdapters), ", ")))
 			}
 		}
-		// An audit is independent only when the auditor is not the agent and
-		// model that led or inspected the work.
-		if a := c.Staffing.Auditor; a != nil && a.Adapter != "" && a.Model != "" {
+		// An audit is independent only when the auditor is neither the same
+		// session nor the same agent and model as the lead or the inspector
+		// (#354 review: one session holding both roles is the plainer case).
+		if a := c.Staffing.Auditor; a != nil {
 			for _, role := range c.Staffing.roles() {
 				if role.Name == "auditor" || role.Cfg == nil {
 					continue
 				}
-				if role.Cfg.Adapter == a.Adapter && role.Cfg.Model == a.Model {
+				if a.Session != "" && role.Cfg.Session == a.Session {
+					problems = append(problems, fmt.Sprintf("staffing.auditor: session %q also holds the %s role (an audit is only independent when it is)", a.Session, role.Name))
+				}
+				if a.Adapter != "" && a.Model != "" && role.Cfg.Adapter == a.Adapter && role.Cfg.Model == a.Model {
 					problems = append(problems, fmt.Sprintf("staffing.auditor: must not be the same agent and model as the %s (an audit is only independent when it is)", role.Name))
 				}
 			}
@@ -642,44 +646,36 @@ func (c *Config) Set(key, value string) error {
 		return c.settableErr(key)
 	}
 	if rest, ok := strings.CutPrefix(key, "staffing."); ok {
-		if dot := strings.IndexByte(rest, '.'); dot > 0 {
-			roleField := rest[:dot]
-			roleKey := rest[dot+1:]
+		if name, field, found := strings.Cut(rest, "."); found {
+			// Nothing is created before the key is known to be settable, so a
+			// rejected Set leaves no empty role behind (#354 review).
+			known := false
+			for _, role := range (*StaffingConfig)(nil).roles() {
+				if role.Name == name {
+					known = true
+				}
+			}
+			if !known || (field != "adapter" && field != "model" && field != "session") {
+				return c.settableErr(key)
+			}
 			if c.Staffing == nil {
 				c.Staffing = &StaffingConfig{}
 			}
-			var role *RoleConfig
-			switch roleField {
-			case "lead":
-				if c.Staffing.Lead == nil {
-					c.Staffing.Lead = &RoleConfig{}
-				}
-				role = c.Staffing.Lead
-			case "inspector":
-				if c.Staffing.Inspector == nil {
-					c.Staffing.Inspector = &RoleConfig{}
-				}
-				role = c.Staffing.Inspector
-			case "auditor":
-				if c.Staffing.Auditor == nil {
-					c.Staffing.Auditor = &RoleConfig{}
-				}
-				role = c.Staffing.Auditor
-			default:
-				return c.settableErr(key)
+			slot := map[string]**RoleConfig{
+				"lead": &c.Staffing.Lead, "inspector": &c.Staffing.Inspector, "auditor": &c.Staffing.Auditor,
+			}[name]
+			if *slot == nil {
+				*slot = &RoleConfig{}
 			}
-			switch roleKey {
+			switch field {
 			case "adapter":
-				role.Adapter = value
-				return nil
+				(*slot).Adapter = value
 			case "model":
-				role.Model = value
-				return nil
-			case "session":
-				role.Session = value
-				return nil
+				(*slot).Model = value
+			default:
+				(*slot).Session = value
 			}
-			return c.settableErr(key)
+			return nil
 		}
 	}
 	switch key {

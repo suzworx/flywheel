@@ -94,12 +94,16 @@ func FactorySummary(dir string) (string, error) {
 	// Add staffing lines
 	lines = append(lines, staffingLines...)
 
-	// Load events to check staffing mismatches
-	events, err := ReadEvents(dir)
-	if err == nil {
-		mismatches := StaffingMismatch(cfg, events)
-		for _, m := range mismatches {
-			lines = append(lines, fmt.Sprintf("  ! %s", m))
+	// Does the floor agree with the configured roles? A ledger that cannot be
+	// read is reported rather than silently skipped (#354 review).
+	if len(staffingLines) > 0 {
+		events, err := ReadEvents(dir)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("  ! staffing: the event log could not be read, so the floor was not checked: %v", err))
+		} else {
+			for _, m := range StaffingMismatch(cfg, events) {
+				lines = append(lines, fmt.Sprintf("  ! %s", m))
+			}
 		}
 	}
 
