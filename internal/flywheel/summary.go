@@ -47,6 +47,14 @@ func FactorySummary(dir string) (string, error) {
 	}
 	lines = append(lines, fmt.Sprintf("  workers: %s", strings.Join(workerStrs, "; ")))
 
+	// Staffing lines
+	var staffingLines []string
+	for _, role := range cfg.Staffing.roles() {
+		if line := StaffingLine(role.Name, role.Cfg); line != "" {
+			staffingLines = append(staffingLines, "  "+line)
+		}
+	}
+
 	// Limits line
 	var limitStrs []string
 	if cfg.Limits.PerHost > 0 {
@@ -82,6 +90,22 @@ func FactorySummary(dir string) (string, error) {
 		limitStrs = append(limitStrs, "rate none")
 	}
 	lines = append(lines, fmt.Sprintf("  limits: %s", strings.Join(limitStrs, " · ")))
+
+	// Add staffing lines
+	lines = append(lines, staffingLines...)
+
+	// Does the floor agree with the configured roles? A ledger that cannot be
+	// read is reported rather than silently skipped (#354 review).
+	if len(staffingLines) > 0 {
+		events, err := ReadEvents(dir)
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("  ! staffing: the event log could not be read, so the floor was not checked: %v", err))
+		} else {
+			for _, m := range StaffingMismatch(cfg, events) {
+				lines = append(lines, fmt.Sprintf("  ! %s", m))
+			}
+		}
+	}
 
 	// Audit line
 	auditStatus := "off"
