@@ -58,32 +58,60 @@ func InWIP(station string) bool {
 	return false
 }
 
-// LineOf is the product line of a task: the line its latest dispatched
-// event recorded (lineFor), else the line its brief resolves to
-// (AttemptBrief + Config.LineFor) for a unit that was planned but never
-// dispatched, else "". dir is the factory directory the brief paths are
-// relative to.
+// LineOf is the product line of a task: the line recorded on the dispatch
+// of its CURRENT attempt (the one Derive settles on, not whichever dispatch
+// happens to sit last in the slice — a merged log is not in state-machine
+// order), else the line its brief header resolves to, for a unit that was
+// planned but never dispatched.
+//
+// The header comes from the planned or amended event itself (issue #259
+// records it), so this stays a derivation of the ledger. Only a legacy
+// ledger whose events carry no header falls back to reading the brief file
+// under dir, and then a missing file simply means no line.
 func LineOf(cfg Config, dir string, events []Event, task string) string {
-	// Find the latest dispatched attempt for this task
-	var latestAttempt string
-	for _, e := range events {
-		if e.Kind == "dispatched" && e.Task == task && e.Attempt != "" {
-			latestAttempt = e.Attempt
+	var ts TaskState
+	for _, t := range Derive(events).Tasks {
+		if t.ID == task {
+			ts = t
+			break
 		}
 	}
-	if latestAttempt != "" {
-		line := lineFor(events, task, latestAttempt)
-		if line != "" {
+	if ts.ID == "" {
+		return ""
+	}
+	if attempt := currentAttempt(ts, events); attempt != "" {
+		if line := lineFor(events, task, attempt); line != "" {
 			return line
 		}
 	}
-	header, _, err := AttemptBrief(dir, events, task)
-	if err != nil {
-		return ""
+	header, ok := plannedHeader(events, task)
+	if !ok {
+		h, _, err := AttemptBrief(dir, events, task)
+		if err != nil {
+			return ""
+		}
+		header = h
 	}
 	resolved, ok, _ := cfg.LineFor(header)
 	if !ok {
 		return ""
 	}
 	return resolved.Name
+}
+
+// plannedHeader returns the brief header the task's latest planned or
+// amended event recorded, and false when neither carries one (a ledger
+// written before issue #259).
+func plannedHeader(events []Event, task string) (BriefHeader, bool) {
+	var h BriefHeader
+	found := false
+	for _, e := range events {
+		if e.Task != task || e.Header == nil {
+			continue
+		}
+		if e.Kind == "planned" || e.Kind == "amended" {
+			h, found = *e.Header, true
+		}
+	}
+	return h, found
 }

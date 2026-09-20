@@ -1,8 +1,10 @@
 package flywheel
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -165,7 +167,7 @@ func TestBuildProductLinesCarriesLimit(t *testing.T) {
 
 func TestFloorTextUnchangedByStations(t *testing.T) {
 	fl := fixtureFloor(t)
-	var buf byteBuffer
+	var buf bytes.Buffer
 	RenderText(&buf, fl, 100, false)
 	got := normLF(buf.Bytes())
 	want, err := os.ReadFile("testdata/factory/floor.golden")
@@ -216,16 +218,45 @@ func TestConfigLineWIPGetAndValidate(t *testing.T) {
 	}
 }
 
-// byteBuffer accumulates write() data in memory.
-type byteBuffer struct {
-	b []byte
+// TestLineOfUsesCurrentAttemptAndLedgerHeader checks that LineOf follows the
+// attempt Derive settles on rather than slice order, and resolves a planned
+// unit from the header the ledger records rather than a file (#358 review).
+func TestLineOfUsesCurrentAttemptAndLedgerHeader(t *testing.T) {
+	cfg := Config{Lines: []Line{
+		{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
+		{Name: "docs", Worker: "w1", Owns: []string{"docs/"}},
+	}}
+	// A merged log is not in state-machine order: the older r2 dispatch (which
+	// names a line) sits after the newer r1 dispatch (which does not).
+	events := []Event{
+		{TS: "2026-09-19T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-19T00:03:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-19T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2", Line: "docs"},
+	}
+	if got := LineOf(cfg, t.TempDir(), events, "T1"); got != "" {
+		t.Errorf("LineOf() = %q, want empty: the current attempt r1 recorded no line", got)
+	}
+
+	// Planned only: the header on the planned event decides, with no file.
+	planned := []Event{{
+		TS: "2026-09-19T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt",
+		Owns: []string{"docs/guide.md"}, Header: &BriefHeader{Owns: []string{"docs/guide.md"}},
+	}}
+	if got := LineOf(cfg, t.TempDir(), planned, "T2"); got != "docs" {
+		t.Errorf("LineOf() = %q, want docs from the recorded header (no brief file exists)", got)
+	}
 }
 
-func (b *byteBuffer) Write(p []byte) (int, error) {
-	b.b = append(b.b, p...)
-	return len(p), nil
-}
-
-func (b *byteBuffer) Bytes() []byte {
-	return b.b
+// TestConfigLineWIPListedInGuidance checks that an unknown key's error names
+// the line keys Get accepts (#358 review).
+func TestConfigLineWIPListedInGuidance(t *testing.T) {
+	cfg := Config{Version: 1, Lines: []Line{{Name: "cli", Worker: "default"}},
+		Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}}
+	_, err := cfg.Get("lines.cli.wipp")
+	if err == nil {
+		t.Fatal("Get(lines.cli.wipp) succeeded, want an unknown-key error")
+	}
+	if !strings.Contains(err.Error(), "lines.cli.wip") {
+		t.Errorf("error = %q, want it to name lines.cli.wip", err)
+	}
 }

@@ -642,6 +642,9 @@ func (c Config) validKeys() []string {
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
 	}
+	for _, l := range c.Lines {
+		keys = append(keys, "lines."+l.Name+".wip")
+	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
 			keys = append(keys, "workers."+w.Name+"."+k)
