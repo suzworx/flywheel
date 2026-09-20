@@ -740,7 +740,7 @@ func TestInitSeededKeepsExistingConfig(t *testing.T) {
 // the ignore check reads the work tree.
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
 	if _, err := cmd.Output(); err != nil {
 		var e *exec.ExitError

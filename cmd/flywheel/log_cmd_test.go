@@ -14,7 +14,7 @@ import (
 
 func gitInitRepo(t *testing.T, dir string) {
 	t.Helper()
-	cmd := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q")
+	cmd := exec.Command("git", "-c", "core.autocrlf=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "init", "-q")
 	cmd.Dir = dir
 	if _, err := cmd.Output(); err != nil {
 		var e *exec.ExitError

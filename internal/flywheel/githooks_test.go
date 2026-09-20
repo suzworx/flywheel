@@ -10,7 +10,7 @@ import (
 
 func TestGitHooksWritesBothOnce(t *testing.T) {
 	dir := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestGitHooksWritesBothOnce(t *testing.T) {
 
 func TestGitHooksLeavesExistingHookUntouched(t *testing.T) {
 	dir := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 
@@ -163,7 +163,7 @@ func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
 // ledger, not the root's (#308 review).
 func TestGitHooksPrePushVerifiesSubdirLedger(t *testing.T) {
 	dir := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 	sub := filepath.Join(dir, "services", "api")
@@ -200,7 +200,7 @@ func TestGitHooksPrePushSkipsDeletes(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 

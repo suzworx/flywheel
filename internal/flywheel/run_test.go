@@ -563,6 +563,8 @@ func TestRunRecordsBaseline(t *testing.T) {
 	}
 	git(t, dir, []string{"init", "-q"})
 	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	git(t, dir, []string{"config", "gc.auto", "0"})
+	git(t, dir, []string{"config", "maintenance.auto", "false"})
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}

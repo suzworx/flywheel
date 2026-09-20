@@ -31,11 +31,23 @@ func git(t *testing.T, wd string, args []string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitInitFlags are the -c settings every test repository is created with:
+// no CRLF translation, and no automatic gc or maintenance, so git never
+// leaves a background process writing in a temp directory (issue #352).
+func gitInitFlags() []string {
+	return []string{"-c", "core.autocrlf=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
+}
+
 // initRepo makes a throwaway git repo in dir with one committed file a.go.
 func initRepo(t *testing.T, dir string) {
 	t.Helper()
-	git(t, dir, []string{"init", "-q"})
+	git(t, dir, append(gitInitFlags(), "init", "-q"))
+	// Recorded in the repository too, so every later command inherits them:
+	// git's background maintenance must never outlive the test and race
+	// t.TempDir's cleanup (issue #352).
 	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	git(t, dir, []string{"config", "gc.auto", "0"})
+	git(t, dir, []string{"config", "maintenance.auto", "false"})
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\n"), 0o644); err != nil {
 		t.Fatalf("write a.go: %v", err)
 	}

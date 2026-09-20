@@ -76,7 +76,7 @@ func TestFactorySummaryShowsLimits(t *testing.T) {
 func TestFactorySummaryDetectsHooks(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", dir).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", dir)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 

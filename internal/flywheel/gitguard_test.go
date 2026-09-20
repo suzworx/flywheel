@@ -274,7 +274,7 @@ func newRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, args := range [][]string{
-		{"-c", "core.autocrlf=false", "init", "-q"},
+		{"-c", "core.autocrlf=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "init", "-q"},
 		{"-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "--allow-empty", "-m", "init"},
 	} {
 		cmd := exec.Command("git", args...)

@@ -11,7 +11,7 @@ import (
 // TestInitCIWritesAtRepoRoot tests that InitCI writes the file at the repository root
 func TestInitCIWritesAtRepoRoot(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
+	err := exec.Command("git", append(gitInitFlags(), "init", "-q", root)...).Run()
 	if err != nil {
 		t.Fatalf("git init: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestInitCIWritesAtRepoRoot(t *testing.T) {
 // even when called from a subdirectory
 func TestInitCISubdirTargetsFactory(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
+	err := exec.Command("git", append(gitInitFlags(), "init", "-q", root)...).Run()
 	if err != nil {
 		t.Fatalf("git init: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestInitCIPinsReleaseVersion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
 			root := t.TempDir()
-			err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
+			err := exec.Command("git", append(gitInitFlags(), "init", "-q", root)...).Run()
 			if err != nil {
 				t.Fatalf("git init: %v", err)
 			}
@@ -134,7 +134,7 @@ func TestInitCIPinsReleaseVersion(t *testing.T) {
 // TestInitCINeverOverwrites tests that InitCI never overwrites an existing file
 func TestInitCINeverOverwrites(t *testing.T) {
 	root := t.TempDir()
-	err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run()
+	err := exec.Command("git", append(gitInitFlags(), "init", "-q", root)...).Run()
 	if err != nil {
 		t.Fatalf("git init: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestInitCINotARepo(t *testing.T) {
 // written safely: YAML-quoted in env, used as "$FLYWHEEL_DIR" (#315 review).
 func TestInitCIPathWithSpace(t *testing.T) {
 	root := t.TempDir()
-	if err := exec.Command("git", "-c", "core.autocrlf=false", "init", "-q", root).Run(); err != nil {
+	if err := exec.Command("git", append(gitInitFlags(), "init", "-q", root)...).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
 	sub := filepath.Join(root, "order api")
