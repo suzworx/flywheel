@@ -49,10 +49,15 @@ type Staffing struct {
 // differ.
 type FloorRole struct {
 	Name       string // lead, inspector, auditor
-	Configured string // "claude claude-opus-5 (session lead-fw)", from StaffingLine's body; "" when unconfigured
-	Session    string // the latest staffed event's session; "" when never staffed
-	Model      string // that event's model
-	Mismatch   bool
+	Configured string // the configured role as one line, for text output; "" when unconfigured
+	// The configured parts, kept apart from Configured: a display string
+	// cannot be split back into columns (#357 review).
+	ConfAdapter string
+	ConfModel   string
+	ConfSession string
+	Session     string // the latest staffed event's session; "" when never staffed
+	Model       string // that event's model
+	Mismatch    bool
 }
 
 // staffRole is one registered role holder: the latest staffed event's session
@@ -597,11 +602,12 @@ func buildStaffing(cfg Config, events []Event) Staffing {
 			}
 			continue
 		}
-		configured := RoleSummary(role.Cfg)
 		floor := staffed[role.Name]
 		mismatch := role.Cfg.Session != "" && floor.Session != "" && floor.Session != role.Cfg.Session
 		s.Roles = append(s.Roles, FloorRole{
-			Name: role.Name, Configured: configured, Session: floor.Session, Model: floor.Model, Mismatch: mismatch,
+			Name: role.Name, Configured: RoleSummary(role.Cfg),
+			ConfAdapter: role.Cfg.Adapter, ConfModel: role.Cfg.Model, ConfSession: role.Cfg.Session,
+			Session: floor.Session, Model: floor.Model, Mismatch: mismatch,
 		})
 	}
 	return s

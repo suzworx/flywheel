@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/suzworx/flywheel/internal/term"
 )
 
 func TestFloorStaffingLeadLineUnchanged(t *testing.T) {
@@ -244,5 +246,48 @@ func TestFloorStaffingWorkersViewUnconfiguredRole(t *testing.T) {
 	}
 	if frame := m.View(d, 80, 12, false); !strings.Contains(frame, "lead") {
 		t.Errorf("frame does not show the role:\n%s", frame)
+	}
+}
+
+// TestFloorStaffingWorkersColumnsFromFields checks that the workers view
+// takes the configured adapter and model from the role's fields, not by
+// splitting its display line (#357 review).
+func TestFloorStaffingWorkersColumnsFromFields(t *testing.T) {
+	cfg := Config{Staffing: &StaffingConfig{
+		Lead:      &RoleConfig{Session: "s2"},                                 // session only
+		Inspector: &RoleConfig{Model: "m2"},                                   // model only
+		Auditor:   &RoleConfig{Adapter: "claude", Model: "m1", Session: "s1"}, // all three
+	}}
+	d := TUIData{Floor: Floor{Staffing: buildStaffing(cfg, nil)}}
+	m := NewTUI()
+	m.view = "workers"
+	_, rows := m.Rows(d)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want three roles", len(rows))
+	}
+	want := [][3]string{{"lead", "-", ""}, {"inspector", "-", "m2"}, {"auditor", "claude", "m1"}}
+	for i, w := range want {
+		if rows[i][0] != w[0] || rows[i][1] != w[1] || rows[i][2] != w[2] {
+			t.Errorf("row %d = %v, want name %q adapter %q model %q", i, rows[i], w[0], w[1], w[2])
+		}
+	}
+}
+
+// TestFloorStaffingAndonRowHasNoDrillDown checks that a staffing condition
+// in the andon view says so instead of asking Explain for a task that does
+// not exist (#357 review).
+func TestFloorStaffingAndonRowHasNoDrillDown(t *testing.T) {
+	d := TUIData{Floor: Floor{
+		Units: []Unit{{Task: "T1", Stage: "building", RunState: "running"}},
+		Andon: []Andon{{Task: "staffing/lead", State: "mismatch"}},
+	}}
+	m := NewTUI()
+	m.view = "andon"
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	if _, _, ok := m.Wants(); ok {
+		t.Error("Wants() ok = true for a staffing andon row, want no drill-down")
+	}
+	if frame := m.View(d, 90, 12, false); !strings.Contains(frame, "not a unit") {
+		t.Errorf("frame does not explain why:\n%s", frame)
 	}
 }
