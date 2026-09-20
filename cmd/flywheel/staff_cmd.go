@@ -62,6 +62,14 @@ func runStaff(args []string) {
 		staffUsage(os.Stderr)
 		os.Exit(2)
 	}
+	// The config is read (and so validated) BEFORE the append: an invalid
+	// staffing section must not be recorded on the floor and reported as a
+	// success (#354 review).
+	cfg, _, err := flywheel.LoadConfig(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel staff: %v\n", err)
+		os.Exit(1)
+	}
 	if err := flywheel.AppendEvent(o.dir, flywheel.Event{
 		Kind: "staffed", Session: o.session, Persona: o.role, Model: o.model, Note: o.note,
 	}); err != nil {
@@ -72,5 +80,21 @@ func runStaff(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel staff: %v\n", err)
 		os.Exit(1)
 	}
+
+	if cfg.Staffing != nil {
+		var role *flywheel.RoleConfig
+		switch o.role {
+		case "lead":
+			role = cfg.Staffing.Lead
+		case "inspector":
+			role = cfg.Staffing.Inspector
+		case "auditor":
+			role = cfg.Staffing.Auditor
+		}
+		if role != nil && role.Session != "" && role.Session != o.session {
+			fmt.Fprintf(os.Stderr, "warning: .flywheel/config.json staffing.%s names session %s, registering %s\n", o.role, role.Session, o.session)
+		}
+	}
+
 	fmt.Printf("%s %s\n", o.role, o.session)
 }

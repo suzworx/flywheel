@@ -133,6 +133,7 @@ scratch — consumer repos commit theirs.
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
 | `baseline` | Frontier prices for `flywheel stats`'s cost comparison: `model`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_write_per_mtok` (USD per million tokens; reasoning is priced as output). |
 | `audit` | `first_article` (bool): opt into rule T7 — `flywheel land` refuses a unit (exit 6, rule `T7`) until its worker line (adapter/model of the passing attempt) has a conforming audit, and while the line's latest audit is a nonconformance; an `--exception` landing is not gated. Set it in .flywheel/config.json as `"audit": {"first_article": true}` (`audit.first_article`). |
+| `staffing` | Declares the factory's roles: `lead` (the agent that writes briefs and lands units), `inspector` (audits before landing), and `auditor` (audits after landing). Each role names an `adapter` (`opencode`, `claude`, `sim`, `codex`, or `cli` for a person), `model`, and optional `session` (the name used with `flywheel staff`). `flywheel init` validates the independence rule: the auditor must not be the same agent and model as the lead or inspector (an audit is only independent when it is). `flywheel factory` shows the configured roles and flags any floor whose registered session does not match. |
 | `log` | `shards` (bool): opt into per-task shards under `.flywheel/events/` instead of a single `.flywheel/events.jsonl` file (issue [#47](https://github.com/suzworx/flywheel/issues/47)). Written by `flywheel log --shard`; the layout is one-way. Read-only: use `flywheel log --shard` to switch. |
 
 Read and set it with the CLI:
@@ -149,7 +150,10 @@ flywheel config validate                    # check the config, list every probl
 ```
 
 Settable keys: `model`, `variant`, `adapter`, `max_parallel` (bare = the default worker, or
-`workers.<name>.<key>`), `feedback.upstream`, `feedback.submit`, `limits.per_host`.
+`workers.<name>.<key>`), `feedback.upstream`, `feedback.submit`, `limits.per_host`,
+`staffing.lead.adapter`, `staffing.lead.model`, `staffing.lead.session`,
+`staffing.inspector.adapter`, `staffing.inspector.model`, `staffing.inspector.session`,
+`staffing.auditor.adapter`, `staffing.auditor.model`, `staffing.auditor.session`.
 `fallbacks` is not settable — edit `.flywheel/config.json` for it. `flywheel init --model <m>
 --variant <v>` seeds a fresh config at setup.
 
