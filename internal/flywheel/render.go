@@ -257,6 +257,7 @@ type jUnit struct {
 	LastAge       int    `json:"last_age"`
 	RunState      string `json:"run_state"`
 	PeakReasoning int    `json:"peak_reasoning"`
+	Station       string `json:"station,omitempty"`
 }
 
 type jAndon struct {
@@ -276,12 +277,15 @@ type jOutput struct {
 }
 
 type jProductLine struct {
-	Name     string   `json:"name"`
-	Worker   string   `json:"worker"`
-	Owns     []string `json:"owns,omitempty"`
-	Units    int      `json:"units"`
-	Building int      `json:"building"`
-	Landed   int      `json:"landed"`
+	Name     string         `json:"name"`
+	Worker   string         `json:"worker"`
+	Owns     []string       `json:"owns,omitempty"`
+	Units    int            `json:"units"`
+	Building int            `json:"building"`
+	Landed   int            `json:"landed"`
+	Stations map[string]int `json:"stations,omitempty"`
+	WIP      int            `json:"wip,omitempty"`
+	Limit    int            `json:"limit,omitempty"`
 }
 
 type jFloor struct {
@@ -305,11 +309,11 @@ func RenderJSON(w io.Writer, f Floor) {
 		j.Lines = append(j.Lines, jLine{Name: l.Name, Adapter: l.Adapter, Model: l.Model, MaxParallel: l.MaxParallel, Busy: l.Busy})
 	}
 	for _, pl := range f.ProductLines {
-		j.ProductLines = append(j.ProductLines, jProductLine{Name: pl.Name, Worker: pl.Worker, Owns: pl.Owns, Units: pl.Units, Building: pl.Building, Landed: pl.Landed})
+		j.ProductLines = append(j.ProductLines, jProductLine{Name: pl.Name, Worker: pl.Worker, Owns: pl.Owns, Units: pl.Units, Building: pl.Building, Landed: pl.Landed, Stations: pl.Stations, WIP: pl.WIP, Limit: pl.Limit})
 	}
 	j.Staffing = jStaff{Lead: f.Staffing.Lead}
 	for _, u := range f.Units {
-		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak})
+		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station})
 	}
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})

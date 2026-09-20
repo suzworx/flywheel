@@ -63,6 +63,7 @@ type Unit struct {
 	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string // the product line from the latest dispatched event (issue #69); "" when none
+	Station  string // where the unit stands on its line (issue #69 follow-up)
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -121,9 +122,12 @@ type ProductLine struct {
 	Name     string
 	Worker   string
 	Owns     []string
-	Units    int // units whose Line is Name
-	Building int // of those, Stage "building"
-	Landed   int // of those, Stage "landed"
+	Units    int            // units whose Line is Name
+	Building int            // of those, Stage "building"
+	Landed   int            // of those, Stage "landed"
+	Stations map[string]int // units per station, by Stations' names
+	WIP      int            // units at a station InWIP reports
+	Limit    int            // lines[].wip, 0 when unlimited
 }
 
 // buildProductLines returns one ProductLine per cfg.Lines entry, in config
@@ -136,7 +140,7 @@ func buildProductLines(cfg Config, units []Unit) []ProductLine {
 	}
 	lineMap := map[string]*ProductLine{}
 	for _, cl := range cfg.Lines {
-		lineMap[cl.Name] = &ProductLine{Name: cl.Name, Worker: cl.Worker, Owns: cl.Owns}
+		lineMap[cl.Name] = &ProductLine{Name: cl.Name, Worker: cl.Worker, Owns: cl.Owns, Limit: cl.WIP, Stations: map[string]int{}}
 	}
 	noneEntry := &ProductLine{Name: "(none)", Worker: ""}
 	for _, u := range units {
@@ -148,6 +152,10 @@ func buildProductLines(cfg Config, units []Unit) []ProductLine {
 			}
 			if u.Stage == "landed" {
 				pl.Landed++
+			}
+			pl.Stations[u.Station]++
+			if InWIP(u.Station) {
+				pl.WIP++
 			}
 		} else {
 			noneEntry.Units++
@@ -346,7 +354,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	}
 	st := Derive(w.events)
 	stallTimeout := int(cfg.DefaultWorker().stallTimeoutDuration().Seconds())
-	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout)
+	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout, cfg)
 	if uerr != nil {
 		return Floor{}, uerr
 	}
@@ -483,7 +491,7 @@ func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtim
 // for its run state, and tallies in-flight units by model. stallTimeout is
 // the default worker's configured stall_timeout in seconds, passed through to
 // classifyRun (issue #85).
-func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int) ([]Unit, map[string]int, error) {
+func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int, cfg Config) ([]Unit, map[string]int, error) {
 	var units []Unit
 	byModel := map[string]int{}
 	for _, t := range st.Tasks {
@@ -514,6 +522,12 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
 		}
+		if u.Line == "" {
+			// A unit planned but never dispatched still belongs to the line
+			// its brief resolves to.
+			u.Line = LineOf(cfg, dir, w.events, t.ID)
+		}
+		u.Station = StationFor(t, w.events)
 		if liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
