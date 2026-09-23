@@ -71,6 +71,21 @@ You do:
 - Write a gate for a document as a **structure** check — every required heading present and a
   minimum line count — never only keywords, which a truncated tail can satisfy: a part-by-part
   overwrite leaves the last section only, and keywords that survive in it still pass.
+- A unit that writes prose about the codebase needs a gate that **resolves every path or symbol
+  the document names**: extract every backticked file name or identifier and fail when it is not
+  in `git ls-files` (or a symbol search). A worker rewrote a diagram document and named four files
+  and hooks that exist nowhere; its gates only grepped for removed strings, which proves nothing
+  about what was added.
+- A document that cites a CLI gets the **verified command list in the brief** and a **denylist**
+  gate of the known-wrong forms. A cheap worker writing an infrastructure runbook invented CLI
+  flags, a region id and latency numbers, and took 12 corrections: route infrastructure and
+  runbook units to a stronger model than the cheapest worker.
+- **Ban the wrong claim, not the word**: gate on the exact false phrase, and say in the brief
+  which mentions stay legitimate. A gate banning a file name pushed the worker to attribute the
+  fact to the replacement file, which was backwards.
+- Mark a gate that runs **only on a developer machine** (a local stack, a device) in the brief,
+  and run it in the lead's verification pass: a gate that needs a local database stack never
+  runs in CI, so CI will never see what it finds.
 - A new gate's first run is mostly about the gate. A UI crawler added to catch unreachable
   routes returned 13 failures on its first run: three were real defects — one falsified a claim
   a lead had written into a commit message and reported as fixed — the other ten the gate's own
