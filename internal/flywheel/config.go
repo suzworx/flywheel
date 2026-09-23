@@ -24,6 +24,7 @@ type Line struct {
 	Name   string   `json:"name"`
 	Worker string   `json:"worker"`         // a worker name in Workers
 	Owns   []string `json:"owns,omitempty"` // path entries, matched like a brief's owns:
+	WIP    int      `json:"wip,omitempty"`  // units in flight this line may hold; 0 is unlimited (issue #69 follow-up)
 }
 
 // RoleConfig is who holds one factory role (issue #69): the agent CLI and model
@@ -379,6 +380,9 @@ func (c Config) Validate() error {
 		if _, ok := c.Worker(l.Worker); !ok {
 			problems = append(problems, fmt.Sprintf("line %q: worker %q is not in workers[]", l.Name, l.Worker))
 		}
+		if l.WIP < 0 {
+			problems = append(problems, fmt.Sprintf("line %q: wip must not be negative", l.Name))
+		}
 	}
 	if c.Limits.PerHost < 0 {
 		problems = append(problems, fmt.Sprintf("limits.per_host %d must be >= 0", c.Limits.PerHost))
@@ -505,6 +509,16 @@ func (c Config) Worker(name string) (Worker, bool) {
 	return Worker{}, false
 }
 
+// Line returns the line with the given name.
+func (c Config) Line(name string) (Line, bool) {
+	for _, l := range c.Lines {
+		if l.Name == name {
+			return l, true
+		}
+	}
+	return Line{}, false
+}
+
 // DefaultWorker returns the first worker, which owns the bare keys in Get.
 func (c Config) DefaultWorker() Worker {
 	if len(c.Workers) == 0 {
@@ -547,6 +561,16 @@ func (c Config) Get(key string) (string, error) {
 						return role.Cfg.Model, nil
 					}
 					return role.Cfg.Session, nil
+				}
+			}
+		}
+	}
+	if rest, ok := strings.CutPrefix(key, "lines."); ok {
+		if name, field, found := strings.Cut(rest, "."); found {
+			if l, ok := c.Line(name); ok {
+				switch field {
+				case "wip":
+					return strconv.Itoa(l.WIP), nil
 				}
 			}
 		}
@@ -618,6 +642,9 @@ func (c Config) validKeys() []string {
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
 	}
+	for _, l := range c.Lines {
+		keys = append(keys, "lines."+l.Name+".wip")
+	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
 			keys = append(keys, "workers."+w.Name+"."+k)
@@ -676,6 +703,11 @@ func (c *Config) Set(key, value string) error {
 				(*slot).Session = value
 			}
 			return nil
+		}
+	}
+	if rest, ok := strings.CutPrefix(key, "lines."); ok {
+		if _, field, found := strings.Cut(rest, "."); found && field == "wip" {
+			return fmt.Errorf("lines.<name>.wip is not settable; edit .flywheel/config.json")
 		}
 	}
 	switch key {
