@@ -254,10 +254,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case 'l':
 			if m.view == "units" || m.view == "andon" {
 				if m.cursor < len(rows) && len(rows) > 0 {
-					m.drillKind = "log"
-					m.drillTask = m.getTaskAtCursor(d)
-					m.detailTop = 0
-					m.statusMsg = ""
+					m.drill(d, "log")
 				}
 			}
 		}
@@ -284,14 +281,36 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		m.statusMsg = ""
 	case term.KeyEnter:
 		if (m.view == "units" || m.view == "andon") && m.cursor < len(rows) && len(rows) > 0 {
-			m.drillKind = "explain"
-			m.drillTask = m.getTaskAtCursor(d)
-			m.detailTop = 0
-			m.statusMsg = ""
+			m.drill(d, "explain")
 		}
 	case term.KeyCtrlC:
 		m.quit = true
 	}
+}
+
+// drill opens a drill-down of the row under the cursor, unless that row is
+// not a unit: a condition of the floor itself (staffing/<role>) has no task
+// to explain, so it says so instead of asking for one (#357 review).
+func (m *TUI) drill(d TUIData, kind string) {
+	task := m.getTaskAtCursor(d)
+	if !unitExists(d, task) {
+		m.statusMsg = task + " is a condition of the floor, not a unit: nothing to " + kind
+		return
+	}
+	m.drillKind = kind
+	m.drillTask = task
+	m.detailTop = 0
+	m.statusMsg = ""
+}
+
+// unitExists reports whether task names one of the floor's units.
+func unitExists(d TUIData, task string) bool {
+	for _, u := range d.Floor.Units {
+		if u.Task == task {
+			return true
+		}
+	}
+	return false
 }
 
 // clampCursor keeps the cursor on one of n rows: 0 when there are none, so
@@ -446,6 +465,25 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 			fmt.Sprintf("%d", l.MaxParallel),
 			fmt.Sprintf("%d", l.Busy),
 		}
+		if m.matchesFilter(row) {
+			rows = append(rows, row)
+		}
+	}
+	for _, r := range d.Floor.Staffing.Roles {
+		// Straight from the configured fields, never split out of the
+		// display line (#357 review).
+		adapter := r.ConfAdapter
+		if adapter == "" {
+			adapter = "-"
+		}
+		busy := r.Session
+		if busy == "" {
+			busy = "not registered"
+		}
+		if r.Mismatch {
+			busy += " !"
+		}
+		row := []string{r.Name, adapter, r.ConfModel, "-", busy}
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
 		}
