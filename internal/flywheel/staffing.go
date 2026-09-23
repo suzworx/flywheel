@@ -51,10 +51,9 @@ func (s *StaffingConfig) roles() []struct {
 	return out
 }
 
-// StaffingLine renders one configured role for the factory summary:
-// "lead: claude claude-opus-5 (session lead-fw)", with the parts that are
-// set; "" when the role is nil or empty.
-func StaffingLine(role string, r *RoleConfig) string {
+// RoleSummary renders a configured role without its name: "claude
+// claude-opus-5 (session lead-fw)", or "" when nothing is set.
+func RoleSummary(r *RoleConfig) string {
 	if r == nil {
 		return ""
 	}
@@ -77,7 +76,18 @@ func StaffingLine(role string, r *RoleConfig) string {
 	case r.Session != "":
 		line = fmt.Sprintf("%s (session %s)", line, r.Session)
 	}
-	return fmt.Sprintf("%s: %s", role, line)
+	return line
+}
+
+// StaffingLine renders one configured role for the factory summary:
+// "lead: claude claude-opus-5 (session lead-fw)", with the parts that are
+// set; "" when the role is nil or empty.
+func StaffingLine(role string, r *RoleConfig) string {
+	summary := RoleSummary(r)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s", role, summary)
 }
 
 // StaffingMismatch reports the roles whose registered staffed event does not

@@ -36,11 +36,28 @@ type FloorLine struct {
 	Busy        int
 }
 
-// Staffing reports the recorded factory roles. Lead is the rendered floor
-// line: `<session> (<model>)` from the latest staffed event for the lead
-// role, or "not registered" when no staffed event exists.
+// Staffing is the floor's roles (issues #69, #355): Lead keeps the rendered
+// line the floor has always shown, and Roles carries every role the config
+// names or the floor registered.
 type Staffing struct {
-	Lead string
+	Lead  string
+	Roles []FloorRole
+}
+
+// FloorRole is one role on the floor: what the config asks for and what the
+// floor registered. Mismatch is true when both name a session and they
+// differ.
+type FloorRole struct {
+	Name       string // lead, inspector, auditor
+	Configured string // the configured role as one line, for text output; "" when unconfigured
+	// The configured parts, kept apart from Configured: a display string
+	// cannot be split back into columns (#357 review).
+	ConfAdapter string
+	ConfModel   string
+	ConfSession string
+	Session     string // the latest staffed event's session; "" when never staffed
+	Model       string // that event's model
+	Mismatch    bool
 }
 
 // staffRole is one registered role holder: the latest staffed event's session
@@ -353,9 +370,9 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl := Floor{Dir: dir, Refreshed: now}
 	fl.Lines = buildLines(cfg, byModel)
 	fl.ProductLines = buildProductLines(cfg, units)
-	fl.Staffing = buildStaffing(w.events)
+	fl.Staffing = buildStaffing(cfg, w.events)
 	fl.Units = units
-	fl.Andon = buildAndon(units)
+	fl.Andon = buildAndon(units, fl.Staffing.Roles)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -549,27 +566,51 @@ func buildLines(cfg Config, byModel map[string]int) []FloorLine {
 	return lines
 }
 
-// buildStaffing reports the recorded lead: the latest staffed event per role
-// (persona holds the role), rendered as `<session> (<model>)` with the
-// parentheses dropped when the model is empty. "not registered" only when no
-// staffed event exists.
-func buildStaffing(events []Event) Staffing {
-	roles := map[string]staffRole{}
+// buildStaffing reports the recorded factory roles: the lead line for backward
+// compatibility, and a Roles list for each role the config names or the floor
+// registered, with mismatch detection.
+func buildStaffing(cfg Config, events []Event) Staffing {
+	staffed := map[string]staffRole{}
 	for _, e := range events {
-		if e.Kind != "staffed" {
-			continue
+		if e.Kind == "staffed" {
+			staffed[e.Persona] = staffRole{Session: e.Session, Model: e.Model}
 		}
-		roles[e.Persona] = staffRole{Session: e.Session, Model: e.Model}
 	}
-	r, ok := roles["lead"]
+	r, ok := staffed["lead"]
 	if !ok {
-		return Staffing{Lead: "not registered"}
+		r = staffRole{}
 	}
 	line := r.Session
 	if r.Model != "" {
 		line = line + " (" + r.Model + ")"
 	}
-	return Staffing{Lead: line}
+	if line == "" {
+		line = "not registered"
+	}
+
+	s := Staffing{Lead: line}
+	if cfg.Staffing == nil {
+		return s
+	}
+
+	for _, role := range cfg.Staffing.roles() {
+		if role.Cfg == nil || (role.Cfg.Adapter == "" && role.Cfg.Model == "" && role.Cfg.Session == "") {
+			if fl, ok := staffed[role.Name]; ok {
+				s.Roles = append(s.Roles, FloorRole{
+					Name: role.Name, Session: fl.Session, Model: fl.Model, Mismatch: false,
+				})
+			}
+			continue
+		}
+		floor := staffed[role.Name]
+		mismatch := role.Cfg.Session != "" && floor.Session != "" && floor.Session != role.Cfg.Session
+		s.Roles = append(s.Roles, FloorRole{
+			Name: role.Name, Configured: RoleSummary(role.Cfg),
+			ConfAdapter: role.Cfg.Adapter, ConfModel: role.Cfg.Model, ConfSession: role.Cfg.Session,
+			Session: floor.Session, Model: floor.Model, Mismatch: mismatch,
+		})
+	}
+	return s
 }
 
 // shortSession truncates a long session id for the table.
@@ -599,13 +640,18 @@ func ageOfTime(t, now time.Time) int {
 }
 
 // buildAndon lists the units in silent, stalled, capped, provider-error,
-// failed or failed-dirty, newest first.
-func buildAndon(units []Unit) []Andon {
+// failed or failed-dirty, newest first, and adds andon entries for mismatching roles.
+func buildAndon(units []Unit, roles []FloorRole) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
 		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
+		}
+	}
+	for _, r := range roles {
+		if r.Mismatch {
+			out = append(out, Andon{Task: "staffing/" + r.Name, State: "mismatch", Age: 0})
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Andon) int {

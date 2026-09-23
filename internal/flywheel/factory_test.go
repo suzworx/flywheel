@@ -482,7 +482,7 @@ func TestBuildStaffingLatestPerRole(t *testing.T) {
 		{TS: "2026-09-13T00:00:01Z", Kind: "staffed", Session: "sf1", Persona: "foreman", Model: "m2"},
 		{TS: "2026-09-13T00:00:02Z", Kind: "staffed", Session: "s3", Persona: "lead"},
 	}
-	st := buildStaffing(events)
+	st := buildStaffing(Config{}, events)
 	if st.Lead != "s3" {
 		t.Errorf("lead = %q, want s3 (latest lead staffed event, parentheses dropped without a model)", st.Lead)
 	}
@@ -492,14 +492,14 @@ func TestBuildStaffingModelShownInParentheses(t *testing.T) {
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Kind: "staffed", Session: "s1", Persona: "lead", Model: "m1"},
 	}
-	st := buildStaffing(events)
+	st := buildStaffing(Config{}, events)
 	if st.Lead != "s1 (m1)" {
 		t.Errorf("lead = %q, want s1 (m1)", st.Lead)
 	}
 }
 
 func TestBuildStaffingNotRegisteredWithoutStaffedEvent(t *testing.T) {
-	st := buildStaffing([]Event{})
+	st := buildStaffing(Config{}, []Event{})
 	if st.Lead != "not registered" {
 		t.Errorf("lead = %q, want not registered", st.Lead)
 	}
