@@ -60,7 +60,7 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, failed-dirty, done
+	RunState string // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string // the product line from the latest dispatched event (issue #69); "" when none
 }
@@ -113,6 +113,36 @@ func hasNoPlan(events []Event, task, attempt string) bool {
 		}
 	}
 	return false
+}
+
+// stopStateFor returns the run state a clean stop of this task's attempt
+// shows instead of done (issue #364): "blocked" when the run recorded a
+// permission-denied signal, else "no-writes" when the attempt's finished
+// event has reason stop and wrote nothing (a floor state only, never a
+// signal: some units legitimately write nothing), else "". Both apply only
+// while the task's status is finished, awaiting judgement (issue #364): a
+// passed, rejected or landed unit shows done, and an old log's clean finishes,
+// which carry no wrote field, never read as no-writes.
+func stopStateFor(events []Event, task, attempt, status string) string {
+	if status != "finished" {
+		return ""
+	}
+	stopped := false
+	for _, e := range events {
+		if e.Task != task || e.Attempt != attempt {
+			continue
+		}
+		if e.Kind == "signal" && e.Signal == "permission-denied" {
+			return "blocked"
+		}
+		if e.Kind == "finished" {
+			stopped = e.Reason == "stop"
+		}
+	}
+	if stopped && len(wroteFor(events, task, attempt)) == 0 {
+		return "no-writes"
+	}
+	return ""
 }
 
 // ProductLine is one configured product line on the floor (issue #69): who
@@ -259,8 +289,10 @@ func liveRun(state string) bool {
 // a true wrote turns what would be "capped" (lastReason "length") or "failed"
 // (every other unclean reason) into "failed-dirty" instead — a failed attempt
 // that left files behind, needing a human decision the andon otherwise treats
-// the same as a clean failure (issue #163).
-func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int, noPlan bool, wrote bool) string {
+// the same as a clean failure (issue #163). stopState replaces a clean done
+// when non-empty: the caller passes "blocked" (a permission-denied signal) or
+// "no-writes" (a stop finish that wrote nothing) for the attempt (issue #364).
+func classifyRun(done bool, steps int, files int, edits int, hasError bool, lastReason string, size int64, age int, stallTimeout int, noPlan bool, wrote bool, stopState string) string {
 	if done {
 		switch lastReason {
 		case "length":
@@ -271,6 +303,9 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 		case "error":
 			return "provider-error"
 		case "", "stop":
+			if stopState != "" {
+				return stopState
+			}
 			return "done"
 		default:
 			if wrote {
@@ -492,6 +527,9 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			Session: shortSession(t.Session), Model: t.Model,
 			Steps: 0, LastAge: ageOf(t.UpdatedAt, now), RunState: "waiting",
 		}
+		// A finished attempt never occupies a busy slot, even when its clean
+		// stop shows no-writes, which is also a live state (issue #364).
+		finished := false
 		if t.Attempt != "" {
 			rel := ".flywheel/runs/" + t.ID + "." + t.Attempt + ".jsonl"
 			size, mtime, rerr := readRun(dir, w, rel, runAdapter(w.events, t.ID, t.Attempt))
@@ -509,12 +547,17 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			}
 			noPlan := hasNoPlan(w.events, t.ID, t.Attempt)
 			wrote := done && len(wroteFor(w.events, t.ID, t.Attempt)) > 0
-			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote)
+			stopState := ""
+			if done {
+				stopState = stopStateFor(w.events, t.ID, t.Attempt, t.Status)
+			}
+			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote, stopState)
+			finished = done
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
 		}
-		if liveRun(u.RunState) {
+		if !finished && liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
 		units = append(units, u)
@@ -598,13 +641,13 @@ func ageOfTime(t, now time.Time) int {
 	return int(d.Seconds())
 }
 
-// buildAndon lists the units in silent, stalled, capped, provider-error,
-// failed or failed-dirty, newest first.
+// buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
+// provider-error, failed or failed-dirty, newest first.
 func buildAndon(units []Unit) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed", "failed-dirty":
+		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}

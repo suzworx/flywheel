@@ -187,7 +187,7 @@ derived state, per line and per unit. Per line:
 Per unit: stage (planned, building, finished, inspecting, audited, landed,
 blocked), attempt number, steps (from the run file), elapsed since the unit's
 last event, run state (running, exploring, long-step, silent, stalled, capped,
-provider-error, done — the classifier in internal/flywheel/factory.go), and ETA.
+provider-error, blocked, no-writes, done — the classifier in internal/flywheel/factory.go), and ETA.
 
 **ETA.** The median wall time of finished units on the same line and agent, minus
 elapsed, with the sample size; "no history" when there is none. Example: a unit

@@ -770,6 +770,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var wroteOrder []string
 	lastText := ""
 	lastReason := ""
+	var denials []string // the last step's permission denials (issue #364)
 	seenError := false
 	steps := 0
 	session := ""
@@ -893,6 +894,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		case "step":
 			if obs.Reason != "" {
 				lastReason = obs.Reason
+			}
+			if len(obs.Denials) > 0 {
+				denials = obs.Denials
 			}
 			if obs.Tokens != nil {
 				tok.Input += obs.Tokens.Input
@@ -1074,6 +1078,21 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// before its finished event (issue #314, #318 review).
 	gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 	note = joinNote(note, gitNote)
+	// A clean stop is not "done" when the harness denied a tool (issue #364):
+	// name the denials in the note and record a permission-denied signal after
+	// the finished event. A clean stop that wrote nothing records no signal
+	// (an untriaged signal blocks landing, and some units legitimately write
+	// nothing); it prints a line, and the floor shows it as no-writes.
+	stopSignal, stopLine := "", ""
+	if reason == "stop" {
+		if len(denials) > 0 {
+			list := clipNote(strings.Join(denials, ", "))
+			note = joinNote(note, clipNote("permission denied: "+list))
+			stopSignal, stopLine = "permission-denied", o.Task+" "+attempt+" permission-denied: "+list
+		} else if len(wrote) == 0 {
+			stopLine = o.Task + " " + attempt + " finished without writing a file"
+		}
+	}
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
@@ -1098,10 +1117,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := recordSignal(dir, o.Task, attempt, session, "provider-error", runRel); err != nil {
 			return Result{}, err
 		}
+	case "stop":
+		if stopSignal != "" {
+			if err := recordSignal(dir, o.Task, attempt, session, stopSignal, runRel); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 	progress(o.Progress, o.Task+" "+attempt+fmt.Sprintf(" finished rc=%d reason=%s model=%s steps=%d tokens=%s cost=$%s", rc, reason, model, steps, tokensK(tok), costK(cost)))
 	if wl := wroteProgressLine(o.Task, attempt, reason, wrote); wl != "" {
 		progress(o.Progress, wl)
+	}
+	if stopLine != "" {
+		progress(o.Progress, stopLine)
 	}
 	if reason == "length" {
 		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
