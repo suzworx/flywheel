@@ -20,7 +20,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   same way at owns-check time, and `flywheel lint` checks a pattern by globbing it against the
   worktree instead of statting a literal path, so a pattern that currently matches nothing is
   reported the same as a missing path. A literal path the unit will create carries the annotation
-  `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. List every
+  `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. An entry
+  starting with `!` is an exception: `owns: apps/inc/**, !apps/inc/wake.h` owns every header but
+  `wake.h`. A negated entry takes the same three forms, so it can be a literal path, a `dir/` or a
+  pattern. It is matched the same way at validate time and by the dispatch owns-collision check,
+  so the unit does not collide with another in-flight unit that owns `wake.h`. Lint never checks
+  a negated entry for existence, and warns when no positive entry covers it. List every
   file a unit may create up front, in `owns:`, rather than inviting it to add one later. (`needs:`
   takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
   dependencies). An optional `line: <name>` puts the unit on a product line from `.flywheel/config.json`

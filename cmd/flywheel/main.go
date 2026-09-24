@@ -82,8 +82,39 @@ func hasHelpFlag(args []string) bool {
 // parseArgs parses args with fs, accepting flags before, between and after
 // positionals: it re-parses after each positional, and a literal "--" ends
 // flag parsing so everything after it is positional. It returns the
-// positionals in order.
+// positionals in order. A --dir inside a unit's worktree is resolved to the
+// main ledger (resolveLedgerDir).
 func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return nil, err
+	}
+	resolveLedgerDir(fs, os.Stderr)
+	return pos, nil
+}
+
+// resolveLedgerDir points fs's dir flag, when it has one, at the main
+// checkout when its value is a `flywheel run --worktree` task worktree
+// (flywheel.LedgerRoot): that worktree holds a stale copy of the ledger, so a
+// command run there would read and write the wrong events (issue #395). It
+// says so once on w. workdir flags are left alone: they address the unit's
+// working tree on purpose.
+func resolveLedgerDir(fs *flag.FlagSet, w io.Writer) {
+	f := fs.Lookup("dir")
+	if f == nil {
+		return
+	}
+	root, task, err := flywheel.LedgerRoot(f.Value.String())
+	if err != nil || task == "" {
+		return
+	}
+	if err := fs.Set("dir", root); err == nil {
+		fmt.Fprintf(w, "flywheel: using the main ledger at %s (this is %s's worktree)\n", root, task)
+	}
+}
+
+// parseFlags is parseArgs without the ledger resolution.
+func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for len(args) > 0 {
 		if args[0] == "--" {

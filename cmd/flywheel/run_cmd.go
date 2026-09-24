@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -12,7 +14,7 @@ import (
 
 func init() {
 	register("run", "dispatch a worker for a task", runRun)
-	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
+	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
 }
 
 // runOptions holds the parsed `flywheel run` flags.
@@ -29,11 +31,12 @@ type runOptions struct {
 	worktree     bool
 	startTimeout time.Duration
 	stallTimeout time.Duration
+	notify       string
 }
 
 // runUsage prints the flywheel run usage line.
 func runUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION]")
+	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD]")
 }
 
 // runFlags defines run's flags once, so help and run share them.
@@ -53,6 +56,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.BoolVar(&o.worktree, "worktree", false, "run the worker in the task's own git worktree (.flywheel/worktrees/<task>, branch fw/<task>)")
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
+	fs.StringVar(&o.notify, "notify", "", "shell command run after the run returns on any path, with FLYWHEEL_FINISHED=\"<task> <attempt> reason=<r> exit=<code>\"; its failure only warns")
 	return fs, o
 }
 
@@ -78,7 +82,16 @@ func runRun(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
+	code, attempt, reason := runDispatch(fs, o, task)
+	if o.notify != "" {
+		runNotify(o.notify, finishedLine(task, attempt, reason, code), os.Stderr)
+	}
+	os.Exit(code)
+}
 
+// runDispatch validates the dispatch flags and runs the task, returning the
+// exit code and the attempt and reason --notify reports (issue #393).
+func runDispatch(fs *flag.FlagSet, o *runOptions, task string) (code int, attempt, reason string) {
 	// Increment validation: --increment flag must be >= 1, and not combined with --resume or --delta
 	set := false
 	fs.Visit(func(f *flag.Flag) {
@@ -89,12 +102,12 @@ func runRun(args []string) {
 	if set && o.increment < 1 {
 		fmt.Fprintf(os.Stderr, "flywheel run: --increment must be >= 1\n")
 		runUsage(os.Stderr)
-		os.Exit(2)
+		return 2, "", "usage"
 	}
 	if o.increment > 0 && (o.resume || o.delta != "") {
 		fmt.Fprintf(os.Stderr, "flywheel run: --increment cannot be combined with --resume or --delta\n")
 		runUsage(os.Stderr)
-		os.Exit(2)
+		return 2, "", "usage"
 	}
 
 	// A worker cut off by a rate limit is resumed after the reset (issue #380).
@@ -107,12 +120,41 @@ func runRun(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel run: %v\n", err)
 		if flywheel.IsNoWorkerSession(err) {
-			os.Exit(2)
+			return 2, res.Attempt, "no-session"
 		}
 		if flywheel.IsRuleRefusal(err) {
-			os.Exit(6)
+			return 6, res.Attempt, "refused"
 		}
-		os.Exit(1)
+		return 1, res.Attempt, "error"
 	}
-	os.Exit(flywheel.ExitCode(res))
+	return flywheel.ExitCode(res), res.Attempt, res.Reason
+}
+
+// finishedLine is --notify's FLYWHEEL_FINISHED value:
+// "<task> <attempt> reason=<r> exit=<code>", "-" for an attempt never made.
+func finishedLine(task, attempt, reason string, code int) string {
+	if attempt == "" {
+		attempt = "-"
+	}
+	return fmt.Sprintf("%s %s reason=%s exit=%d", task, attempt, reason, code)
+}
+
+// runNotify runs cmd through bash -c when bash is on PATH (cmd /C on Windows,
+// sh -c elsewhere), as gates do, with FLYWHEEL_FINISHED=finished in its
+// environment. Its output goes to stderr; its failure only warns.
+func runNotify(cmd, finished string, stderr io.Writer) {
+	var argv []string
+	if _, err := exec.LookPath("bash"); err == nil {
+		argv = []string{"bash", "-c", cmd}
+	} else if runtime.GOOS == "windows" {
+		argv = []string{"cmd", "/C", cmd}
+	} else {
+		argv = []string{"sh", "-c", cmd}
+	}
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Env = append(os.Environ(), "FLYWHEEL_FINISHED="+finished)
+	c.Stdout, c.Stderr = stderr, stderr
+	if err := c.Run(); err != nil {
+		fmt.Fprintf(stderr, "flywheel run: warning: --notify command failed: %v\n", err)
+	}
 }

@@ -1054,6 +1054,72 @@ func TestValidateOtherWorktreePlannedOnlyTaskNotAttributed(t *testing.T) {
 	}
 }
 
+// TestValidateTaskWorktreeSibling checks a sibling that is another unit's
+// `run --worktree` worktree, <repo>/.flywheel/worktrees/<B>, is attributed to
+// B from the MAIN ledger while B is dispatched and unlanded there, even though
+// the worktree holds no ledger of its own (issue #386). Once B lands its path
+// is outside again, and a sibling outside .flywheel/worktrees/ keeps the
+// worktree's own-ledger rule.
+func TestValidateTaskWorktreeSibling(t *testing.T) {
+	cases := []struct {
+		name         string
+		landed       bool
+		taskWorktree bool
+		wantOwnsOK   bool
+	}{
+		{"in flight", false, true, true},
+		{"landed", true, true, false},
+		{"not a task worktree", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, err := initTask(t, []string{"exit 0"})
+			if err != nil {
+				t.Fatalf("initTask() error = %v", err)
+			}
+			otherTaskPlanned(t, dir, "B", "b.go")
+			if err := AppendEvent(dir, Event{TS: "2026-09-12T00:40:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+				t.Fatalf("AppendEvent() dispatched B error = %v", err)
+			}
+			if tc.landed {
+				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:50:00Z", Task: "B", Kind: "landed"}); err != nil {
+					t.Fatalf("AppendEvent() landed B error = %v", err)
+				}
+			}
+			wt := filepath.Join(dir, ".flywheel", "worktrees", "B")
+			if !tc.taskWorktree {
+				wt = filepath.Join(t.TempDir(), "B")
+			}
+			git(t, dir, []string{"worktree", "add", "-b", "fw/B", wt, "HEAD"})
+			dispatchedWithWorktree(t, dir, wt)
+			if err := os.WriteFile(filepath.Join(wt, "b.go"), []byte("package b\n"), 0o644); err != nil {
+				t.Fatalf("write b.go: %v", err)
+			}
+			res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+			if err != nil {
+				t.Fatalf("ValidateTask() error = %v", err)
+			}
+			if res.OwnsOK != tc.wantOwnsOK {
+				t.Errorf("OwnsOK = %v, want %v (outside %v, attributed %v)", res.OwnsOK, tc.wantOwnsOK, res.Outside, res.Attributed)
+			}
+			if tc.wantOwnsOK {
+				want := wt + ": b.go -> B"
+				if len(res.Attributed) != 1 || res.Attributed[0] != want {
+					t.Errorf("attributed = %v, want [%s]", res.Attributed, want)
+				}
+				return
+			}
+			want := wt + ": b.go"
+			if len(res.Outside) != 1 || res.Outside[0] != want {
+				t.Errorf("outside = %v, want [%s]", res.Outside, want)
+			}
+			if len(res.Attributed) != 0 {
+				t.Errorf("attributed = %v, want nothing", res.Attributed)
+			}
+		})
+	}
+}
+
 // TestValidateOtherWorktreeNeedsCorrectionTaskAttributed checks a changed
 // path in a sibling worktree whose own task needs correction (reviewed,
 // not yet landed) still lands in Attributed as "<worktree>: <path> ->
@@ -2824,4 +2890,37 @@ func TestValidateSiblingClaim(t *testing.T) {
 			t.Errorf("OwnsOK = %v, outside = %v, want ci.yml outside", res.OwnsOK, res.Outside)
 		}
 	})
+}
+
+// TestOwnsNegated checks a negated owns entry ("!path", issue #388) removes
+// what it covers from the positive entries, in the literal, "dir/" and
+// pattern forms, and that a negation alone owns nothing.
+func TestOwnsNegated(t *testing.T) {
+	cases := []struct {
+		name string
+		owns []string
+		p    string
+		want bool
+	}{
+		{"literal negation keeps sibling", []string{"apps/inc/**", "!apps/inc/wake.h"}, "apps/inc/a.h", true},
+		{"literal negation excludes", []string{"apps/inc/**", "!apps/inc/wake.h"}, "apps/inc/wake.h", false},
+		{"dir negation excludes", []string{"apps/", "!apps/gen/"}, "apps/gen/x.go", false},
+		{"dir negation keeps outside", []string{"apps/", "!apps/gen/"}, "apps/main.go", true},
+		{"pattern negation excludes", []string{"src/", "!src/*_gen.go"}, "src/a_gen.go", false},
+		{"pattern negation keeps other", []string{"src/", "!src/*_gen.go"}, "src/a.go", true},
+		{"negation alone owns nothing", []string{"!apps/inc/wake.h"}, "apps/inc/a.h", false},
+		{"negation alone not the negated", []string{"!apps/inc/wake.h"}, "apps/inc/wake.h", false},
+		{"bookkeeping stays owned", []string{"apps/", "!.flywheel/"}, ".flywheel/log.jsonl", true},
+	}
+	for _, tc := range cases {
+		if got := ownsContains(tc.owns, tc.p); got != tc.want {
+			t.Errorf("%s: ownsContains(%v, %q) = %v, want %v", tc.name, tc.owns, tc.p, got, tc.want)
+		}
+	}
+	if explicitlyOwned([]string{"apps/inc/wake.h", "!apps/inc/wake.h"}, "apps/inc/wake.h") {
+		t.Errorf("explicitlyOwned of a negated path = true, want false")
+	}
+	if !covers([]string{"apps/inc/**", "!apps/inc/wake.h"}, []string{"apps/inc/**", "!apps/inc/wake.h"}) {
+		t.Errorf("covers of identical owns with a negation = false, want true")
+	}
 }

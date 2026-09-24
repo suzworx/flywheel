@@ -598,3 +598,30 @@ func TestDeriveReplayDeterminism(t *testing.T) {
 		t.Errorf("Derive(shuffled) differs from Derive(events):\n%s\nvs\n%s", a, b)
 	}
 }
+
+// TestAgentReviewNeverPasses: a reviewed event the review agent wrote (persona
+// reviewer with an adapter) never makes a unit passed; its correct still
+// counts, and a hand-recorded pass still passes (issue #389).
+func TestAgentReviewNeverPasses(t *testing.T) {
+	fin := Event{TS: "2026-09-24T00:00:00Z", Task: "T1", Kind: "finished"}
+	agent := func(verdict string) Event {
+		return Event{TS: "2026-09-24T00:00:01Z", Task: "T1", Kind: "reviewed", Verdict: verdict, Persona: "reviewer", Adapter: "claude"}
+	}
+	hand := Event{TS: "2026-09-24T00:00:01Z", Task: "T1", Kind: "reviewed", Verdict: "pass", Persona: "reviewer"}
+	for name, c := range map[string]struct {
+		events []Event
+		want   string
+	}{
+		"agent pass":    {[]Event{fin, agent("pass")}, "finished"},
+		"agent correct": {[]Event{fin, agent("correct")}, "needs-correction"},
+		"hand pass":     {[]Event{fin, hand}, "passed"},
+	} {
+		ts, ok := findTask(Derive(c.events), "T1")
+		if !ok {
+			t.Fatalf("%s: T1 missing", name)
+		}
+		if ts.Status != c.want {
+			t.Errorf("%s: status %q, want %q", name, ts.Status, c.want)
+		}
+	}
+}

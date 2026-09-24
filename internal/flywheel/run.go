@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -418,7 +419,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// common case — unless --strict-brief makes it a T1 RuleRefusal before
 	// any event is appended.
 	if drift := checkBriefDrift(dir, events, o.Task, brief); drift != nil {
-		msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", drift.attempt, o.Task, brief)
+		msg := briefDriftAdvice(dir, events, o.Task, brief, drift.attempt)
 		if o.StrictBrief {
 			return Result{}, &RuleRefusal{Rule: "T1", Fix: msg}
 		}
@@ -1227,10 +1228,26 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Workers never write git history: flywheel commits a clean stop's owned
+	// changes on fw/<task> itself when the attempt ran in its task worktree
+	// (issue #391). A commit failure never fails the run; it goes on the note.
+	attemptCommit := ""
+	if o.Worktree && reason == "stop" {
+		sha, outside, cerr := commitAttempt(dir, wt, o.Task, attempt, myOwns)
+		attemptCommit = sha
+		if cerr != nil {
+			note = joinNote(note, clipNote("attempt commit failed: "+cerr.Error()))
+		}
+		if len(outside) > 0 {
+			note = joinNote(note, clipNote("left uncommitted (outside owns): "+strings.Join(outside, ", ")))
+		}
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
+		Commit: attemptCommit,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1392,6 +1409,30 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 	return acquireRepoLock(dir, "dispatch.lock", defaultRepoLockTimings())
 }
 
+// briefDriftAdvice is the brief-drift message for task, whose brief drifted
+// from the hash dispatched at dispatchedAt (issue #387). Drift is measured
+// against a dispatched attempt, and a new planned header does not change that
+// attempt (issue #366): owns and exclusive widen with an amended event (issue
+// #281), and a gate change needs a correction delta — an amendment that
+// changes gates is refused (issue #274). The drifted header is compared with
+// the attempt's effective header to name the step that takes effect; when
+// either cannot be read, the message falls back to the plain re-record advice.
+func briefDriftAdvice(dir string, events []Event, task, brief, dispatchedAt string) string {
+	drifted, err := ParseBriefHeader(resolveBriefPath(dir, brief))
+	if err != nil {
+		return fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", dispatchedAt, task, brief)
+	}
+	effective, _, err := AttemptBrief(dir, events, task)
+	if err != nil {
+		return fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", dispatchedAt, task, brief)
+	}
+	msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; the dispatched attempt keeps its header until you record the change: flywheel log --task %s --kind amended --brief %s --note \"<why>\" (widens owns/exclusive on the dispatched attempt)", dispatchedAt, task, brief)
+	if !slices.Equal(drifted.Gates, effective.Gates) || !slices.Equal(drifted.LiveGates, effective.LiveGates) {
+		msg += fmt.Sprintf("; its gates changed, which an amendment cannot do — dispatch a correction instead: flywheel run %s --delta <file> (a header carrying every gate)", task)
+	}
+	return msg
+}
+
 // briefDrift is a dispatch-time finding that the brief on disk differs from
 // the content hash a previous dispatch recorded (issue #135).
 type briefDrift struct {
@@ -1451,8 +1492,10 @@ func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift
 // when they are equal, when either is a directory prefix (trailing /)
 // containing the other, or when either matches the other as a shell pattern —
 // the same matching rule ownsContains applies, checked in both directions so
-// the relation is symmetric. The colliding paths are the entries involved,
-// deduplicated and sorted.
+// the relation is symmetric. A negated entry ("!path", issue #388) is never a
+// colliding entry itself, but it removes what it covers from its side's owns,
+// so apps/inc/** with !apps/inc/wake.h does not collide with apps/inc/wake.h.
+// The colliding paths are the entries involved, deduplicated and sorted.
 func ownsCollisionWith(dir string, events []Event, task string, owns []string) *ownsCollision {
 	st := Derive(events)
 	status := make(map[string]string, len(st.Tasks))
@@ -1478,12 +1521,12 @@ func ownsCollisionWith(dir string, events []Event, task string, owns []string) *
 			}
 		}
 		for _, a := range owns {
-			if ownsContains(header.Owns, a) {
+			if _, neg := negatedEntry(a); !neg && ownsContains(header.Owns, a) {
 				add(a)
 			}
 		}
 		for _, b := range header.Owns {
-			if ownsContains(owns, b) {
+			if _, neg := negatedEntry(b); !neg && ownsContains(owns, b) {
 				add(b)
 			}
 		}

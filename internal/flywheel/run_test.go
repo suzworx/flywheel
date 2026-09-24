@@ -1790,7 +1790,7 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	if !errors.As(err, &r) || r.Rule != "T1" {
 		t.Fatalf("Run() error = %v, want a T1 RuleRefusal", err)
 	}
-	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind planned --brief b.txt") {
+	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind amended --brief b.txt") {
 		t.Errorf("RuleRefusal fix = %q, want it naming the re-record fix", r.Fix)
 	}
 	after, err := ReadEvents(dir)
@@ -1799,6 +1799,51 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("events grew from %d to %d after a strict refusal, want none appended", len(before), len(after))
+	}
+}
+
+// TestBriefDriftAdvice checks the drift message names the step that takes
+// effect on a dispatched attempt (issue #387): an owns-only edit is recorded
+// with --kind amended, never --kind planned, and a gate edit also names a
+// correction delta.
+func TestBriefDriftAdvice(t *testing.T) {
+	orig := []byte("owns: a.go\ngate: go test ./...\n\n# Task\nbody\n")
+	cases := []struct {
+		name      string
+		edited    string
+		wantDelta bool
+	}{
+		{"owns only", "owns: a.go, b.go\ngate: go test ./...\n\n# Task\nbody\n", false},
+		{"gate change", "owns: a.go\ngate: go test ./...\ngate: go vet ./...\n\n# Task\nbody\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), orig, 0o644); err != nil {
+				t.Fatalf("write brief: %v", err)
+			}
+			h, err := ParseBriefHeaderBytes(orig)
+			if err != nil {
+				t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+			}
+			events := []Event{
+				{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt", Header: &h},
+				{TS: "2026-09-12T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", SHA256: h.SHA256, Header: &h},
+			}
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(c.edited), 0o644); err != nil {
+				t.Fatalf("write edited brief: %v", err)
+			}
+			msg := briefDriftAdvice(dir, events, "T1", "b.txt", "r1")
+			if !strings.Contains(msg, "flywheel log --task T1 --kind amended --brief b.txt") {
+				t.Errorf("briefDriftAdvice() = %q, want the --kind amended step", msg)
+			}
+			if strings.Contains(msg, "--kind planned") {
+				t.Errorf("briefDriftAdvice() = %q, want no --kind planned advice", msg)
+			}
+			if got := strings.Contains(msg, "flywheel run T1 --delta"); got != c.wantDelta {
+				t.Errorf("briefDriftAdvice() = %q, names --delta = %v, want %v", msg, got, c.wantDelta)
+			}
+		})
 	}
 }
 
@@ -2804,6 +2849,43 @@ func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
 	}
 	if !strings.Contains(r.Fix, "internal/foo/bar.go") {
 		t.Errorf("refusal fix = %q, want it naming the file under the directory prefix", r.Fix)
+	}
+}
+
+// TestCollisionNegated checks a negated owns: entry is part of the contract
+// (issue #388): apps/inc/** with !apps/inc/wake.h does not collide with an
+// in-flight task owning apps/inc/wake.h, in either direction, while
+// apps/inc/** alone still does.
+func TestCollisionNegated(t *testing.T) {
+	cases := []struct {
+		name       string
+		t1, t2     string
+		wantCollid bool
+	}{
+		{"negated new side", "apps/inc/wake.h", "apps/inc/**, !apps/inc/wake.h", false},
+		{"negated in-flight side", "apps/inc/**, !apps/inc/wake.h", "apps/inc/wake.h", false},
+		{"no negation", "apps/inc/wake.h", "apps/inc/**", true},
+		{"negation elsewhere", "apps/inc/wake.h", "apps/inc/**, !apps/inc/other.h", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Init(dir, false); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", tc.t1))
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			got := ownsCollisionWith(dir, evs, "T2", strings.Split(strings.ReplaceAll(tc.t2, " ", ""), ","))
+			if (got != nil) != tc.wantCollid {
+				t.Fatalf("ownsCollisionWith(%q vs %q) = %+v, want collision %v", tc.t2, tc.t1, got, tc.wantCollid)
+			}
+			if got != nil && !strings.Contains(strings.Join(got.paths, ","), "apps/inc/wake.h") {
+				t.Errorf("collision paths = %v, want apps/inc/wake.h", got.paths)
+			}
+		})
 	}
 }
 
@@ -4542,5 +4624,56 @@ func TestGatesUnrun(t *testing.T) {
 		if got := gateRan(c.gate, c.cmds); got != c.want {
 			t.Errorf("%s: gateRan(%q, %q) = %v, want %v", c.name, c.gate, c.cmds, got, c.want)
 		}
+	}
+}
+
+// TestRunCommitsAttempt checks that a clean stop of a --worktree run is
+// committed by flywheel on fw/<task> (issue #391): the owned change lands in
+// the commit named on the finished event, the unowned one is left and named
+// on the note, and no git-write signal is raised for flywheel's own commit.
+func TestRunCommitsAttempt(t *testing.T) {
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n", "notes.txt": "not owned\n"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fin *Event
+	for i := range events {
+		if events[i].Kind == "signal" && events[i].Signal == "git-write" {
+			t.Errorf("git-write signal for flywheel's own commit: %+v", events[i])
+		}
+		if events[i].Task == "T1" && events[i].Kind == "finished" {
+			fin = &events[i]
+		}
+	}
+	if fin == nil {
+		t.Fatal("no finished event")
+	}
+	if fin.Reason != "stop" || !CommitOK(fin.Commit) {
+		t.Fatalf("finished reason=%q commit=%q, want stop with a commit", fin.Reason, fin.Commit)
+	}
+	if !strings.Contains(fin.Note, "left uncommitted (outside owns): notes.txt") {
+		t.Errorf("note = %q, want the unowned path named", fin.Note)
+	}
+	if got := strings.TrimSpace(git(t, wt, []string{"rev-parse", "refs/heads/fw/T1"})); got != fin.Commit {
+		t.Errorf("fw/T1 = %s, finished commit = %s", got, fin.Commit)
+	}
+	if files := strings.TrimSpace(git(t, wt, []string{"show", "--name-only", "--format=", fin.Commit})); files != "a.go" {
+		t.Errorf("committed files = %q, want a.go", files)
+	}
+	if msg := git(t, wt, []string{"log", "-1", "--format=%B", fin.Commit}); !strings.Contains(msg, "Flywheel-Task: T1") {
+		t.Errorf("commit message %q lacks the Flywheel-Task trailer", msg)
 	}
 }
