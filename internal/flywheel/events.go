@@ -179,6 +179,10 @@ var kinds = map[string]bool{
 	"probed":          true,
 	"sharded":         true,
 	"review_finding":  true,
+	// finding_response is an answer to one review finding (issue #389): the
+	// worker's fixed or disputed, a missing answer the framework records, or a
+	// lead's dismissal (disputed, Note "dismissed: ...").
+	"finding_response": true,
 }
 
 // FindingSeverities is the set of severities a review_finding event may carry
@@ -322,7 +326,15 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response", e.Kind)
+	}
+	if e.Kind == "finding_response" {
+		if e.Finding == "" {
+			return fmt.Errorf("finding_response event must carry the finding id it answers")
+		}
+		if e.Verdict != "fixed" && e.Verdict != "disputed" {
+			return fmt.Errorf("finding_response verdict %q is not one of fixed, disputed", e.Verdict)
+		}
 	}
 	if e.Kind == "review_finding" {
 		if e.Session == "" || e.Title == "" || e.Path == "" {
