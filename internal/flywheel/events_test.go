@@ -1110,3 +1110,30 @@ func TestReviewFindingEvent(t *testing.T) {
 		t.Errorf("round trip = %+v", got)
 	}
 }
+
+// TestFindingResponseEvent checks the finding_response kind (issue #389): a
+// fixed or disputed answer naming a finding validates; a missing task,
+// finding or verdict, and any other verdict, are refused.
+func TestFindingResponseEvent(t *testing.T) {
+	ok := Event{Task: "T1", Kind: "finding_response", Attempt: "c1", Session: "w-1",
+		Finding: "T1-r1-1", Verdict: "fixed", Note: "added the flush; go test passes"}
+	for _, v := range []string{"fixed", "disputed"} {
+		e := ok
+		e.Verdict = v
+		if err := Validate(e); err != nil {
+			t.Errorf("Validate(verdict %s) = %v", v, err)
+		}
+	}
+	for name, mut := range map[string]func(*Event){
+		"no task":      func(e *Event) { e.Task = "" },
+		"no finding":   func(e *Event) { e.Finding = "" },
+		"no verdict":   func(e *Event) { e.Verdict = "" },
+		"pass verdict": func(e *Event) { e.Verdict = "pass" },
+	} {
+		e := ok
+		mut(&e)
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate accepted %+v", name, e)
+		}
+	}
+}
