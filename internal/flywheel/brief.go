@@ -25,10 +25,15 @@ type BriefHeader struct {
 	// (`flywheel validate <task> --live`), never on a worker's own mocked
 	// run (issue #152).
 	LiveGates []string
-	Exclusive []string
-	Review    []string
-	Line      string `json:",omitempty"`
-	SHA256    string
+	// QuietGates and QuietLiveGates are the 1-based indices into Gates and
+	// LiveGates of the lines marked `[quiet]` (issue #411): gates that wait
+	// for an idle host before they run.
+	QuietGates     []int `json:",omitempty"`
+	QuietLiveGates []int `json:",omitempty"`
+	Exclusive      []string
+	Review         []string
+	Line           string `json:",omitempty"`
+	SHA256         string
 }
 
 // ParseBriefHeader reads the file at path and parses its header block; it is
@@ -75,6 +80,20 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			continue
 		}
 		lastKey = key
+		// A `gate[quiet]:` or `live-gate[quiet]:` line is a gate that needs the
+		// host to itself (issue #411): its command joins Gates/LiveGates like
+		// any other and its 1-based index is recorded as quiet. An unknown
+		// marker is kept as the plain key's line; flywheel lint warns on it.
+		if base, marker, found := gateMarker(key); found {
+			key = base
+			if marker == "quiet" {
+				if base == "gate" {
+					h.QuietGates = append(h.QuietGates, len(h.Gates)+1)
+				} else {
+					h.QuietLiveGates = append(h.QuietLiveGates, len(h.LiveGates)+1)
+				}
+			}
+		}
 		switch key {
 		case "owns":
 			owns = append(owns, val)
@@ -120,6 +139,27 @@ func cutKey(line string) (key, val string, ok bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(k), strings.TrimSpace(v), true
+}
+
+// gateMarker splits a `gate[m]` or `live-gate[m]` key into its base key and
+// marker m (issue #411). found is false for any other key.
+func gateMarker(key string) (base, marker string, found bool) {
+	for _, b := range []string{"gate", "live-gate"} {
+		if rest, ok := strings.CutPrefix(key, b+"["); ok && strings.HasSuffix(rest, "]") {
+			return b, strings.TrimSpace(strings.TrimSuffix(rest, "]")), true
+		}
+	}
+	return "", "", false
+}
+
+// isQuiet reports whether the 1-based index n is listed in quiet.
+func isQuiet(quiet []int, n int) bool {
+	for _, q := range quiet {
+		if q == n {
+			return true
+		}
+	}
+	return false
 }
 
 // stripAnnotation removes a trailing parenthesised annotation: "a.go (new)"

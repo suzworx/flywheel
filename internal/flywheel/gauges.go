@@ -236,6 +236,14 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// one owner lookup per pass, from the pass's snapshot, never per gate
 	// (issue #365).
 	owner := pathOwners(o.Dir, events, task)
+	// the host gate lock's wait budget (issue #411); an unreadable config
+	// keeps the 30m default rather than failing the pass.
+	quietWait, _ := Limits{}.QuietWaitDuration()
+	if cfg, _, cerr := LoadConfig(o.Dir); cerr == nil {
+		if d, derr := cfg.Limits.QuietWaitDuration(); derr == nil && d > 0 {
+			quietWait = d
+		}
+	}
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
@@ -244,7 +252,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		// resolving once per pass would record a history position no reading
 		// was taken at (issue #240).
 		commit := headCommit(wd)
-		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false, owner)
+		out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner)
 		if err != nil {
 			return GaugeResult{}, err
 		}
@@ -263,7 +271,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			// at the moment it ran, never one hoisted from the pass start
 			// (issue #240).
 			commit := headCommit(wd)
-			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true, owner)
+			out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner)
 			if err != nil {
 				return GaugeResult{}, err
 			}
@@ -281,6 +289,41 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	return finishValidate(o.Dir, wd, task, attempt, tree, commit, header.Owns, header.NeedsState, events, res)
 }
 
+// hostGate runs one gate under the host gate lock (issue #411). A quiet gate
+// first waits, up to wait, for an idle host (waitQuietGate); when the host
+// never goes idle nothing runs and the reading is recorded inconclusive with
+// the note "host busy: <tasks>", never a failure. An ordinary gate holds a
+// shared marker while it runs, after waiting the same budget for another
+// process's quiet gate to end (gateTurn).
+func hostGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string) (GateOut, error) {
+	if quiet {
+		release, busy, err := waitQuietGate(dir, task, gateID, wait, now, quietSleep)
+		if err != nil {
+			return GateOut{}, err
+		}
+		defer release()
+		if len(busy) > 0 {
+			note := quietBusyNote(busy)
+			ev := Event{
+				Task: task, Kind: "validated", Attempt: attempt, Gate: gateID, Command: gate,
+				Tree: tree, Commit: commit, Reason: "inconclusive", Note: note,
+				Persona: "supervisor", Workdir: workdirField(wd, dir),
+			}
+			if err := AppendEvent(dir, ev); err != nil {
+				return GateOut{}, err
+			}
+			return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: note, Live: live}, nil
+		}
+		return runAndRecordGate(dir, wd, task, attempt, tree, commit, owns, gateID, logSuffix, gate, live, owner, "")
+	}
+	release, note, err := gateTurn(dir, task, gateID, wait, now, quietSleep)
+	if err != nil {
+		return GateOut{}, err
+	}
+	defer release()
+	return runAndRecordGate(dir, wd, task, attempt, tree, commit, owns, gateID, logSuffix, gate, live, owner, note)
+}
+
 // runAndRecordGate runs one declared gate — ordinary or live — through the
 // path every gate shares: runGate, a rerun when the host blocks the first
 // attempt, the evidence log write at
@@ -289,7 +332,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // (issue #152); the recorded reading is otherwise identical to an ordinary
 // gate's. owner (pathOwners, built once per pass; may be nil) names the
 // in-flight unit owning each path an inconclusive note lists (issue #365).
-func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string) (GateOut, error) {
+// hostNote (from hostGate; may be empty) is recorded as the note when the
+// reading carries no other (issue #411).
+func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote string) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, err := runGate(wd, gate)
@@ -330,6 +375,10 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 			ev.Reason = "inconclusive"
 			ev.Note = note
 		}
+	}
+	if note == "" && hostNote != "" {
+		note = hostNote
+		ev.Note = note
 	}
 	if err := AppendEvent(dir, ev); err != nil {
 		return GateOut{}, err

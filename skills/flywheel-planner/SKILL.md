@@ -86,6 +86,9 @@ You do:
 - Mark a gate that runs **only on a developer machine** (a local stack, a device) in the brief,
   and run it in the lead's verification pass: a gate that needs a local database stack never
   runs in CI, so CI will never see what it finds.
+- Mark every device or timing gate `gate[quiet]:` (or `live-gate[quiet]:`) so it waits for an
+  idle host: a hardware-in-the-loop gate read 951–1705 ms while other workers compiled and
+  156 ms alone.
 - A new gate's first run is mostly about the gate. A UI crawler added to catch unreachable
   routes returned 13 failures on its first run: three were real defects — one falsified a claim
   a lead had written into a commit message and reported as fixed — the other ten the gate's own

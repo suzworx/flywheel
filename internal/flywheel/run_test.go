@@ -4724,3 +4724,45 @@ func TestRunCommitsAttempt(t *testing.T) {
 		t.Errorf("commit message %q lacks the Flywheel-Task trailer", msg)
 	}
 }
+
+// TestRunRefusedDuringQuietGate checks a dispatch is refused with rule quiet,
+// naming the running quiet gate, while quiet.lock is held by a live process,
+// and records nothing (issue #411). A holder on another host cannot be probed
+// and counts as live.
+func TestRunRefusedDuringQuietGate(t *testing.T) {
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 5, false))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	p := quietLockPath(dir)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := `{"task":"T9","gate":"3","pid":4242,"host":"another-host","started_at":"2026-09-24T00:00:00Z"}`
+	if err := os.WriteFile(p, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "quiet" {
+		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='quiet'", err)
+	}
+	if want := "a quiet gate (T9 gate 3) is running on this host; dispatch after it ends"; rf.Fix != want {
+		t.Errorf("Fix = %q, want %q", rf.Fix, want)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded for T1 despite the quiet refusal: %v", e)
+		}
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() after the quiet gate ended error = %v", err)
+	}
+}

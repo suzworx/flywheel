@@ -364,6 +364,21 @@ working exactly as before.
   recorded with `reason` `inconclusive` and a `note` of `blocked by <paths>` (issue #162). T3 still
   requires a *passing* reading for every declared gate: an `inconclusive` reading is not a pass, and
   `flywheel validate` still exits 5 for it, exactly like an ordinary failure.
+- A **quiet gate** (issue #411) is a `gate[quiet]:` or `live-gate[quiet]:` header line: a gate
+  that host contention distorts (device timing, hardware in the loop). The parsed header keeps
+  its command among the gates or live gates as usual and lists its 1-based index in
+  `QuietGates` / `QuietLiveGates`. Before it runs, `flywheel validate` takes the exclusive
+  `.flywheel/locks/quiet.lock` (recording task, gate, pid, host and `started_at`) and polls until
+  no other task has a live lease on this host and no other process holds a gate marker; the
+  validating task's own lease is ignored. Every ordinary gate holds a shared marker
+  (`.flywheel/locks/gates/<pid>-<n>`) while it runs, and first waits while another process holds
+  `quiet.lock`; after the budget it runs anyway with the note `ran during a quiet gate (<task>
+  gate <n>)`. Both waits are bounded by `limits.quiet_wait` (a Go duration, default `30m`). A lock
+  or marker whose pid is dead on this host is stale and ignored. When the host never goes idle,
+  the quiet gate does not run: it is recorded with `reason` `inconclusive`, no `rc` and the note
+  `host busy: <tasks>` — unmeasured, never a failure, and not a pass for T3. While `quiet.lock` is
+  held by a live process, `flywheel run` refuses every dispatch (exit 6, rule `quiet`: `a quiet
+  gate (<task> gate <n>) is running on this host; dispatch after it ends`).
 - An **external** reading (`source` `"external"`, issue #367) is one flywheel did not measure:
   `flywheel attest <task> --commit <sha> --evidence <url> --session <lead>` records that a named
   run elsewhere (CI on the unit's PR) passed every gate on a commit. It writes one `validated` per
