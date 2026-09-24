@@ -867,7 +867,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		case "text":
 			lastText = obs.Text
 		case "tool":
-			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(dir, obs.Path) && !outsideSeen[obs.Path] {
+			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(wt, obs.Path) && !outsideSeen[obs.Path] {
 				outsideSeen[obs.Path] = true
 				outsideOrder = append(outsideOrder, obs.Path)
 				if len(outsideOrder) == 5 {
@@ -929,6 +929,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wrote := append([]string(nil), wroteOrder...)
 	sort.Strings(wrote)
 
+	// outsideNote names the written paths outside the tree the worker ran in:
+	// a checkout's settings once let a worker edit the main checkout from its
+	// worktree (issue #359).
+	var outsideWrote []string
+	for _, p := range wrote {
+		if isOutsideWorktree(wt, p) {
+			outsideWrote = append(outsideWrote, p)
+		}
+	}
+	outsideNote := ""
+	if len(outsideWrote) > 0 {
+		outsideNote = "wrote outside the worktree: " + clipNote(strings.Join(outsideWrote, ", "))
+	}
+
 	// Silent: no output within the start timeout; we already killed the process
 	// we started. Every return path records a finished event.
 	if silent.Load() {
@@ -946,7 +960,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(note, gitNote), outsideNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -989,7 +1003,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Model: model, Reason: "stalled", Note: joinNote(gitNote, outsideNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1074,6 +1088,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// before its finished event (issue #314, #318 review).
 	gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 	note = joinNote(note, gitNote)
+	note = joinNote(note, outsideNote)
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
@@ -1081,6 +1096,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		PeakReasoning: peak, Wrote: wrote,
 	}); err != nil {
 		return Result{}, err
+	}
+
+	// A write outside the worktree is off course; the read-based check may
+	// already have recorded the signal for this attempt, so record it once.
+	if outsideNote != "" {
+		if !offCourseRecorded {
+			if err := recordSignal(dir, o.Task, attempt, session, "off-course", runRel); err != nil {
+				return Result{}, err
+			}
+		}
+		progress(o.Progress, o.Task+" "+attempt+" off-course ("+outsideNote+")")
 	}
 
 	if gitWrote {

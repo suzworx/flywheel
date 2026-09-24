@@ -348,7 +348,11 @@ func (a claudeAdapter) Name() string {
 // --disallowedTools (r.DisallowedTools, by default the git-write family) so
 // the worker permission policy ("workers never commit, stash, reset,
 // checkout or push") is enforced by the permission layer. An empty list
-// appends no flag. A resume (r.Resume with a non-empty r.Session) leads the
+// appends no flag. --setting-sources user loads only the user's settings:
+// the worker's permissions come from the flags above, and a checkout's
+// project or local settings (for example permissions.additionalDirectories
+// naming the repository root) must not widen where the worker may write
+// (issue #359). A resume (r.Resume with a non-empty r.Session) leads the
 // prompt with resumeMessage instead of freshPrompt and adds
 // --resume <session>, mirroring opencodeAdapter.Command.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
@@ -365,6 +369,7 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		"--max-turns", "200",
 		"--model", r.Model,
 		"--permission-mode", "acceptEdits",
+		"--setting-sources", "user",
 	}
 	if len(r.AllowedTools) > 0 {
 		args = append(args, "--allowedTools")
