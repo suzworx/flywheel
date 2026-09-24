@@ -1790,7 +1790,7 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	if !errors.As(err, &r) || r.Rule != "T1" {
 		t.Fatalf("Run() error = %v, want a T1 RuleRefusal", err)
 	}
-	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind planned --brief b.txt") {
+	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind amended --brief b.txt") {
 		t.Errorf("RuleRefusal fix = %q, want it naming the re-record fix", r.Fix)
 	}
 	after, err := ReadEvents(dir)
@@ -1799,6 +1799,51 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("events grew from %d to %d after a strict refusal, want none appended", len(before), len(after))
+	}
+}
+
+// TestBriefDriftAdvice checks the drift message names the step that takes
+// effect on a dispatched attempt (issue #387): an owns-only edit is recorded
+// with --kind amended, never --kind planned, and a gate edit also names a
+// correction delta.
+func TestBriefDriftAdvice(t *testing.T) {
+	orig := []byte("owns: a.go\ngate: go test ./...\n\n# Task\nbody\n")
+	cases := []struct {
+		name      string
+		edited    string
+		wantDelta bool
+	}{
+		{"owns only", "owns: a.go, b.go\ngate: go test ./...\n\n# Task\nbody\n", false},
+		{"gate change", "owns: a.go\ngate: go test ./...\ngate: go vet ./...\n\n# Task\nbody\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), orig, 0o644); err != nil {
+				t.Fatalf("write brief: %v", err)
+			}
+			h, err := ParseBriefHeaderBytes(orig)
+			if err != nil {
+				t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+			}
+			events := []Event{
+				{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt", Header: &h},
+				{TS: "2026-09-12T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", SHA256: h.SHA256, Header: &h},
+			}
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(c.edited), 0o644); err != nil {
+				t.Fatalf("write edited brief: %v", err)
+			}
+			msg := briefDriftAdvice(dir, events, "T1", "b.txt", "r1")
+			if !strings.Contains(msg, "flywheel log --task T1 --kind amended --brief b.txt") {
+				t.Errorf("briefDriftAdvice() = %q, want the --kind amended step", msg)
+			}
+			if strings.Contains(msg, "--kind planned") {
+				t.Errorf("briefDriftAdvice() = %q, want no --kind planned advice", msg)
+			}
+			if got := strings.Contains(msg, "flywheel run T1 --delta"); got != c.wantDelta {
+				t.Errorf("briefDriftAdvice() = %q, names --delta = %v, want %v", msg, got, c.wantDelta)
+			}
+		})
 	}
 }
 
