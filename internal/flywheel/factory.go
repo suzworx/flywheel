@@ -77,11 +77,28 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int       // seconds since the unit's last event
-	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, failed, failed-dirty, done
+	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, abandoned-job, failed, failed-dirty, done
 	Peak     int       // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string    // the product line from the latest dispatched event (issue #69); "" when none
 	Station  string    // where the unit stands on its line (issue #69 follow-up)
 	ResetAt  time.Time // a rate-limited attempt's parsed reset (issue #383); zero when none
+	Workdir  string    // the latest dispatched event's workdir (issue #394); "" in the main checkout
+	Base     string    // that event's base commit, first 7 characters; "" when none
+}
+
+// worktreeFor returns the workdir and the 7-character base commit the task's
+// latest dispatched event for attempt recorded, scanning in order so the last
+// one wins, the same way lineFor does (issue #394).
+func worktreeFor(events []Event, task, attempt string) (workdir, base string) {
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Task == task && e.Attempt == attempt {
+			workdir, base = e.Workdir, e.Base
+		}
+	}
+	if len(base) > 7 {
+		base = base[:7]
+	}
+	return workdir, base
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -332,6 +349,10 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 			// Cut off by a rate limit, files or not: the resume continues
 			// the same session (issue #380).
 			return "rate-limited"
+		case "abandoned-job":
+			// Ended its session while a background job it started ran,
+			// files or not: the resume re-runs the job (issue #390).
+			return "abandoned-job"
 		case "", "stop":
 			if stopState != "" {
 				return stopState
@@ -589,6 +610,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
+			u.Workdir, u.Base = worktreeFor(w.events, t.ID, t.Attempt)
 		}
 		if u.Line == "" {
 			// A unit planned but never dispatched still belongs to the line
@@ -705,13 +727,14 @@ func ageOfTime(t, now time.Time) int {
 }
 
 // buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
-// provider-error, rate-limited, failed or failed-dirty, newest first, and adds
+// provider-error, rate-limited, abandoned-job, failed or failed-dirty, newest
+// first, and adds
 // andon entries for mismatching roles and the paused entries (pausedAndon).
 func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "failed", "failed-dirty":
+		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}

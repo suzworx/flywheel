@@ -41,6 +41,7 @@ type StaffingConfig struct {
 	Lead      *RoleConfig `json:"lead,omitempty"`
 	Inspector *RoleConfig `json:"inspector,omitempty"`
 	Auditor   *RoleConfig `json:"auditor,omitempty"`
+	Reviewer  *RoleConfig `json:"reviewer,omitempty"` // the agent that reads a unit's diff (issue #389)
 }
 
 // Config is the project configuration stored in .flywheel/config.json.
@@ -539,6 +540,15 @@ func (c Config) Validate() error {
 				}
 			}
 		}
+		// A review is independent only when the reviewer does not share a
+		// session with the lead or the inspector (issue #389).
+		if r := c.Staffing.Reviewer; r != nil && r.Session != "" {
+			for _, role := range c.Staffing.roles() {
+				if (role.Name == "lead" || role.Name == "inspector") && role.Cfg != nil && role.Cfg.Session == r.Session {
+					problems = append(problems, fmt.Sprintf("staffing.reviewer: session %q also holds the %s role (a review is only independent when it is)", r.Session, role.Name))
+				}
+			}
+		}
 	}
 	if len(problems) == 0 {
 		return nil
@@ -701,6 +711,7 @@ func (c Config) validKeys() []string {
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
+		"staffing.reviewer.adapter", "staffing.reviewer.model", "staffing.reviewer.session",
 	}
 	for _, l := range c.Lines {
 		keys = append(keys, "lines."+l.Name+".wip")
@@ -752,6 +763,7 @@ func (c *Config) Set(key, value string) error {
 			}
 			slot := map[string]**RoleConfig{
 				"lead": &c.Staffing.Lead, "inspector": &c.Staffing.Inspector, "auditor": &c.Staffing.Auditor,
+				"reviewer": &c.Staffing.Reviewer,
 			}[name]
 			if *slot == nil {
 				*slot = &RoleConfig{}
@@ -853,6 +865,7 @@ func (c Config) settableKeys() []string {
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
+		"staffing.reviewer.adapter", "staffing.reviewer.model", "staffing.reviewer.session",
 	}
 	for _, w := range c.Workers {
 		for _, k := range []string{"adapter", "max_parallel", "model", "stall_timeout", "variant"} {

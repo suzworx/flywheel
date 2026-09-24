@@ -691,3 +691,16 @@ func TestPlanDriftWarning(t *testing.T) {
 		}
 	})
 }
+
+// TestCoversNegatedNarrowing checks a new negated owns entry that stops
+// covering a path the attempt covered is a narrowing (issue #388), while
+// dropping a negation widens.
+func TestCoversNegatedNarrowing(t *testing.T) {
+	have := []string{"apps/inc/**"}
+	if covers([]string{"apps/inc/**", "!apps/inc/wake.h"}, have) {
+		t.Errorf("covers with a new negation = true, want false (a narrowing)")
+	}
+	if !covers(have, []string{"apps/inc/**", "!apps/inc/wake.h"}) {
+		t.Errorf("covers after dropping a negation = false, want true (a widening)")
+	}
+}

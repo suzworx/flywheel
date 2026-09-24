@@ -20,7 +20,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   same way at owns-check time, and `flywheel lint` checks a pattern by globbing it against the
   worktree instead of statting a literal path, so a pattern that currently matches nothing is
   reported the same as a missing path. A literal path the unit will create carries the annotation
-  `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. List every
+  `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. An entry
+  starting with `!` is an exception: `owns: apps/inc/**, !apps/inc/wake.h` owns every header but
+  `wake.h`. A negated entry takes the same three forms, so it can be a literal path, a `dir/` or a
+  pattern. It is matched the same way at validate time and by the dispatch owns-collision check,
+  so the unit does not collide with another in-flight unit that owns `wake.h`. Lint never checks
+  a negated entry for existence, and warns when no positive entry covers it. List every
   file a unit may create up front, in `owns:`, rather than inviting it to add one later. (`needs:`
   takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
   dependencies). An optional `line: <name>` puts the unit on a product line from `.flywheel/config.json`
@@ -242,6 +247,7 @@ output cap was hit), `part.tokens` `{total, input, output, reasoning, cache: {re
 | capped | rc 0 and the last reason is `length` | rerun fresh with `--variant low` and the file in named parts (the default reasoning variant plans so hard it caps with nothing written — see §2). |
 | provider error | an `error` event in the JSONL, or errors only in the opencode log | see §8. |
 | rate-limited | finish reason `rate-limited` (a claude 429 or rate/usage/session-limit message); the note names `limit resets <time>` | `flywheel run` already waits for the reset and resumes the same session (`limits.rate_limit_retries`, default 3; `limits.rate_limit_max_wait`, default 5h); if it gave up, resume it yourself after the reset. |
+| abandoned-job | finish reason `abandoned-job`: a clean stop that left a background shell it started (Bash `run_in_background`) uncollected, so the job died with the session; the note names `background job never collected: <cmd>` | `flywheel run` already resumed the same session once with `.flywheel/briefs/<task>.job-1.txt` (run the job in the foreground and wait); if it is abandoned again, resume with a delta naming the command and a foreground timeout, or re-run the job yourself. |
 | denied | a bash tool `error` event carrying the rule message: "The user has specified a rule which prevents you from using this specific tool call" | the foreman treats a worker trying to get around it as a signal — stop it and triage; never help it around the block. |
 | blocked | rc 0, reason `stop`, and a `permission-denied` signal (the claude result line's `permission_denials`, named in the finished note) | the harness denied a tool the unit needs: fix the path or the policy, then redispatch; never help it around the block. |
 | no-writes | rc 0, reason `stop`, no permission denial, and nothing written, while awaiting judgement (a floor state from the finished event's empty `wrote`, not a signal; it blocks nothing) | the worker finished without writing a file: read its report; if the unit had to write, resume with a delta or redispatch. |
@@ -432,6 +438,11 @@ A correction to work the session **just did** may resume it. A late or small fix
 other files, goes to a **fresh** session with a self-contained brief: the owns/needs header, the
 defects, and one test per defect. Evidence: a resumed session grew from 104 k to 279 k tokens and
 from 18 to 63-79 s per step, while fresh fix sessions ran 11-36 steps in 96-431 s.
+
+- **Corrections cite evidence:** a correction quotes the gauge or run id (e.g. `validated` on
+  `<id>.r1`) and the exact failing lines, and names the suspected cause; it never restates the
+  task. The worker gets the same evidence you judged, so corrections cite evidence, not a
+  summary of it — in a consumer's waves every such correction produced a precise root-cause fix.
 
 ```bash
 OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \

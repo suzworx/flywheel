@@ -106,7 +106,10 @@ You never:
   or a trailing-slash directory such as `src/voice/` — rather than leaving the entry to be added
   later. When the name is known and the file does not exist yet, list it with the `(new)`
   annotation — `src/voice.ts (new)` — so lint does not report it as missing. Both forms are
-  checked the same as a literal path at validate and lint time.
+  checked the same as a literal path at validate and lint time. When a broad entry must leave out
+  a file another work order owns, add a negated entry — `apps/inc/**, !apps/inc/wake.h` — rather
+  than a prose exception or `--allow-overlap`. The negation is machine-checked, so the two
+  work orders do not collide at dispatch.
 
 ## Inputs and outputs
 

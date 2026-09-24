@@ -23,8 +23,10 @@ type LintResult struct {
 // filepath.Glob instead of os.Stat: a pattern filepath.Glob rejects is
 // invalid syntax, while a valid pattern matching nothing is reported like a
 // missing path, with the (new) remedy. A (new) entry skips only the
-// existence check; a (new) pattern still has its syntax validated. Warnings
-// cover the missing write rule and a missing needs line.
+// existence check; a (new) pattern still has its syntax validated. A negated
+// entry ("!path", issue #388) is never existence-checked. Warnings cover the
+// missing write rule, a missing needs line and a negated entry no positive
+// entry covers.
 func LintBrief(dir, path string) (LintResult, error) {
 	var res LintResult
 	b, err := os.ReadFile(path)
@@ -50,6 +52,12 @@ func LintBrief(dir, path string) (LintResult, error) {
 		res.Problems = append(res.Problems, "missing owns: line")
 	}
 	for _, e := range entries {
+		if neg, ok := negatedEntry(e.path); ok {
+			if !negationExcludes(entries, neg) {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("owns: !%s excludes nothing: no positive entry covers it", neg))
+			}
+			continue
+		}
 		if isOwnsPattern(e.path) {
 			matches, err := filepath.Glob(filepath.Join(dir, e.path))
 			if err != nil {
@@ -143,6 +151,38 @@ func gateBacktickInDoubleQuotes(gate string) bool {
 // with filepath.Glob against dir instead of os.Stat.
 func isOwnsPattern(p string) bool {
 	return strings.ContainsAny(p, "*?[")
+}
+
+// negationExcludes reports whether some positive owns entry could contain the
+// negated entry neg (issue #388): the positive entry matches neg itself (a
+// "dir/" negation also without its '/'), neg covers the positive entry, or,
+// when either is a pattern, one literal prefix (the text before the first
+// '*', '?' or '[') starts with the other.
+func negationExcludes(entries []ownsEntry, neg string) bool {
+	for _, e := range entries {
+		pos := e.path
+		if _, n := negatedEntry(pos); n {
+			continue
+		}
+		if ownsEntryMatches(pos, neg) || ownsEntryMatches(pos, strings.TrimSuffix(neg, "/")) || ownsEntryMatches(neg, pos) {
+			return true
+		}
+		if isOwnsPattern(neg) || isOwnsPattern(pos) {
+			np, pp := literalPrefix(neg), literalPrefix(pos)
+			if strings.HasPrefix(np, pp) || strings.HasPrefix(pp, np) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// literalPrefix returns an owns entry up to its first '*', '?' or '['.
+func literalPrefix(p string) string {
+	if i := strings.IndexAny(p, "*?["); i >= 0 {
+		return p[:i]
+	}
+	return p
 }
 
 // hasHeading reports whether content has a line starting with prefix, e.g. a

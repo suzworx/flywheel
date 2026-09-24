@@ -306,6 +306,64 @@ func TestClaudeParseToolUseFixture(t *testing.T) {
 	}
 }
 
+// TestClaudeBackgroundShell: a Bash tool_use with run_in_background true is
+// a background call keyed by its tool_use id; every tool_use carries its raw
+// input, where a later call names the shell it collects (issue #390).
+func TestClaudeBackgroundShell(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	for _, tc := range []struct {
+		line       string
+		background bool
+		toolUseID  string
+		command    string
+		input      string
+	}{
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`, true, "toolu_1", "go test ./...", `{"command":"go test ./...","run_in_background":true}`},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"go build ./..."}}]}}`, false, "", "go build ./...", `{"command":"go build ./..."}`},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"ls","run_in_background":false}}]}}`, false, "", "ls", `{"command":"ls","run_in_background":false}`},
+		{`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_4","name":"BashOutput","input":{"bash_id":"bzkt5tsmf"}}]}}`, false, "", "", `{"bash_id":"bzkt5tsmf"}`},
+	} {
+		obs, ok := a.Parse([]byte(tc.line))
+		if !ok || obs.Kind != "tool" {
+			t.Fatalf("Parse(%s) = %v, %v, want a tool observation", tc.line, obs, ok)
+		}
+		if obs.Background != tc.background || obs.ToolUseID != tc.toolUseID || obs.Command != tc.command || obs.Input != tc.input || obs.ShellID != "" {
+			t.Errorf("Parse(%s) = background %v tool_use %q shell %q command %q input %q, want %v %q \"\" %q %q", tc.line, obs.Background, obs.ToolUseID, obs.ShellID, obs.Command, obs.Input, tc.background, tc.toolUseID, tc.command, tc.input)
+		}
+	}
+}
+
+// TestClaudeBackgroundResultID: a user line's tool_result reporting a
+// background shell or subagent id, as a string or as text blocks, becomes a
+// tool_result observation that ends no turn; a result with no id is not
+// observed (issue #390).
+func TestClaudeBackgroundResultID(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	for _, tc := range []struct {
+		line    string
+		ok      bool
+		toolUse string
+		shellID string
+	}{
+		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"Command running in background with ID: bzkt5tsmf. Output is being written to: C:\\tasks\\bzkt5tsmf.output"}]}}`, true, "toolu_012eoA", "bzkt5tsmf"},
+		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"text","text":"Command running in background with ID: b_7-x"}]}]}}`, true, "toolu_2", "b_7-x"},
+		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_3","content":[{"type":"text","text":"Async agent launched.\nagentId: a1b2c3"}]}]}}`, true, "toolu_3", "a1b2c3"},
+		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_4","content":"ok"}]}}`, false, "", ""},
+		{`{"type":"user","message":{"content":"hello"}}`, false, "", ""},
+	} {
+		obs, ok := a.Parse([]byte(tc.line))
+		if ok != tc.ok {
+			t.Fatalf("Parse(%s) ok = %v, want %v", tc.line, ok, tc.ok)
+		}
+		if !ok {
+			continue
+		}
+		if obs.Kind != "tool_result" || obs.ToolUseID != tc.toolUse || obs.ShellID != tc.shellID || obs.EndsTurn {
+			t.Errorf("Parse(%s) = %+v, want tool_result %q shell %q, no turn end", tc.line, obs, tc.toolUse, tc.shellID)
+		}
+	}
+}
+
 // TestClaudeParseLimitFixture parses testdata/claude-limit.jsonl, one REAL
 // line captured from `claude -p ...` on this machine after it hit its
 // session limit: stop_reason stop_sequence and subtype "success", but with

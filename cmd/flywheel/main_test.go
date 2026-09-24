@@ -3,9 +3,52 @@ package main
 import (
 	"flag"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestParseArgsResolvesTaskWorktreeDir checks that a --dir inside a unit's
+// worktree is resolved to the main checkout's ledger, and that a FlagSet
+// without a dir flag is left untouched (issue #395).
+func TestParseArgsResolvesTaskWorktreeDir(t *testing.T) {
+	repo := t.TempDir()
+	gitInitRepo(t, repo)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "init")
+	wt := filepath.Join(repo, ".flywheel", "worktrees", "T1")
+	run("worktree", "add", "-q", wt, "-b", "fw/T1")
+
+	fs := flag.NewFlagSet("x", flag.ContinueOnError)
+	dir := fs.String("dir", ".", "")
+	if _, err := parseArgs(fs, []string{"--dir", wt}); err != nil {
+		t.Fatal(err)
+	}
+	if *dir != repo {
+		t.Errorf("dir = %q, want %q", *dir, repo)
+	}
+
+	fs = flag.NewFlagSet("y", flag.ContinueOnError)
+	workdir := fs.String("workdir", "", "")
+	if _, err := parseArgs(fs, []string{"--workdir", wt}); err != nil {
+		t.Fatal(err)
+	}
+	if *workdir != wt {
+		t.Errorf("workdir = %q, want it untouched (%q)", *workdir, wt)
+	}
+}
 
 // parseArgsOptions mirrors a minimal two-flag command for the parseArgs tests.
 type parseArgsOptions struct {

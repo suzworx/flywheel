@@ -115,13 +115,37 @@ func pauseClock(t time.Time) string {
 // limitContinue is the task text of the delta a rate-limit resume attaches.
 const limitContinue = "# TASK: continue\n\nYour run was cut off by a rate limit. Continue the same task from where you stopped; do not redo finished work. Re-run the gates at the end and report their exit codes.\n"
 
+// jobContinue is the task text of the delta an abandoned-job resume attaches;
+// %s is the killed command(s) (issue #390).
+const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed when your session ended. Run it in the foreground (with a timeout long enough for it to finish) and wait for it, then finish the task and report its result and every gate's exit code.\n"
+
 // RunResumingLimits calls Run and, while the attempt ends rate-limited and
 // limits.rate_limit_retries allows, waits for the limit to reset and resumes
 // the same worker session with a continue delta (issue #380). The wait is the
 // parsed reset time plus a minute, else a backoff of 2m, 4m, 8m... capped at
 // 30m; a wait beyond limits.rate_limit_max_wait stops and returns the
-// rate-limited result. sleep and now are injected so tests never sleep.
+// rate-limited result. An attempt that ends abandoned-job is resumed once,
+// immediately, on the same session with a delta naming the killed job; a
+// second abandoned-job is returned as is (issue #390). sleep and now are
+// injected so tests never sleep.
 func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now func() time.Time) (Result, error) {
+	res, err := resumeLimits(dir, o, sleep, now)
+	if err != nil || res.Reason != "abandoned-job" {
+		return res, err
+	}
+	delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.job-1.txt", o.Task), fmt.Sprintf(jobContinue, strings.Join(res.Jobs, "`, `")))
+	if err != nil {
+		return res, err
+	}
+	progress(o.Progress, fmt.Sprintf("%s abandoned-job (%s); resuming once in the same session", o.Task, strings.Join(res.Jobs, ", ")))
+	next := o
+	next.Resume, next.DeltaPath, next.Increment = true, delta, 0
+	return resumeLimits(dir, next, sleep, now)
+}
+
+// resumeLimits is RunResumingLimits' rate-limit loop: Run, then the bounded
+// waits and resumes while the attempt ends rate-limited.
+func resumeLimits(dir string, o RunOptions, sleep func(time.Duration), now func() time.Time) (Result, error) {
 	res, err := Run(dir, o)
 	if err != nil || res.Reason != "rate-limited" {
 		return res, err
@@ -167,6 +191,13 @@ func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now 
 // needs and gate lines of the task's effective brief, then limitContinue. It
 // returns the repo-relative path.
 func writeLimitDelta(dir, task string, n int) (string, error) {
+	return writeResumeDelta(dir, task, fmt.Sprintf("%s.limit-%d.txt", task, n), limitContinue)
+}
+
+// writeResumeDelta writes .flywheel/briefs/<name>: the owns, needs and gate
+// lines of the task's effective brief, then text. It returns the
+// repo-relative path.
+func writeResumeDelta(dir, task, name, text string) (string, error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return "", err
@@ -185,8 +216,8 @@ func writeLimitDelta(dir, task string, n int) (string, error) {
 	for _, g := range header.Gates {
 		fmt.Fprintf(&b, "gate: %s\n", g)
 	}
-	b.WriteString("\n" + limitContinue)
-	rel := filepath.Join(".flywheel", "briefs", fmt.Sprintf("%s.limit-%d.txt", task, n))
+	b.WriteString("\n" + text)
+	rel := filepath.Join(".flywheel", "briefs", name)
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel", "briefs"), 0o755); err != nil {
 		return "", err
 	}
