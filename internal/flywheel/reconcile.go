@@ -9,28 +9,32 @@ import (
 )
 
 // Observed is what Reconcile sees of the world beyond the event log: the
-// lease files as they read now.
+// lease files as they read now, and each run file's modification time keyed
+// by "<task>.<attempt>" (issue #402).
 type Observed struct {
-	Leases []Lease `json:"leases"`
+	Leases       []Lease              `json:"leases"`
+	RunFileMTime map[string]time.Time `json:"run_file_mtime,omitempty"`
 }
 
 // Policy caps the factory's parallelism for one tick.
 type Policy struct {
-	MaxParallel   int      `json:"max_parallel"`
-	PerHost       int      `json:"per_host,omitempty"`        // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
-	Model         string   `json:"model,omitempty"`           // the default worker's model, which DISPATCH would use
-	BudgetUSD     float64  `json:"budget_usd,omitempty"`      // limits.budget.wave_cost_usd; 0 means no budget
-	BudgetTokens  int      `json:"budget_tokens,omitempty"`   // limits.budget.wave_tokens; 0 means no budget
-	RatePerMinute int      `json:"rate_per_minute,omitempty"` // limits.rate_per_minute; 0 means no limit
-	Breaker       *Breaker `json:"breaker,omitempty"`         // limits.breaker; nil means no breaker
-	Fallbacks     []string `json:"fallbacks,omitempty"`       // the default worker's approved fallback models, in config order
+	MaxParallel   int           `json:"max_parallel"`
+	PerHost       int           `json:"per_host,omitempty"`        // PerHost caps attempts in flight on this host across every model (limits.per_host); 0 means no cap.
+	Model         string        `json:"model,omitempty"`           // the default worker's model, which DISPATCH would use
+	BudgetUSD     float64       `json:"budget_usd,omitempty"`      // limits.budget.wave_cost_usd; 0 means no budget
+	BudgetTokens  int           `json:"budget_tokens,omitempty"`   // limits.budget.wave_tokens; 0 means no budget
+	RatePerMinute int           `json:"rate_per_minute,omitempty"` // limits.rate_per_minute; 0 means no limit
+	Breaker       *Breaker      `json:"breaker,omitempty"`         // limits.breaker; nil means no breaker
+	Fallbacks     []string      `json:"fallbacks,omitempty"`       // the default worker's approved fallback models, in config order
+	LostAfter     time.Duration `json:"lost_after,omitempty"`      // limits.lost_after; an attempt with no lease idle this long is lost; 0 disables the idle rule
 }
 
 // PolicyFromConfig derives the policy from the configuration: the default
 // worker's max_parallel (where 0 means 1), the default worker's model, the
 // budget from limits.budget.wave_cost_usd and wave_tokens when set, the breaker
 // from limits.breaker when set, the rate limit from limits.rate_per_minute,
-// and the default worker's approved fallback models.
+// the default worker's approved fallback models, and limits.lost_after (24h
+// when unset or invalid).
 func PolicyFromConfig(cfg Config) Policy {
 	mp := cfg.DefaultWorker().MaxParallel
 	if mp < 1 {
@@ -42,13 +46,17 @@ func PolicyFromConfig(cfg Config) Policy {
 		budgetUSD = cfg.Limits.Budget.WaveCostUSD
 		budgetTokens = cfg.Limits.Budget.WaveTokens
 	}
+	lostAfter, err := cfg.Limits.LostAfterDuration()
+	if err != nil || lostAfter <= 0 {
+		lostAfter = 24 * time.Hour
+	}
 	var fallbacks []string
 	for _, f := range cfg.DefaultWorker().Fallbacks {
 		if f.Approved {
 			fallbacks = append(fallbacks, f.Model)
 		}
 	}
-	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, BudgetTokens: budgetTokens, RatePerMinute: cfg.Limits.RatePerMinute, Breaker: cfg.Limits.Breaker, Fallbacks: fallbacks}
+	return Policy{MaxParallel: mp, PerHost: cfg.Limits.PerHost, Model: cfg.DefaultWorker().Model, BudgetUSD: budgetUSD, BudgetTokens: budgetTokens, RatePerMinute: cfg.Limits.RatePerMinute, Breaker: cfg.Limits.Breaker, Fallbacks: fallbacks, LostAfter: lostAfter}
 }
 
 // Action is one transition Reconcile recommends. Nothing executes the
@@ -128,15 +136,85 @@ func unionClaims(a, b claims) claims {
 	}
 }
 
-// claimOverlap returns the first overlapping owns path (checked both ways
-// with ownsContains, as run's owns check does) or shared exclusive resource
-// between a and b, and whether there is one; kind is "owns" or "exclusive".
+// lostEvidence reports whether the current attempt of an in-flight task is
+// lost at now, with the lost reason and evidence (issue #402):
+//   - lease-expired: its lease file exists in obs and is no longer live;
+//   - idle: no lease file exists for it and its run file's mtime (with no run
+//     file, its dispatched event's TS) is older than p.LostAfter. A
+//     LostAfter of 0 disables the idle rule.
+//
+// A live lease is never lost.
+func lostEvidence(ts TaskState, events []Event, obs Observed, p Policy, now time.Time) (reason, evidence string, ok bool) {
+	for _, l := range obs.Leases {
+		if l.Task != ts.ID || l.Attempt != ts.Attempt {
+			continue
+		}
+		if LeaseLive(l, now) {
+			return "", "", false
+		}
+		return "lease-expired", "lease expired at " + l.ExpiresAt, true
+	}
+	if p.LostAfter <= 0 {
+		return "", "", false
+	}
+	if mt, has := obs.RunFileMTime[ts.ID+"."+ts.Attempt]; has {
+		if now.Sub(mt) > p.LostAfter {
+			return "idle", "no live lease; run file idle since " + mt.UTC().Format(time.RFC3339), true
+		}
+		return "", "", false
+	}
+	var dispatched time.Time
+	for _, e := range events {
+		if e.Task != ts.ID || e.Kind != "dispatched" || (e.Attempt != "" && e.Attempt != ts.Attempt) {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(dispatched) {
+			dispatched = t
+		}
+	}
+	if !dispatched.IsZero() && now.Sub(dispatched) > p.LostAfter {
+		return "idle", "no live lease; no run file; dispatched at " + dispatched.UTC().Format(time.RFC3339), true
+	}
+	return "", "", false
+}
+
+// ownsContainsNegated reports whether owns contains p, honouring "!"
+// entries: p is inside when a plain entry contains it (ownsContains) and no
+// "!" entry, with the "!" removed, matches it by the same rule (#388).
+func ownsContainsNegated(owns []string, p string) bool {
+	var plain, negated []string
+	for _, o := range owns {
+		if n, ok := strings.CutPrefix(o, "!"); ok {
+			negated = append(negated, n)
+		} else {
+			plain = append(plain, o)
+		}
+	}
+	if !ownsContains(plain, p) {
+		return false
+	}
+	for _, n := range negated {
+		if ownsContains([]string{n}, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// claimOverlap returns the first overlapping owns path or shared exclusive
+// resource between a and b, and whether there is one; kind is "owns" or
+// "exclusive". An owns entry of one side overlaps when the other side's whole
+// owns list contains it (ownsContainsNegated), checked both ways; "!"
+// entries themselves are never compared (#388).
 func claimOverlap(a, b claims) (kind, what string, ok bool) {
 	for _, ap := range a.owns {
-		for _, bp := range b.owns {
-			if ownsContains([]string{ap}, bp) || ownsContains([]string{bp}, ap) {
-				return "owns", ap, true
-			}
+		if !strings.HasPrefix(ap, "!") && ownsContainsNegated(b.owns, ap) {
+			return "owns", ap, true
+		}
+	}
+	for _, bp := range b.owns {
+		if !strings.HasPrefix(bp, "!") && ownsContainsNegated(a.owns, bp) {
+			return "owns", bp, true
 		}
 	}
 	for _, ae := range a.exclusive {
@@ -158,8 +236,10 @@ func claimOverlap(a, b claims) (kind, what string, ok bool) {
 // then by task id.
 //
 //   - MARK_LOST: the current attempt of a dispatched or running task whose
-//     lease file exists in obs and has expired at now; the evidence names the
-//     lease's expires_at.
+//     lease file exists in obs and has expired at now (reason lease-expired,
+//     the evidence names the lease's expires_at), or that has no lease file
+//     and whose run file (else its dispatch) is older than p.LostAfter
+//     (reason idle); see lostEvidence.
 //   - REQUEST_INSPECTION: a finished task whose latest validated reading per
 //     gate all passed, on the tree of its latest owns_checked, which is clean
 //     and after the latest finished, and with no inspected event after the
@@ -200,7 +280,7 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 
 	var keys []actionKey
 	// 1. lost: the current attempt of a dispatched or running task whose
-	// lease file exists in obs and is no longer live at now. A task whose
+	// lease has expired or that sat idle past LostAfter. A task whose
 	// status is already lost is skipped, so a repeated tick never appends a
 	// second lost event for the same attempt.
 	for _, ts := range s.Tasks {
@@ -213,17 +293,10 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 		if ts.Attempt == "" {
 			continue
 		}
-		for _, l := range obs.Leases {
-			if l.Task != ts.ID || l.Attempt != ts.Attempt {
-				continue
-			}
-			if LeaseLive(l, now) {
-				break
-			}
+		if reason, evidence, ok := lostEvidence(ts, events, obs, p, now); ok {
 			keys = append(keys, actionKey{Rank: 0, Valid: planned[ts.ID], Time: pt[ts.ID],
 				Action: Action{Kind: "MARK_LOST", Task: ts.ID, Attempt: ts.Attempt,
-					Evidence: "lease expired at " + l.ExpiresAt}})
-			break
+					Reason: reason, Evidence: evidence}})
 		}
 	}
 	// 2. inspection: a finished task whose latest readings cover its latest
@@ -608,21 +681,28 @@ func latestReading(events []Event, task, kind, cur string) (have bool, t time.Ti
 	return have, t, tree, outside
 }
 
-// NextActions is the read-only command path: it reads the event log, the
-// lease files and the config, derives the state, and returns the reconciled
-// actions without executing them.
+// NextActions is the flywheel next command path: it first marks lost every
+// abandoned attempt (MarkLost, issue #402), so a dead attempt never holds its
+// claims against a recommendation, then reads the event log, the lease and
+// run files and the config, derives the state, and returns the reconciled
+// actions without executing them. The MARK_LOST actions it recorded lead the
+// list, in Reconcile's order.
 func NextActions(dir string, now time.Time) ([]Action, error) {
+	marked, err := markLost(dir, now)
+	if err != nil {
+		return nil, err
+	}
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read events %s: %w", dir, err)
 	}
-	leases, err := ReadLeases(dir)
+	obs, err := observe(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read leases %s: %w", dir, err)
+		return nil, err
 	}
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", dir, err)
 	}
-	return Reconcile(Derive(events), events, Observed{Leases: leases}, PolicyFromConfig(cfg), now), nil
+	return append(marked, Reconcile(Derive(events), events, obs, PolicyFromConfig(cfg), now)...), nil
 }
