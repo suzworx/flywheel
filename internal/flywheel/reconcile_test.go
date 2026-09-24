@@ -43,7 +43,7 @@ func recCases() []recCase {
 			leases: []Lease{lease("m", "r1", "2026-09-14T00:02:00Z")},
 			policy: Policy{MaxParallel: 2},
 			now:    "2026-09-14T00:10:00Z",
-			want: []Action{{Kind: "MARK_LOST", Task: "m", Attempt: "r1",
+			want: []Action{{Kind: "MARK_LOST", Task: "m", Attempt: "r1", Reason: "lease-expired",
 				Evidence: "lease expired at 2026-09-14T00:02:00Z"}},
 		},
 		{
@@ -284,7 +284,7 @@ func recCases() []recCase {
 			policy: Policy{MaxParallel: 4},
 			now:    "2026-09-14T00:10:00Z",
 			want: []Action{
-				{Kind: "MARK_LOST", Task: "l", Attempt: "r1", Evidence: "lease expired at 2026-09-14T00:02:00Z"},
+				{Kind: "MARK_LOST", Task: "l", Attempt: "r1", Reason: "lease-expired", Evidence: "lease expired at 2026-09-14T00:02:00Z"},
 				{Kind: "REQUEST_INSPECTION", Task: "q", Reason: "validated pass awaits inspection"},
 				{Kind: "WAIT", Task: "early", Reason: "needs l"},
 				{Kind: "WAIT", Task: "early2", Reason: "needs l"},
@@ -482,5 +482,83 @@ func TestNextHoldsPausedModel(t *testing.T) {
 		if a.Task == "t3" && a.Kind == "HOLD" {
 			t.Errorf("after the reset: %v, want no HOLD for t3", a)
 		}
+	}
+}
+
+// TestMarkLostIdle covers both MARK_LOST paths (issue #402): an expired lease
+// (lease-expired) and an attempt with no lease whose run file, or with no run
+// file its dispatch, is older than LostAfter (idle). A live lease and a fresh
+// run file never mark lost.
+func TestMarkLostIdle(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	events := []Event{
+		{TS: "2026-09-10T00:00:00Z", Task: "a", Kind: "planned", Brief: "a.md"},
+		{TS: "2026-09-10T00:01:00Z", Task: "a", Kind: "dispatched", Attempt: "r1"},
+	}
+	p := Policy{MaxParallel: 1, LostAfter: 24 * time.Hour}
+	lostOf := func(obs Observed, p Policy) []Action {
+		var out []Action
+		for _, a := range Reconcile(Derive(events), events, obs, p, now) {
+			if a.Kind == "MARK_LOST" {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	cases := []struct {
+		name   string
+		obs    Observed
+		p      Policy
+		reason string
+		ev     string
+	}{
+		{"expired lease", Observed{Leases: []Lease{{Task: "a", Attempt: "r1", ExpiresAt: "2026-09-13T00:00:00Z"}}}, p,
+			"lease-expired", "lease expired at 2026-09-13T00:00:00Z"},
+		{"live lease, old run file", Observed{Leases: []Lease{{Task: "a", Attempt: "r1", ExpiresAt: "2026-09-14T00:05:00Z"}},
+			RunFileMTime: map[string]time.Time{"a.r1": now.Add(-72 * time.Hour)}}, p, "", ""},
+		{"no lease, old run file", Observed{RunFileMTime: map[string]time.Time{"a.r1": now.Add(-48 * time.Hour)}}, p,
+			"idle", "no live lease; run file idle since 2026-09-12T00:00:00Z"},
+		{"no lease, fresh run file", Observed{RunFileMTime: map[string]time.Time{"a.r1": now.Add(-time.Hour)}}, p, "", ""},
+		{"no lease, no run file", Observed{}, p,
+			"idle", "no live lease; no run file; dispatched at 2026-09-10T00:01:00Z"},
+		{"no lease, no run file, idle rule off", Observed{}, Policy{MaxParallel: 1}, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lostOf(tc.obs, tc.p)
+			if tc.reason == "" {
+				if len(got) != 0 {
+					t.Fatalf("MARK_LOST = %+v, want none", got)
+				}
+				return
+			}
+			want := Action{Kind: "MARK_LOST", Task: "a", Attempt: "r1", Reason: tc.reason, Evidence: tc.ev}
+			if len(got) != 1 || got[0] != want {
+				t.Fatalf("MARK_LOST = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestClaimOverlapNegated: claimOverlap compares each side's whole owns list,
+// honouring "!" negations (#388 follow-up).
+func TestClaimOverlapNegated(t *testing.T) {
+	wake := claims{owns: []string{"apps/inc/wake.h"}}
+	negated := claims{owns: []string{"apps/inc/**", "!apps/inc/wake.h"}}
+	plain := claims{owns: []string{"apps/inc/**"}}
+	if k, w, ok := claimOverlap(negated, wake); ok {
+		t.Errorf("claimOverlap(negated, wake) = %s %s, want no overlap", k, w)
+	}
+	if k, w, ok := claimOverlap(wake, negated); ok {
+		t.Errorf("claimOverlap(wake, negated) = %s %s, want no overlap", k, w)
+	}
+	if _, _, ok := claimOverlap(plain, wake); !ok {
+		t.Errorf("claimOverlap(plain, wake) = no overlap, want overlap")
+	}
+	if _, _, ok := claimOverlap(wake, plain); !ok {
+		t.Errorf("claimOverlap(wake, plain) = no overlap, want overlap")
+	}
+	if _, _, ok := claimOverlap(negated, claims{owns: []string{"apps/inc/other.h"}}); !ok {
+		t.Errorf("claimOverlap(negated, other.h) = no overlap, want overlap")
 	}
 }
