@@ -410,7 +410,10 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   dispatch, owned by no in-flight unit's brief there, is attributed `"<worktree>: <path> -> lead
   <session>"` when that worktree's own ledger has a `lead_edit` claim covering it under the same
   three guards (the worker-session guard against each of that worktree's in-flight units), and only
-  while that worktree still has a dispatched, unlanded unit.
+  while that worktree still has a dispatched, unlanded unit. A sibling that is another unit's
+  `run --worktree` worktree, `<repo>/.flywheel/worktrees/<task>`, is read against the MAIN ledger
+  instead: while `<task>` is dispatched and unlanded there, every changed path in it is attributed
+  `"<worktree>: <path> -> <task>"` (issue #386).
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.
