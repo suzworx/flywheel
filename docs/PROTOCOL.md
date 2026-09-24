@@ -104,7 +104,15 @@ all.
   `flywheel run` refuses a fresh attempt on it (exit 6, rule `rate-limit`; a resume is exempt),
   `flywheel next` HOLDs with `rate-limit: <model> paused until <time>`, and the floor shows the
   unit `rate-limited until HH:MM` and an andon entry `model/<model>` `paused until HH:MM`; a later
-  clean `stop` finish on the model ends the pause early, issue #383; `start-failed`; `silent`;
+  clean `stop` finish on the model ends the pause early, issue #383; `abandoned-job` — a clean
+  stop that left a background shell it started (claude Bash `run_in_background`, whose
+  tool_result reports `running in background with ID: <id>` or `agentId: <id>`) never collected
+  — no later tool call's input names that id (`BashOutput`, `KillShell`, a `Read` of its output
+  file, ...) — so the job died with the session; the note names
+  `background job never collected: <cmd>`, no signal is recorded, the floor shows the unit
+  `abandoned-job` on the andon, and `flywheel run` resumes the same session once, immediately,
+  with `.flywheel/briefs/<task>.job-1.txt` telling the worker to run the job in the foreground; a
+  second `abandoned-job` is returned as is, issue #390; `start-failed`; `silent`;
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
@@ -657,7 +665,7 @@ a consumer scripts exit codes per command, never globally:
 | Exit | `flywheel run` reason |
 | --- | --- |
 | 3 | `silent` — no stdout line arrived within the start timeout |
-| 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, `rate-limited` (after any resumes), or `start-failed` |
+| 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, `rate-limited` (after any resumes), `abandoned-job` (after its one resume), or `start-failed` |
 | 7 | `stalled` — the run had started but the run file stopped growing for the stall timeout (issue #158) |
 
 Everything upstream of these five commands — writing a brief, deciding what belongs in `owns:`,
