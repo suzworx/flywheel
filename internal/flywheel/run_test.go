@@ -4363,3 +4363,54 @@ func TestGatesUnrun(t *testing.T) {
 		}
 	}
 }
+
+// TestRunCommitsAttempt checks that a clean stop of a --worktree run is
+// committed by flywheel on fw/<task> (issue #391): the owned change lands in
+// the commit named on the finished event, the unowned one is left and named
+// on the note, and no git-write signal is raised for flywheel's own commit.
+func TestRunCommitsAttempt(t *testing.T) {
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n", "notes.txt": "not owned\n"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fin *Event
+	for i := range events {
+		if events[i].Kind == "signal" && events[i].Signal == "git-write" {
+			t.Errorf("git-write signal for flywheel's own commit: %+v", events[i])
+		}
+		if events[i].Task == "T1" && events[i].Kind == "finished" {
+			fin = &events[i]
+		}
+	}
+	if fin == nil {
+		t.Fatal("no finished event")
+	}
+	if fin.Reason != "stop" || !CommitOK(fin.Commit) {
+		t.Fatalf("finished reason=%q commit=%q, want stop with a commit", fin.Reason, fin.Commit)
+	}
+	if !strings.Contains(fin.Note, "left uncommitted (outside owns): notes.txt") {
+		t.Errorf("note = %q, want the unowned path named", fin.Note)
+	}
+	if got := strings.TrimSpace(git(t, wt, []string{"rev-parse", "refs/heads/fw/T1"})); got != fin.Commit {
+		t.Errorf("fw/T1 = %s, finished commit = %s", got, fin.Commit)
+	}
+	if files := strings.TrimSpace(git(t, wt, []string{"show", "--name-only", "--format=", fin.Commit})); files != "a.go" {
+		t.Errorf("committed files = %q, want a.go", files)
+	}
+	if msg := git(t, wt, []string{"log", "-1", "--format=%B", fin.Commit}); !strings.Contains(msg, "Flywheel-Task: T1") {
+		t.Errorf("commit message %q lacks the Flywheel-Task trailer", msg)
+	}
+}
