@@ -1565,3 +1565,59 @@ func TestVerifyT5ExceptionForOtherCommitFails(t *testing.T) {
 		t.Error("T5 passed a landing of def5678 on an exception that covers abc1234")
 	}
 }
+
+// TestVerifyAttested accepts a pass on attested readings and names their
+// evidence on the T3 line (issue #367), and fails an external reading that
+// lacks its evidence or its commit.
+func TestVerifyAttested(t *testing.T) {
+	dir, commit := attestSetup(t, []string{"exit 0"}, "a.go")
+	if _, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1"); err != nil {
+		t.Fatalf("Attest() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1", Commit: commit}); err != nil {
+		t.Fatalf("InspectTask() error = %v", err)
+	}
+	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if !res.Passed {
+		t.Fatalf("VerifyTasks() failed an attested pass: %+v", res.Items)
+	}
+	for _, it := range res.Items {
+		if it.Rule == "T3" && !strings.Contains(it.Reason, "attested: https://ci.example/run/7") {
+			t.Errorf("T3 reason = %q, want it to name the attested evidence", it.Reason)
+		}
+	}
+
+	tree := landedTree(dir, commit)
+	for _, line := range []string{
+		`{"ts":"2026-09-12T02:00:00Z","task":"T1","kind":"validated","gate":"1","rc":0,"tree":"` + tree + `","session":"lead-1","commit":"` + commit + `","source":"external","persona":"supervisor"}`,
+		`{"ts":"2026-09-12T02:00:01Z","task":"T1","kind":"owns_checked","tree":"` + tree + `","session":"lead-1","evidence":"https://ci.example/run/8","source":"external","persona":"supervisor"}`,
+	} {
+		f, err := os.OpenFile(filepath.Join(dir, ".flywheel", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatalf("open events.jsonl: %v", err)
+		}
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatalf("append raw event: %v", err)
+		}
+		f.Close()
+	}
+	res, err = VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
+	if err != nil {
+		t.Fatalf("VerifyTasks() error = %v", err)
+	}
+	if res.Passed {
+		t.Fatal("VerifyTasks() passed external readings missing evidence or commit")
+	}
+	bad := 0
+	for _, it := range res.Items {
+		if it.Rule == "T3" && !it.Pass && strings.Contains(it.Reason, "lacks evidence") {
+			bad++
+		}
+	}
+	if bad != 2 {
+		t.Errorf("T3 failures naming a malformed external reading = %d, want 2: %+v", bad, res.Items)
+	}
+}

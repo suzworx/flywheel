@@ -239,7 +239,8 @@ back to reading the file at its `brief` path, so ledgers written before this fie
 working exactly as before.
 
 ### `validated`
-- Written by: the CLI only, via `flywheel validate <task>`, once per declared `gate:` line.
+- Written by: the CLI only, via `flywheel validate <task>`, once per declared `gate:` line, or
+  `flywheel attest` (an external reading, below).
 - Carries: `task`, `attempt`, `gate` (1-based index, as a string), `command`, `tree` (git tree
   hash), `commit` (the repository HEAD at the moment **this** reading was taken, not at the start
   of the pass — each gate resolves it independently, so two readings in one pass may carry
@@ -261,9 +262,21 @@ working exactly as before.
   recorded with `reason` `inconclusive` and a `note` of `blocked by <paths>` (issue #162). T3 still
   requires a *passing* reading for every declared gate: an `inconclusive` reading is not a pass, and
   `flywheel validate` still exits 5 for it, exactly like an ordinary failure.
+- An **external** reading (`source` `"external"`, issue #367) is one flywheel did not measure:
+  `flywheel attest <task> --commit <sha> --evidence <url> --session <lead>` records that a named
+  run elsewhere (CI on the unit's PR) passed every gate on a commit. It writes one `validated` per
+  `gate:` and `live-gate:` (rc 0) and one clean `owns_checked`, in one `AppendEvents` call, on the
+  commit's tree, each carrying `source`, `evidence` (the run's URL or reference), `commit` and
+  `session`; `Validate` refuses an external reading missing any of the three. Only the lead writes
+  them, never a worker: `attest` refuses a worker session of the task (T4, and verify's T4 fails
+  one), a task with no dispatched attempt (T5), and a commit that changed a path outside the
+  unit's `owns:` against its first parent (T3). An external reading counts for T3 exactly like a
+  measured one; verify fails one missing its evidence, session or commit, and names the evidence
+  of a pass it relied on (`attested: <evidence>` on the T3 line).
 
 ### `owns_checked`
-- Written by: the CLI only, via `flywheel validate <task>`, once per pass.
+- Written by: the CLI only, via `flywheel validate <task>`, once per pass, or `flywheel attest`
+  (an external reading, see `validated` above).
 - Carries: `task`, `attempt`, `tree`, `commit` (the repository HEAD at the moment the owns check
   ran, resolved independently of the gates — each reading carries the HEAD at the time it was
   taken, so it may differ from the gates' commits and that is correct, not a bug; empty when the
@@ -299,6 +312,8 @@ working exactly as before.
 ### `inspected`
 - Written by: the CLI only, via `flywheel inspect <task> --verdict ... --session ...`.
 - Carries: `task`, `verdict` (`pass`, `rework`, `scrap`, or `escalate`), `tree`, `session`, `note`,
+  `commit` (with `--commit <sha>`: the tree inspected is that commit's, not the working tree's —
+  how an attested, already-merged commit is inspected, issue #367),
   `workdir` (the git working tree inspected, canonical absolute form, recorded only when it
   differs from the flywheel root, issue #244), `persona` (always `"inspector"`, hardcoded by
   `InspectTask` — see §4 for the only way a `"lead"` ever appears there).
@@ -487,7 +502,8 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   who typed it. "A worker never runs the gauges" is a skill-level convention here, not a mechanical
   block: the OpenCode worker permission policy
   (`skills/flywheel/references/worker-permissions.json`) denies only tree-rewriting git commands,
-  not `flywheel validate`.
+  not `flywheel validate`. `flywheel attest` also signs its external readings `"supervisor"`, and
+  they are the one kind of reading that does carry a `session`: the lead's, never a worker's (T4).
 - `inspected` → persona must be `"inspector"` or `"lead"`. `flywheel inspect` (`InspectTask`)
   always writes `"inspector"`; the only way an `inspected` event ever carries `"lead"` is a
   hand-crafted `flywheel log --json` line with an explicit `"persona":"lead"` field — the ordinary
@@ -556,6 +572,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, or T8 and its fix | 2 usage, 1 other error |
+| `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 | 2 usage (e.g., --exception without --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
