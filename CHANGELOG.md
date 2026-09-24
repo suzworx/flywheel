@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/suzworx/flywheel/compare/v0.18.1...v0.18.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* a rate-limited model is paused until the reset, and the floor says until when ([#384](https://github.com/suzworx/flywheel/issues/384)) ([14f060f](https://github.com/suzworx/flywheel/commit/14f060fc235371c3c5fd1a5f810c092154f6645f)), closes [#383](https://github.com/suzworx/flywheel/issues/383)
+
 ## [0.18.1](https://github.com/suzworx/flywheel/compare/v0.18.0...v0.18.1) (2026-09-24)
 
 
