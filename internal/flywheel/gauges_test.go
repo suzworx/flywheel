@@ -1634,6 +1634,60 @@ func TestValidateInconclusiveGate(t *testing.T) {
 	}
 }
 
+// TestInconclusiveNoteNamesOwner checks an inconclusive note names the
+// in-flight unit owning each blocking path it can attribute (issue #365):
+// directly through inconclusiveNote, and end to end through ValidateTask
+// with a second dispatched task whose brief owns the blocking path.
+func TestInconclusiveNoteNamesOwner(t *testing.T) {
+	owner := func(p string) string {
+		if p == "a.ts" {
+			return "T3"
+		}
+		return ""
+	}
+	if got, want := inconclusiveNote([]string{"a.ts", "b.ts"}, owner), "blocked by a.ts (owned by T3), b.ts"; got != want {
+		t.Errorf("inconclusiveNote(owner) = %q, want %q", got, want)
+	}
+	if got, want := inconclusiveNote([]string{"a.ts", "b.ts"}, nil), "blocked by a.ts, b.ts"; got != want {
+		t.Errorf("inconclusiveNote(nil) = %q, want %q", got, want)
+	}
+
+	dir, err := initTask(t, []string{`printf 'FAIL b.txt:3: broken\n'; exit 1`})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	otherTaskPlanned(t, dir, "B", "b.txt")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched B error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].Inconclusive {
+		t.Fatalf("Inconclusive = false, want true (only B's changed path is named)")
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" && e.Task == "T1" {
+			found = true
+			if !strings.Contains(e.Note, "b.txt (owned by B)") {
+				t.Errorf("event note = %q, want it to contain %q", e.Note, "b.txt (owned by B)")
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded")
+	}
+}
+
 // TestValidateInconclusiveGateOwnsPathIsOrdinary checks that naming a path
 // inside owns keeps the failure ordinary, even when an outside changed path
 // is also named.
