@@ -107,12 +107,28 @@ type GaugeResult struct {
 	// needs-state: path was neither present in an isolated Workdir nor
 	// carried; Gates, Outside and Attributed are all empty in that case.
 	Refused string
+	// GatesUnrun copies the attempt's latest finished event's gates_unrun:
+	// the gate ids the worker never ran itself (issue #365). A reading, never
+	// a gate.
+	GatesUnrun []string
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
 // sits outside owns.
 func (r GaugeResult) OK() bool {
 	return r.Refused == "" && r.GatesOK && r.OwnsOK
+}
+
+// attemptGatesUnrun returns the GatesUnrun of the latest finished event of
+// task's attempt in events, or nil when there is none (issue #365).
+func attemptGatesUnrun(events []Event, task, attempt string) []string {
+	var unrun []string
+	for _, e := range events {
+		if e.Task == task && e.Kind == "finished" && e.Attempt == attempt {
+			unrun = e.GatesUnrun
+		}
+	}
+	return unrun
 }
 
 // hostBlocked is the Windows Smart App Control message that intermittently
@@ -215,6 +231,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.Attempt = attempt
 	res.BriefPaths = briefPaths
 	res.GatesOK = true
+	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)

@@ -823,3 +823,27 @@ func TestFreshPromptNoIncrement(t *testing.T) {
 		t.Errorf("freshPrompt(empty request) = %q, want %q", result, freshMessage)
 	}
 }
+
+// TestParseCommands: a shell tool call yields its command on every adapter
+// (issue #365); a non-shell tool yields none.
+func TestParseCommands(t *testing.T) {
+	cases := []struct {
+		adapter, line, want string
+	}{
+		{"claude", `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go build ./..."}}]}}`, "go build ./..."},
+		{"claude", `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}]}}`, ""},
+		{"opencode", `{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"bash","state":{"input":{"command":"go vet ./..."}}}}`, "go vet ./..."},
+		{"opencode", `{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"read","state":{"input":{"filePath":"a.go"}}}}`, ""},
+		{"codex", `{"type":"item.completed","item":{"id":"i","type":"command_execution","command":"bash -lc 'go test ./...'","exit_code":0,"status":"completed"}}`, "bash -lc 'go test ./...'"},
+	}
+	for _, c := range cases {
+		a, err := AdapterFor(c.adapter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obs, ok := a.Parse([]byte(c.line))
+		if !ok || obs.Kind != "tool" || obs.Command != c.want {
+			t.Errorf("%s Parse(%s) = %+v, %v; want tool with Command %q", c.adapter, c.line, obs, ok, c.want)
+		}
+	}
+}

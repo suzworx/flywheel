@@ -65,6 +65,8 @@ type Observation struct {
 	// line's permission_denials, each with " <file_path>" when one was given
 	// (issue #364).
 	Denials []string
+	// Command is the shell command of a shell tool call (issue #365).
+	Command string
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -164,6 +166,9 @@ func (a opencodeAdapter) Parse(line []byte) (Observation, bool) {
 			// grep and glob carry their target under "path" instead of
 			// "filePath" (issue #72).
 			obs.Path, _ = partStateInputString(m, "path")
+		}
+		if obs.Tool == "bash" {
+			obs.Command, _ = partStateInputString(m, "command")
 		}
 	case "step_finish":
 		obs.Kind = "step"
@@ -496,13 +501,17 @@ func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 	for _, block := range content {
 		switch rawString(block, "type") {
 		case "tool_use":
-			return Observation{
+			obs := Observation{
 				Kind:   "tool",
 				Tool:   claudeToolName(rawString(block, "name")),
 				Path:   claudeToolPath(block),
 				Text:   strings.Join(texts, "\n"),
 				Tokens: tok,
-			}, true
+			}
+			if rawString(block, "name") == "Bash" {
+				obs.Command = claudeToolInput(block, "command")
+			}
+			return obs, true
 		case "text":
 			texts = append(texts, rawString(block, "text"))
 		}
@@ -613,6 +622,7 @@ func (a codexAdapter) Parse(line []byte) (Observation, bool) {
 		case "command_execution":
 			obs.Kind = "tool"
 			obs.Tool = "bash"
+			obs.Command, _ = rawStringOK(item, "command")
 			obs.EndsTurn = true
 			return obs, true
 		case "file_change":
@@ -724,6 +734,14 @@ func claudeToolName(name string) string {
 // claudeToolPath returns a tool_use block's target: input.file_path, else
 // input.path, else "".
 func claudeToolPath(block map[string]json.RawMessage) string {
+	if p := claudeToolInput(block, "file_path"); p != "" {
+		return p
+	}
+	return claudeToolInput(block, "path")
+}
+
+// claudeToolInput returns the string input.<key> of a tool_use block, or "".
+func claudeToolInput(block map[string]json.RawMessage, key string) string {
 	inputRaw, ok := block["input"]
 	if !ok {
 		return ""
@@ -732,10 +750,7 @@ func claudeToolPath(block map[string]json.RawMessage) string {
 	if err := json.Unmarshal(inputRaw, &input); err != nil {
 		return ""
 	}
-	if p := rawString(input, "file_path"); p != "" {
-		return p
-	}
-	return rawString(input, "path")
+	return rawString(input, key)
 }
 
 // claudeTokens decodes message.usage into a Tokens pointer, or nil when
