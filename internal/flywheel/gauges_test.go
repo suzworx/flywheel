@@ -2891,3 +2891,36 @@ func TestValidateSiblingClaim(t *testing.T) {
 		}
 	})
 }
+
+// TestOwnsNegated checks a negated owns entry ("!path", issue #388) removes
+// what it covers from the positive entries, in the literal, "dir/" and
+// pattern forms, and that a negation alone owns nothing.
+func TestOwnsNegated(t *testing.T) {
+	cases := []struct {
+		name string
+		owns []string
+		p    string
+		want bool
+	}{
+		{"literal negation keeps sibling", []string{"apps/inc/**", "!apps/inc/wake.h"}, "apps/inc/a.h", true},
+		{"literal negation excludes", []string{"apps/inc/**", "!apps/inc/wake.h"}, "apps/inc/wake.h", false},
+		{"dir negation excludes", []string{"apps/", "!apps/gen/"}, "apps/gen/x.go", false},
+		{"dir negation keeps outside", []string{"apps/", "!apps/gen/"}, "apps/main.go", true},
+		{"pattern negation excludes", []string{"src/", "!src/*_gen.go"}, "src/a_gen.go", false},
+		{"pattern negation keeps other", []string{"src/", "!src/*_gen.go"}, "src/a.go", true},
+		{"negation alone owns nothing", []string{"!apps/inc/wake.h"}, "apps/inc/a.h", false},
+		{"negation alone not the negated", []string{"!apps/inc/wake.h"}, "apps/inc/wake.h", false},
+		{"bookkeeping stays owned", []string{"apps/", "!.flywheel/"}, ".flywheel/log.jsonl", true},
+	}
+	for _, tc := range cases {
+		if got := ownsContains(tc.owns, tc.p); got != tc.want {
+			t.Errorf("%s: ownsContains(%v, %q) = %v, want %v", tc.name, tc.owns, tc.p, got, tc.want)
+		}
+	}
+	if explicitlyOwned([]string{"apps/inc/wake.h", "!apps/inc/wake.h"}, "apps/inc/wake.h") {
+		t.Errorf("explicitlyOwned of a negated path = true, want false")
+	}
+	if !covers([]string{"apps/inc/**", "!apps/inc/wake.h"}, []string{"apps/inc/**", "!apps/inc/wake.h"}) {
+		t.Errorf("covers of identical owns with a negation = false, want true")
+	}
+}

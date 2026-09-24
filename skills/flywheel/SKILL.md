@@ -92,7 +92,8 @@ When you start a session, register yourself on the floor:
   limit, out of credits, a consent gate such as China hosting), report the blocker and halt
   ([references/worker-brief.md#8-blocker-protocol-do-not-take-over](references/worker-brief.md#8-blocker-protocol-do-not-take-over)).
 - **No unrequested commits, pushes, or secrets.** Commit and push only when the user asks;
-  standing instructions in `CLAUDE.md` or `AGENTS.md` count as asking. Workers never commit. Never
+  standing instructions in `CLAUDE.md` or `AGENTS.md` count as asking. Workers never run git write commands; flywheel commits each
+  attempt of a `--worktree` unit on `fw/<task>` (the `finished` event's `commit`). Never
   put secrets or keys in a brief.
 - **Workers never rewrite the shared tree or index.** Every dispatch carries the deny policy via
   `OPENCODE_CONFIG`
@@ -119,8 +120,9 @@ found" addendum for what is not there yet, then send a follow-up delta once the 
 ([references/worker-brief.md#4-concurrency-disjoint-file-ownership-preserve-dirty-edits](references/worker-brief.md#4-concurrency-disjoint-file-ownership-preserve-dirty-edits)).
 Template and rules: [references/worker-brief.md](references/worker-brief.md). When a later unit
 extends a shared file whose size a previous brief's gate bounded, amend that brief with
-`flywheel log --task <id> --kind amended --brief <path>`; the amended event explains the change
-to verify's T1, so validate no longer fails the stale gate.
+`flywheel log --task <id> --kind amended --brief <path> --note "<why>"`; the amended event explains the change
+to verify's T1, so validate no longer fails the stale gate. On a dispatched attempt, owns widen
+with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`.
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
@@ -132,6 +134,15 @@ parallel units, `flywheel run --worktree <task>` is the default: each unit build
 flywheel commands run there use the main ledger. The floor's TREE column shows each unit's
 worktree and base commit. The
 hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
+or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
+hand-built **fresh run** below is the OpenCode-specific fallback.
+**Never background a dispatch with a bare `&`**: a shell job nobody tracks finishes unseen (issue
+#393). Use the host's tracked background mode (one that re-invokes you when the command exits), or
+block on `flywheel wait <task>... [--timeout D]`: it returns when each named task finishes its current
+(or first) attempt and prints `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
+4 any unclean, 8 timeout). `flywheel run <task> --notify CMD` also runs `CMD` when the run returns on
+any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"` in its environment.
+The OpenCode fallback (e.g. one increment of a brief):
 verify flags first
 (`opencode run --help`), label with `--title`, auto-approve with `--auto`, emit JSON so you capture
 the session id, and add `--variant low` (the default reasoning variant spends 17-30 k reasoning
@@ -209,6 +220,8 @@ build does), or keep one verify worktree: reset it to main's HEAD, clean it, and
 unit's owned files. Then run `flywheel validate <task> --workdir <tree>` to measure gates on a
 stable tree, followed by `flywheel inspect <task> --verdict pass --workdir <tree>` using the same
 tree (so T3 finds a passing supervisor reading on that hash), and commit only the unit's files.
+A flywheel command run inside a unit's `flywheel run --worktree` worktree
+(`.flywheel/worktrees/<task>`) uses the main checkout's ledger, not the worktree's stale copy.
 
 ### 5. Correct or land
 - Needs changes → send a **correction** to the worker by resuming the **emitted session id** with a

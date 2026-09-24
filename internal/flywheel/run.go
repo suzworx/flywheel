@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,6 +56,10 @@ type Result struct {
 	// ResetText is the rate limit's reset clause when Reason is
 	// "rate-limited" (issue #380); RunResumingLimits waits for it.
 	ResetText string
+	// Jobs are the commands of the background shells the worker started and
+	// never collected when Reason is "abandoned-job" (issue #390);
+	// RunResumingLimits names them in the resume delta.
+	Jobs []string
 }
 
 // workerPermissionPolicy is the embedded OpenCode permission policy written to
@@ -106,6 +111,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
 - Never commit, push, or write secrets.
+- Never end your turn while a background job you started is running: run long commands in the foreground and wait for them.
 - Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `
 
@@ -413,7 +419,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// common case — unless --strict-brief makes it a T1 RuleRefusal before
 	// any event is appended.
 	if drift := checkBriefDrift(dir, events, o.Task, brief); drift != nil {
-		msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", drift.attempt, o.Task, brief)
+		msg := briefDriftAdvice(dir, events, o.Task, brief, drift.attempt)
 		if o.StrictBrief {
 			return Result{}, &RuleRefusal{Rule: "T1", Fix: msg}
 		}
@@ -790,6 +796,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wroteSeen := map[string]bool{}
 	var wroteOrder []string
 	var commands []string // shell commands in order, at most 100 (issue #365)
+	// Background shells started and not yet collected, shell id → command, in
+	// start order; pending holds a background call, tool_use id → command,
+	// until its tool_result names the shell id (issue #390).
+	shells := map[string]string{}
+	pending := map[string]string{}
+	var shellOrder []string
 	lastText := ""
 	lastReason := ""
 	resetText := ""      // a rate limit's reset clause (issue #380)
@@ -934,6 +946,28 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					c = string(r[:300])
 				}
 				commands = append(commands, c)
+			}
+			// Any later tool call whose input names an open shell's id
+			// collects it, whatever the tool (issue #390).
+			if obs.Input != "" {
+				for id := range shells {
+					if strings.Contains(obs.Input, id) {
+						delete(shells, id)
+					}
+				}
+			}
+			if obs.Background && obs.ToolUseID != "" {
+				pending[obs.ToolUseID] = obs.Command
+			}
+		case "tool_result":
+			// A background call's result names its shell id: the call is
+			// tracked from here on under that id (issue #390).
+			if c, ok := pending[obs.ToolUseID]; ok && obs.ShellID != "" {
+				delete(pending, obs.ToolUseID)
+				if _, seen := shells[obs.ShellID]; !seen {
+					shellOrder = append(shellOrder, obs.ShellID)
+				}
+				shells[obs.ShellID] = c
 			}
 		case "step":
 			if obs.Reason != "" {
@@ -1104,6 +1138,21 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		reason = "start-failed"
 		note = firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 	}
+	// A clean stop that leaves a background shell it started uncollected
+	// ended its session while the job ran, and the job died with it: the run
+	// is abandoned-job, not done, and records no signal (issue #390).
+	var jobs []string
+	if reason == "stop" {
+		for _, id := range shellOrder {
+			if c, open := shells[id]; open {
+				jobs = append(jobs, c)
+			}
+		}
+		if len(jobs) > 0 {
+			reason = "abandoned-job"
+			note = joinNote(note, clipNote("background job never collected: "+strings.Join(jobs, ", ")))
+		}
+	}
 
 	// A clean stop records the reply as the worker's report, as always. Any
 	// other reason (length, error, start-failed, ...) means the reply is a
@@ -1179,10 +1228,26 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Workers never write git history: flywheel commits a clean stop's owned
+	// changes on fw/<task> itself when the attempt ran in its task worktree
+	// (issue #391). A commit failure never fails the run; it goes on the note.
+	attemptCommit := ""
+	if o.Worktree && reason == "stop" {
+		sha, outside, cerr := commitAttempt(dir, wt, o.Task, attempt, myOwns)
+		attemptCommit = sha
+		if cerr != nil {
+			note = joinNote(note, clipNote("attempt commit failed: "+cerr.Error()))
+		}
+		if len(outside) > 0 {
+			note = joinNote(note, clipNote("left uncommitted (outside owns): "+strings.Join(outside, ", ")))
+		}
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
+		Commit: attemptCommit,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1235,7 +1300,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
-	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText}, nil
+	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText, Jobs: jobs}, nil
 }
 
 // gateContention describes one shared-gate finding at dispatch: this task's
@@ -1344,6 +1409,30 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 	return acquireRepoLock(dir, "dispatch.lock", defaultRepoLockTimings())
 }
 
+// briefDriftAdvice is the brief-drift message for task, whose brief drifted
+// from the hash dispatched at dispatchedAt (issue #387). Drift is measured
+// against a dispatched attempt, and a new planned header does not change that
+// attempt (issue #366): owns and exclusive widen with an amended event (issue
+// #281), and a gate change needs a correction delta — an amendment that
+// changes gates is refused (issue #274). The drifted header is compared with
+// the attempt's effective header to name the step that takes effect; when
+// either cannot be read, the message falls back to the plain re-record advice.
+func briefDriftAdvice(dir string, events []Event, task, brief, dispatchedAt string) string {
+	drifted, err := ParseBriefHeader(resolveBriefPath(dir, brief))
+	if err != nil {
+		return fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", dispatchedAt, task, brief)
+	}
+	effective, _, err := AttemptBrief(dir, events, task)
+	if err != nil {
+		return fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", dispatchedAt, task, brief)
+	}
+	msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; the dispatched attempt keeps its header until you record the change: flywheel log --task %s --kind amended --brief %s --note \"<why>\" (widens owns/exclusive on the dispatched attempt)", dispatchedAt, task, brief)
+	if !slices.Equal(drifted.Gates, effective.Gates) || !slices.Equal(drifted.LiveGates, effective.LiveGates) {
+		msg += fmt.Sprintf("; its gates changed, which an amendment cannot do — dispatch a correction instead: flywheel run %s --delta <file> (a header carrying every gate)", task)
+	}
+	return msg
+}
+
 // briefDrift is a dispatch-time finding that the brief on disk differs from
 // the content hash a previous dispatch recorded (issue #135).
 type briefDrift struct {
@@ -1403,8 +1492,10 @@ func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift
 // when they are equal, when either is a directory prefix (trailing /)
 // containing the other, or when either matches the other as a shell pattern —
 // the same matching rule ownsContains applies, checked in both directions so
-// the relation is symmetric. The colliding paths are the entries involved,
-// deduplicated and sorted.
+// the relation is symmetric. A negated entry ("!path", issue #388) is never a
+// colliding entry itself, but it removes what it covers from its side's owns,
+// so apps/inc/** with !apps/inc/wake.h does not collide with apps/inc/wake.h.
+// The colliding paths are the entries involved, deduplicated and sorted.
 func ownsCollisionWith(dir string, events []Event, task string, owns []string) *ownsCollision {
 	st := Derive(events)
 	status := make(map[string]string, len(st.Tasks))
@@ -1430,12 +1521,12 @@ func ownsCollisionWith(dir string, events []Event, task string, owns []string) *
 			}
 		}
 		for _, a := range owns {
-			if ownsContains(header.Owns, a) {
+			if _, neg := negatedEntry(a); !neg && ownsContains(header.Owns, a) {
 				add(a)
 			}
 		}
 		for _, b := range header.Owns {
-			if ownsContains(owns, b) {
+			if _, neg := negatedEntry(b); !neg && ownsContains(owns, b) {
 				add(b)
 			}
 		}

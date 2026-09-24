@@ -1060,22 +1060,54 @@ func isFlywheelOwnPath(p string) bool {
 
 // ownsContains reports whether a changed path is inside the owns boundary.
 // flywheel's own files (flywheel.md at the root and anything under .flywheel/)
-// are never outside. A path is inside when it equals an owns entry, or starts
-// with an entry ending in '/', or matches an entry as a shell pattern.
+// are never outside. An entry starting with '!' is negated (issue #388): a
+// path is inside when some positive entry matches it (ownsEntryMatches) and
+// no negated entry does, so an exception is part of the contract.
 func ownsContains(owns []string, p string) bool {
 	p = filepath.ToSlash(p)
 	if isFlywheelOwnPath(p) {
 		return true
 	}
+	in := false
 	for _, o := range owns {
-		o = filepath.ToSlash(o)
-		if o == p {
-			return true
+		if neg, ok := negatedEntry(o); ok {
+			if ownsEntryMatches(neg, p) {
+				return false
+			}
+			continue
 		}
-		if strings.HasSuffix(o, "/") && strings.HasPrefix(p, o) {
-			return true
+		if ownsEntryMatches(o, p) {
+			in = true
 		}
-		if m, _ := path.Match(o, p); m {
+	}
+	return in
+}
+
+// ownsEntryMatches reports whether one owns entry (without any '!') covers p:
+// p equals the entry, or starts with an entry ending in '/', or matches the
+// entry as a shell pattern.
+func ownsEntryMatches(o, p string) bool {
+	o, p = filepath.ToSlash(o), filepath.ToSlash(p)
+	if o == p {
+		return true
+	}
+	if strings.HasSuffix(o, "/") && strings.HasPrefix(p, o) {
+		return true
+	}
+	m, _ := path.Match(o, p)
+	return m
+}
+
+// negatedEntry reports whether an owns entry is negated ("!path") and returns
+// the entry without its '!'.
+func negatedEntry(o string) (string, bool) {
+	return strings.CutPrefix(o, "!")
+}
+
+// ownsNegated reports whether a negated owns entry covers p.
+func ownsNegated(owns []string, p string) bool {
+	for _, o := range owns {
+		if neg, ok := negatedEntry(o); ok && ownsEntryMatches(neg, p) {
 			return true
 		}
 	}
@@ -1108,10 +1140,13 @@ func ignoredOwned(wd string, owns []string) ([]string, error) {
 		dirOwned := false
 		for _, o := range owns {
 			o = filepath.ToSlash(o)
-			if !strings.HasPrefix(o, p) {
+			if _, neg := negatedEntry(o); neg || !strings.HasPrefix(o, p) {
 				continue
 			}
 			if isPlainFile(o) {
+				if ownsNegated(owns, o) {
+					continue
+				}
 				if _, err := os.Stat(filepath.Join(wd, filepath.FromSlash(o))); err == nil {
 					seen[o] = true
 				}
@@ -1133,11 +1168,18 @@ func ignoredOwned(wd string, owns []string) ([]string, error) {
 
 // explicitlyOwned reports whether owns names p itself: an entry equal to p, a
 // glob pattern matching p, or, for a directory entry p ("dir/"), a plain file
-// entry inside it. A path only under an owned directory is not explicit.
+// entry inside it. A path only under an owned directory is not explicit, and
+// a path a negated entry ("!path") covers is not owned at all.
 func explicitlyOwned(owns []string, p string) bool {
 	p = filepath.ToSlash(p)
+	if ownsNegated(owns, p) {
+		return false
+	}
 	for _, o := range owns {
 		o = filepath.ToSlash(o)
+		if _, neg := negatedEntry(o); neg {
+			continue
+		}
 		if o == p {
 			return true
 		}

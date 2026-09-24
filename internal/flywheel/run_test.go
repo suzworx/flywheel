@@ -1790,7 +1790,7 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	if !errors.As(err, &r) || r.Rule != "T1" {
 		t.Fatalf("Run() error = %v, want a T1 RuleRefusal", err)
 	}
-	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind planned --brief b.txt") {
+	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind amended --brief b.txt") {
 		t.Errorf("RuleRefusal fix = %q, want it naming the re-record fix", r.Fix)
 	}
 	after, err := ReadEvents(dir)
@@ -1799,6 +1799,51 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	}
 	if len(after) != len(before) {
 		t.Errorf("events grew from %d to %d after a strict refusal, want none appended", len(before), len(after))
+	}
+}
+
+// TestBriefDriftAdvice checks the drift message names the step that takes
+// effect on a dispatched attempt (issue #387): an owns-only edit is recorded
+// with --kind amended, never --kind planned, and a gate edit also names a
+// correction delta.
+func TestBriefDriftAdvice(t *testing.T) {
+	orig := []byte("owns: a.go\ngate: go test ./...\n\n# Task\nbody\n")
+	cases := []struct {
+		name      string
+		edited    string
+		wantDelta bool
+	}{
+		{"owns only", "owns: a.go, b.go\ngate: go test ./...\n\n# Task\nbody\n", false},
+		{"gate change", "owns: a.go\ngate: go test ./...\ngate: go vet ./...\n\n# Task\nbody\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), orig, 0o644); err != nil {
+				t.Fatalf("write brief: %v", err)
+			}
+			h, err := ParseBriefHeaderBytes(orig)
+			if err != nil {
+				t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+			}
+			events := []Event{
+				{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt", Header: &h},
+				{TS: "2026-09-12T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", SHA256: h.SHA256, Header: &h},
+			}
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(c.edited), 0o644); err != nil {
+				t.Fatalf("write edited brief: %v", err)
+			}
+			msg := briefDriftAdvice(dir, events, "T1", "b.txt", "r1")
+			if !strings.Contains(msg, "flywheel log --task T1 --kind amended --brief b.txt") {
+				t.Errorf("briefDriftAdvice() = %q, want the --kind amended step", msg)
+			}
+			if strings.Contains(msg, "--kind planned") {
+				t.Errorf("briefDriftAdvice() = %q, want no --kind planned advice", msg)
+			}
+			if got := strings.Contains(msg, "flywheel run T1 --delta"); got != c.wantDelta {
+				t.Errorf("briefDriftAdvice() = %q, names --delta = %v, want %v", msg, got, c.wantDelta)
+			}
+		})
 	}
 }
 
@@ -2804,6 +2849,43 @@ func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
 	}
 	if !strings.Contains(r.Fix, "internal/foo/bar.go") {
 		t.Errorf("refusal fix = %q, want it naming the file under the directory prefix", r.Fix)
+	}
+}
+
+// TestCollisionNegated checks a negated owns: entry is part of the contract
+// (issue #388): apps/inc/** with !apps/inc/wake.h does not collide with an
+// in-flight task owning apps/inc/wake.h, in either direction, while
+// apps/inc/** alone still does.
+func TestCollisionNegated(t *testing.T) {
+	cases := []struct {
+		name       string
+		t1, t2     string
+		wantCollid bool
+	}{
+		{"negated new side", "apps/inc/wake.h", "apps/inc/**, !apps/inc/wake.h", false},
+		{"negated in-flight side", "apps/inc/**, !apps/inc/wake.h", "apps/inc/wake.h", false},
+		{"no negation", "apps/inc/wake.h", "apps/inc/**", true},
+		{"negation elsewhere", "apps/inc/wake.h", "apps/inc/**, !apps/inc/other.h", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Init(dir, false); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", tc.t1))
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			got := ownsCollisionWith(dir, evs, "T2", strings.Split(strings.ReplaceAll(tc.t2, " ", ""), ","))
+			if (got != nil) != tc.wantCollid {
+				t.Fatalf("ownsCollisionWith(%q vs %q) = %+v, want collision %v", tc.t2, tc.t1, got, tc.wantCollid)
+			}
+			if got != nil && !strings.Contains(strings.Join(got.paths, ","), "apps/inc/wake.h") {
+				t.Errorf("collision paths = %v, want apps/inc/wake.h", got.paths)
+			}
+		})
 	}
 }
 
@@ -4134,6 +4216,89 @@ func limitRun(t *testing.T, retries *int, maxWait string) (Result, []time.Durati
 	return res, sleeps, reqs, evs
 }
 
+// TestResumeAbandonedJob checks that an abandoned-job attempt is resumed
+// once, without a wait, on the same session with a job delta naming the
+// killed command, and that a second abandoned-job is returned as is (issue
+// #390).
+func TestResumeAbandonedJob(t *testing.T) {
+	const session = "ses_job_001"
+	head := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_bg","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`+"\n", session) +
+		fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_bg","content":"Command running in background with ID: bsh01"}]}}`+"\n", session)
+	fg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_fg","name":"Bash","input":{"command":"go test ./..."}}]}}`+"\n", session)
+	end := fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	run := func(t *testing.T, streams []string) (Result, []RunRequest) {
+		dir := setupTask(t)
+		brief := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n# TASK: x\n"
+		if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+			t.Fatalf("write brief: %v", err)
+		}
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("os.Executable() error = %v", err)
+		}
+		binDir := t.TempDir()
+		fake := filepath.Join(binDir, "claude")
+		if runtime.GOOS == "windows" {
+			fake += ".exe"
+		}
+		if err := linkOrCopy(exe, fake); err != nil {
+			t.Fatalf("install fake claude: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		var paths []string
+		for i, s := range streams {
+			p := filepath.Join(t.TempDir(), fmt.Sprintf("stream%d.jsonl", i+1))
+			if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			paths = append(paths, p)
+		}
+		t.Setenv(fakeClaudeEnv, paths[0])
+		var reqs []RunRequest
+		commandHook = func(r RunRequest) {
+			reqs = append(reqs, r)
+			_ = os.Setenv(fakeClaudeEnv, paths[min(len(reqs), len(paths))-1])
+		}
+		defer func() { commandHook = nil }()
+		var buf bytes.Buffer
+		res, err := RunResumingLimits(dir, RunOptions{Task: "T1", Progress: &buf},
+			func(d time.Duration) { t.Errorf("sleep(%s) called; an abandoned-job resume never waits", d) },
+			time.Now)
+		if err != nil {
+			t.Fatalf("RunResumingLimits() error = %v; progress:\n%s", err, buf.String())
+		}
+		return res, reqs
+	}
+	t.Run("resumes once", func(t *testing.T) {
+		res, reqs := run(t, []string{head + bg + end, head + fg + end})
+		if len(reqs) != 2 || reqs[0].Resume || !reqs[1].Resume || reqs[1].Session != session {
+			t.Fatalf("dispatch requests = %+v, want a fresh run then a resume of %s", reqs, session)
+		}
+		delta, err := os.ReadFile(reqs[1].PromptFile)
+		if err != nil || !strings.HasSuffix(filepath.ToSlash(reqs[1].PromptFile), ".flywheel/briefs/T1.job-1.txt") {
+			t.Fatalf("resume prompt %s: %v, want .flywheel/briefs/T1.job-1.txt", reqs[1].PromptFile, err)
+		}
+		want := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n" + fmt.Sprintf(jobContinue, "go test ./...")
+		if string(delta) != want {
+			t.Errorf("delta = %q, want %q", delta, want)
+		}
+		if res.Reason != "stop" {
+			t.Errorf("result = %+v, want the resume's stop", res)
+		}
+	})
+	t.Run("second abandoned-job", func(t *testing.T) {
+		res, reqs := run(t, []string{head + bg + end, head + bg + end, head + fg + end})
+		if len(reqs) != 2 || res.Reason != "abandoned-job" {
+			t.Errorf("requests = %d, result = %+v, want 2 dispatches and abandoned-job returned", len(reqs), res)
+		}
+	})
+}
+
 // finishedOf returns the finished events, and whether any signal was recorded.
 func finishedOf(evs []Event) (fins []Event, signaled bool) {
 	for _, e := range evs {
@@ -4198,6 +4363,104 @@ func TestRunRetriesRateLimit(t *testing.T) {
 			t.Errorf("sleeps %v, %d dispatches, result %+v; want no resume past the max wait", sleeps, len(reqs), res)
 		}
 	})
+}
+
+// runFakeClaudeStream runs task T1 on a fake claude worker that replays
+// stream, and returns the task dir and the result.
+func runFakeClaudeStream(t *testing.T, stream string) (string, Result) {
+	t.Helper()
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	path := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(path, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, path)
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	return dir, res
+}
+
+// TestRunAbandonedJob: a clean stop that leaves a background Bash job
+// uncollected finishes abandoned-job, names the command and records no
+// signal; collecting it by the shell id its tool_result reported keeps the
+// stop, and a background call whose result gives no id is not tracked
+// (issue #390).
+func TestRunAbandonedJob(t *testing.T) {
+	const session = "ses_bg_001"
+	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_012eoA","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`, session)
+	result := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"Command running in background with ID: bzkt5tsmf. Output is being written to: C:\\tasks\\bzkt5tsmf.output"}]}}`, session)
+	noID := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"started"}]}}`, session)
+	collect := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_out","name":"BashOutput","input":{"bash_id":"bzkt5tsmf"}}]}}`, session)
+	build := func(lines ...string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+		for _, line := range lines {
+			b.WriteString(line + "\n")
+		}
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"text","text":"I'll wait for the run's completion notification."}]}}`+"\n", session)
+		fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name   string
+		tools  []string
+		reason string
+	}{
+		{"uncollected", []string{bg, result}, "abandoned-job"},
+		{"collected", []string{bg, result, collect}, "stop"},
+		{"no id", []string{bg, noID}, "stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, res := runFakeClaudeStream(t, build(tc.tools...))
+			if res.Reason != tc.reason {
+				t.Errorf("Result.Reason = %q, want %q", res.Reason, tc.reason)
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var fin *Event
+			for i := range evs {
+				if evs[i].Kind == "finished" {
+					fin = &evs[i]
+				}
+				if tc.reason == "abandoned-job" && evs[i].Kind == "signal" {
+					t.Errorf("signal %q recorded, want none", evs[i].Signal)
+				}
+			}
+			if fin == nil || fin.Reason != tc.reason {
+				t.Fatalf("finished = %+v, want reason %s", fin, tc.reason)
+			}
+			if tc.reason == "abandoned-job" {
+				if !strings.Contains(fin.Note, "background job never collected: go test ./...") {
+					t.Errorf("finished note = %q, want it to name the job", fin.Note)
+				}
+				if len(res.Jobs) != 1 || res.Jobs[0] != "go test ./..." || ExitCode(res) != 4 {
+					t.Errorf("Jobs = %v, ExitCode = %d, want [go test ./...] and 4", res.Jobs, ExitCode(res))
+				}
+			}
+		})
+	}
 }
 
 // TestRunPlanBeforeTool checks a claude run whose first assistant message
@@ -4361,5 +4624,56 @@ func TestGatesUnrun(t *testing.T) {
 		if got := gateRan(c.gate, c.cmds); got != c.want {
 			t.Errorf("%s: gateRan(%q, %q) = %v, want %v", c.name, c.gate, c.cmds, got, c.want)
 		}
+	}
+}
+
+// TestRunCommitsAttempt checks that a clean stop of a --worktree run is
+// committed by flywheel on fw/<task> (issue #391): the owned change lands in
+// the commit named on the finished event, the unowned one is left and named
+// on the note, and no git-write signal is raised for flywheel's own commit.
+func TestRunCommitsAttempt(t *testing.T) {
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n", "notes.txt": "not owned\n"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fin *Event
+	for i := range events {
+		if events[i].Kind == "signal" && events[i].Signal == "git-write" {
+			t.Errorf("git-write signal for flywheel's own commit: %+v", events[i])
+		}
+		if events[i].Task == "T1" && events[i].Kind == "finished" {
+			fin = &events[i]
+		}
+	}
+	if fin == nil {
+		t.Fatal("no finished event")
+	}
+	if fin.Reason != "stop" || !CommitOK(fin.Commit) {
+		t.Fatalf("finished reason=%q commit=%q, want stop with a commit", fin.Reason, fin.Commit)
+	}
+	if !strings.Contains(fin.Note, "left uncommitted (outside owns): notes.txt") {
+		t.Errorf("note = %q, want the unowned path named", fin.Note)
+	}
+	if got := strings.TrimSpace(git(t, wt, []string{"rev-parse", "refs/heads/fw/T1"})); got != fin.Commit {
+		t.Errorf("fw/T1 = %s, finished commit = %s", got, fin.Commit)
+	}
+	if files := strings.TrimSpace(git(t, wt, []string{"show", "--name-only", "--format=", fin.Commit})); files != "a.go" {
+		t.Errorf("committed files = %q, want a.go", files)
+	}
+	if msg := git(t, wt, []string{"log", "-1", "--format=%B", fin.Commit}); !strings.Contains(msg, "Flywheel-Task: T1") {
+		t.Errorf("commit message %q lacks the Flywheel-Task trailer", msg)
 	}
 }

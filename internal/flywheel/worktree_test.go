@@ -265,6 +265,40 @@ func TestWorktreeCleanRunNoFalseGitWrite(t *testing.T) {
 	}
 }
 
+// TestLedgerRoot checks that a task worktree, or a directory inside one, maps
+// to the main checkout's ledger, while the root itself and a plain directory
+// at a worktree path map to themselves (#395).
+func TestLedgerRoot(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	wt := filepath.Join(repo, ".flywheel", "worktrees", "T1")
+	git(t, repo, append(gitInitFlags(), "worktree", "add", wt, "-b", "fw/T1"))
+	sub := filepath.Join(wt, "sub", "dir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{wt, sub} {
+		root, task, err := LedgerRoot(d)
+		if err != nil || root != repo || task != "T1" {
+			t.Errorf("LedgerRoot(%s) = (%q, %q, %v), want (%q, T1, nil)", d, root, task, err, repo)
+		}
+	}
+	if root, task, err := LedgerRoot(repo); err != nil || root != repo || task != "" {
+		t.Errorf("LedgerRoot(repo) = (%q, %q, %v), want (%q, \"\", nil)", root, task, err, repo)
+	}
+	plain := filepath.Join(repo, ".flywheel", "worktrees", "X")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if root, task, err := LedgerRoot(plain); err != nil || root != plain || task != "" {
+		t.Errorf("LedgerRoot(plain) = (%q, %q, %v), want (%q, \"\", nil)", root, task, err, plain)
+	}
+	outside := t.TempDir()
+	if root, task, err := LedgerRoot(outside); err != nil || root != outside || task != "" {
+		t.Errorf("LedgerRoot(non-repo) = (%q, %q, %v), want itself", root, task, err)
+	}
+}
+
 // TestWorktreeRefusesForeignDir checks that a plain directory left at the
 // worktree path is refused, not reused (#333 review).
 func TestWorktreeRefusesForeignDir(t *testing.T) {

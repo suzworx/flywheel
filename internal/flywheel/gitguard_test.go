@@ -259,6 +259,20 @@ func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
 	}
 }
 
+// TestGitGuardIndexWrites checks that every index write a worker could leave
+// behind (#391: intent-to-add entries it could not undo) is refused.
+func TestGitGuardIndexWrites(t *testing.T) {
+	for _, args := range [][]string{
+		{"add", "a.go"}, {"add", "-N", "a.go"}, {"add", "--intent-to-add", "a.go"},
+		{"rm", "--cached", "a.go"}, {"update-index", "--add", "a.go"},
+		{"restore", "--staged", "a.go"}, {"-C", "/x", "add", "-N", "a.go"},
+	} {
+		if r, _ := GitGuardRefused(args); !r {
+			t.Errorf("GitGuardRefused(%v) allowed, want refused", args)
+		}
+	}
+}
+
 // commonDir returns dir's absolute git common directory.
 func commonDir(t *testing.T, dir string) string {
 	t.Helper()

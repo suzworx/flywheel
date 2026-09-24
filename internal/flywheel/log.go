@@ -318,10 +318,20 @@ func PlanDriftWarning(dir, task, brief string) string {
 // covers reports whether every entry of have is still covered by want, under
 // the matching the owns check uses (ownsContains: exact path, directory
 // prefix, or shell pattern), so a replacement that drops coverage is seen
-// even when it adds a new, narrower entry (issue #281).
+// even when it adds a new, narrower entry (issue #281). Negated entries
+// ("!path", issue #388) are part of the owns: a negation in want that removes
+// a path have covers is a narrowing too.
 func covers(want, have []string) bool {
 	for _, e := range have {
+		if _, neg := negatedEntry(e); neg {
+			continue
+		}
 		if !ownsContains(want, e) {
+			return false
+		}
+	}
+	for _, e := range want {
+		if n, neg := negatedEntry(e); neg && ownsContains(have, n) {
 			return false
 		}
 	}

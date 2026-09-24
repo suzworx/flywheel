@@ -139,6 +139,8 @@ func explainLine(e Event) string {
 			line += fmt.Sprintf(" (%s)", e.Model)
 		}
 		return line
+	case "review_finding":
+		return fmt.Sprintf("%s finding %s at %s:%d: %s", e.Severity, e.Finding, e.Path, e.LineNo, e.Title)
 
 	case "signal":
 		return words("signal", e.Signal, "on", e.Attempt)

@@ -208,6 +208,21 @@ func TestClassifyRunRateLimited(t *testing.T) {
 	}
 }
 
+// TestClassifyRunAbandoned checks that a done attempt whose reason is
+// abandoned-job shows its own run state, wrote or not, and reaches the andon
+// like provider-error (issue #390).
+func TestClassifyRunAbandoned(t *testing.T) {
+	for _, wrote := range []bool{false, true} {
+		if got := classifyRun(true, 12, 0, 3, false, "abandoned-job", 100, 0, 600, false, wrote, ""); got != "abandoned-job" {
+			t.Errorf("classifyRun(done, abandoned-job, wrote %v) = %q, want abandoned-job", wrote, got)
+		}
+	}
+	andon := buildAndon([]Unit{{Task: "T1", RunState: "abandoned-job", LastAge: 5}, {Task: "T2", RunState: "done"}}, nil, nil)
+	if len(andon) != 1 || andon[0].Task != "T1" || andon[0].State != "abandoned-job" {
+		t.Errorf("buildAndon() = %v, want one abandoned-job entry for T1", andon)
+	}
+}
+
 func TestClassifyRunBlocked(t *testing.T) {
 	for _, reason := range []string{"stop", ""} {
 		for _, s := range []string{"blocked", "no-writes"} {
