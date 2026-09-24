@@ -97,7 +97,12 @@ all.
   provider's rate or usage limit cut the run off (a claude 429 or limit message); the note names
   `limit resets <time>`, no signal is recorded, the breaker does not count it, and `flywheel run`
   resumes the same session after the reset (`limits.rate_limit_retries`,
-  `limits.rate_limit_max_wait`), issue #380; `start-failed`; `silent`;
+  `limits.rate_limit_max_wait`), issue #380. A rate-limited finish whose reset parses also carries
+  `reset_at` (RFC 3339): the limit belongs to the subscription, so until then the model is paused —
+  `flywheel run` refuses a fresh attempt on it (exit 6, rule `rate-limit`; a resume is exempt),
+  `flywheel next` HOLDs with `rate-limit: <model> paused until <time>`, and the floor shows the
+  unit `rate-limited until HH:MM` and an andon entry `model/<model>` `paused until HH:MM`; a later
+  clean `stop` finish on the model ends the pause early, issue #383; `start-failed`; `silent`;
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue

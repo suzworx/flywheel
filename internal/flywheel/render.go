@@ -221,11 +221,15 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 	}
 	row("TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN"))
 	for _, u := range f.Units {
-		cell := u.RunState
+		cell := truncate(u.RunState, runW)
 		if u.RunState == "capped" && u.Peak > 0 {
-			cell = "capped " + tokensK(Tokens{Reasoning: u.Peak})
+			cell = truncate("capped "+tokensK(Tokens{Reasoning: u.Peak}), runW)
 		}
-		run := paint(color, stateColor(u.RunState), padLeft(truncate(cell, runW), runW))
+		if u.RunState == "rate-limited" && !u.ResetAt.IsZero() {
+			// The last column: the reset clock may run past runW (issue #383).
+			cell = "rate-limited until " + u.ResetAt.Local().Format("15:04")
+		}
+		run := paint(color, stateColor(u.RunState), padLeft(cell, runW))
 		row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(u.Stage, stageW),
 			truncate(u.Attempt, attW), truncate(u.Session, sessWd), truncate(u.Model, modelWd),
 			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run)
@@ -288,6 +292,7 @@ type jUnit struct {
 	RunState      string `json:"run_state"`
 	PeakReasoning int    `json:"peak_reasoning"`
 	Station       string `json:"station,omitempty"`
+	ResetAt       string `json:"reset_at,omitempty"` // a rate-limited unit's reset, RFC 3339 (issue #383)
 }
 
 type jAndon struct {
@@ -347,7 +352,11 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = js
 	for _, u := range f.Units {
-		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station})
+		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station}
+		if !u.ResetAt.IsZero() {
+			ju.ResetAt = u.ResetAt.UTC().Format(time.RFC3339)
+		}
+		j.Units = append(j.Units, ju)
 	}
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})

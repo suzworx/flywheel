@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -336,6 +337,13 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 			// Half-open: the cooldown is over and no probe is in flight;
 			// run admits exactly one probe, so recommend one (#311 review).
 			capacity = 1
+		}
+	}
+	// A rate limit pauses the model the dispatch will use until its reset
+	// (issue #383); run refuses fresh work on it, so next holds.
+	if pauseModel := cmp.Or(fallbackTakeover, p.Model); holdReason == "" && pauseModel != "" {
+		if until, paused := rateLimitPaused(events, pauseModel, now); paused {
+			holdReason = fmt.Sprintf("rate-limit: %s paused until %s", pauseModel, pauseClock(until))
 		}
 	}
 

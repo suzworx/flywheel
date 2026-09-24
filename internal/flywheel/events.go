@@ -80,6 +80,9 @@ type Event struct {
 	// recorded command contains (issue #365).
 	GatesUnrun []string `json:"gates_unrun,omitempty"`
 	Tree       string   `json:"tree,omitempty"`
+	// ResetAt is a rate-limited finished event's parsed reset time, RFC 3339
+	// (issue #383): the model is paused for every unit until then.
+	ResetAt string `json:"reset_at,omitempty"`
 	// Workdir is the git working tree a validated, owns_checked or inspected
 	// reading was taken in, recorded only when it differs from the flywheel
 	// root (issue #244): the ledger says where a reading happened, so verify

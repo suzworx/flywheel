@@ -450,3 +450,37 @@ func TestPolicyFromConfig(t *testing.T) {
 		t.Errorf("PerHost = %d, want 5", p.PerHost)
 	}
 }
+
+// TestNextHoldsPausedModel checks that flywheel next holds new work on a
+// model a rate limit paused until its reset, and dispatches after it (issue
+// #383).
+func TestNextHoldsPausedModel(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 10, 0, 0, time.UTC)
+	reset := now.Add(20 * time.Minute)
+	limitTime := now.Add(-1 * time.Minute).Format(time.RFC3339Nano)
+	events := []Event{
+		{TS: "2026-09-14T00:00:00Z", Task: "t1", Kind: "planned", Brief: "b.txt"},
+		{TS: limitTime, Task: "t1", Kind: "dispatched", Attempt: "r1", Model: "m1"},
+		{TS: limitTime, Task: "t1", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "rate-limited", ResetAt: reset.Format(time.RFC3339)},
+		{TS: "2026-09-14T00:08:00Z", Task: "t3", Kind: "planned", Brief: "b.txt"},
+	}
+	p := Policy{MaxParallel: 2, Model: "m1"}
+	acts := Reconcile(Derive(events), events, Observed{}, p, now)
+	var hold *Action
+	for i := range acts {
+		if acts[i].Task == "t3" {
+			hold = &acts[i]
+		}
+	}
+	if hold == nil || hold.Kind != "HOLD" {
+		t.Fatalf("actions = %v, want HOLD for t3", acts)
+	}
+	if !strings.HasPrefix(hold.Reason, "rate-limit: m1 paused until ") || !strings.Contains(hold.Reason, reset.Format(time.RFC3339)) {
+		t.Errorf("reason = %q, want rate-limit: m1 paused until ... %s", hold.Reason, reset.Format(time.RFC3339))
+	}
+	for _, a := range Reconcile(Derive(events), events, Observed{}, p, reset.Add(time.Minute)) {
+		if a.Task == "t3" && a.Kind == "HOLD" {
+			t.Errorf("after the reset: %v, want no HOLD for t3", a)
+		}
+	}
+}
