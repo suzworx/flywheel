@@ -16,22 +16,41 @@ import (
 // LearningView is one learning: its stable id, the task it was observed on,
 // its curation fields, and its dismissal state.
 type LearningView struct {
-	ID        string   `json:"id"`
-	Task      string   `json:"task"`
-	Severity  string   `json:"severity"`
-	Title     string   `json:"title"`
-	Observed  string   `json:"observed"`
-	Evidence  string   `json:"evidence"`
-	Ask       string   `json:"ask"`
-	Signals   []string `json:"signals,omitempty"`
-	Dismissed bool     `json:"dismissed"`
-	Reason    string   `json:"reason,omitempty"`
+	ID       string   `json:"id"`
+	Task     string   `json:"task"`
+	Severity string   `json:"severity"`
+	Title    string   `json:"title"`
+	Observed string   `json:"observed"`
+	Evidence string   `json:"evidence"`
+	Ask      string   `json:"ask"`
+	Signals  []string `json:"signals,omitempty"`
+	// Scope is "flywheel" or "project" (issue #409); an event without one is
+	// flywheel-scoped.
+	Scope     string `json:"scope,omitempty"`
+	Dismissed bool   `json:"dismissed"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// ProjectScoped reports whether v is the project's own learning (issue #409):
+// it stays local and is never exported or submitted upstream.
+func (v LearningView) ProjectScoped() bool { return v.Scope == "project" }
+
+// ProjectKeptLocal counts the undismissed project-scoped learnings in views:
+// the ones export and submit leave out.
+func ProjectKeptLocal(views []LearningView) int {
+	n := 0
+	for _, v := range views {
+		if v.ProjectScoped() && !v.Dismissed {
+			n++
+		}
+	}
+	return n
 }
 
 // Learnings folds the event log into one LearningView per learning event, in
 // log order, assigning ids L-01, L-02, ... in the order learning events
-// appear. A later dismissed event marks the learning it targets by id;
-// dismissing never removes or renumbers a learning.
+// appear, whatever their scope. A later dismissed event marks the learning it
+// targets by id; dismissing never removes or renumbers a learning.
 func Learnings(events []Event) []LearningView {
 	var out []LearningView
 	index := map[string]int{}
@@ -43,9 +62,13 @@ func Learnings(events []Event) []LearningView {
 		n++
 		id := fmt.Sprintf("L-%02d", n)
 		index[id] = len(out)
+		scope := e.Scope
+		if scope == "" {
+			scope = "flywheel"
+		}
 		out = append(out, LearningView{
 			ID: id, Task: e.Task, Severity: e.Severity, Title: e.Title,
-			Observed: e.Observed, Evidence: e.Evidence, Ask: e.Ask, Signals: e.Signals,
+			Observed: e.Observed, Evidence: e.Evidence, Ask: e.Ask, Signals: e.Signals, Scope: scope,
 		})
 	}
 	for _, e := range events {
@@ -130,7 +153,16 @@ func acquireFeedbackLock(dir string) (release func(), err error) {
 // log and the artifact is derived from it, so the learning is not lost.
 // Because the mutation is serialised, the id computed from the events read
 // under the lock is the id the append actually writes.
-func AddLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
+//
+// scope is "flywheel" (or empty) or "project" (issue #409); a flywheel scope is
+// recorded as the empty default so the event reads exactly as before.
+func AddLearning(dir, task, severity, title, observed, evidence, ask string, signals []string, scope string) (id, titleOut string, appendErr, renderErr error) {
+	if scope == "flywheel" {
+		scope = ""
+	}
+	if !learningScopeOK(scope) {
+		return "", "", fmt.Errorf("learning scope %q is not one of flywheel, project", scope), nil
+	}
 	release, err := acquireFeedbackLock(dir)
 	if err != nil {
 		return "", "", err, nil
@@ -143,7 +175,7 @@ func AddLearning(dir, task, severity, title, observed, evidence, ask string, sig
 	id = NextLearningID(events)
 	if err := AppendEvent(dir, Event{
 		Task: task, Kind: "learning", Severity: severity, Title: title,
-		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals,
+		Observed: observed, Evidence: evidence, Ask: ask, Signals: signals, Scope: scope,
 	}); err != nil {
 		return "", "", err, nil
 	}
@@ -329,8 +361,9 @@ func CheckLearningsOwned(dir string) (*LearningsOwnership, error) {
 }
 
 // WriteLearningsFile rewrites .flywheel/learnings.md atomically (temp file plus
-// rename) from views, in log order: a heading, the flywheel marker, then one
-// section per learning with its severity, observed, evidence, ask, signals
+// rename) from views: a heading, the flywheel marker, then a "Feedback for
+// flywheel" and a "Project learnings" section (issue #409), each holding, in
+// log order, one entry per learning with its severity, observed, evidence, ask, signals
 // (when given) and dismissed reason (when dismissed). Every free-text field is
 // sanitised before it is written, so a path or token never leaks into the
 // artifact. The file lives under .flywheel/ so a repo's existing .flywheel
@@ -356,21 +389,36 @@ func writeLearningsFile(dir string, views []LearningView, lstat func(string) (os
 	var b strings.Builder
 	b.WriteString("# Learnings\n")
 	b.WriteString(learningsMarker + "\n")
-	for _, v := range views {
-		fmt.Fprintf(&b, "\n## %s — %s\n", v.ID, Sanitise(v.Title))
-		fmt.Fprintf(&b, "severity: %s\n", v.Severity)
-		fmt.Fprintf(&b, "observed: %s\n", Sanitise(v.Observed))
-		fmt.Fprintf(&b, "evidence: %s\n", Sanitise(v.Evidence))
-		fmt.Fprintf(&b, "ask: %s\n", Sanitise(v.Ask))
-		if len(v.Signals) > 0 {
-			sigs := make([]string, len(v.Signals))
-			for i, s := range v.Signals {
-				sigs[i] = Sanitise(s)
+	// Two sections by scope (issue #409), each in log order under the ids
+	// Learnings assigned; a section with no learning is omitted.
+	for _, sec := range []struct {
+		heading string
+		project bool
+	}{{"Feedback for flywheel", false}, {"Project learnings", true}} {
+		wrote := false
+		for _, v := range views {
+			if v.ProjectScoped() != sec.project {
+				continue
 			}
-			fmt.Fprintf(&b, "signals: %s\n", strings.Join(sigs, ", "))
-		}
-		if v.Dismissed {
-			fmt.Fprintf(&b, "dismissed: %s\n", Sanitise(v.Reason))
+			if !wrote {
+				fmt.Fprintf(&b, "\n## %s\n", sec.heading)
+				wrote = true
+			}
+			fmt.Fprintf(&b, "\n### %s — %s\n", v.ID, Sanitise(v.Title))
+			fmt.Fprintf(&b, "severity: %s\n", v.Severity)
+			fmt.Fprintf(&b, "observed: %s\n", Sanitise(v.Observed))
+			fmt.Fprintf(&b, "evidence: %s\n", Sanitise(v.Evidence))
+			fmt.Fprintf(&b, "ask: %s\n", Sanitise(v.Ask))
+			if len(v.Signals) > 0 {
+				sigs := make([]string, len(v.Signals))
+				for i, s := range v.Signals {
+					sigs[i] = Sanitise(s)
+				}
+				fmt.Fprintf(&b, "signals: %s\n", strings.Join(sigs, ", "))
+			}
+			if v.Dismissed {
+				fmt.Fprintf(&b, "dismissed: %s\n", Sanitise(v.Reason))
+			}
 		}
 	}
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
@@ -505,7 +553,8 @@ func Sanitise(s string) string {
 // FeedbackReport renders a Markdown report of every undismissed learning for
 // export or submission: a short header naming the flywheel version, then one
 // section per learning with its id, severity, title and sanitised observed,
-// evidence, ask and signals. Dismissed learnings are excluded.
+// evidence, ask and signals. Dismissed learnings are excluded, and so are
+// project-scoped ones (issue #409): only feedback about flywheel goes upstream.
 func FeedbackReport(version string, views []LearningView) string {
 	if version == "" {
 		version = "dev"
@@ -513,7 +562,7 @@ func FeedbackReport(version string, views []LearningView) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# flywheel learnings (v%s)\n", version)
 	for _, v := range views {
-		if v.Dismissed {
+		if v.Dismissed || v.ProjectScoped() {
 			continue
 		}
 		fmt.Fprintf(&b, "\n## %s — %s\n", v.ID, Sanitise(v.Title))
@@ -630,7 +679,7 @@ func runGh(args ...string) error {
 func writeOutbox(dir string, views []LearningView, report string, now time.Time) (string, error) {
 	id := "L-00"
 	for _, v := range views {
-		if !v.Dismissed {
+		if !v.Dismissed && !v.ProjectScoped() {
 			id = v.ID
 			break
 		}

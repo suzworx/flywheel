@@ -221,6 +221,9 @@ func Derive(events []Event) State {
 			case "escalate":
 				ts.Status = "blocked"
 			}
+		case "review_finding", "finding_response":
+			// Findings and their answers (issue #389) change no status:
+			// OpenFindings reads them, and the next review round decides.
 		case "amended":
 			ts.Brief = e.Brief
 			ts.Needs = NeedTargets(e.Needs...)

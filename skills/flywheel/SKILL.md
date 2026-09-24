@@ -238,6 +238,8 @@ OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \
 - After merging, run `flywheel land <task> --commit <sha>` to record the landing. Before landing, triage the unit's signals (`flywheel feedback`); `--allow-untriaged <reason>` is for a signal you have read and decided not to turn into a learning, and the reason is recorded. When the gauges cannot run but you verified the unit by hand, land it with `--exception "<what you ran and saw>" --session <your session>`; never use it to skip a failing gate.
 - When CI already measured the merged commit (the gates passed on the PR before the squash merge), record that evidence rather than an exception: `flywheel attest <task> --commit <sha> --evidence <CI run URL> --session <your session>`, then `flywheel inspect <task> --verdict pass --commit <sha> --session <your session>`, then `flywheel land <task> --commit <sha>`.
 
+Record each thing in its place: feedback about flywheel itself → `flywheel feedback add` (the default scope, the only one `export`/`submit` send upstream); the project's own bugs → `flywheel feedback add --scope project`, or the project's tracker; progress and journal lines ("dispatched…", "merged…") → `flywheel log --kind note [--task T] --note "<text>"`, never a learning.
+
 ## References
 
 - [references/worker-brief.md](references/worker-brief.md) — the full brief template, concurrency

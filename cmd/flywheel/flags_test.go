@@ -239,3 +239,30 @@ func TestReviewAgentFlags(t *testing.T) {
 		t.Errorf("usage %q does not name --agent and --round", reviewUsageLine)
 	}
 }
+
+// TestReviewLoopFlags parses the review loop's flags (issue #389): --fix with
+// its rounds, correcting worker and worktree, and a lead's --dismiss.
+func TestReviewLoopFlags(t *testing.T) {
+	fs, o := reviewFlags()
+	if o.rounds != 3 {
+		t.Errorf("default --rounds = %d, want 3", o.rounds)
+	}
+	if err := fs.Parse([]string{"--agent", "--fix", "--rounds", "5", "--fix-worker", "w", "--worktree", "--session", "rev"}); err != nil {
+		t.Fatalf("reviewFlags: %v", err)
+	}
+	if !o.agent || !o.fix || o.rounds != 5 || o.fixWorker != "w" || !o.worktree || o.session != "rev" {
+		t.Errorf("--fix parsed = %#v", *o)
+	}
+	fs, o = reviewFlags()
+	if err := fs.Parse([]string{"--dismiss", "T1-r1-2", "--session", "lead", "--note", "by design"}); err != nil {
+		t.Fatalf("reviewFlags: %v", err)
+	}
+	if o.dismiss != "T1-r1-2" || o.session != "lead" || o.note != "by design" {
+		t.Errorf("--dismiss parsed = %#v", *o)
+	}
+	for _, want := range []string{"--fix", "--rounds N", "--dismiss <finding-id>"} {
+		if !strings.Contains(reviewUsageLine, want) {
+			t.Errorf("usage %q does not name %s", reviewUsageLine, want)
+		}
+	}
+}
