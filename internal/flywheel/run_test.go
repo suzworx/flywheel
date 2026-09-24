@@ -3857,7 +3857,13 @@ func TestRunPlanBeforeTool(t *testing.T) {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	binDir := t.TempDir()
-	if err := linkOrCopy(exe, filepath.Join(binDir, "claude"+filepath.Ext(exe))); err != nil {
+	// Named exactly "claude" (plus ".exe" on Windows): the test binary's own
+	// extension is ".test" on Linux and macOS, which PATH lookup never finds.
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
 		t.Fatalf("install fake claude: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
