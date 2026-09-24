@@ -224,3 +224,30 @@ func TestLintBriefNormalExclusiveEntryPasses(t *testing.T) {
 		"owns: a.go\nexclusive: db\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
+
+// TestLintGateBacktick is issue #366: gates run under bash -c, so a backtick
+// inside double quotes is command substitution and lint warns about it; single
+// quotes, "$(...)" and an escaped backtick are fine.
+func TestLintGateBacktick(t *testing.T) {
+	const warning = "gate 1 has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file"
+	cases := []struct {
+		name, gate string
+		warns      bool
+	}{
+		{"double quoted", "node -e \"x `a`\"", true},
+		{"single quoted", "node -e 'x `a`'", false},
+		{"command substitution", `[ -z "$(ls)" ]`, false},
+		{"escaped in double quotes", "node -e \"x \\`a\\`\"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := lintCheck(t, t.TempDir(), []string{"a.go"},
+				"owns: a.go\nneeds: none\ngate: "+c.gate+"\n\n# TASK: x\n## Checks\nAt most one write per response\n")
+			var wantWarnings []string
+			if c.warns {
+				wantWarnings = []string{warning}
+			}
+			want(t, res, nil, wantWarnings)
+		})
+	}
+}

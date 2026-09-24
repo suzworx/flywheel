@@ -646,3 +646,48 @@ func TestAppendAmendedEventHeaderlessWidensOwns(t *testing.T) {
 		t.Errorf("amended event header = %v owns = %v, want the parsed header and its owns", last.Header, last.Owns)
 	}
 }
+
+// TestPlanDriftWarning is issue #366: re-planning a task whose attempt r1 was
+// already dispatched with different gates warns that validate keeps measuring
+// the dispatched header; before any dispatch, or when only prose changes,
+// there is nothing to warn about.
+func TestPlanDriftWarning(t *testing.T) {
+	t.Run("no dispatch", func(t *testing.T) {
+		dir := t.TempDir()
+		brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+		if err := RecordPlanned(dir, "t", brief); err != nil {
+			t.Fatalf("RecordPlanned() error = %v", err)
+		}
+		writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n")
+		if w := PlanDriftWarning(dir, "t", brief); w != "" {
+			t.Errorf("PlanDriftWarning() = %q, want empty before any dispatch", w)
+		}
+	})
+	t.Run("changed gate after dispatch", func(t *testing.T) {
+		dir := t.TempDir()
+		brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+		if err := RecordPlanned(dir, "t", brief); err != nil {
+			t.Fatalf("RecordPlanned() error = %v", err)
+		}
+		dispatchBrief(t, dir, "t", brief)
+		writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go test ./...\n\n# TASK: t\nv2\n")
+		w := PlanDriftWarning(dir, "t", brief)
+		for _, s := range []string{"attempt r1", "--delta"} {
+			if !strings.Contains(w, s) {
+				t.Errorf("PlanDriftWarning() = %q, want it containing %q", w, s)
+			}
+		}
+	})
+	t.Run("prose change after dispatch", func(t *testing.T) {
+		dir := t.TempDir()
+		brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
+		if err := RecordPlanned(dir, "t", brief); err != nil {
+			t.Fatalf("RecordPlanned() error = %v", err)
+		}
+		dispatchBrief(t, dir, "t", brief)
+		writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv2, clearer prose\n")
+		if w := PlanDriftWarning(dir, "t", brief); w != "" {
+			t.Errorf("PlanDriftWarning() = %q, want empty for a prose-only change", w)
+		}
+	})
+}
