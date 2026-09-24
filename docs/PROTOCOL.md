@@ -162,8 +162,15 @@ all.
 - Effect: `Derive` sets status `blocked`.
 
 ### `lost`
-- Written by: the controller, when an attempt's lease has expired.
-- Carries: `task`, `attempt`, `reason` (`lease-expired`), `note` (the lease evidence).
+- Written by: `flywheel controller`, `flywheel run` (before its owns and exclusive collision
+  checks) and `flywheel next` (before it recommends), for the current attempt of a dispatched or
+  running task that is abandoned (issue #402): its lease has expired, or no lease exists and its
+  run file `.flywheel/runs/<task>.<attempt>.jsonl` (with no run file, its `dispatched` event) is
+  older than `limits.lost_after` (a Go duration, default `24h`). A live lease is never lost, and a
+  lost attempt is not in flight, so it never blocks a dispatch.
+- Carries: `task`, `attempt`, `reason` (`lease-expired` or `idle`), `note` (the evidence:
+  `lease expired at <time>`, `no live lease; run file idle since <time>`, or
+  `no live lease; no run file; dispatched at <time>`).
 - Effect: a stale-kind event, ignored unless its `attempt` matches the task's current one;
   otherwise `Derive` sets status `lost`.
 
@@ -532,7 +539,8 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   `report`, `reviewed`, `blocked`, `lost`, `landed`, `amended`, `staffed`, `goal`) carries no
   persona restriction in `ruleT8`. In practice most of them are written only by a specific CLI
   command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report` only by `flywheel
-  run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`), which is
+  run`; `landed` only by `flywheel land`; `blocked` only by `flywheel controller`; `lost` only by `flywheel controller`, `flywheel run`
+  and `flywheel next`), which is
   what keeps them honest — not a persona field.
 
 The one place "a worker never inspects its own work" is a real, live check rather than a skill

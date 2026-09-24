@@ -2630,13 +2630,15 @@ func ownsBrief(t *testing.T, dir, name, owns string) string {
 }
 
 // planAndDispatch records a planned event (brief at path) and a dispatched
-// event for task, leaving it in flight (derived status dispatched).
+// event for task, leaving it in flight (derived status dispatched). The
+// dispatch is stamped now, so it is not an abandoned attempt that flywheel
+// run marks lost (issue #402).
 func planAndDispatch(t *testing.T, dir, task, brief string) {
 	t.Helper()
 	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: task, Kind: "planned", Brief: brief}); err != nil {
 		t.Fatalf("AppendEvent() planned %s: %v", task, err)
 	}
-	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: task, Kind: "dispatched", Attempt: "r1"}); err != nil {
+	if err := AppendEvent(dir, Event{TS: now().UTC().Format(time.RFC3339Nano), Task: task, Kind: "dispatched", Attempt: "r1"}); err != nil {
 		t.Fatalf("AppendEvent() dispatched %s: %v", task, err)
 	}
 }
@@ -2765,11 +2767,11 @@ func TestRunOwnsCollisionWithNotInFlightDispatches(t *testing.T) {
 			}
 			planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", "a.go, shared.go"))
 			if final == "landed" {
-				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "landed"}); err != nil {
+				if err := AppendEvent(dir, Event{TS: now().UTC().Add(time.Second).Format(time.RFC3339Nano), Task: "T1", Kind: "landed"}); err != nil {
 					t.Fatalf("AppendEvent() landed: %v", err)
 				}
 			} else {
-				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+				if err := AppendEvent(dir, Event{TS: now().UTC().Add(time.Second).Format(time.RFC3339Nano), Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
 					t.Fatalf("AppendEvent() inspected: %v", err)
 				}
 			}
@@ -2901,11 +2903,11 @@ func TestRunExclusiveClashWithNotInFlightDispatches(t *testing.T) {
 			}
 			planAndDispatch(t, dir, "T1", exclBrief(t, dir, "b1.txt", "a.go", "db"))
 			if final == "landed" {
-				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "landed"}); err != nil {
+				if err := AppendEvent(dir, Event{TS: now().UTC().Add(time.Second).Format(time.RFC3339Nano), Task: "T1", Kind: "landed"}); err != nil {
 					t.Fatalf("AppendEvent() landed: %v", err)
 				}
 			} else {
-				if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:02Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
+				if err := AppendEvent(dir, Event{TS: now().UTC().Add(time.Second).Format(time.RFC3339Nano), Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector"}); err != nil {
 					t.Fatalf("AppendEvent() inspected: %v", err)
 				}
 			}
@@ -3637,7 +3639,7 @@ func TestRunLimitsPerHostRefused(t *testing.T) {
 	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("AppendEvent() planned T2: %v", err)
 	}
-	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
+	if err := AppendEvent(dir, Event{TS: now().UTC().Format(time.RFC3339Nano), Task: "T2", Kind: "dispatched", Attempt: "r1"}); err != nil {
 		t.Fatalf("AppendEvent() dispatched T2: %v", err)
 	}
 	// Try to run T1; should be refused with limits RuleRefusal.
@@ -3983,7 +3985,7 @@ func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
 	if err := WriteConfig(dir, cfg); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
-	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"}); err != nil {
+	if err := AppendEvent(dir, Event{TS: now().UTC().Format(time.RFC3339Nano), Task: "T1", Kind: "dispatched", Attempt: "r1"}); err != nil {
 		t.Fatalf("AppendEvent() dispatched T1: %v", err)
 	}
 	_, err := Run(dir, RunOptions{Task: "T1"})
@@ -4360,6 +4362,51 @@ func TestGatesUnrun(t *testing.T) {
 	for _, c := range cases {
 		if got := gateRan(c.gate, c.cmds); got != c.want {
 			t.Errorf("%s: gateRan(%q, %q) = %v, want %v", c.name, c.gate, c.cmds, got, c.want)
+		}
+	}
+}
+
+// TestRunIgnoresLostCollision checks an attempt abandoned three days ago —
+// no lease, no run file — does not block a dispatch owning the same file:
+// flywheel run marks it lost (reason idle) before the owns check (issue #402).
+func TestRunIgnoresLostCollision(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	old := now().UTC().Add(-72 * time.Hour)
+	if err := AppendEvent(dir, Event{TS: old.Format(time.RFC3339Nano), Task: "T1", Kind: "planned", Brief: ownsBrief(t, dir, "b1.txt", "a.txt")}); err != nil {
+		t.Fatalf("AppendEvent() planned T1: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: old.Add(time.Second).Format(time.RFC3339Nano), Task: "T1", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched T1: %v", err)
+	}
+	planOnly(t, dir, "T2", ownsBrief(t, dir, "b2.txt", "a.txt"))
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T2"}); err != nil {
+		t.Fatalf("Run() error = %v, want a normal dispatch (T1 is abandoned)", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	lost := 0
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "lost" {
+			lost++
+			if e.Attempt != "r1" || e.Reason != "idle" || !strings.Contains(e.Note, "no live lease") {
+				t.Errorf("lost event = %+v, want attempt r1, reason idle, a no-live-lease note", e)
+			}
+		}
+	}
+	if lost != 1 {
+		t.Errorf("T1 lost events = %d, want 1", lost)
+	}
+	for _, ts := range Derive(evs).Tasks {
+		if ts.ID == "T1" && ts.Status != "lost" {
+			t.Errorf("T1 status = %q, want lost", ts.Status)
 		}
 	}
 }

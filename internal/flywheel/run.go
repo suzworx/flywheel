@@ -267,6 +267,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// --allow-overlap skips the refusal and records the crossing on the
 	// dispatched note instead. A task with no readable brief contributes no
 	// owns and never blocks.
+	// Lost first (issue #402): an attempt abandoned with its lease expired or
+	// gone and its run file idle past limits.lost_after is marked lost here,
+	// so a dead attempt never holds its owns or exclusive resources against
+	// this dispatch. A failure only warns; the checks below still run.
+	if n, lerr := MarkLost(dir, now()); lerr != nil {
+		progress(o.Progress, fmt.Sprintf("warning: marking abandoned attempts lost: %v", lerr))
+	} else if n > 0 {
+		if events, err = ReadEvents(dir); err != nil {
+			return Result{}, err
+		}
+	}
 	myOwns := []string{}
 	myExclusive := []string{}
 	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
