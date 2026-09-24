@@ -62,6 +62,56 @@ func parseResetTime(text string, now time.Time) (time.Time, bool) {
 	return at, true
 }
 
+// rateLimitPaused reports whether model is paused by a rate limit at now
+// (issue #383): a rate limit belongs to the subscription, so every unit on the
+// model waits for the reset. The latest finished event for model carrying a
+// reset_at decides it, unless a later finished event on that model stopped
+// cleanly (the window has reopened).
+func rateLimitPaused(events []Event, model string, now time.Time) (until time.Time, paused bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind != "finished" || e.Model != model {
+			continue
+		}
+		if e.Reason == "stop" {
+			return time.Time{}, false
+		}
+		if e.ResetAt == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, e.ResetAt)
+		if err != nil || !now.Before(at) {
+			return time.Time{}, false
+		}
+		return at, true
+	}
+	return time.Time{}, false
+}
+
+// pausedModels lists every model in events that rateLimitPaused holds at now,
+// with its reset time, in first-seen order.
+func pausedModels(events []Event, now time.Time) (models []string, until map[string]time.Time) {
+	until = map[string]time.Time{}
+	seen := map[string]bool{}
+	for _, e := range events {
+		if e.Kind != "finished" || e.ResetAt == "" || e.Model == "" || seen[e.Model] {
+			continue
+		}
+		seen[e.Model] = true
+		if at, ok := rateLimitPaused(events, e.Model, now); ok {
+			models = append(models, e.Model)
+			until[e.Model] = at
+		}
+	}
+	return models, until
+}
+
+// pauseClock is a reset time as the viewer's local HH:MM with the RFC 3339
+// instant in parentheses.
+func pauseClock(t time.Time) string {
+	return t.Local().Format("15:04") + " (" + t.UTC().Format(time.RFC3339) + ")"
+}
+
 // limitContinue is the task text of the delta a rate-limit resume attaches.
 const limitContinue = "# TASK: continue\n\nYour run was cut off by a rate limit. Continue the same task from where you stopped; do not redo finished work. Re-run the gates at the end and report their exit codes.\n"
 

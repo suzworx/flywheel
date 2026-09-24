@@ -76,11 +76,12 @@ type Unit struct {
 	Session  string // short form
 	Model    string
 	Steps    int
-	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, failed, failed-dirty, done
-	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
-	Line     string // the product line from the latest dispatched event (issue #69); "" when none
-	Station  string // where the unit stands on its line (issue #69 follow-up)
+	LastAge  int       // seconds since the unit's last event
+	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, failed, failed-dirty, done
+	Peak     int       // largest single-step reasoning figure, from the latest finished event; 0 when none
+	Line     string    // the product line from the latest dispatched event (issue #69); "" when none
+	Station  string    // where the unit stands on its line (issue #69 follow-up)
+	ResetAt  time.Time // a rate-limited attempt's parsed reset (issue #383); zero when none
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -419,7 +420,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.ProductLines = buildProductLines(cfg, units)
 	fl.Staffing = buildStaffing(cfg, w.events)
 	fl.Units = units
-	fl.Andon = buildAndon(units, fl.Staffing.Roles)
+	fl.Andon = buildAndon(units, fl.Staffing.Roles, pausedAndon(w.events, now))
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -581,6 +582,9 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 				stopState = stopStateFor(w.events, t.ID, t.Attempt, t.Status)
 			}
 			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote, stopState)
+			if u.RunState == "rate-limited" {
+				u.ResetAt = resetAtFor(w.events, t.ID, t.Attempt)
+			}
 			finished = done
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
@@ -702,8 +706,8 @@ func ageOfTime(t, now time.Time) int {
 
 // buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
 // provider-error, rate-limited, failed or failed-dirty, newest first, and adds
-// andon entries for mismatching roles.
-func buildAndon(units []Unit, roles []FloorRole) []Andon {
+// andon entries for mismatching roles and the paused entries (pausedAndon).
+func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
@@ -716,6 +720,7 @@ func buildAndon(units []Unit, roles []FloorRole) []Andon {
 			out = append(out, Andon{Task: "staffing/" + r.Name, State: "mismatch", Age: 0})
 		}
 	}
+	out = append(out, paused...)
 	slices.SortStableFunc(out, func(a, b Andon) int {
 		if a.Age != b.Age {
 			return a.Age - b.Age
@@ -723,6 +728,29 @@ func buildAndon(units []Unit, roles []FloorRole) []Andon {
 		return strings.Compare(a.Task, b.Task)
 	})
 	return out
+}
+
+// pausedAndon is one andon entry per model a rate limit pauses at now (issue
+// #383): task model/<model>, state "paused until HH:MM" in the viewer's zone.
+func pausedAndon(events []Event, now time.Time) []Andon {
+	models, until := pausedModels(events, now)
+	var out []Andon
+	for _, m := range models {
+		out = append(out, Andon{Task: "model/" + m, State: "paused until " + until[m].Local().Format("15:04"), Age: 0})
+	}
+	return out
+}
+
+// resetAtFor returns the reset_at of the task's latest finished event for
+// attempt, or the zero time when it has none (issue #383).
+func resetAtFor(events []Event, task, attempt string) time.Time {
+	var at time.Time
+	for _, e := range events {
+		if e.Kind == "finished" && e.Task == task && e.Attempt == attempt {
+			at, _ = time.Parse(time.RFC3339, e.ResetAt)
+		}
+	}
+	return at
 }
 
 // buildOutput aggregates the production summary from finished events. The

@@ -358,6 +358,18 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// A rate limit belongs to the subscription: while its reset is pending, no
+	// fresh attempt goes to the model (issue #383). A resume is exempt, since
+	// RunResumingLimits resumes only after the reset.
+	if !o.Resume {
+		if until, paused := rateLimitPaused(events, model, now()); paused {
+			return Result{}, &RuleRefusal{
+				Rule: "rate-limit",
+				Fix:  fmt.Sprintf("%s is paused by a rate limit until %s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(until)),
+			}
+		}
+	}
+
 	if cfg.Limits.RatePerMinute > 0 {
 		if limited, until := rateLimited(events, model, cfg.Limits.RatePerMinute, now()); limited {
 			return Result{}, &RuleRefusal{
@@ -1156,16 +1168,21 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// A rate limit names its reset on the note and records no signal: an
 	// untriaged signal would block landing after a successful resume (issue
 	// #380).
+	// The parsed reset pauses the model for every unit until then (issue #383).
+	resetAt := ""
 	if reason != "rate-limited" {
 		resetText = ""
 	} else if resetText != "" {
 		note = joinNote(note, "limit resets "+resetText)
+		if at, ok := parseResetTime(resetText, now()); ok {
+			resetAt = at.Format(time.RFC3339)
+		}
 	}
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun,
+		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
 	}); err != nil {
 		return Result{}, err
 	}

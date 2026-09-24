@@ -41,3 +41,39 @@ func TestParseResetTime(t *testing.T) {
 		}
 	}
 }
+
+// TestRateLimitPaused covers the pause a rate-limited finished event's
+// reset_at puts on its model (issue #383).
+func TestRateLimitPaused(t *testing.T) {
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	reset := now.Add(20 * time.Minute)
+	limited := func(model string, at time.Time) Event {
+		return Event{Kind: "finished", Task: "T1", Model: model, Reason: "rate-limited", ResetAt: at.Format(time.RFC3339)}
+	}
+	cases := []struct {
+		name   string
+		events []Event
+		model  string
+		paused bool
+	}{
+		{"no events", nil, "m", false},
+		{"pending reset", []Event{limited("m", reset)}, "m", true},
+		{"expired reset", []Event{limited("m", now.Add(-time.Minute))}, "m", false},
+		{"clean stop after the limit", []Event{limited("m", reset), {Kind: "finished", Task: "T2", Model: "m", Reason: "stop"}}, "m", false},
+		{"error after the limit", []Event{limited("m", reset), {Kind: "finished", Task: "T2", Model: "m", Reason: "error"}}, "m", true},
+		{"a different model", []Event{limited("other", reset)}, "m", false},
+	}
+	for _, c := range cases {
+		until, paused := rateLimitPaused(c.events, c.model, now)
+		if paused != c.paused {
+			t.Errorf("%s: paused = %v, want %v", c.name, paused, c.paused)
+		}
+		if paused && !until.Equal(reset) {
+			t.Errorf("%s: until = %v, want %v", c.name, until, reset)
+		}
+	}
+	models, at := pausedModels([]Event{limited("a", reset), limited("b", now.Add(-time.Minute)), limited("a", reset)}, now)
+	if len(models) != 1 || models[0] != "a" || !at["a"].Equal(reset) {
+		t.Errorf("pausedModels = %v %v, want [a] at %v", models, at, reset)
+	}
+}

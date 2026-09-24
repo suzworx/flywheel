@@ -3,6 +3,7 @@ package flywheel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -200,7 +201,7 @@ func TestClassifyRunRateLimited(t *testing.T) {
 	if got := classifyRun(true, 26, 0, 3, false, "error", 100, 0, 600, false, false, ""); got != "provider-error" {
 		t.Errorf("classifyRun(done, error) = %q, want provider-error", got)
 	}
-	andon := buildAndon([]Unit{{Task: "T1", RunState: "rate-limited", LastAge: 5}, {Task: "T2", RunState: "done"}}, nil)
+	andon := buildAndon([]Unit{{Task: "T1", RunState: "rate-limited", LastAge: 5}, {Task: "T2", RunState: "done"}}, nil, nil)
 	if len(andon) != 1 || andon[0].Task != "T1" || andon[0].State != "rate-limited" {
 		t.Errorf("buildAndon() = %v, want one rate-limited entry for T1", andon)
 	}
@@ -248,7 +249,7 @@ func TestClassifyRunBlocked(t *testing.T) {
 	if got := classifyRun(true, 3, 0, 0, false, "stop", 100, 0, 600, false, false, stopStateFor(evs, "T2", "r1", "landed")); got != "done" {
 		t.Errorf("landed unit with no writes = %q, want done", got)
 	}
-	andon := buildAndon([]Unit{{Task: "T1", RunState: "blocked"}, {Task: "T2", RunState: "no-writes"}, {Task: "T3", RunState: "done"}}, nil)
+	andon := buildAndon([]Unit{{Task: "T1", RunState: "blocked"}, {Task: "T2", RunState: "no-writes"}, {Task: "T3", RunState: "done"}}, nil, nil)
 	if len(andon) != 2 {
 		t.Errorf("buildAndon() = %v, want the blocked and no-writes units", andon)
 	}
@@ -737,6 +738,62 @@ func TestStartFailedFinishIsFailedOnAndon(t *testing.T) {
 	}
 	if !andonHas(fl.Andon, "died") {
 		t.Errorf("andon missing died: %v", fl.Andon)
+	}
+}
+
+// TestFloorPausedModel checks a rate-limited unit shows its reset on the
+// floor and its model gets one paused andon entry until then (issue #383).
+func TestFloorPausedModel(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC)
+	reset := now.Add(20 * time.Minute)
+	clock := reset.Local().Format("15:04")
+	for _, e := range []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "lim", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "lim", Kind: "dispatched", Attempt: "r1", Model: "m1"},
+		{TS: "2026-09-15T00:00:30Z", Task: "lim", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "rate-limited", ResetAt: reset.Format(time.RFC3339)},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	var w Watcher = NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "lim")
+	if !ok || u.RunState != "rate-limited" || !u.ResetAt.Equal(reset) {
+		t.Fatalf("unit lim = %+v, want run state rate-limited with reset %v", u, reset)
+	}
+	var paused int
+	for _, a := range fl.Andon {
+		if a.Task == "model/m1" {
+			paused++
+			if a.State != "paused until "+clock {
+				t.Errorf("andon state = %q, want paused until %s", a.State, clock)
+			}
+		}
+	}
+	if paused != 1 || !andonHas(fl.Andon, "lim") {
+		t.Errorf("andon = %v, want lim and one model/m1 entry", fl.Andon)
+	}
+	var text, js strings.Builder
+	RenderText(&text, fl, 160, false)
+	if !strings.Contains(text.String(), "rate-limited until "+clock) {
+		t.Errorf("rendered text lacks %q:\n%s", "rate-limited until "+clock, text.String())
+	}
+	RenderJSON(&js, fl)
+	if !strings.Contains(js.String(), `"run_state": "rate-limited"`) || !strings.Contains(js.String(), `"reset_at": "`+reset.Format(time.RFC3339)+`"`) {
+		t.Errorf("JSON lacks run_state rate-limited and reset_at:\n%s", js.String())
+	}
+	// After the reset the model is no longer paused.
+	fl, err = w.Refresh(dir, reset.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if andonHas(fl.Andon, "model/m1") {
+		t.Errorf("andon after the reset = %v, want no model/m1", fl.Andon)
 	}
 }
 

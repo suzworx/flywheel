@@ -3934,6 +3934,45 @@ func TestRunBreakerRefusesDispatch(t *testing.T) {
 	}
 }
 
+// TestRunRefusesPausedModel checks that a fresh Run refuses a model another
+// unit's rate limit paused until its reset (issue #383).
+func TestRunRefusesPausedModel(t *testing.T) {
+	dir := setupTask(t)
+	cfg := simConfig(noPlanFixture(t, 5, false))
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	model := cfg.DefaultWorker().Model
+	now := time.Now()
+	reset := now.Add(30 * time.Minute).UTC().Truncate(time.Second)
+	for _, e := range []Event{
+		{TS: now.Add(-3 * time.Minute).Format(time.RFC3339), Task: "T2", Kind: "planned", Brief: "b.txt"},
+		{TS: now.Add(-2 * time.Minute).Format(time.RFC3339), Task: "T2", Kind: "dispatched", Attempt: "r1", Model: model},
+		{TS: now.Add(-1 * time.Minute).Format(time.RFC3339), Task: "T2", Kind: "finished", Attempt: "r1", Model: model, Reason: "rate-limited", ResetAt: reset.Format(time.RFC3339)},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent(%s %s) error = %v", e.Task, e.Kind, err)
+		}
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	var rf *RuleRefusal
+	if !errors.As(err, &rf) || rf.Rule != "rate-limit" {
+		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='rate-limit'", err)
+	}
+	if !strings.Contains(rf.Fix, model+" is paused by a rate limit until") || !strings.Contains(rf.Fix, reset.Format(time.RFC3339)) {
+		t.Errorf("Fix = %q, want the model and the reset %s", rf.Fix, reset.Format(time.RFC3339))
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded for T1 despite the pause: %v", e)
+		}
+	}
+}
+
 // TestRunLimitsPerHostCountsSameTask checks a second fresh run of a task that
 // is already running counts toward limits.per_host: it is another attempt on
 // the host (#293 review).
