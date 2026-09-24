@@ -251,7 +251,9 @@ all.
 Because `planned`, `amended` and `dispatched` events carry the parsed `header`, the log is
 self-contained: a pass is measured against the header recorded in it, so a brief edited on disk
 after the fact — even one re-recorded through `flywheel log --kind amended` with the same path —
-no longer changes what any recorded pass is measured against. An event without a `header` falls
+no longer changes what any recorded pass is measured against. On a dispatched attempt, owns widen
+with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`, which is what
+`flywheel run`'s brief-drift message names (issue #387). An event without a `header` falls
 back to reading the file at its `brief` path, so ledgers written before this field existed keep
 working exactly as before.
 
