@@ -25,8 +25,24 @@ const (
 	adapterW = 8
 	modelL   = 40
 	andonW   = 14
-	lineW    = 8 // the units table's LINE column, shown when a unit has a line
+	lineW    = 8  // the units table's LINE column, shown when a unit has a line
+	treeW    = 14 // the units table's TREE column, shown when a unit has a workdir
 )
+
+// treeCell is a unit's TREE cell (issue #394): the worktree's last path
+// element and "@" plus its base commit, or "" in the main checkout. Either
+// separator ends a path element, so a ledger recorded on another OS still reads.
+func treeCell(u Unit) string {
+	if u.Workdir == "" {
+		return ""
+	}
+	name := strings.TrimRight(u.Workdir, `/\`)
+	name = name[strings.LastIndexAny(name, `/\`)+1:]
+	if u.Base != "" {
+		name += "@" + u.Base
+	}
+	return name
+}
 
 // ANSI colour codes. They are only emitted when colour is enabled (colour=true
 // in RenderText); otherwise cells carry no escape sequences.
@@ -193,11 +209,24 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			break
 		}
 	}
+	hasTree := false
+	for _, u := range f.Units {
+		if u.Workdir != "" {
+			hasTree = true
+			break
+		}
+	}
 	sessWd := sessW
+	need := 0
 	if hasLine {
-		// The LINE column's cells come out of MODEL, then TASK, then SESSION,
-		// so the table still fits the render width (issue #69).
-		need := lineW + 1
+		need += lineW + 1
+	}
+	if hasTree {
+		need += treeW + 1
+	}
+	if need > 0 {
+		// The LINE and TREE columns' cells come out of MODEL, then TASK, then
+		// SESSION, so the table still fits the render width (issues #69, #394).
 		for _, c := range []struct {
 			wd    *int
 			floor int
@@ -208,10 +237,13 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			}
 		}
 	}
-	row := func(task, line, stage, att, sess, model, steps, age, run string) {
+	row := func(task, line, tree, stage, att, sess, model, steps, age, run string) {
 		cells := []string{fmt.Sprintf("%-*s", taskWd, task)}
 		if hasLine {
 			cells = append(cells, fmt.Sprintf("%-*s", lineW, line))
+		}
+		if hasTree {
+			cells = append(cells, fmt.Sprintf("%-*s", treeW, tree))
 		}
 		cells = append(cells,
 			fmt.Sprintf("%-*s", stageW, stage), fmt.Sprintf("%-*s", attW, att),
@@ -219,7 +251,7 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			fmt.Sprintf("%*s", stepsW, steps), fmt.Sprintf("%*s", ageW, age), run)
 		fmt.Fprintf(w, "  %s\n", strings.Join(cells, " "))
 	}
-	row("TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN"))
+	row("TASK", "LINE", "TREE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN"))
 	for _, u := range f.Units {
 		cell := truncate(u.RunState, runW)
 		if u.RunState == "capped" && u.Peak > 0 {
@@ -230,7 +262,7 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			cell = "rate-limited until " + u.ResetAt.Local().Format("15:04")
 		}
 		run := paint(color, stateColor(u.RunState), padLeft(cell, runW))
-		row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(u.Stage, stageW),
+		row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(treeCell(u), treeW), truncate(u.Stage, stageW),
 			truncate(u.Attempt, attW), truncate(u.Session, sessWd), truncate(u.Model, modelWd),
 			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run)
 	}
@@ -293,6 +325,8 @@ type jUnit struct {
 	PeakReasoning int    `json:"peak_reasoning"`
 	Station       string `json:"station,omitempty"`
 	ResetAt       string `json:"reset_at,omitempty"` // a rate-limited unit's reset, RFC 3339 (issue #383)
+	Workdir       string `json:"workdir,omitempty"`  // the unit's worktree (issue #394)
+	Base          string `json:"base,omitempty"`     // its base commit, first 7 characters
 }
 
 type jAndon struct {
@@ -352,7 +386,7 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = js
 	for _, u := range f.Units {
-		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station}
+		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base}
 		if !u.ResetAt.IsZero() {
 			ju.ResetAt = u.ResetAt.UTC().Format(time.RFC3339)
 		}

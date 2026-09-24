@@ -433,6 +433,11 @@ other files, goes to a **fresh** session with a self-contained brief: the owns/n
 defects, and one test per defect. Evidence: a resumed session grew from 104 k to 279 k tokens and
 from 18 to 63-79 s per step, while fresh fix sessions ran 11-36 steps in 96-431 s.
 
+- **Corrections cite evidence:** a correction quotes the gauge or run id (e.g. `validated` on
+  `<id>.r1`) and the exact failing lines, and names the suspected cause; it never restates the
+  task. The worker gets the same evidence you judged, so corrections cite evidence, not a
+  summary of it — in a consumer's waves every such correction produced a precise root-cause fix.
+
 ```bash
 OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \
   opencode run --pure -m "$MODEL" --auto --format json --title "<id>-c<n>" --variant low --session "<emitted-sessionID>" \

@@ -82,6 +82,23 @@ type Unit struct {
 	Line     string    // the product line from the latest dispatched event (issue #69); "" when none
 	Station  string    // where the unit stands on its line (issue #69 follow-up)
 	ResetAt  time.Time // a rate-limited attempt's parsed reset (issue #383); zero when none
+	Workdir  string    // the latest dispatched event's workdir (issue #394); "" in the main checkout
+	Base     string    // that event's base commit, first 7 characters; "" when none
+}
+
+// worktreeFor returns the workdir and the 7-character base commit the task's
+// latest dispatched event for attempt recorded, scanning in order so the last
+// one wins, the same way lineFor does (issue #394).
+func worktreeFor(events []Event, task, attempt string) (workdir, base string) {
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Task == task && e.Attempt == attempt {
+			workdir, base = e.Workdir, e.Base
+		}
+	}
+	if len(base) > 7 {
+		base = base[:7]
+	}
+	return workdir, base
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -589,6 +606,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Steps = w.runSteps[rel]
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
+			u.Workdir, u.Base = worktreeFor(w.events, t.ID, t.Attempt)
 		}
 		if u.Line == "" {
 			// A unit planned but never dispatched still belongs to the line

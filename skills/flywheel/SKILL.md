@@ -126,7 +126,11 @@ to verify's T1, so validate no longer fails the stale gate.
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
 (attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
 adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,
-or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
+or `sim`), and `flywheel run --worker <name>` picks between several configured workers. For
+parallel units, `flywheel run --worktree <task>` is the default: each unit builds in its own
+`.flywheel/worktrees/<task>` on branch `fw/<task>`, so parallel workers never share a tree, and
+flywheel commands run there use the main ledger. The floor's TREE column shows each unit's
+worktree and base commit. The
 hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
 verify flags first
 (`opencode run --help`), label with `--title`, auto-approve with `--auto`, emit JSON so you capture
