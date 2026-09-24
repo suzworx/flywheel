@@ -188,6 +188,24 @@ func TestClassifyRunNoWrites(t *testing.T) {
 // the attempt's events: blocked from a permission-denied signal (over
 // no-writes), no-writes from a stop finish with an empty wrote list and no
 // signal at all (issue #364).
+// TestClassifyRunRateLimited checks that a done attempt whose reason is
+// rate-limited shows its own run state, wrote or not, and reaches the andon
+// like provider-error (issue #380).
+func TestClassifyRunRateLimited(t *testing.T) {
+	for _, wrote := range []bool{false, true} {
+		if got := classifyRun(true, 26, 0, 3, false, "rate-limited", 100, 0, 600, false, wrote, ""); got != "rate-limited" {
+			t.Errorf("classifyRun(done, rate-limited, wrote %v) = %q, want rate-limited", wrote, got)
+		}
+	}
+	if got := classifyRun(true, 26, 0, 3, false, "error", 100, 0, 600, false, false, ""); got != "provider-error" {
+		t.Errorf("classifyRun(done, error) = %q, want provider-error", got)
+	}
+	andon := buildAndon([]Unit{{Task: "T1", RunState: "rate-limited", LastAge: 5}, {Task: "T2", RunState: "done"}}, nil)
+	if len(andon) != 1 || andon[0].Task != "T1" || andon[0].State != "rate-limited" {
+		t.Errorf("buildAndon() = %v, want one rate-limited entry for T1", andon)
+	}
+}
+
 func TestClassifyRunBlocked(t *testing.T) {
 	for _, reason := range []string{"stop", ""} {
 		for _, s := range []string{"blocked", "no-writes"} {

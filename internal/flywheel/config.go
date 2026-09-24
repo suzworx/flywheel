@@ -136,6 +136,28 @@ type Limits struct {
 	Budget        *Budget  `json:"budget,omitempty"`
 	Breaker       *Breaker `json:"breaker,omitempty"`
 	RatePerMinute int      `json:"rate_per_minute,omitempty"` // at most this many dispatches of one model in any 60 seconds; 0 means no limit
+	// RateLimitRetries is how many times flywheel run resumes a worker cut
+	// off by a provider rate limit; nil means 3, 0 disables (issue #380).
+	RateLimitRetries *int `json:"rate_limit_retries,omitempty"`
+	// RateLimitMaxWait is the longest flywheel run waits for a rate limit to
+	// reset, a Go duration; "" means 5h (issue #380).
+	RateLimitMaxWait string `json:"rate_limit_max_wait,omitempty"`
+}
+
+// RateLimitRetryCount is RateLimitRetries, 3 when unset.
+func (l Limits) RateLimitRetryCount() int {
+	if l.RateLimitRetries == nil {
+		return 3
+	}
+	return *l.RateLimitRetries
+}
+
+// RateLimitMaxWaitDuration parses RateLimitMaxWait ("" means 5 hours).
+func (l Limits) RateLimitMaxWaitDuration() (time.Duration, error) {
+	if l.RateLimitMaxWait == "" {
+		return 5 * time.Hour, nil
+	}
+	return time.ParseDuration(l.RateLimitMaxWait)
 }
 
 // Budget caps spending and tokens per wave.
@@ -390,6 +412,14 @@ func (c Config) Validate() error {
 	if c.Limits.RatePerMinute < 0 {
 		problems = append(problems, fmt.Sprintf("limits.rate_per_minute %d must be >= 0", c.Limits.RatePerMinute))
 	}
+	if n := c.Limits.RateLimitRetryCount(); n < 0 {
+		problems = append(problems, fmt.Sprintf("limits.rate_limit_retries %d must be >= 0", n))
+	}
+	if d, err := c.Limits.RateLimitMaxWaitDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.rate_limit_max_wait %q: %v", c.Limits.RateLimitMaxWait, err))
+	} else if d <= 0 {
+		problems = append(problems, fmt.Sprintf("limits.rate_limit_max_wait %q must be > 0", c.Limits.RateLimitMaxWait))
+	}
 	if c.Limits.Budget != nil && c.Limits.Budget.WaveTokens < 0 {
 		problems = append(problems, fmt.Sprintf("limits.budget.wave_tokens %d must be >= 0", c.Limits.Budget.WaveTokens))
 	}
@@ -582,6 +612,13 @@ func (c Config) Get(key string) (string, error) {
 		return c.Feedback.Submit, nil
 	case "limits.per_host":
 		return strconv.Itoa(c.Limits.PerHost), nil
+	case "limits.rate_limit_retries":
+		return strconv.Itoa(c.Limits.RateLimitRetryCount()), nil
+	case "limits.rate_limit_max_wait":
+		if c.Limits.RateLimitMaxWait == "" {
+			return "5h", nil
+		}
+		return c.Limits.RateLimitMaxWait, nil
 	case "log.shards":
 		if c.Log != nil && c.Log.Shards {
 			return "true", nil
@@ -637,7 +674,8 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.per_host", "log.shards", "max_parallel", "model", "stall_timeout", "variant",
+		"feedback.upstream", "limits.per_host", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
+		"log.shards", "max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -658,7 +696,8 @@ func (c Config) validKeys() []string {
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are model, variant, adapter,
 // max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
-// and limits.per_host. Integer keys parse with strconv.Atoi. fallbacks is not
+// limits.per_host, limits.rate_limit_retries and limits.rate_limit_max_wait.
+// Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
 func (c *Config) Set(key, value string) error {
@@ -729,6 +768,16 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Limits.PerHost = n
 		return nil
+	case "limits.rate_limit_retries":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("limits.rate_limit_retries: value %q must be an integer", value)
+		}
+		c.Limits.RateLimitRetries = &n
+		return nil
+	case "limits.rate_limit_max_wait":
+		c.Limits.RateLimitMaxWait = value
+		return nil
 	case "fallbacks", "fallbacks.all":
 		return fmt.Errorf("%s: not settable; edit .flywheel/config.json", key)
 	case "log.shards":
@@ -773,6 +822,7 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.per_host",
+		"limits.rate_limit_max_wait", "limits.rate_limit_retries",
 		"max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",

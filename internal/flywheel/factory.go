@@ -77,7 +77,7 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int    // seconds since the unit's last event
-	RunState string // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, failed, failed-dirty, done
+	RunState string // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string // the product line from the latest dispatched event (issue #69); "" when none
 	Station  string // where the unit stands on its line (issue #69 follow-up)
@@ -327,6 +327,10 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 			return "capped"
 		case "error":
 			return "provider-error"
+		case "rate-limited":
+			// Cut off by a rate limit, files or not: the resume continues
+			// the same session (issue #380).
+			return "rate-limited"
 		case "", "stop":
 			if stopState != "" {
 				return stopState
@@ -697,13 +701,13 @@ func ageOfTime(t, now time.Time) int {
 }
 
 // buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
-// provider-error, failed or failed-dirty, newest first, and adds andon entries
-// for mismatching roles.
+// provider-error, rate-limited, failed or failed-dirty, newest first, and adds
+// andon entries for mismatching roles.
 func buildAndon(units []Unit, roles []FloorRole) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "failed", "failed-dirty":
+		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
 	}

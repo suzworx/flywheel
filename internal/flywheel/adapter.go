@@ -67,6 +67,10 @@ type Observation struct {
 	Denials []string
 	// Command is the shell command of a shell tool call (issue #365).
 	Command string
+	// ResetText is a rate-limit message's reset clause, the text after
+	// "resets " (e.g. "10:20am (America/Los_Angeles)"); set only when Reason
+	// is "rate-limited" (issue #380).
+	ResetText string
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -434,6 +438,12 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 			_ = json.Unmarshal(raw, &isError)
 		}
 		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"), isError)
+		if status, _ := rawFloat(m, "api_error_status"); isError || status == 429 {
+			if reset, ok := claudeRateLimit(status, rawString(m, "result")); ok {
+				obs.Reason = "rate-limited"
+				obs.ResetText = reset
+			}
+		}
 		obs.Cost, _ = rawFloat(m, "total_cost_usd")
 		// The result line's top-level usage is the session total (issue
 		// #286); claudeTokens reads m["usage"], the same shape as a message's.
@@ -804,6 +814,25 @@ func claudeReason(stopReason, subtype string, isError bool) string {
 	default:
 		return "error"
 	}
+}
+
+// claudeRateLimit reports whether a result line is a rate limit: an
+// api_error_status of 429, or a result message naming a rate, usage or
+// session limit. reset is the text after "resets " when the message has one
+// (issue #380).
+func claudeRateLimit(status float64, result string) (reset string, ok bool) {
+	lower := strings.ToLower(result)
+	if status != 429 && !strings.Contains(lower, "rate limit") &&
+		!strings.Contains(lower, "usage limit") && !strings.Contains(lower, "session limit") {
+		return "", false
+	}
+	for _, key := range []string{"resets ", "Resets "} {
+		if i := strings.Index(result, key); i >= 0 {
+			reset = strings.TrimSpace(result[i+len(key):])
+			break
+		}
+	}
+	return reset, true
 }
 
 // rawString returns the string value of key in m, or "" when absent or not

@@ -3784,6 +3784,36 @@ func TestBreakerClosedWhenLatestSucceeded(t *testing.T) {
 	}
 }
 
+// TestBreakerIgnoresRateLimit checks that a rate-limited finish is not a
+// provider error: rate limits alone never open the breaker, and one between
+// errors neither counts nor breaks the error streak (issue #380).
+func TestBreakerIgnoresRateLimit(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-09-13T00:00:00Z")
+	b := Breaker{Errors: 2, Cooldown: "10m"}
+	limits := []Event{
+		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "rate-limited"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T2", Kind: "finished", Model: "m", Reason: "rate-limited"},
+	}
+	if open, _ := breakerOpen(limits, "m", b, now); open {
+		t.Errorf("breakerOpen(two rate limits) open = true, want false")
+	}
+	mixed := []Event{
+		{TS: "2026-09-12T23:57:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
+		{TS: "2026-09-12T23:58:00Z", Task: "T2", Kind: "finished", Model: "m", Reason: "rate-limited"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T3", Kind: "finished", Model: "m", Reason: "error"},
+	}
+	if open, _ := breakerOpen(mixed, "m", b, now); !open {
+		t.Errorf("breakerOpen(error, rate-limited, error) open = false, want true")
+	}
+	oneError := []Event{
+		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "rate-limited"},
+		{TS: "2026-09-12T23:59:00Z", Task: "T2", Kind: "finished", Model: "m", Reason: "error"},
+	}
+	if open, _ := breakerOpen(oneError, "m", b, now); open {
+		t.Errorf("breakerOpen(rate-limited, error) open = true, want false")
+	}
+}
+
 // TestBreakerClosedAfterCooldown checks that breakerOpen returns open=false
 // when the cooldown has passed since the newest error.
 func TestBreakerClosedAfterCooldown(t *testing.T) {
@@ -3992,6 +4022,143 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// limitRun runs RunResumingLimits on a claude worker whose first attempt hits
+// a rate limit resetting at 10:20am Los Angeles (now is 10:00 there) and whose
+// second attempt stops cleanly. It returns the result, the injected sleeps,
+// the dispatch requests and the events (issue #380).
+func limitRun(t *testing.T, retries *int, maxWait string) (Result, []time.Duration, []RunRequest, []Event) {
+	dir := setupTask(t)
+	brief := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n# TASK: x\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}},
+		Limits: Limits{RateLimitRetries: retries, RateLimitMaxWait: maxWait}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const session = "ses_limit_001"
+	head := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session) +
+		fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"a.go"}}]}}`+"\n", session)
+	streams := []string{
+		head + fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"stop_sequence","is_error":true,"api_error_status":429,"session_id":%q,"result":"You've hit your session limit · resets 10:20am (America/Los_Angeles)"}`+"\n", session),
+		head + fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session),
+	}
+	var paths []string
+	for i, s := range streams {
+		p := filepath.Join(t.TempDir(), fmt.Sprintf("stream%d.jsonl", i+1))
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatalf("write stream: %v", err)
+		}
+		paths = append(paths, p)
+	}
+	t.Setenv(fakeClaudeEnv, paths[0])
+	var reqs []RunRequest
+	commandHook = func(r RunRequest) {
+		reqs = append(reqs, r)
+		_ = os.Setenv(fakeClaudeEnv, paths[min(len(reqs), len(paths))-1])
+	}
+	defer func() { commandHook = nil }()
+
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sleeps []time.Duration
+	var buf bytes.Buffer
+	res, err := RunResumingLimits(dir, RunOptions{Task: "T1", Progress: &buf},
+		func(d time.Duration) { sleeps = append(sleeps, d) },
+		func() time.Time { return time.Date(2026, 9, 23, 10, 0, 0, 0, la) })
+	if err != nil {
+		t.Fatalf("RunResumingLimits() error = %v; progress:\n%s", err, buf.String())
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	return res, sleeps, reqs, evs
+}
+
+// finishedOf returns the finished events, and whether any signal was recorded.
+func finishedOf(evs []Event) (fins []Event, signaled bool) {
+	for _, e := range evs {
+		switch e.Kind {
+		case "finished":
+			fins = append(fins, e)
+		case "signal":
+			signaled = true
+		}
+	}
+	return fins, signaled
+}
+
+// TestRunRetriesRateLimit checks that a rate-limited attempt is recorded as
+// rate-limited with its reset, waits (injected) until the reset plus a
+// minute, and resumes the same session with a continue delta; retries 0 or a
+// reset beyond the max wait does not resume (issue #380).
+func TestRunRetriesRateLimit(t *testing.T) {
+	t.Run("resumes", func(t *testing.T) {
+		res, sleeps, reqs, evs := limitRun(t, nil, "")
+		if len(sleeps) != 1 || sleeps[0] != 21*time.Minute {
+			t.Errorf("sleeps = %v, want one of 21m (the reset plus a minute)", sleeps)
+		}
+		fins, signaled := finishedOf(evs)
+		if len(fins) != 2 || fins[0].Reason != "rate-limited" || fins[1].Reason != "stop" {
+			t.Fatalf("finished events = %+v, want reasons rate-limited then stop", fins)
+		}
+		if !strings.Contains(fins[0].Note, "limit resets 10:20am (America/Los_Angeles)") {
+			t.Errorf("rate-limited note = %q, want the reset", fins[0].Note)
+		}
+		if signaled {
+			t.Errorf("a signal was recorded; a rate limit records none")
+		}
+		if len(reqs) != 2 || reqs[0].Resume || !reqs[1].Resume || reqs[1].Session != "ses_limit_001" {
+			t.Fatalf("dispatch requests = %+v, want a fresh run then a resume of ses_limit_001", reqs)
+		}
+		delta, err := os.ReadFile(reqs[1].PromptFile)
+		if err != nil || !strings.HasSuffix(filepath.ToSlash(reqs[1].PromptFile), ".flywheel/briefs/T1.limit-1.txt") {
+			t.Fatalf("resume prompt %s: %v, want .flywheel/briefs/T1.limit-1.txt", reqs[1].PromptFile, err)
+		}
+		if want := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n" + limitContinue; string(delta) != want {
+			t.Errorf("delta = %q, want %q", delta, want)
+		}
+		if res.Reason != "stop" || res.Attempt != "c1" {
+			t.Errorf("result = %+v, want the resume's stop on c1", res)
+		}
+	})
+	t.Run("retries 0", func(t *testing.T) {
+		zero := 0
+		res, sleeps, reqs, evs := limitRun(t, &zero, "")
+		fins, _ := finishedOf(evs)
+		if len(sleeps) != 0 || len(reqs) != 1 || len(fins) != 1 || res.Reason != "rate-limited" {
+			t.Errorf("sleeps %v, %d dispatches, %d finished, result %+v; want no resume", sleeps, len(reqs), len(fins), res)
+		}
+		if res.ResetText != "10:20am (America/Los_Angeles)" || ExitCode(res) != 4 {
+			t.Errorf("ResetText %q, exit %d; want the reset and exit 4", res.ResetText, ExitCode(res))
+		}
+	})
+	t.Run("beyond max wait", func(t *testing.T) {
+		res, sleeps, reqs, _ := limitRun(t, nil, "10m")
+		if len(sleeps) != 0 || len(reqs) != 1 || res.Reason != "rate-limited" {
+			t.Errorf("sleeps %v, %d dispatches, result %+v; want no resume past the max wait", sleeps, len(reqs), res)
+		}
+	})
 }
 
 // TestRunPlanBeforeTool checks a claude run whose first assistant message
