@@ -661,6 +661,44 @@ func TestValidateLearningEvent(t *testing.T) {
 	}
 }
 
+func TestValidateExternalReading(t *testing.T) {
+	ok := Event{Task: "t1", Kind: "validated", Gate: "1", Tree: "t", Source: "external", Evidence: "https://ci/run/1", Session: "lead", Commit: "abc1234"}
+	if err := Validate(ok); err != nil {
+		t.Errorf("Validate() rejected a valid external reading: %v", err)
+	}
+	owns := ok
+	owns.Kind = "owns_checked"
+	if err := Validate(owns); err != nil {
+		t.Errorf("Validate() rejected a valid external owns_checked: %v", err)
+	}
+	for _, field := range []string{"evidence", "session", "commit"} {
+		e := ok
+		switch field {
+		case "evidence":
+			e.Evidence = ""
+		case "session":
+			e.Session = ""
+		case "commit":
+			e.Commit = "nothex"
+		}
+		if err := Validate(e); err == nil {
+			t.Errorf("Validate() accepted an external reading without %s", field)
+		} else if !strings.Contains(err.Error(), "external") {
+			t.Errorf("Validate() error = %v, want external message", err)
+		}
+	}
+	other := ok
+	other.Kind = "inspected"
+	if err := Validate(other); err == nil {
+		t.Error("Validate() accepted a source on an inspected event")
+	}
+	bad := ok
+	bad.Source = "ci"
+	if err := Validate(bad); err == nil {
+		t.Error("Validate() accepted source \"ci\"")
+	}
+}
+
 func TestValidateDismissedEvent(t *testing.T) {
 	ok := Event{Task: "t1", Kind: "dismissed", ID: "L-01", Note: "fixed"}
 	if err := Validate(ok); err != nil {
