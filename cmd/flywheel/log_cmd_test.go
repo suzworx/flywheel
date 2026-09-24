@@ -281,6 +281,67 @@ func TestInitShardCreatesShardedRepo(t *testing.T) {
 	}
 }
 
+// runLogHelperEnv carries runLog's arguments to the re-executed test binary,
+// separated by \x1f, so a test can observe runLog's stderr and exit status.
+const runLogHelperEnv = "FLYWHEEL_TEST_RUNLOG_ARGS"
+
+// runLogProcess runs runLog(args) in a child copy of the test binary and
+// returns its stderr and exit code.
+func runLogProcess(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLogMissingFlagErrors$")
+	cmd.Env = append(os.Environ(), runLogHelperEnv+"="+strings.Join(args, "\x1f"))
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var e *exec.ExitError
+	if errors.As(err, &e) {
+		return stderr.String(), e.ExitCode()
+	}
+	if err != nil {
+		t.Fatalf("run child: %v", err)
+	}
+	return stderr.String(), 0
+}
+
+// TestLogMissingFlagErrors checks a missing flag prints the error and the
+// fixed command, not the whole usage, and exits 2 (issue #392).
+func TestLogMissingFlagErrors(t *testing.T) {
+	if v, ok := os.LookupEnv(runLogHelperEnv); ok {
+		runLog(strings.Split(v, "\x1f"))
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"amended without --note",
+			[]string{"--task", "T", "--kind", "amended", "--brief", "B", "--dir", dir},
+			[]string{"requires --note", "try: flywheel log --task T --kind amended --brief", `--note "<why>"`}},
+		{"no --kind",
+			[]string{"--task", "T", "--brief", "my brief.md", "--dir", dir},
+			[]string{"--kind is required", `try: flywheel log --task T --brief "my brief.md"`, "--kind <kind>"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stderr, code := runLogProcess(t, tt.args...)
+			if code != 2 {
+				t.Errorf("exit = %d, want 2; stderr:\n%s", code, stderr)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(stderr, w) {
+					t.Errorf("stderr lacks %q:\n%s", w, stderr)
+				}
+			}
+			if strings.Contains(stderr, "usage: flywheel <subcommand>") {
+				t.Errorf("stderr carries the full usage:\n%s", stderr)
+			}
+		})
+	}
+}
+
 // shardTestClock is the fixed instant the migration tests stamp seals with.
 var shardTestClock = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 

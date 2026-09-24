@@ -284,11 +284,14 @@ func runLog(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
+	if fs.NFlag() == 0 {
+		fmt.Fprintf(os.Stderr, "flywheel log: no flags given\n")
+		usage(os.Stderr)
+		os.Exit(2)
+	}
 	if o.shard {
 		if err := logShardConflicts(o); err != nil {
-			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
-			usage(os.Stderr)
-			os.Exit(2)
+			logFlagError(fs, args, err.Error(), func(n string) bool { return n == "dir" || n == "shard" }, "")
 		}
 		if err := runLogShard(o.dir, os.Stdout, os.Stderr, time.Now()); err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
@@ -300,12 +303,19 @@ func runLog(args []string) {
 		runLogJSON(o.dir, o.jsonIn, o.noState)
 		return
 	}
-	// --goal is legal only for planned: refuse it on amended as a usage
-	// error (exit 2) before asking whether the goal exists.
-	if o.kind == "amended" && o.goal != "" {
-		fmt.Fprintf(os.Stderr, "flywheel log: --goal applies to --kind planned only\n")
-		usage(os.Stderr)
-		os.Exit(2)
+	// A missing or misplaced flag is a usage error (exit 2) reported before
+	// anything is read: the error, then the same command fixed (issue #392).
+	switch {
+	case o.kind == "":
+		logFlagError(fs, args, "--kind is required", nil, "--kind <kind>")
+	case (o.kind == "planned" || o.kind == "amended") && o.task == "":
+		logFlagError(fs, args, "--kind "+o.kind+" requires --task <id>", nil, "--task <id>")
+	case o.kind == "amended" && o.goal != "":
+		// --goal is legal only for planned: refuse it before asking whether
+		// the goal exists.
+		logFlagError(fs, args, "--goal applies to --kind planned only", logWithout("goal"), "")
+	case o.kind == "amended" && o.note == "":
+		logFlagError(fs, args, "--kind amended requires --note <why>", nil, `--note "<why>"`)
 	}
 	if o.goal != "" {
 		if _, ok := findGoal(o.dir, o.goal); !ok {
@@ -321,11 +331,6 @@ func runLog(args []string) {
 		}
 	}
 	if o.kind == "amended" {
-		if o.note == "" {
-			fmt.Fprintf(os.Stderr, "flywheel log: --kind amended requires --note <why>\n")
-			usage(os.Stderr)
-			os.Exit(2)
-		}
 		finishLog(o.dir, flywheel.RecordAmendedBy(o.dir, o.task, o.brief, o.note, flywheel.PlanMeta{Session: o.session, Model: o.model}), o.noState)
 		return
 	}
@@ -357,12 +362,73 @@ func runLog(args []string) {
 	if o.rc != "" {
 		v, err := strconv.ParseInt(o.rc, 10, strconv.IntSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "flywheel log: invalid --rc %q: %v\n", o.rc, err)
-			os.Exit(1)
+			logFlagError(fs, args, fmt.Sprintf("invalid --rc %q: %v", o.rc, err), logWithout("rc"), "--rc <exit-code>")
 		}
 		p := new(int)
 		*p = int(v)
 		e.RC = p
 	}
 	appendEvents(o.dir, []flywheel.Event{e}, o.noState)
+}
+
+// logFlagError reports an error about one missing or invalid flag and exits 2:
+// the error line, then "try:" and the same command fixed — the flags the user
+// gave that keep accepts (all when keep is nil), plus add. It never prints the
+// full usage, which buried the one line that mattered (issue #392).
+func logFlagError(fs *flag.FlagSet, args []string, msg string, keep func(name string) bool, add string) {
+	fmt.Fprintf(os.Stderr, "flywheel log: %s\n", msg)
+	fmt.Fprintf(os.Stderr, "try: %s\n", logTryCommand(fs, args, keep, add))
+	os.Exit(2)
+}
+
+// logWithout keeps every flag except the named ones.
+func logWithout(names ...string) func(string) bool {
+	return func(n string) bool {
+		for _, x := range names {
+			if n == x {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// logTryCommand rebuilds "flywheel log ..." from the parsed flags in the order
+// the user gave them (each once, with its final value), dropping those keep
+// rejects, and appends add verbatim.
+func logTryCommand(fs *flag.FlagSet, args []string, keep func(string) bool, add string) string {
+	parts := []string{"flywheel log"}
+	seen := map[string]bool{}
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		f := fs.Lookup(name)
+		if f == nil || seen[name] || (keep != nil && !keep(name)) {
+			continue
+		}
+		seen[name] = true
+		v := f.Value.String()
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			if v == "true" {
+				parts = append(parts, "--"+name)
+			}
+			continue
+		}
+		parts = append(parts, "--"+name, logQuote(v))
+	}
+	if add != "" {
+		parts = append(parts, add)
+	}
+	return strings.Join(parts, " ")
+}
+
+// logQuote double-quotes a value that is empty or holds whitespace or quotes,
+// so the try line can be pasted back into a shell.
+func logQuote(v string) string {
+	if v != "" && !strings.ContainsAny(v, " \t\"'") {
+		return v
+	}
+	return `"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
 }
