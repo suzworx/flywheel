@@ -330,7 +330,15 @@ func runLog(args []string) {
 		return
 	}
 	if o.kind == "planned" && o.brief != "" {
-		finishLog(o.dir, flywheel.RecordPlannedBy(o.dir, o.task, o.brief, flywheel.PlanMeta{Session: o.session, Model: o.model, GoalID: o.goal, Note: o.note}), o.noState)
+		// A re-plan cannot change a dispatched attempt's gates (issue #366):
+		// compute the warning against the log before this event lands, and
+		// print it once the event is recorded; the exit status is unchanged.
+		w := flywheel.PlanDriftWarning(o.dir, o.task, o.brief)
+		err := flywheel.RecordPlannedBy(o.dir, o.task, o.brief, flywheel.PlanMeta{Session: o.session, Model: o.model, GoalID: o.goal, Note: o.note})
+		if err == nil && w != "" {
+			fmt.Fprintf(os.Stderr, "flywheel log: warning: %s\n", w)
+		}
+		finishLog(o.dir, err, o.noState)
 		return
 	}
 

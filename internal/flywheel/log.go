@@ -280,6 +280,41 @@ func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefH
 	return nil
 }
 
+// PlanDriftWarning returns a warning when re-planning task with brief would
+// not change the gates its latest attempt is measured against (issue #366),
+// and "" otherwise. A dispatched attempt is measured against the header
+// recorded when it was dispatched (AttemptBrief), so a planned event recorded
+// after that dispatch changes nothing validate runs until the next dispatch.
+// Re-planning stays legitimate — the next dispatch uses the new header — so
+// this warns instead of refusing, the planned counterpart of
+// inertAmendRefusal. A task with no attempt, a brief that does not parse, or
+// an attempt whose effective header cannot be resolved yields "": the warning
+// must not guess from evidence it cannot read.
+func PlanDriftWarning(dir, task, brief string) string {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return ""
+	}
+	_, attempt, _ := latestBaseBriefAndAttempt(events, task)
+	if attempt == "" {
+		return ""
+	}
+	header, err := ParseBriefHeader(resolveBriefPath(dir, brief))
+	if err != nil {
+		return ""
+	}
+	eff, _, err := AttemptBrief(dir, events, task)
+	if err != nil {
+		return ""
+	}
+	if gatesEqual(eff.Gates, header.Gates) && gatesEqual(eff.LiveGates, header.LiveGates) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"attempt %s of task %s was dispatched with different gates; validate keeps measuring it against its dispatched header. The new gates apply from the next dispatch (flywheel run %s) or a correction (flywheel run %s --delta <file>).",
+		attempt, task, task, task)
+}
+
 // covers reports whether every entry of have is still covered by want, under
 // the matching the owns check uses (ownsContains: exact path, directory
 // prefix, or shell pattern), so a replacement that drops coverage is seen
