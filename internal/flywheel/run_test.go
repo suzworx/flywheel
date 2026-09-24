@@ -2852,6 +2852,43 @@ func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
 	}
 }
 
+// TestCollisionNegated checks a negated owns: entry is part of the contract
+// (issue #388): apps/inc/** with !apps/inc/wake.h does not collide with an
+// in-flight task owning apps/inc/wake.h, in either direction, while
+// apps/inc/** alone still does.
+func TestCollisionNegated(t *testing.T) {
+	cases := []struct {
+		name       string
+		t1, t2     string
+		wantCollid bool
+	}{
+		{"negated new side", "apps/inc/wake.h", "apps/inc/**, !apps/inc/wake.h", false},
+		{"negated in-flight side", "apps/inc/**, !apps/inc/wake.h", "apps/inc/wake.h", false},
+		{"no negation", "apps/inc/wake.h", "apps/inc/**", true},
+		{"negation elsewhere", "apps/inc/wake.h", "apps/inc/**, !apps/inc/other.h", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Init(dir, false); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			planAndDispatch(t, dir, "T1", ownsBrief(t, dir, "b1.txt", tc.t1))
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			got := ownsCollisionWith(dir, evs, "T2", strings.Split(strings.ReplaceAll(tc.t2, " ", ""), ","))
+			if (got != nil) != tc.wantCollid {
+				t.Fatalf("ownsCollisionWith(%q vs %q) = %+v, want collision %v", tc.t2, tc.t1, got, tc.wantCollid)
+			}
+			if got != nil && !strings.Contains(strings.Join(got.paths, ","), "apps/inc/wake.h") {
+				t.Errorf("collision paths = %v, want apps/inc/wake.h", got.paths)
+			}
+		})
+	}
+}
+
 // TestRunRefusesExclusiveCollision checks a dispatch whose exclusive: names a
 // resource an in-flight task already holds is refused with the exclusive
 // RuleRefusal, the message names the resource and the holding task, and no

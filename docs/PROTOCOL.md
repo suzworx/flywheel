@@ -493,7 +493,14 @@ gates (exit 5) without touching the log's legality.
   that file's `gate:` lines replacing the base's and its `owns:` unioned with the base's — an
   `amended` event replaces which brief counts as the base outright. `owns:` entries are matched as
   a literal path, a `dir/` prefix, or a `path.Match` shell pattern, all three checked the same way
-  (issue #135, `ownsContains`). Each inspection uses its own window, so a later correction attempt
+  (issue #135, `ownsContains`). An entry starting with `!` is negated (issue #388) and takes the
+  same three forms: a path is owned when some positive entry matches it and no negated entry does,
+  so `apps/inc/**, !apps/inc/wake.h` owns `apps/inc/a.h` but not `apps/inc/wake.h`, and a negation
+  with no positive entry owns nothing. flywheel's own bookkeeping stays owned. The dispatch owns
+  collision check applies the same rule, so that header does not collide with an in-flight task
+  owning `apps/inc/wake.h`; an amendment adding a negation that removes a covered path is a
+  narrowing; and `flywheel lint` never checks a negated entry for existence, but warns when no
+  positive entry covers it. Each inspection uses its own window, so a later correction attempt
   never invalidates an earlier legitimate pass. A pass measured in an external `--workdir` — a
   separate clone, not a worktree of the verifying repository — is verifiable from its own repo:
   `flywheel verify --workdir <path>` resolves tree objects there, and without the flag a `workdir`

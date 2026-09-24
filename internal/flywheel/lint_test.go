@@ -251,3 +251,29 @@ func TestLintGateBacktick(t *testing.T) {
 		})
 	}
 }
+
+// TestLintNegated checks a negated owns entry (issue #388) is never
+// existence-checked, and one no positive entry covers is a warning.
+func TestLintNegated(t *testing.T) {
+	const tail = "\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n"
+	cases := []struct {
+		name  string
+		owns  string
+		files []string
+		warn  []string
+	}{
+		{"literal under a pattern", "apps/inc/*.h, !apps/inc/wake.h", []string{"apps/", "apps/inc/", "apps/inc/a.h"}, nil},
+		{"dir under a dir", "apps/, !apps/gen/", []string{"apps/"}, nil},
+		{"pattern under a dir", "src/, !src/*_gen.go", []string{"src/"}, nil},
+		{"covers nothing", "apps/, !docs/x.md", []string{"apps/"},
+			[]string{"owns: !docs/x.md excludes nothing: no positive entry covers it"}},
+		{"negation alone", "a.go, !b/*.go", []string{"a.go"},
+			[]string{"owns: !b/*.go excludes nothing: no positive entry covers it"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := lintCheck(t, t.TempDir(), tc.files, "owns: "+tc.owns+tail)
+			want(t, res, nil, tc.warn)
+		})
+	}
+}
