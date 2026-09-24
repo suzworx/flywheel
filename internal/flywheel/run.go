@@ -774,6 +774,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var outsideOrder []string
 	wroteSeen := map[string]bool{}
 	var wroteOrder []string
+	var commands []string // shell commands in order, at most 100 (issue #365)
 	lastText := ""
 	lastReason := ""
 	var denials []string // the last step's permission denials (issue #364)
@@ -911,6 +912,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					}
 				}
 			}
+			if obs.Command != "" && len(commands) < 100 {
+				c := obs.Command
+				if r := []rune(c); len(r) > 300 {
+					c = string(r[:300])
+				}
+				commands = append(commands, c)
+			}
 		case "step":
 			if obs.Reason != "" {
 				lastReason = obs.Reason
@@ -984,7 +992,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(note, gitNote), outsideNote), SHA256: runSHA, Wrote: wrote}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(note, gitNote), outsideNote), SHA256: runSHA, Wrote: wrote, Commands: commands}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -1028,6 +1036,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: joinNote(gitNote, outsideNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Commands: commands,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1128,11 +1137,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			stopLine = o.Task + " " + attempt + " finished without writing a file"
 		}
 	}
+	// A clean stop names the gates the worker never ran itself (issue #365):
+	// a note and a progress line, no signal (the lead re-measures every gate).
+	var gatesUnrun []string
+	if reason == "stop" {
+		gatesUnrun = unrunGates(dir, o.Task, commands)
+		if len(gatesUnrun) > 0 {
+			note = joinNote(note, "gates never run by the worker: "+strings.Join(gatesUnrun, ", "))
+		}
+	}
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak, Wrote: wrote,
+		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1176,6 +1194,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	if stopLine != "" {
 		progress(o.Progress, stopLine)
+	}
+	if len(gatesUnrun) > 0 {
+		progress(o.Progress, o.Task+" "+attempt+" never ran gate(s) "+strings.Join(gatesUnrun, ", "))
 	}
 	if reason == "length" {
 		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
@@ -1706,6 +1727,49 @@ func wroteProgressLine(task, attempt, reason string, wrote []string) string {
 	}
 	paths := clipNote(strings.Join(wrote, ", "))
 	return fmt.Sprintf("%s %s wrote %d file(s) before failing: %s", task, attempt, len(wrote), paths)
+}
+
+// unrunGates returns the ids ("1", "2", ..) of the attempt's gates that no
+// command in commands ran, resolved from a fresh read of the event log; nil
+// when the log or the brief cannot be read. Live gates are not checked: a
+// worker never runs those (issue #365).
+func unrunGates(dir, task string, commands []string) []string {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return nil
+	}
+	header, _, err := AttemptBrief(dir, events, task)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for i, gate := range header.Gates {
+		if !gateRan(gate, commands) {
+			ids = append(ids, strconv.Itoa(i+1))
+		}
+	}
+	return ids
+}
+
+// gateRan reports whether any command, whitespace collapsed, contains the
+// gate's whitespace-collapsed text or its first 40 characters: a worker often
+// runs a gate with a suffix such as `; echo exit=$?` (issue #365).
+func gateRan(gate string, commands []string) bool {
+	g := strings.Join(strings.Fields(gate), " ")
+	if g == "" {
+		return true
+	}
+	prefix := g
+	if r := []rune(g); len(r) > 40 {
+		prefix = string(r[:40])
+	}
+	for _, c := range commands {
+		c = strings.Join(strings.Fields(c), " ")
+		if strings.Contains(c, g) || strings.Contains(c, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // clipNote trims s and caps it at 200 characters for a finished note.

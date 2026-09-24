@@ -98,7 +98,11 @@ all.
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
   #156), `sha256` (of the whole run file), `wrote` (the attempt's distinct edit/write paths, sorted,
-  at most 50, omitted when the attempt made no edits, issue #163).
+  at most 50, omitted when the attempt made no edits, issue #163), `commands` (the shell commands
+  the worker ran, in order, at most 100, each clipped to 300 characters; omitted when it ran none,
+  issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
+  effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
+  gate's first 40 characters; live gates are not checked; omitted when empty, issue #365).
 - `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
   normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
   `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider
@@ -122,6 +126,10 @@ all.
   `finished` event alone. Both states apply only while the unit is awaiting judgement (status
   `finished`); once passed, rejected or landed it shows done. Both reach the andon; no-writes
   blocks nothing.
+- A non-empty `gates_unrun` adds `gates never run by the worker: <ids>` to `note` and prints a
+  `<task> <attempt> never ran gate(s) <ids>` progress line; no signal is recorded (the lead
+  re-measures every gate). `flywheel validate` prints `<task> note: the worker never ran gate(s)
+  <ids> itself; its report's claims about them are unmeasured` after the gate lines (issue #365).
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

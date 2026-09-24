@@ -4056,3 +4056,104 @@ func TestRunPlanBeforeTool(t *testing.T) {
 		t.Errorf("worker_plan events = %d, want exactly 1; events = %v", plans, evs)
 	}
 }
+
+// TestRunRecordsCommands: the finished event carries the shell commands a
+// claude worker ran, in order, and names the gate it never ran (issue #365).
+func TestRunRecordsCommands(t *testing.T) {
+	dir := setupTask(t)
+	brief := "gate: go build ./...\ngate: go test -count=1 ./...\n\n# TASK\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const session = "ses_commands_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	for _, block := range []string{
+		`{"type":"tool_use","name":"Write","input":{"file_path":"a.go"}}`,
+		`{"type":"tool_use","name":"Bash","input":{"command":"go  build ./... ; echo \"exit=$?\""}}`,
+		`{"type":"tool_use","name":"Bash","input":{"command":"go vet ./..."}}`,
+	} {
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[%s]}}`+"\n", session, block)
+	}
+	fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(stream, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, stream)
+
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stop" {
+		t.Fatalf("Run() reason = %q, want stop; progress:\n%s", res.Reason, buf.String())
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var fin *Event
+	for i := range evs {
+		if evs[i].Kind == "finished" {
+			fin = &evs[i]
+		}
+	}
+	if fin == nil {
+		t.Fatalf("no finished event; events = %v", evs)
+	}
+	wantCmds := []string{`go  build ./... ; echo "exit=$?"`, "go vet ./..."}
+	if !reflect.DeepEqual(fin.Commands, wantCmds) {
+		t.Errorf("finished Commands = %q, want %q", fin.Commands, wantCmds)
+	}
+	if !reflect.DeepEqual(fin.GatesUnrun, []string{"2"}) {
+		t.Errorf("finished GatesUnrun = %q, want [2]", fin.GatesUnrun)
+	}
+	if !strings.Contains(fin.Note, "gates never run by the worker: 2") {
+		t.Errorf("finished Note = %q, want it to name gate 2", fin.Note)
+	}
+	if !strings.Contains(buf.String(), "T1 "+fin.Attempt+" never ran gate(s) 2") {
+		t.Errorf("progress lacks the never-ran line:\n%s", buf.String())
+	}
+}
+
+// TestGatesUnrun unit-tests gateRan (issue #365).
+func TestGatesUnrun(t *testing.T) {
+	long := "for f in $(git ls-files -m -o --exclude-standard -- '*.go'); do gofmt -l \"$f\"; done"
+	cases := []struct {
+		name, gate string
+		cmds       []string
+		want       bool
+	}{
+		{"exact", "go build ./...", []string{"go build ./..."}, true},
+		{"echo suffix", "go vet ./...", []string{`go vet ./... ; echo "exit=$?"`}, true},
+		{"whitespace", "go  test\t-count=1 ./...", []string{"cd x &&  go test -count=1   ./..."}, true},
+		{"long prefix", long, []string{long[:45] + " | head"}, true},
+		{"not run", "go test ./...", []string{"go build ./...", "go vet ./..."}, false},
+		{"no commands", "go build ./...", nil, false},
+	}
+	for _, c := range cases {
+		if got := gateRan(c.gate, c.cmds); got != c.want {
+			t.Errorf("%s: gateRan(%q, %q) = %v, want %v", c.name, c.gate, c.cmds, got, c.want)
+		}
+	}
+}

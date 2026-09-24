@@ -73,7 +73,13 @@ type Event struct {
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
 	Wrote []string `json:"wrote,omitempty"`
-	Tree  string   `json:"tree,omitempty"`
+	// Commands are the shell commands a worker ran, in order, at most 100,
+	// each clipped to 300 characters (issue #365).
+	Commands []string `json:"commands,omitempty"`
+	// GatesUnrun are the gate ids of the attempt's effective header that no
+	// recorded command contains (issue #365).
+	GatesUnrun []string `json:"gates_unrun,omitempty"`
+	Tree       string   `json:"tree,omitempty"`
 	// Workdir is the git working tree a validated, owns_checked or inspected
 	// reading was taken in, recorded only when it differs from the flywheel
 	// root (issue #244): the ledger says where a reading happened, so verify
