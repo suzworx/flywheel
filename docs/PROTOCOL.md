@@ -203,6 +203,34 @@ all.
   and the path.
 - Effect: no status change. Every finding and the round's closing `reviewed` event go out in one
   `AppendEvents` write; an answer without a parsable `{"findings": [...]}` block records nothing.
+- Open and closed (`OpenFindings`, issue #389): a finding opens when it is raised. It closes only on
+  the framework's evidence, never on an agent's word: a LATER agent review round (a `reviewed`
+  event with persona `reviewer` and an adapter) completes without re-reporting it — same `path`
+  and the same claim, case- and space-insensitive; a re-report is still open under its new id —
+  or the lead dismisses it (a `finding_response` below). A worker's `fixed` never closes a finding
+  by itself. `blocker` and `major` findings block the unit.
+
+### `finding_response`
+- Written by: `flywheel review <task> --agent --fix` (`ReviewLoop`, issue #389) after each
+  correction, one per open blocking finding it sent — the worker's answer parsed from the
+  attempt's report (`.flywheel/runs/<task>.<attempt>.report.md`), under the worker's session; or,
+  for an id the report does not answer, `disputed` with note `missing: the worker gave no answer`,
+  so the next round re-reviews it anyway. And by the lead, `flywheel review <task> --dismiss <id>
+  --session S --note WHY`: `disputed` with note `dismissed: WHY`; a worker session of the task is
+  refused (T4, exit 6), and the id must be a finding the task's reviewer raised.
+- Carries: `task`, `attempt` (the correction), `session`, `finding` (the id it answers), `verdict`
+  `fixed` or `disputed`, and `note` (the worker's evidence or reason). `Validate` requires the
+  task, the finding and a verdict in the set.
+- Effect: no status change. Only a lead dismissal — `disputed`, note starting `dismissed:`, from a
+  non-worker session — closes a finding, and with it any later re-report of the same file and claim.
+- The loop: review; no open blocking finding → verdict `pass` (exit 0). Else flywheel writes the
+  findings delta `.flywheel/briefs/<task>.review-<round>.txt` — the effective brief's `owns:`,
+  `needs:` and every `gate:` line, `# TASK: fix the review findings`, one block per open blocking
+  finding (`FINDING <id> [<severity>] <file>:<line> — <claim>`, `scenario: …`, `fix hint: …`), then
+  the contract: fix each finding, change nothing unrelated, re-run every gate, and end the report
+  with one line per finding, `FINDING <id>: fixed <evidence>` or `FINDING <id>: disputed <reason>`
+  — resumes the worker's session on it, records the answers and reviews again. After `--rounds`
+  reviews (default 3) the open blocking findings are printed and the command exits 1.
 
 ### `blocked`
 - Written by: the controller (`flywheel controller`), when a task's `needs:` target is scrapped.
@@ -616,6 +644,10 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   `report`, `reviewed`, `blocked`, `lost`, `landed`, `amended`, `staffed`, `goal`) carries no
   persona restriction in `ruleT8`. In practice most of them are written only by a specific CLI
   command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report` only by `flywheel
+  run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`;
+  `review_finding` only by `flywheel review --agent`; `finding_response` only by `flywheel review
+  --agent --fix` and a lead's `--dismiss`), which is what keeps them honest — not a
+  persona field. The staffing `reviewer` role (`staffing.reviewer.adapter|model|session`) names who
   run`; `landed` only by `flywheel land`; `blocked` only by `flywheel controller`; `lost` only by
   `flywheel controller`, `flywheel run` and `flywheel next`; `review_finding` only by
   `flywheel review --agent`), which is what keeps them honest — not a persona field. The staffing `reviewer` role (`staffing.reviewer.adapter|model|session`) names who

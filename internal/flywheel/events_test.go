@@ -1111,6 +1111,33 @@ func TestReviewFindingEvent(t *testing.T) {
 	}
 }
 
+// TestFindingResponseEvent checks the finding_response kind (issue #389): a
+// fixed or disputed answer naming a finding validates; a missing task,
+// finding or verdict, and any other verdict, are refused.
+func TestFindingResponseEvent(t *testing.T) {
+	ok := Event{Task: "T1", Kind: "finding_response", Attempt: "c1", Session: "w-1",
+		Finding: "T1-r1-1", Verdict: "fixed", Note: "added the flush; go test passes"}
+	for _, v := range []string{"fixed", "disputed"} {
+		e := ok
+		e.Verdict = v
+		if err := Validate(e); err != nil {
+			t.Errorf("Validate(verdict %s) = %v", v, err)
+		}
+	}
+	for name, mut := range map[string]func(*Event){
+		"no task":      func(e *Event) { e.Task = "" },
+		"no finding":   func(e *Event) { e.Finding = "" },
+		"no verdict":   func(e *Event) { e.Verdict = "" },
+		"pass verdict": func(e *Event) { e.Verdict = "pass" },
+	} {
+		e := ok
+		mut(&e)
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate accepted %+v", name, e)
+		}
+	}
+}
+
 // TestNoteEvent: a note is a journal line (issue #409) — Task optional, Note
 // required — and a learning's scope is flywheel (default), or project, only.
 func TestNoteEvent(t *testing.T) {
@@ -1126,7 +1153,7 @@ func TestNoteEvent(t *testing.T) {
 	if err := Validate(Event{Kind: "note", Task: "bad task", Note: "x"}); err == nil {
 		t.Error("note with a malformed task was accepted")
 	}
-	if err := Validate(Event{Kind: "bogus", Task: "t1"}); err == nil || !strings.Contains(err.Error(), "review_finding, note") {
+	if err := Validate(Event{Kind: "bogus", Task: "t1"}); err == nil || !strings.Contains(err.Error(), "finding_response, note") {
 		t.Errorf("kind error text does not list note: %v", err)
 	}
 	learning := Event{Task: "t1", Kind: "learning", Severity: "P2", Title: "t", Observed: "o", Evidence: "e", Ask: "a"}

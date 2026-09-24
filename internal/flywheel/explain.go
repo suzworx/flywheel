@@ -141,6 +141,15 @@ func explainLine(e Event) string {
 		return line
 	case "review_finding":
 		return fmt.Sprintf("%s finding %s at %s:%d: %s", e.Severity, e.Finding, e.Path, e.LineNo, e.Title)
+	case "finding_response":
+		line := fmt.Sprintf("finding %s %s", e.Finding, e.Verdict)
+		if e.Session != "" {
+			line += " by " + e.Session
+		}
+		if e.Note != "" {
+			line += ": " + e.Note
+		}
+		return line
 
 	case "signal":
 		return words("signal", e.Signal, "on", e.Attempt)

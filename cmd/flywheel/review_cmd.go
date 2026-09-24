@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -12,7 +13,9 @@ import (
 // reviewUsageLine is the flywheel review usage: a verdict passed in, or the
 // review agent (--agent, issue #389).
 const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]\n" +
-	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]"
+	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
+	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--dir DIR]\n" +
+	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]"
 
 func init() {
 	register("review", "re-run a task's gates in an isolated worktree, or run the review agent (--agent)", runReview)
@@ -31,6 +34,11 @@ type reviewOptions struct {
 	agent     bool
 	worker    string
 	round     int
+	fix       bool
+	rounds    int
+	fixWorker string
+	worktree  bool
+	dismiss   string
 }
 
 // reviewFlags defines review's flags once, so help and run share them.
@@ -48,6 +56,11 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.BoolVar(&o.agent, "agent", false, "run the review agent: it reads the unit's diff and records findings and a verdict")
 	fs.StringVar(&o.worker, "worker", "", "with --agent: the worker that reviews (default: the staffing reviewer role, else the default worker)")
 	fs.IntVar(&o.round, "round", 0, "with --agent: the review round (default: the task's next round)")
+	fs.BoolVar(&o.fix, "fix", false, "with --agent: loop review, send open blocking findings back to the worker, review again")
+	fs.IntVar(&o.rounds, "rounds", 3, "with --fix: review rounds at most")
+	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the default worker)")
+	fs.BoolVar(&o.worktree, "worktree", false, "with --fix: run the correction in the task's own git worktree")
+	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
 	return fs, o
 }
 
@@ -75,6 +88,19 @@ func runReview(args []string) {
 		os.Exit(2)
 	}
 	task := pos[0]
+	if o.dismiss != "" {
+		runReviewDismiss(task, o)
+		return
+	}
+	if o.agent && o.fix {
+		runReviewFix(task, o)
+		return
+	}
+	if o.fix || o.fixWorker != "" || o.worktree || o.rounds != 3 {
+		fmt.Fprintf(os.Stderr, "flywheel review: --fix needs --agent; --rounds, --fix-worker and --worktree need --fix\n")
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
 	if o.agent {
 		runReviewAgent(task, o)
 		return
@@ -143,4 +169,69 @@ func runReviewAgent(task string, o *reviewOptions) {
 	if res.Verdict != "pass" {
 		os.Exit(1)
 	}
+}
+
+// runReviewFix implements `flywheel review <task> --agent --fix` (issue
+// #389): the review loop, with the review agent reviewing and the worker's
+// session resumed on each findings delta. It prints each open blocking
+// finding left and exits 0 when none is, 1 when some are or on an error, 6
+// on a rule refusal and 2 on a usage error.
+func runReviewFix(task string, o *reviewOptions) {
+	if o.verdict != "" || o.note != "" || o.model != "" || len(o.checklist) > 0 || o.round != 0 {
+		fmt.Fprintf(os.Stderr, "flywheel review: --fix records its own rounds and verdicts; drop --verdict, --note, --model, --check and --round\n")
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.rounds < 1 {
+		fmt.Fprintf(os.Stderr, "flywheel review: --rounds %d must be >= 1\n", o.rounds)
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
+	res, err := flywheel.ReviewLoop(o.dir, task, flywheel.ReviewLoopOptions{
+		Rounds: o.rounds, ReviewSession: o.session, Worker: o.fixWorker, ReviewWorker: o.worker, Progress: os.Stderr,
+		Review: func(round int) (flywheel.ReviewAgentResult, error) {
+			return flywheel.ReviewAgent(o.dir, task, flywheel.ReviewAgentOptions{
+				Worker: o.worker, Session: o.session, Workdir: o.workdir, Round: round, Progress: os.Stderr,
+			})
+		},
+		Correct: func(delta string) (flywheel.Result, error) {
+			return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
+				Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree,
+				Progress: os.Stderr, Stderr: os.Stderr,
+			}, time.Sleep, time.Now)
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
+	for _, f := range res.Open {
+		fmt.Printf("OPEN %s [%s] %s:%d %s\n", f.Finding, f.Severity, f.Path, f.LineNo, f.Title)
+	}
+	fmt.Printf("review loop: %s after %d review(s), %d correction(s)\n", res.Verdict, res.Reviews, res.Corrections)
+	if res.Verdict != "pass" {
+		os.Exit(1)
+	}
+}
+
+// runReviewDismiss implements `flywheel review <task> --dismiss <id>`: the
+// lead's decision that a finding is closed (issue #389). A worker session of
+// the task is refused (T4, exit 6).
+func runReviewDismiss(task string, o *reviewOptions) {
+	if o.agent || o.fix || o.verdict != "" || o.model != "" || len(o.checklist) > 0 {
+		fmt.Fprintf(os.Stderr, "flywheel review: --dismiss takes only --session, --note and --dir\n")
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if err := flywheel.DismissFinding(o.dir, task, o.dismiss, o.session, o.note); err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
+	fmt.Printf("%s finding %s dismissed by %s\n", task, o.dismiss, o.session)
 }
