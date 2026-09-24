@@ -1403,8 +1403,10 @@ func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift
 // when they are equal, when either is a directory prefix (trailing /)
 // containing the other, or when either matches the other as a shell pattern —
 // the same matching rule ownsContains applies, checked in both directions so
-// the relation is symmetric. The colliding paths are the entries involved,
-// deduplicated and sorted.
+// the relation is symmetric. A negated entry ("!path", issue #388) is never a
+// colliding entry itself, but it removes what it covers from its side's owns,
+// so apps/inc/** with !apps/inc/wake.h does not collide with apps/inc/wake.h.
+// The colliding paths are the entries involved, deduplicated and sorted.
 func ownsCollisionWith(dir string, events []Event, task string, owns []string) *ownsCollision {
 	st := Derive(events)
 	status := make(map[string]string, len(st.Tasks))
@@ -1430,12 +1432,12 @@ func ownsCollisionWith(dir string, events []Event, task string, owns []string) *
 			}
 		}
 		for _, a := range owns {
-			if ownsContains(header.Owns, a) {
+			if _, neg := negatedEntry(a); !neg && ownsContains(header.Owns, a) {
 				add(a)
 			}
 		}
 		for _, b := range header.Owns {
-			if ownsContains(owns, b) {
+			if _, neg := negatedEntry(b); !neg && ownsContains(owns, b) {
 				add(b)
 			}
 		}
