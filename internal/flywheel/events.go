@@ -132,6 +132,14 @@ type Event struct {
 	Ask      string   `json:"ask,omitempty"`
 	Signals  []string `json:"signals,omitempty"`
 	ID       string   `json:"id,omitempty"`
+	// Review finding fields (issue #389): a review_finding event reuses
+	// Severity (blocker, major, minor or nit), Title (the claim), Observed (the
+	// failure scenario), Ask (the fix hint) and Path (the file), and adds the
+	// file line (LineNo: Line and "line" are already the product line), the
+	// Category and a stable Finding id <task>-r<round>-<n>.
+	LineNo   int    `json:"line_no,omitempty"`
+	Category string `json:"category,omitempty"`
+	Finding  string `json:"finding,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
@@ -170,6 +178,21 @@ var kinds = map[string]bool{
 	"audited":         true,
 	"probed":          true,
 	"sharded":         true,
+	"review_finding":  true,
+}
+
+// FindingSeverities is the set of severities a review_finding event may carry
+// (issue #389), most severe first.
+var FindingSeverities = []string{"blocker", "major", "minor", "nit"}
+
+// findingSeverityOK reports whether s is one of FindingSeverities.
+func findingSeverityOK(s string) bool {
+	for _, v := range FindingSeverities {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Signals is the set of condition names a signal event may carry (issue #37):
@@ -299,7 +322,18 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding", e.Kind)
+	}
+	if e.Kind == "review_finding" {
+		if e.Session == "" || e.Title == "" || e.Path == "" {
+			return fmt.Errorf("review_finding event must carry a session, a title (the claim) and a path")
+		}
+		if !findingSeverityOK(e.Severity) {
+			return fmt.Errorf("review_finding severity %q is not one of blocker, major, minor, nit", e.Severity)
+		}
+		if e.LineNo < 0 {
+			return fmt.Errorf("review_finding line %d must be >= 0", e.LineNo)
+		}
 	}
 	if e.Kind == "signal" {
 		if e.Signal == "" {

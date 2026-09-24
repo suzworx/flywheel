@@ -188,9 +188,17 @@ func Derive(events []Event) State {
 		case "finished":
 			ts.Status = "finished"
 		case "reviewed":
+			// The review agent reads, the gauges measure (issue #389): a
+			// reviewed event the agent wrote (persona reviewer with an
+			// adapter) never passes a unit; its pass leaves the status
+			// unchanged and only validate+inspect or a hand-recorded review
+			// (which re-runs the gates) set passed. Its correct still counts.
+			agent := e.Persona == "reviewer" && e.Adapter != ""
 			switch e.Verdict {
 			case "pass":
-				ts.Status = "passed"
+				if !agent {
+					ts.Status = "passed"
+				}
 			case "correct":
 				ts.Status = "needs-correction"
 			case "reject":
