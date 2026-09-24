@@ -35,7 +35,7 @@ func adapterKnown(name string, cli bool) bool {
 	return false
 }
 
-// roles returns the config's three roles in summary order, including the
+// roles returns the config's four roles in summary order, including the
 // ones it does not name (a nil RoleConfig).
 func (s *StaffingConfig) roles() []struct {
 	Name string
@@ -44,9 +44,9 @@ func (s *StaffingConfig) roles() []struct {
 	out := []struct {
 		Name string
 		Cfg  *RoleConfig
-	}{{"lead", nil}, {"inspector", nil}, {"auditor", nil}}
+	}{{"lead", nil}, {"inspector", nil}, {"auditor", nil}, {"reviewer", nil}}
 	if s != nil {
-		out[0].Cfg, out[1].Cfg, out[2].Cfg = s.Lead, s.Inspector, s.Auditor
+		out[0].Cfg, out[1].Cfg, out[2].Cfg, out[3].Cfg = s.Lead, s.Inspector, s.Auditor, s.Reviewer
 	}
 	return out
 }

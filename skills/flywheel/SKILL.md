@@ -119,8 +119,9 @@ found" addendum for what is not there yet, then send a follow-up delta once the 
 ([references/worker-brief.md#4-concurrency-disjoint-file-ownership-preserve-dirty-edits](references/worker-brief.md#4-concurrency-disjoint-file-ownership-preserve-dirty-edits)).
 Template and rules: [references/worker-brief.md](references/worker-brief.md). When a later unit
 extends a shared file whose size a previous brief's gate bounded, amend that brief with
-`flywheel log --task <id> --kind amended --brief <path>`; the amended event explains the change
-to verify's T1, so validate no longer fails the stale gate.
+`flywheel log --task <id> --kind amended --brief <path> --note "<why>"`; the amended event explains the change
+to verify's T1, so validate no longer fails the stale gate. On a dispatched attempt, owns widen
+with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`.
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
@@ -214,6 +215,8 @@ build does), or keep one verify worktree: reset it to main's HEAD, clean it, and
 unit's owned files. Then run `flywheel validate <task> --workdir <tree>` to measure gates on a
 stable tree, followed by `flywheel inspect <task> --verdict pass --workdir <tree>` using the same
 tree (so T3 finds a passing supervisor reading on that hash), and commit only the unit's files.
+A flywheel command run inside a unit's `flywheel run --worktree` worktree
+(`.flywheel/worktrees/<task>`) uses the main checkout's ledger, not the worktree's stale copy.
 
 ### 5. Correct or land
 - Needs changes → send a **correction** to the worker by resuming the **emitted session id** with a
