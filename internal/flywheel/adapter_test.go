@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -528,6 +529,71 @@ func TestClaudeCommandResumeWithoutSession(t *testing.T) {
 	}
 	if len(args) < 2 || !strings.HasPrefix(args[1], freshMessage) {
 		t.Errorf("args[1] = %q, want it to lead with freshMessage when Session is empty", args[1])
+	}
+}
+
+// TestClaudeCommandAppendsRules checks a claude dispatch carries the worker
+// rules, PLAN check-in included, as --append-system-prompt on fresh and
+// resumed runs alike (issue #360).
+func TestClaudeCommandAppendsRules(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	promptPath := filepath.Join(t.TempDir(), "brief.txt")
+	for _, r := range []RunRequest{
+		{Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: promptPath},
+		{Task: "T1", Attempt: "c1", Title: "T1-c1", Model: "m1", Session: "ses_1", PromptFile: promptPath, Resume: true},
+	} {
+		_, args := a.Command(r)
+		found := false
+		for i, arg := range args {
+			if arg == "--append-system-prompt" {
+				found = true
+				if i+1 >= len(args) || !strings.Contains(args[i+1], "PLAN files-to-read") {
+					t.Errorf("resume=%v: --append-system-prompt not followed by the rules: %v", r.Resume, args)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("resume=%v: args = %v, want --append-system-prompt", r.Resume, args)
+		}
+	}
+}
+
+// TestClaudeAssistantTextWithTool checks an assistant message holding text
+// then a tool_use keeps the text on the tool observation, where a model
+// writes its plan before its first tool call (issue #360).
+func TestClaudeAssistantTextWithTool(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	plan := "PLAN files-to-read: a\nPLAN files-to-change: b\nPLAN order: c\nPLAN checks: d"
+	planJSON, _ := json.Marshal(plan)
+	line := `{"type":"assistant","session_id":"s","message":{"content":[{"type":"text","text":` + string(planJSON) + `},{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}]}}`
+	obs, ok := a.Parse([]byte(line))
+	if !ok || obs.Kind != "tool" || obs.Text != plan {
+		t.Errorf("Parse(text+tool_use) = %+v, %v, want Kind tool with Text %q", obs, ok, plan)
+	}
+	line = `{"type":"assistant","session_id":"s","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}]}}`
+	obs, ok = a.Parse([]byte(line))
+	if !ok || obs.Kind != "tool" || obs.Text != "" {
+		t.Errorf("Parse(tool_use only) = %+v, %v, want Kind tool with empty Text", obs, ok)
+	}
+}
+
+// TestClaudeCommandSettingSources checks a claude dispatch, fresh or resumed,
+// loads only the user's settings, so a checkout's project or local settings
+// cannot widen where the worker may write (issue #359).
+func TestClaudeCommandSettingSources(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	for _, tc := range []struct {
+		name string
+		req  RunRequest
+	}{
+		{"fresh", RunRequest{Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath}},
+		{"resume", RunRequest{Task: "T1", Attempt: "c1", Title: "T1-c1", Model: "m1", PromptFile: briefPath, Session: "ses_1", Resume: true}},
+	} {
+		_, args := a.Command(tc.req)
+		if got := flagValues(args, "--setting-sources"); len(got) == 0 || got[0] != "user" {
+			t.Errorf("%s: --setting-sources = %v, want user; args = %v", tc.name, got, args)
+		}
 	}
 }
 

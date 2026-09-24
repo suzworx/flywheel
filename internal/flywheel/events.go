@@ -87,6 +87,8 @@ type Event struct {
 	Baseline   map[string]string `json:"baseline,omitempty"`
 	Baselined  []string          `json:"baselined,omitempty"`
 	Attributed []string          `json:"attributed,omitempty"`
+	// Ignored lists owned paths git ignores, so never commits (issue #363).
+	Ignored []string `json:"ignored,omitempty"`
 	// Files is an owns_checked event's measured shape of every changed path
 	// inside the unit's owns, sorted by path (issue #130), so a truncated
 	// document is visible in the ledger without re-reading the tree.

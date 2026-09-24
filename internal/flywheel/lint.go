@@ -84,6 +84,16 @@ func LintBrief(dir, path string) (LintResult, error) {
 			res.Problems = append(res.Problems, "exclusive: entry is empty")
 		}
 	}
+	for i, g := range header.Gates {
+		if gateBacktickInDoubleQuotes(g) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
+		}
+	}
+	for i, lg := range header.LiveGates {
+		if gateBacktickInDoubleQuotes(lg) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("live-gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
+		}
+	}
 	if !header.NeedsDeclared {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}
@@ -91,6 +101,40 @@ func LintBrief(dir, path string) (LintResult, error) {
 		res.Warnings = append(res.Warnings, `write rule "At most one write per response" is absent`)
 	}
 	return res, nil
+}
+
+// gateBacktickInDoubleQuotes reports whether a gate has an unescaped backtick
+// inside a double-quoted span (issue #366). Gates run under `bash -c`, where
+// such a backtick is command substitution, so  node -e "... `x` ..."  fails on
+// correct work. One pass tracks quote state: outside quotes, ' opens a
+// single-quoted span that ends at the next ' (no escapes) and " opens a
+// double-quoted span; inside it \ escapes the next character and " closes it.
+// "$(...)" is not flagged: the repository's own gates rely on it.
+func gateBacktickInDoubleQuotes(gate string) bool {
+	inSingle, inDouble := false, false
+	for i := 0; i < len(gate); i++ {
+		c := gate[i]
+		switch {
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			}
+		case inDouble:
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inDouble = false
+			case '`':
+				return true
+			}
+		case c == '\'':
+			inSingle = true
+		case c == '"':
+			inDouble = true
+		}
+	}
+	return false
 }
 
 // isOwnsPattern reports whether an owns entry is a shell pattern rather than

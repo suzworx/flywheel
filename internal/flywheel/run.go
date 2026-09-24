@@ -103,6 +103,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
 - Never commit, push, or write secrets.
+- Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `
 
 // NoWorkerSession is the refusal returned by a resume when the task has no
@@ -778,6 +779,26 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	peak := 0
 	cost := 0.0
 
+	// recordPlan records a worker_plan event (and the plan file) when text
+	// holds the PLAN check-in.
+	recordPlan := func(text string) error {
+		plan, isPlan := planText(text)
+		if !isPlan {
+			return nil
+		}
+		planRecorded = true
+		planPath := filepath.Join(runsDir, o.Task+"."+attempt+".plan.md")
+		if err := os.WriteFile(planPath, []byte(plan), 0o644); err != nil {
+			return err
+		}
+		planSum := sha256.Sum256([]byte(plan))
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
+			return err
+		}
+		progress(o.Progress, o.Task+" "+attempt+" plan recorded")
+		return nil
+	}
+
 	firstLine := true
 	for sc.Scan() {
 		if silent.Load() || stalled.Load() {
@@ -819,19 +840,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		// A plan is recognised BEFORE the turn it arrives on is counted: the
 		// claude adapter marks each assistant message (text included) as
 		// ending a turn, so a plan in the 20th message must not first trip
-		// the no-plan threshold (issue #284 review).
-		if obs.Kind == "text" && !planRecorded {
-			if plan, isPlan := planText(obs.Text); isPlan {
-				planRecorded = true
-				planPath := filepath.Join(runsDir, o.Task+"."+attempt+".plan.md")
-				if err := os.WriteFile(planPath, []byte(plan), 0o644); err != nil {
-					return Result{}, err
-				}
-				planSum := sha256.Sum256([]byte(plan))
-				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
-					return Result{}, err
-				}
-				progress(o.Progress, o.Task+" "+attempt+" plan recorded")
+		// the no-plan threshold (issue #284 review). A tool observation's
+		// Text — the claude adapter's text written beside a tool call, where a
+		// model puts its plan before its first tool (issue #360) — is checked
+		// the same way.
+		if (obs.Kind == "text" || (obs.Kind == "tool" && obs.Text != "")) && !planRecorded {
+			if err := recordPlan(obs.Text); err != nil {
+				return Result{}, err
 			}
 		}
 		if obs.EndsTurn {
@@ -868,7 +883,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		case "text":
 			lastText = obs.Text
 		case "tool":
-			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(dir, obs.Path) && !outsideSeen[obs.Path] {
+			if !offCourseRecorded && offCourseTools[obs.Tool] && isOutsideWorktree(wt, obs.Path) && !outsideSeen[obs.Path] {
 				outsideSeen[obs.Path] = true
 				outsideOrder = append(outsideOrder, obs.Path)
 				if len(outsideOrder) == 5 {
@@ -933,6 +948,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wrote := append([]string(nil), wroteOrder...)
 	sort.Strings(wrote)
 
+	// outsideNote names the written paths outside the tree the worker ran in:
+	// a checkout's settings once let a worker edit the main checkout from its
+	// worktree (issue #359).
+	var outsideWrote []string
+	for _, p := range wrote {
+		if isOutsideWorktree(wt, p) {
+			outsideWrote = append(outsideWrote, p)
+		}
+	}
+	outsideNote := ""
+	if len(outsideWrote) > 0 {
+		outsideNote = "wrote outside the worktree: " + clipNote(strings.Join(outsideWrote, ", "))
+	}
+
 	// Silent: no output within the start timeout; we already killed the process
 	// we started. Every return path records a finished event.
 	if silent.Load() {
@@ -950,7 +979,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(note, gitNote), outsideNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -993,7 +1022,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Model: model, Reason: "stalled", Note: joinNote(gitNote, outsideNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1078,6 +1107,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// before its finished event (issue #314, #318 review).
 	gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
 	note = joinNote(note, gitNote)
+	note = joinNote(note, outsideNote)
 	// A clean stop is not "done" when the harness denied a tool (issue #364):
 	// name the denials in the note and record a permission-denied signal after
 	// the finished event. A clean stop that wrote nothing records no signal
@@ -1100,6 +1130,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		PeakReasoning: peak, Wrote: wrote,
 	}); err != nil {
 		return Result{}, err
+	}
+
+	// A write outside the worktree is off course; the read-based check may
+	// already have recorded the signal for this attempt, so record it once.
+	if outsideNote != "" {
+		if !offCourseRecorded {
+			if err := recordSignal(dir, o.Task, attempt, session, "off-course", runRel); err != nil {
+				return Result{}, err
+			}
+		}
+		progress(o.Progress, o.Task+" "+attempt+" off-course ("+outsideNote+")")
 	}
 
 	if gitWrote {

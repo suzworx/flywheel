@@ -92,7 +92,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   the traps in §6).
 - **Docs tasks** — "document what is in the code; flag what is not". A docs worker told to
   document a parallel task caught a code/doc mismatch this way; the docs task becomes a cheap
-  second reviewer.
+  second reviewer. A docs task's gates include one that resolves every path or symbol the
+  document names, never only a grep for removed strings.
 - **Build after each file written** — run a build (or typecheck) after every file you write so a
   broken intermediate state surfaces immediately; run the full tests and the formatter once, at
   the end (each is a slow tool call).

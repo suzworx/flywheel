@@ -119,6 +119,13 @@ func runValidate(args []string) {
 	} else {
 		fmt.Printf("%s owns: outside %s\n", task, strings.Join(res.Outside, ", "))
 	}
+	if n := len(res.Ignored); n > 0 {
+		shown := strings.Join(res.Ignored, ", ")
+		if n > 10 {
+			shown = strings.Join(res.Ignored[:10], ", ") + fmt.Sprintf(", ... (+%d more)", n-10)
+		}
+		fmt.Printf("%s owns: warning: %d owned path(s) are git-ignored and will never be committed: %s\n", task, n, shown)
+	}
 	if res.OK() {
 		os.Exit(0)
 	}

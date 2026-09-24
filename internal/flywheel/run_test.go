@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -2487,6 +2488,78 @@ func TestRunWroteRecordsSortedDedupedFiles(t *testing.T) {
 	}
 }
 
+// TestRunWroteOutsideWorktree checks a write outside the worktree is named in
+// the finished event's note and records one off-course signal for the
+// attempt, even when outside reads already recorded it; writes inside the
+// worktree record neither (issue #359).
+func TestRunWroteOutsideWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		outsideWrite bool
+		outsideReads bool
+	}{
+		{"outside write", true, false},
+		{"outside write after outside reads", true, true},
+		{"inside writes only", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := setupTask(t)
+			outside := filepath.Join(t.TempDir(), "main.go")
+			var calls [][2]string
+			if tc.outsideReads {
+				o := shortOutsideDir(dir)
+				for _, n := range []string{"o1.go", "o2.go", "o3.go", "o4.go", "o5.go"} {
+					calls = append(calls, [2]string{"read", filepath.Join(o, n)})
+				}
+			}
+			calls = append(calls, [2]string{"write", filepath.Join(dir, "a.go")})
+			if tc.outsideWrite {
+				calls = append(calls, [2]string{"edit", outside})
+			}
+			if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			var buf bytes.Buffer
+			if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var fin Event
+			signals := 0
+			for _, e := range evs {
+				if e.Kind == "finished" {
+					fin = e
+				}
+				if e.Kind == "signal" && e.Signal == "off-course" && e.Attempt == "r1" {
+					signals++
+				}
+			}
+			has := strings.Contains(fin.Note, "wrote outside the worktree:")
+			if !tc.outsideWrite {
+				if has || signals != 0 {
+					t.Errorf("note = %q, off-course signals = %d; want neither for inside writes", fin.Note, signals)
+				}
+				return
+			}
+			if !has || !strings.Contains(fin.Note, outside) {
+				t.Errorf("finished note = %q, want it to name the outside write %q", fin.Note, outside)
+			}
+			if strings.Contains(fin.Note, filepath.Join(dir, "a.go")) {
+				t.Errorf("finished note = %q, want the inside write left out", fin.Note)
+			}
+			if signals != 1 {
+				t.Errorf("off-course signals = %d, want exactly 1", signals)
+			}
+			if !strings.Contains(buf.String(), "T1 r1 off-course (wrote outside the worktree: ") {
+				t.Errorf("progress = %q, want an off-course line for the outside write", buf.String())
+			}
+		})
+	}
+}
+
 // TestRunNoEditsOmitsWroteField checks a run with no edit/write tool calls
 // omits the wrote field from its finished event (issue #163).
 func TestRunNoEditsOmitsWroteField(t *testing.T) {
@@ -3898,5 +3971,88 @@ func TestBriefHasIncrement(t *testing.T) {
 				t.Errorf("briefHasIncrement(%q, %d) = %v, want %v", c.text, c.n, got, c.want)
 			}
 		})
+	}
+}
+
+// fakeClaudeEnv names the stream file the test binary replays when it runs
+// as a fake claude (see TestMain and TestRunPlanBeforeTool).
+const fakeClaudeEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STREAM"
+
+// TestMain lets the test binary stand in for the claude CLI: copied to a
+// PATH directory as claude and started with fakeClaudeEnv set, it prints that
+// file as its stream-json output and exits 0.
+func TestMain(m *testing.M) {
+	if stream := os.Getenv(fakeClaudeEnv); stream != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
+		b, err := os.ReadFile(stream)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(b)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// TestRunPlanBeforeTool checks a claude run whose first assistant message
+// holds the PLAN text beside a tool_use records worker_plan and, past step
+// 20, no no-plan (issue #360).
+func TestRunPlanBeforeTool(t *testing.T) {
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	// Named exactly "claude" (plus ".exe" on Windows): the test binary's own
+	// extension is ".test" on Linux and macOS, which PATH lookup never finds.
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const session = "ses_plan_tool_001"
+	plan, _ := json.Marshal("PLAN files-to-read: a.go\nPLAN files-to-change: a.go\nPLAN order: edit\nPLAN checks: go test")
+	tool := `{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}`
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"text","text":%s},%s]}}`+"\n", session, plan, tool)
+	for i := 0; i < 21; i++ {
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[%s]}}`+"\n", session, tool)
+	}
+	fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(stream, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, stream)
+
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	plans := 0
+	for _, e := range evs {
+		switch e.Kind {
+		case "worker_plan":
+			plans++
+		case "no-plan":
+			t.Errorf("events include a no-plan event when the PLAN came beside a tool call: %v", e)
+		}
+	}
+	if plans != 1 {
+		t.Errorf("worker_plan events = %d, want exactly 1; events = %v", plans, evs)
 	}
 }

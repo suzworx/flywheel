@@ -2592,3 +2592,105 @@ func TestValidateRecordsWorkdirOnlyWhenExternal(t *testing.T) {
 		t.Errorf("validated = %d, owns_checked = %d, want both > 0", validated, ownsChecked)
 	}
 }
+
+// TestValidateIgnoredOwned checks that owned paths git ignores are reported
+// (issue #363): an explicitly owned one fails the owns check, one merely under
+// an owned directory is a warning, and nothing ignored reports nothing.
+func TestValidateIgnoredOwned(t *testing.T) {
+	setup := func(t *testing.T, owns string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if _, err := Init(dir, false); err != nil {
+			t.Fatalf("Init() error = %v", err)
+		}
+		initRepo(t, dir)
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\ndata/\n"), 0o644); err != nil {
+			t.Fatalf("write .gitignore: %v", err)
+		}
+		brief := "owns: " + owns + "\nneeds: none\ngate: exit 0\n\n# TASK: ignored\n"
+		if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+			t.Fatalf("write brief: %v", err)
+		}
+		if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+		git(t, dir, []string{"add", "-A"})
+		git(t, dir, []string{"commit", "-m", "brief"})
+		return dir
+	}
+	write := func(t *testing.T, dir, p string) {
+		t.Helper()
+		full := filepath.Join(dir, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", p, err)
+		}
+		if err := os.WriteFile(full, []byte("x\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	ownsChecked := func(t *testing.T, dir string) Event {
+		t.Helper()
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		for i := len(evs) - 1; i >= 0; i-- {
+			if evs[i].Kind == "owns_checked" {
+				return evs[i]
+			}
+		}
+		t.Fatal("no owns_checked event")
+		return Event{}
+	}
+
+	t.Run("explicitly owned ignored file fails owns", func(t *testing.T) {
+		dir := setup(t, "src/data/x.txt")
+		write(t, dir, "src/data/x.txt")
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		if res.OwnsOK || res.OK() {
+			t.Errorf("OwnsOK = %v, want false", res.OwnsOK)
+		}
+		want := "src/data/x.txt (git-ignored)"
+		if strings.Join(res.Outside, "|") != want {
+			t.Errorf("Outside = %v, want [%s]", res.Outside, want)
+		}
+		if e := ownsChecked(t, dir); strings.Join(e.Ignored, "|") != "src/data/x.txt" {
+			t.Errorf("owns_checked ignored = %v, want [src/data/x.txt]", e.Ignored)
+		}
+	})
+
+	t.Run("ignored under owned directory is a warning", func(t *testing.T) {
+		dir := setup(t, "src/")
+		write(t, dir, "src/data/x.txt")
+		write(t, dir, "src/a.txt")
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		if !res.OwnsOK {
+			t.Errorf("OwnsOK = false, outside = %v, want true", res.Outside)
+		}
+		if strings.Join(res.Ignored, "|") != "src/data/" {
+			t.Errorf("Ignored = %v, want [src/data/]", res.Ignored)
+		}
+	})
+
+	t.Run("nothing ignored in owns", func(t *testing.T) {
+		dir := setup(t, "src/")
+		write(t, dir, "src/a.txt")
+		write(t, dir, "data/y.txt")
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		if len(res.Ignored) != 0 {
+			t.Errorf("Ignored = %v, want empty", res.Ignored)
+		}
+		if !res.OwnsOK {
+			t.Errorf("OwnsOK = false, outside = %v, want true", res.Outside)
+		}
+	})
+}
