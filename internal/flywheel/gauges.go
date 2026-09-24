@@ -85,6 +85,11 @@ type GaugeResult struct {
 	// claim covers it only while the path's content still hashes to the value
 	// the claim recorded (issue #258).
 	Attributed []string
+	// Ignored lists, sorted, owned paths git ignores, so they can never be
+	// committed (issue #363): an explicitly owned one fails the owns check,
+	// one merely under an owned directory (build output, for instance) is a
+	// warning.
+	Ignored []string
 	// Files lists the measured shape of every changed path inside the unit's
 	// owns, sorted by path; paths outside owns and flywheel's own bookkeeping
 	// are never measured (issue #130). A reading, never a gate.
@@ -391,6 +396,16 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 		}
 	}
 	sort.Strings(attributed)
+	// Owned paths git ignores never reach a commit, however green the gates
+	// (issue #363); a failed reading is skipped, never fatal.
+	if ignored, err := ignoredOwned(wd, owns); err == nil {
+		res.Ignored = ignored
+		for _, p := range ignored {
+			if explicitlyOwned(owns, p) {
+				outside = append(outside, p+" (git-ignored)")
+			}
+		}
+	}
 	res.Outside = outside
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
@@ -398,7 +413,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Baselined: baselined, Attributed: attributed,
-		Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
+		Ignored: res.Ignored, Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
 	}); err != nil {
 		return GaugeResult{}, err
 	}
@@ -941,6 +956,84 @@ func ownsContains(owns []string, p string) bool {
 		}
 	}
 	return false
+}
+
+// ignoredOwned lists, sorted, the paths inside owns that git ignores, so a
+// commit would silently skip them (issue #363). --directory collapses a wholly
+// ignored directory into one "dir/" entry; such an entry is kept when owns
+// covers it, and an owned file that exists inside it is reported by its own
+// path. flywheel's own bookkeeping is never reported.
+func ignoredOwned(wd string, owns []string) ([]string, error) {
+	out, err := gitRead(wd, []string{"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, p := range strings.Split(out, "\x00") {
+		p = filepath.ToSlash(p)
+		if p == "" || isFlywheelOwnPath(strings.TrimSuffix(p, "/")) {
+			continue
+		}
+		if ownsContains(owns, p) {
+			seen[p] = true
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			continue
+		}
+		dirOwned := false
+		for _, o := range owns {
+			o = filepath.ToSlash(o)
+			if !strings.HasPrefix(o, p) {
+				continue
+			}
+			if isPlainFile(o) {
+				if _, err := os.Stat(filepath.Join(wd, filepath.FromSlash(o))); err == nil {
+					seen[o] = true
+				}
+				continue
+			}
+			dirOwned = true
+		}
+		if dirOwned {
+			seen[p] = true
+		}
+	}
+	ignored := make([]string, 0, len(seen))
+	for p := range seen {
+		ignored = append(ignored, p)
+	}
+	sort.Strings(ignored)
+	return ignored, nil
+}
+
+// explicitlyOwned reports whether owns names p itself: an entry equal to p, a
+// glob pattern matching p, or, for a directory entry p ("dir/"), a plain file
+// entry inside it. A path only under an owned directory is not explicit.
+func explicitlyOwned(owns []string, p string) bool {
+	p = filepath.ToSlash(p)
+	for _, o := range owns {
+		o = filepath.ToSlash(o)
+		if o == p {
+			return true
+		}
+		if strings.ContainsAny(o, "*?[") {
+			if m, _ := path.Match(o, p); m {
+				return true
+			}
+			continue
+		}
+		if strings.HasSuffix(p, "/") && isPlainFile(o) && strings.HasPrefix(o, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlainFile reports whether an owns entry names one file: neither a
+// directory ("dir/") nor a glob pattern.
+func isPlainFile(o string) bool {
+	return !strings.HasSuffix(o, "/") && !strings.ContainsAny(o, "*?[")
 }
 
 // isPathDelim splits a gate's output into path tokens on whitespace or ':',

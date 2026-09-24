@@ -2410,6 +2410,78 @@ func TestRunWroteRecordsSortedDedupedFiles(t *testing.T) {
 	}
 }
 
+// TestRunWroteOutsideWorktree checks a write outside the worktree is named in
+// the finished event's note and records one off-course signal for the
+// attempt, even when outside reads already recorded it; writes inside the
+// worktree record neither (issue #359).
+func TestRunWroteOutsideWorktree(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		outsideWrite bool
+		outsideReads bool
+	}{
+		{"outside write", true, false},
+		{"outside write after outside reads", true, true},
+		{"inside writes only", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := setupTask(t)
+			outside := filepath.Join(t.TempDir(), "main.go")
+			var calls [][2]string
+			if tc.outsideReads {
+				o := shortOutsideDir(dir)
+				for _, n := range []string{"o1.go", "o2.go", "o3.go", "o4.go", "o5.go"} {
+					calls = append(calls, [2]string{"read", filepath.Join(o, n)})
+				}
+			}
+			calls = append(calls, [2]string{"write", filepath.Join(dir, "a.go")})
+			if tc.outsideWrite {
+				calls = append(calls, [2]string{"edit", outside})
+			}
+			if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			var buf bytes.Buffer
+			if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var fin Event
+			signals := 0
+			for _, e := range evs {
+				if e.Kind == "finished" {
+					fin = e
+				}
+				if e.Kind == "signal" && e.Signal == "off-course" && e.Attempt == "r1" {
+					signals++
+				}
+			}
+			has := strings.Contains(fin.Note, "wrote outside the worktree:")
+			if !tc.outsideWrite {
+				if has || signals != 0 {
+					t.Errorf("note = %q, off-course signals = %d; want neither for inside writes", fin.Note, signals)
+				}
+				return
+			}
+			if !has || !strings.Contains(fin.Note, outside) {
+				t.Errorf("finished note = %q, want it to name the outside write %q", fin.Note, outside)
+			}
+			if strings.Contains(fin.Note, filepath.Join(dir, "a.go")) {
+				t.Errorf("finished note = %q, want the inside write left out", fin.Note)
+			}
+			if signals != 1 {
+				t.Errorf("off-course signals = %d, want exactly 1", signals)
+			}
+			if !strings.Contains(buf.String(), "T1 r1 off-course (wrote outside the worktree: ") {
+				t.Errorf("progress = %q, want an off-course line for the outside write", buf.String())
+			}
+		})
+	}
+}
+
 // TestRunNoEditsOmitsWroteField checks a run with no edit/write tool calls
 // omits the wrote field from its finished event (issue #163).
 func TestRunNoEditsOmitsWroteField(t *testing.T) {

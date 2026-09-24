@@ -549,6 +549,26 @@ func TestClaudeAssistantTextWithTool(t *testing.T) {
 	}
 }
 
+// TestClaudeCommandSettingSources checks a claude dispatch, fresh or resumed,
+// loads only the user's settings, so a checkout's project or local settings
+// cannot widen where the worker may write (issue #359).
+func TestClaudeCommandSettingSources(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	for _, tc := range []struct {
+		name string
+		req  RunRequest
+	}{
+		{"fresh", RunRequest{Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath}},
+		{"resume", RunRequest{Task: "T1", Attempt: "c1", Title: "T1-c1", Model: "m1", PromptFile: briefPath, Session: "ses_1", Resume: true}},
+	} {
+		_, args := a.Command(tc.req)
+		if got := flagValues(args, "--setting-sources"); len(got) == 0 || got[0] != "user" {
+			t.Errorf("%s: --setting-sources = %v, want user; args = %v", tc.name, got, args)
+		}
+	}
+}
+
 func TestSimAdapter(t *testing.T) {
 	a, _ := AdapterFor("sim")
 	if a.Name() != "sim" {
