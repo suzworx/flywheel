@@ -49,6 +49,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"feedback":   func() (*flag.FlagSet, any) { fs, o := feedbackFlags(); return fs, o },
 	"gate":       func() (*flag.FlagSet, any) { fs, o := gateFlags(); return fs, o },
 	"watch":      func() (*flag.FlagSet, any) { fs, o := watchFlags(); return fs, o },
+	"wait":       func() (*flag.FlagSet, any) { fs, o := waitFlags(); return fs, o },
 	"context":    func() (*flag.FlagSet, any) { fs, o := contextFlags(); return fs, o },
 	"upgrade":    func() (*flag.FlagSet, any) { fs, o := upgradeFlags(); return fs, o },
 }
