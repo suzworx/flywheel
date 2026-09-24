@@ -105,21 +105,59 @@ func recordedWorkdir(events []Event, task string) string {
 	return ""
 }
 
+// gitCommonDir returns the absolute git common directory of the repository
+// that d belongs to.
+func gitCommonDir(d string) (string, error) {
+	out, err := exec.Command("git", "-C", d, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+// LedgerRoot maps dir to the flywheel root whose ledger it must use. When dir
+// is a task worktree <X>/.flywheel/worktrees/<T> (or inside one) that shares
+// <X>'s repository, it returns (X, T): the worktree holds a stale copy of the
+// ledger, and commands run there must read and write the main one (#395).
+// Anything else, a non-repository included, returns (dir, "") with dir made
+// absolute and clean.
+func LedgerRoot(dir string) (root string, task string, err error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve %q: %w", dir, err)
+	}
+	abs = filepath.Clean(abs)
+	for p := abs; ; {
+		worktrees := filepath.Dir(p)
+		fw := filepath.Dir(worktrees)
+		if filepath.Base(worktrees) == "worktrees" && filepath.Base(fw) == ".flywheel" {
+			x := filepath.Dir(fw)
+			// A plain directory at that path sits inside <X>'s own work
+			// tree and shares its common dir too: p must be a top level.
+			top, terr := exec.Command("git", "-C", p, "rev-parse", "--show-toplevel").Output()
+			want, werr := gitCommonDir(x)
+			got, gerr := gitCommonDir(p)
+			if terr == nil && werr == nil && gerr == nil &&
+				samePath(filepath.Clean(strings.TrimSpace(string(top))), p) && samePath(got, want) {
+				return x, filepath.Base(p), nil
+			}
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return abs, "", nil
+		}
+		p = parent
+	}
+}
+
 // checkTaskWorktree verifies that path is a git worktree sharing dir's
 // repository (the same git common directory) with branch checked out.
 func checkTaskWorktree(dir, path, branch string) error {
-	common := func(d string) (string, error) {
-		out, err := exec.Command("git", "-C", d, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Clean(strings.TrimSpace(string(out))), nil
-	}
-	want, err := common(dir)
+	want, err := gitCommonDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve the repository of %s: %w", dir, err)
 	}
-	got, err := common(path)
+	got, err := gitCommonDir(path)
 	if err != nil || !samePath(got, want) {
 		return fmt.Errorf("%s exists but is not a worktree of this repository; remove it (git worktree prune) and rerun", path)
 	}

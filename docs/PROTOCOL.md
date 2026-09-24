@@ -12,7 +12,9 @@ Every record is one JSON line appended to `.flywheel/events.jsonl` by `AppendEve
 never rewritten — `flywheel log` (or a command that calls `AppendEvent` internally) is the only way
 to add a line. `flywheel state` derives `.flywheel/state.json` and the status block in
 `flywheel.md` from the log alone (`Derive`): the log is the one source of truth, everything else is
-a read-only projection of it.
+a read-only projection of it. A command whose `--dir` is inside a unit's worktree
+(`<root>/.flywheel/worktrees/<task>`, made by `flywheel run --worktree`) uses the main checkout's
+ledger at `<root>`, never the worktree's stale copy (issue #395).
 
 Every skill in `skills/` that drives this loop cites `protocol v1` and links back here;
 `cmd/flywheel/docs_test.go` fails the build the moment a skill stops citing it, or this file's
