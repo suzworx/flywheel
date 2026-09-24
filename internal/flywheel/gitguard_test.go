@@ -308,3 +308,30 @@ func TestGitGuardScopedToUnitRepo(t *testing.T) {
 		t.Errorf("git init in a temp dir: rc %d, want 0 (%s)", rc, errb.String())
 	}
 }
+
+// TestGitGuardLogsWrites checks that the guard logs each write-class call
+// beside its bin directory, and nothing for a read (#361).
+func TestGitGuardLogsWrites(t *testing.T) {
+	unit := newRepo(t)
+	binDir := filepath.Join(t.TempDir(), "T1.r1.bin")
+	t.Setenv(GitGuardEnv, binDir)
+	t.Setenv(GitGuardRepoEnv, commonDir(t, unit))
+	var out, errb bytes.Buffer
+	if rc := GitGuard([]string{"-C", unit, "status"}, nil, &out, &errb); rc != 0 {
+		t.Fatalf("status: rc %d, want 0 (%s)", rc, errb.String())
+	}
+	if _, err := os.Stat(gitGuardLogPath(binDir)); !os.IsNotExist(err) {
+		t.Errorf("status wrote a guard log (stat err %v), want none", err)
+	}
+	if rc := GitGuard([]string{"-C", unit, "commit", "-q", "--allow-empty", "-m", "x"}, nil, &out, &errb); rc != 1 {
+		t.Fatalf("commit in the unit's repository: rc %d, want 1 (refused)", rc)
+	}
+	refused, allowed := readGitGuardLog(binDir)
+	if strings.Join(refused, ",") != "commit" || len(allowed) != 0 {
+		t.Errorf("log = refused %v allowed %v, want refused [commit], allowed []", refused, allowed)
+	}
+	b, err := os.ReadFile(gitGuardLogPath(binDir))
+	if err != nil || strings.TrimSpace(string(b)) != "refused commit" {
+		t.Errorf("log file = %q (%v), want \"refused commit\"", b, err)
+	}
+}

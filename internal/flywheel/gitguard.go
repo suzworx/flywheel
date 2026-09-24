@@ -148,9 +148,13 @@ func GitGuard(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	env := guardFreeEnv()
 
-	if refused, sub := GitGuardRefused(args); refused && stillRefused(gitPath, env, args, sub) {
-		io.WriteString(stderr, "flywheel: workers never commit, stash, reset, checkout or push; \"git "+sub+"\" is refused in this unit's repository — under flywheel run, git runs read-only commands only there (the lead commits after inspection)\n")
-		return 1
+	if refused, sub := GitGuardRefused(args); refused {
+		if stillRefused(gitPath, env, args, sub) {
+			logGitGuard("refused " + sub)
+			io.WriteString(stderr, "flywheel: workers never commit, stash, reset, checkout or push; \"git "+sub+"\" is refused in this unit's repository — under flywheel run, git runs read-only commands only there (the lead commits after inspection)\n")
+			return 1
+		}
+		logGitGuard("allowed " + sub)
 	}
 
 	cmd := exec.Command(gitPath, args...)
@@ -165,6 +169,49 @@ func GitGuard(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// gitGuardLogPath is the guard's write log for the bin directory binDir: a
+// sibling file (binDir + ".log"), so it survives the removal of binDir (#361).
+func gitGuardLogPath(binDir string) string {
+	return filepath.Clean(binDir) + ".log"
+}
+
+// logGitGuard appends line to the guard's write log (GitGuardEnv names the bin
+// directory). Every error is ignored: logging never changes what the guard does.
+func logGitGuard(line string) {
+	binDir := os.Getenv(GitGuardEnv)
+	if binDir == "" {
+		return
+	}
+	f, err := os.OpenFile(gitGuardLogPath(binDir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(line + "\n")
+}
+
+// readGitGuardLog returns the write-class subcommands the guard refused and
+// allowed during an attempt, from binDir's log; a missing log reads as none.
+func readGitGuardLog(binDir string) (refused, allowed []string) {
+	b, err := os.ReadFile(gitGuardLogPath(binDir))
+	if err != nil {
+		return nil, nil
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		verdict, sub, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		switch verdict {
+		case "refused":
+			refused = append(refused, sub)
+		case "allowed":
+			allowed = append(allowed, sub)
+		}
+	}
+	return refused, allowed
 }
 
 // GitRealEnv names the environment variable holding the absolute path of the
