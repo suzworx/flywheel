@@ -1057,3 +1057,56 @@ func TestValidateIncrement(t *testing.T) {
 		t.Error("Validate(finished increment 1) = nil, want an error")
 	}
 }
+
+// TestReviewFindingEvent checks the review_finding kind (issue #389): a sound
+// finding validates and round-trips through the log with its line, category
+// and id; each missing field and an unknown severity are refused.
+func TestReviewFindingEvent(t *testing.T) {
+	ok := Event{
+		Task: "T1", Kind: "review_finding", Session: "rev-1", Severity: "blocker",
+		Title: "drops the last line", Observed: "a file without a trailing newline loses its tail",
+		Ask: "flush the scanner remainder", Path: "a.go", LineNo: 12, Category: "correctness",
+		Finding: "T1-r1-1",
+	}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("Validate(sound finding) = %v", err)
+	}
+	for name, mut := range map[string]func(*Event){
+		"no task":      func(e *Event) { e.Task = "" },
+		"no session":   func(e *Event) { e.Session = "" },
+		"no title":     func(e *Event) { e.Title = "" },
+		"no path":      func(e *Event) { e.Path = "" },
+		"bad severity": func(e *Event) { e.Severity = "P0" },
+		"no severity":  func(e *Event) { e.Severity = "" },
+		"negative ln":  func(e *Event) { e.LineNo = -1 },
+	} {
+		e := ok
+		mut(&e)
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate accepted %+v", name, e)
+		}
+	}
+	for _, sev := range FindingSeverities {
+		e := ok
+		e.Severity = sev
+		if err := Validate(e); err != nil {
+			t.Errorf("severity %s refused: %v", sev, err)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendEvent(dir, ok); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("ReadEvents = %d events, %v", len(events), err)
+	}
+	got := events[0]
+	if got.LineNo != 12 || got.Category != "correctness" || got.Finding != "T1-r1-1" || got.Severity != "blocker" || got.Path != "a.go" {
+		t.Errorf("round trip = %+v", got)
+	}
+}

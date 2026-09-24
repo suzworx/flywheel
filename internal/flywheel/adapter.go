@@ -24,6 +24,9 @@ type RunRequest struct {
 	// an empty list appends no flag (issue #192).
 	AllowedTools    []string
 	DisallowedTools []string
+	// NoWorkerRules marks a non-worker dispatch such as the review agent
+	// (issue #389): claude gets no --append-system-prompt workerRules.
+	NoWorkerRules bool
 }
 
 // The message placed on the command line before --file. Brief text itself is
@@ -370,7 +373,8 @@ func (a claudeAdapter) Name() string {
 // --resume <session>, mirroring opencodeAdapter.Command. The worker rules
 // (workerRules, PLAN check-in included) reach OpenCode through the policy's
 // "instructions" file; claude gets them as --append-system-prompt, on fresh
-// and resumed runs alike (issue #360). The value is multi-line, which is safe
+// and resumed runs alike (issue #360), unless r.NoWorkerRules marks a
+// non-worker dispatch such as the review agent (issue #389). The value is multi-line, which is safe
 // as a command-line argument because claude is a native binary, not an npm
 // shim run through cmd.exe.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
@@ -388,7 +392,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		"--model", r.Model,
 		"--permission-mode", "acceptEdits",
 		"--setting-sources", "user",
-		"--append-system-prompt", workerRules,
+	}
+	if !r.NoWorkerRules {
+		args = append(args, "--append-system-prompt", workerRules)
 	}
 	if len(r.AllowedTools) > 0 {
 		args = append(args, "--allowedTools")

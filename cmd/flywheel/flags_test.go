@@ -223,3 +223,18 @@ func TestFactoryFlagsBindEveryOption(t *testing.T) {
 		t.Errorf("factoryFlags parsed = %#v, want %#v", *o, want)
 	}
 }
+
+// TestReviewAgentFlags parses the review agent's flags (issue #389) and
+// asserts the bound options hold them.
+func TestReviewAgentFlags(t *testing.T) {
+	fs, o := reviewFlags()
+	if err := fs.Parse([]string{"--agent", "--worker", "rev", "--round", "3", "--session", "s", "--workdir", "W", "--dir", "D"}); err != nil {
+		t.Fatalf("reviewFlags: %v", err)
+	}
+	if !o.agent || o.worker != "rev" || o.round != 3 || o.session != "s" || o.workdir != "W" || o.dir != "D" {
+		t.Errorf("reviewFlags parsed = %#v", *o)
+	}
+	if !strings.Contains(reviewUsageLine, "--agent") || !strings.Contains(reviewUsageLine, "--round N") {
+		t.Errorf("usage %q does not name --agent and --round", reviewUsageLine)
+	}
+}
