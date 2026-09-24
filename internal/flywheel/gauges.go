@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -390,6 +391,10 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 						attributed = append(attributed, wtPath+": "+p+" -> "+owner)
 						continue
 					}
+					if s := siblingClaim(fresh, task, wtPath, p, reading); s != "" {
+						attributed = append(attributed, wtPath+": "+p+" -> lead "+s)
+						continue
+					}
 					outside = append(outside, wtPath+": "+p)
 				}
 			}
@@ -509,10 +514,13 @@ func leadClaimingSession(wd string, events []Event, task, p string, reading time
 
 // claimingSession is leadClaimingSession with the worker guard supplied by
 // the caller: isWorker reports a session that may never count as the lead.
+// A lead_edit with a non-empty Workdir names paths in a sibling worktree
+// (claim-edit --worktree) and is skipped here: it never excuses the same
+// relative path in the tree being checked (issue #362).
 func claimingSession(wd string, events []Event, p string, reading time.Time, isWorker func(sess string) bool) string {
 	sess := ""
 	for _, e := range events {
-		if e.Kind != "lead_edit" || !ownsContains(e.Owns, p) {
+		if e.Kind != "lead_edit" || e.Workdir != "" || !ownsContains(e.Owns, p) {
 			continue
 		}
 		want, ok := e.Baseline[p]
@@ -520,6 +528,43 @@ func claimingSession(wd string, events []Event, p string, reading time.Time, isW
 			continue
 		}
 		if isWorker(e.Session) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, e.TS)
+		if err != nil || !t.Before(reading) {
+			continue
+		}
+		sess = e.Session
+	}
+	return sess
+}
+
+// siblingClaim returns the session of the lead_edit event in the unit's own
+// ledger that claims path p (relative to the sibling worktree wtPath) for this
+// reading, or "" when none does (issue #362): another session's edit in a
+// sibling worktree, declared with claim-edit --worktree. The event's Workdir
+// must name wtPath (filepath.Clean of both, compared with isPathEqual), its
+// Owns must contain p exactly, its Baseline[p] must still equal p's current
+// content in wtPath, its session must not be a worker session of task, and
+// its TS must be strictly before the reading. The last matching event wins,
+// like claimingSession.
+func siblingClaim(events []Event, task, wtPath, p string, reading time.Time) string {
+	sess := ""
+	for _, e := range events {
+		if e.Kind != "lead_edit" || e.Workdir == "" {
+			continue
+		}
+		if !isPathEqual(filepath.Clean(e.Workdir), filepath.Clean(wtPath)) {
+			continue
+		}
+		if !slices.Contains(e.Owns, p) {
+			continue
+		}
+		want, ok := e.Baseline[p]
+		if !ok || fileSHA(wtPath, p) != want {
+			continue
+		}
+		if workerSessionOf(task, events, e.Session) {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339Nano, e.TS)

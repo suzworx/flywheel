@@ -118,6 +118,14 @@ func runValidate(args []string) {
 		fmt.Printf("%s owns: ok\n", task)
 	} else {
 		fmt.Printf("%s owns: outside %s\n", task, strings.Join(res.Outside, ", "))
+		// A sibling entry reads "<worktree path>: <path>"; another session's
+		// edit there can be claimed from this ledger (issue #362).
+		for _, o := range res.Outside {
+			if wt, p, ok := strings.Cut(o, ": "); ok {
+				fmt.Printf("%s owns: hint: a path in a sibling worktree changed after dispatch; if another session made it, claim it: flywheel claim-edit --worktree %s --paths %s --session <your session>\n", task, wt, p)
+				break
+			}
+		}
 	}
 	if n := len(res.Ignored); n > 0 {
 		shown := strings.Join(res.Ignored, ", ")
