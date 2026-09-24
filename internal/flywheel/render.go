@@ -59,7 +59,7 @@ func RenderText(w io.Writer, f Floor, width int, color bool) {
 	}
 	taskWd, modelWd, modelLineWd := tableWidths(width)
 	renderHeader(w, f, width)
-	renderFloor(w, f, modelLineWd)
+	renderFloor(w, f, modelLineWd, width)
 	renderProductLines(w, f, width)
 	renderUnits(w, f, taskWd, modelWd, color)
 	renderAndon(w, f, color)
@@ -76,7 +76,7 @@ func renderHeader(w io.Writer, f Floor, width int) {
 }
 
 // renderFloor prints the stations (one per config worker) and the staffing.
-func renderFloor(w io.Writer, f Floor, modelLine int) {
+func renderFloor(w io.Writer, f Floor, modelLine, width int) {
 	fmt.Fprintf(w, "\nfloor\n")
 	for _, l := range f.Lines {
 		fmt.Fprintf(w, "  %-*s  %-*s  %s  max %d  busy %d\n",
@@ -85,6 +85,27 @@ func renderFloor(w io.Writer, f Floor, modelLine int) {
 			truncate(l.Model, modelLine), l.MaxParallel, l.Busy)
 	}
 	fmt.Fprintf(w, "  lead  %s\n", f.Staffing.Lead)
+
+	hasConfigured := false
+	for _, r := range f.Staffing.Roles {
+		if r.Configured != "" {
+			hasConfigured = true
+			break
+		}
+	}
+	if hasConfigured {
+		for _, r := range f.Staffing.Roles {
+			session := r.Session
+			if session == "" {
+				session = "not registered"
+			}
+			line := fmt.Sprintf("  %-9s  config %-9s  floor %s", r.Name, r.Configured, session)
+			if r.Mismatch {
+				line += " !"
+			}
+			fmt.Fprintf(w, "%s\n", truncate(line, width))
+		}
+	}
 }
 
 // renderProductLines prints the product lines and their unit counts, each
@@ -146,7 +167,7 @@ func stateColor(state string) string {
 		return ansiGreen
 	case "exploring", "long-step":
 		return ansiYellow
-	case "stalled", "capped", "provider-error":
+	case "stalled", "capped", "provider-error", "mismatch":
 		return ansiRed
 	}
 	return ""
@@ -242,8 +263,17 @@ type jLine struct {
 	Busy        int    `json:"busy"`
 }
 
+type jFloorRole struct {
+	Name       string `json:"name"`
+	Configured string `json:"configured,omitempty"`
+	Session    string `json:"session,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Mismatch   bool   `json:"mismatch,omitempty"`
+}
+
 type jStaff struct {
-	Lead string `json:"lead"`
+	Lead  string       `json:"lead"`
+	Roles []jFloorRole `json:"roles,omitempty"`
 }
 
 type jUnit struct {
@@ -257,6 +287,7 @@ type jUnit struct {
 	LastAge       int    `json:"last_age"`
 	RunState      string `json:"run_state"`
 	PeakReasoning int    `json:"peak_reasoning"`
+	Station       string `json:"station,omitempty"`
 }
 
 type jAndon struct {
@@ -276,12 +307,15 @@ type jOutput struct {
 }
 
 type jProductLine struct {
-	Name     string   `json:"name"`
-	Worker   string   `json:"worker"`
-	Owns     []string `json:"owns,omitempty"`
-	Units    int      `json:"units"`
-	Building int      `json:"building"`
-	Landed   int      `json:"landed"`
+	Name     string         `json:"name"`
+	Worker   string         `json:"worker"`
+	Owns     []string       `json:"owns,omitempty"`
+	Units    int            `json:"units"`
+	Building int            `json:"building"`
+	Landed   int            `json:"landed"`
+	Stations map[string]int `json:"stations,omitempty"`
+	WIP      int            `json:"wip,omitempty"`
+	Limit    int            `json:"limit,omitempty"`
 }
 
 type jFloor struct {
@@ -305,11 +339,15 @@ func RenderJSON(w io.Writer, f Floor) {
 		j.Lines = append(j.Lines, jLine{Name: l.Name, Adapter: l.Adapter, Model: l.Model, MaxParallel: l.MaxParallel, Busy: l.Busy})
 	}
 	for _, pl := range f.ProductLines {
-		j.ProductLines = append(j.ProductLines, jProductLine{Name: pl.Name, Worker: pl.Worker, Owns: pl.Owns, Units: pl.Units, Building: pl.Building, Landed: pl.Landed})
+		j.ProductLines = append(j.ProductLines, jProductLine{Name: pl.Name, Worker: pl.Worker, Owns: pl.Owns, Units: pl.Units, Building: pl.Building, Landed: pl.Landed, Stations: pl.Stations, WIP: pl.WIP, Limit: pl.Limit})
 	}
-	j.Staffing = jStaff{Lead: f.Staffing.Lead}
+	js := jStaff{Lead: f.Staffing.Lead}
+	for _, r := range f.Staffing.Roles {
+		js.Roles = append(js.Roles, jFloorRole{Name: r.Name, Configured: r.Configured, Session: r.Session, Model: r.Model, Mismatch: r.Mismatch})
+	}
+	j.Staffing = js
 	for _, u := range f.Units {
-		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak})
+		j.Units = append(j.Units, jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station})
 	}
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})
