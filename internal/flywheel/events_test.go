@@ -387,7 +387,7 @@ func TestOffCourseKindRoundTrips(t *testing.T) {
 // is rejected with a message naming it and the allowed set; and no other kind
 // may carry a Signal.
 func TestSignalKindValidate(t *testing.T) {
-	for _, s := range []string{"no-plan", "off-course", "no-writes", "capped", "provider-error", "stalled", "silent", "failed-dirty"} {
+	for _, s := range []string{"no-plan", "off-course", "no-writes", "capped", "provider-error", "stalled", "silent", "failed-dirty", "git-write", "permission-denied"} {
 		if err := Validate(Event{Task: "T1", Kind: "signal", Signal: s}); err != nil {
 			t.Errorf("Validate() rejected signal/%s: %v", s, err)
 		}

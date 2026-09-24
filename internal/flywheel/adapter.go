@@ -61,6 +61,10 @@ type Observation struct {
 	Aggregate bool
 	Cost      float64
 	EndsTurn  bool // true when this line completes one model turn; run.go counts turns with it
+	// Denials are the tool names the harness denied, from the claude result
+	// line's permission_denials, each with " <file_path>" when one was given
+	// (issue #364).
+	Denials []string
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -430,6 +434,7 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		// #286); claudeTokens reads m["usage"], the same shape as a message's.
 		obs.Tokens = claudeTokens(m)
 		obs.Aggregate = true
+		obs.Denials = claudeDenials(m)
 	default:
 		return Observation{}, false
 	}
@@ -437,6 +442,35 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Session = s
 	}
 	return obs, true
+}
+
+// claudeDenials decodes a result line's permission_denials: one entry per
+// denial, the tool name plus " <file_path>" when tool_input carries one.
+// A missing or malformed array is nil (issue #364).
+func claudeDenials(m map[string]json.RawMessage) []string {
+	raw, ok := m["permission_denials"]
+	if !ok {
+		return nil
+	}
+	var items []struct {
+		ToolName  string                     `json:"tool_name"`
+		ToolInput map[string]json.RawMessage `json:"tool_input"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	var out []string
+	for _, it := range items {
+		if it.ToolName == "" {
+			continue
+		}
+		d := it.ToolName
+		if p := rawString(it.ToolInput, "file_path"); p != "" {
+			d += " " + p
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // claudeAssistantObs decodes one assistant line's message.content: the first
@@ -495,7 +529,16 @@ func (a simAdapter) Command(r RunRequest) (string, []string) {
 // Parse uses the opencode parser: a fixture is a recorded OpenCode run.
 func (a simAdapter) Parse(line []byte) (Observation, bool) {
 	oc := opencodeAdapter{}
-	return oc.Parse(line)
+	if obs, ok := oc.Parse(line); ok {
+		return obs, true
+	}
+	// A claude result line replays through the claude parser, so a fixture
+	// can carry permission_denials (issue #364).
+	var m map[string]json.RawMessage
+	if json.Unmarshal(line, &m) == nil && rawString(m, "type") == "result" {
+		return claudeAdapter{}.Parse(line)
+	}
+	return Observation{}, false
 }
 
 // codexAdapter runs OpenAI Codex via `codex exec --json` (issue #275): parses

@@ -232,9 +232,12 @@ file is re-read from zero) and building a Floor with lines, staffing, units, and
 (internal/flywheel/factory.go:Refresh, internal/flywheel/factory.go:readEvents). Each unit's run
 state is classified from its run file's signals — error, finish reason "length", done event,
 size, age since last growth, step count, files read, edits — into running, exploring, long-step
-(>5min), stalled (>10min), silent (no output after 60s), capped, provider-error or done
-(internal/flywheel/factory.go:classifyRun). The andon lists units in silent, stalled, capped or
-provider-error, oldest first, plus per-line busy counts and the output summary (first-pass rate
+(>5min), stalled (>10min), silent (no output after 60s), capped, provider-error, blocked (a clean
+stop after a permission-denied signal), no-writes (a floor state, not a signal: a clean stop whose
+finished event wrote no file; blocked and no-writes apply only while the unit is awaiting
+judgement, issue #364) or done
+(internal/flywheel/factory.go:classifyRun). The andon lists units in silent, stalled, no-writes,
+blocked, capped or provider-error, oldest first, plus per-line busy counts and the output summary (first-pass rate
 from first verdicts, rework ratio, tokens, cost, landed today) (internal/flywheel/factory.go:buildAndon,
 internal/flywheel/factory.go:buildOutput). The CLI render (`flywheel factory` with `--once` or
 watch mode) calls Refresh and prints the floor; rendering never calls a model and never runs a

@@ -114,6 +114,14 @@ all.
   `capped`, when `reason` is `length`) — a failed attempt that left files behind, needing a human
   decision (revert, resume, or re-dispatch) that a clean failure or a cut-off run that wrote nothing
   does not (issue #163). `failed-dirty` reaches the andon and is dead, exactly as `failed` is.
+- A `stop` finish is not automatically done (issue #364): when the claude result line carried
+  `permission_denials`, `note` adds `permission denied: <tool [path], ...>` and a
+  `permission-denied` signal follows the `finished` event (run state **blocked**). Otherwise, when
+  `wrote` is empty, no signal is recorded (an untriaged signal blocks landing, and some units
+  legitimately write nothing): the factory view derives the floor state **no-writes** from the
+  `finished` event alone. Both states apply only while the unit is awaiting judgement (status
+  `finished`); once passed, rejected or landed it shows done. Both reach the andon; no-writes
+  blocks nothing.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

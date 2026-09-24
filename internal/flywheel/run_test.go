@@ -1649,6 +1649,84 @@ func lastDispatched(t *testing.T, dir, task string) Event {
 	return d
 }
 
+// lastFinished returns the last finished event for a task, or zero.
+func lastFinished(t *testing.T, dir, task string) Event {
+	t.Helper()
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var f Event
+	for _, e := range evs {
+		if e.Task == task && e.Kind == "finished" {
+			f = e
+		}
+	}
+	return f
+}
+
+// TestRunStopWithoutWrites checks a clean stop is not silently "done" (issue
+// #364): no writes records no signal but prints a line (the floor shows it as
+// no-writes), a write records none, and a result line with permission denials
+// records permission-denied and names them in the finished note.
+func TestRunStopWithoutWrites(t *testing.T) {
+	session := "ses_test_nowrites_001"
+	start := fmt.Sprintf(`{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	stop := fmt.Sprintf(`{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop"}}`+"\n", session)
+	denied := `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"` + session +
+		`","permission_denials":[{"tool_name":"Edit","tool_input":{"file_path":"/x/a.go"}},{"tool_name":"Bash","tool_input":{"command":"ls"}}]}` + "\n"
+	cases := []struct {
+		name, fixture, signal, line, note string
+	}{
+		{"no writes", start + stop, "", "T1 r1 finished without writing a file", ""},
+		{"wrote", fmt.Sprintf(start+`{"type":"tool_use","sessionID":%q,"part":{"type":"tool_use","tool":"write","state":{"input":{"filePath":"a.go"}}}}`+"\n"+stop, session), "", "", ""},
+		{"denied", start + denied, "permission-denied", "T1 r1 permission-denied: Edit /x/a.go, Bash", "permission denied: Edit /x/a.go, Bash"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := setupTask(t)
+			model := filepath.Join(t.TempDir(), "f.jsonl")
+			if err := os.WriteFile(model, []byte(c.fixture), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			if err := WriteConfig(dir, simConfig(model)); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			var buf bytes.Buffer
+			res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if res.Reason != "stop" {
+				t.Fatalf("reason = %q, want stop", res.Reason)
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var sigs []string
+			for _, e := range evs {
+				if e.Kind == "signal" {
+					sigs = append(sigs, e.Signal)
+				}
+			}
+			var want []string
+			if c.signal != "" {
+				want = []string{c.signal}
+			}
+			if !reflect.DeepEqual(sigs, want) {
+				t.Errorf("signals = %q, want %q", sigs, want)
+			}
+			if c.line != "" && !strings.Contains(buf.String(), c.line+"\n") {
+				t.Errorf("progress missing %q:\n%s", c.line, buf.String())
+			}
+			if f := lastFinished(t, dir, "T1"); f.Note != c.note {
+				t.Errorf("finished note = %q, want %q", f.Note, c.note)
+			}
+		})
+	}
+}
+
 // TestRunBriefDriftWarns checks a brief edited after its dispatch is caught
 // at the next dispatch: the drift line is printed, the run still dispatches,
 // and the newly recorded dispatched hash is the brief's CURRENT content

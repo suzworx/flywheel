@@ -242,6 +242,8 @@ output cap was hit), `part.tokens` `{total, input, output, reasoning, cache: {re
 | capped | rc 0 and the last reason is `length` | rerun fresh with `--variant low` and the file in named parts (the default reasoning variant plans so hard it caps with nothing written — see §2). |
 | provider error | an `error` event in the JSONL, or errors only in the opencode log | see §8. |
 | denied | a bash tool `error` event carrying the rule message: "The user has specified a rule which prevents you from using this specific tool call" | the foreman treats a worker trying to get around it as a signal — stop it and triage; never help it around the block. |
+| blocked | rc 0, reason `stop`, and a `permission-denied` signal (the claude result line's `permission_denials`, named in the finished note) | the harness denied a tool the unit needs: fix the path or the policy, then redispatch; never help it around the block. |
+| no-writes | rc 0, reason `stop`, no permission denial, and nothing written, while awaiting judgement (a floor state from the finished event's empty `wrote`, not a signal; it blocks nothing) | the worker finished without writing a file: read its report; if the unit had to write, resume with a delta or redispatch. |
 | done | rc 0 and the last reason is `stop` | review it (§6). |
 
 `flywheel run` now records the off-course signal itself: one `off-course` event, naming the paths, when a read, grep or glob call names the 5th distinct path outside the worktree (issue #72).

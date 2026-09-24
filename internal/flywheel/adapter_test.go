@@ -382,6 +382,34 @@ func TestClaudeParseResultWithoutUsage(t *testing.T) {
 	}
 }
 
+// TestClaudeParsePermissionDenials checks that a result line's
+// permission_denials become Denials, and that a line without them yields nil
+// (issue #364).
+func TestClaudeParsePermissionDenials(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1","permission_denials":[{"tool_name":"Edit","tool_use_id":"t1","tool_input":{"file_path":"/w/a.go","old_string":"x"}},{"tool_name":"Bash","tool_input":{"command":"git commit"}}]}`)
+	obs, ok := a.Parse(line)
+	if !ok {
+		t.Fatalf("Parse() rejected a valid result line")
+	}
+	want := []string{"Edit /w/a.go", "Bash"}
+	if !reflect.DeepEqual(obs.Denials, want) {
+		t.Errorf("Denials = %q, want %q", obs.Denials, want)
+	}
+	for _, l := range []string{
+		`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1"}`,
+		`{"type":"result","subtype":"success","is_error":false,"permission_denials":"bogus"}`,
+	} {
+		obs, ok := a.Parse([]byte(l))
+		if !ok {
+			t.Fatalf("Parse(%s) rejected a valid result line", l)
+		}
+		if obs.Denials != nil {
+			t.Errorf("Parse(%s) Denials = %q, want nil", l, obs.Denials)
+		}
+	}
+}
+
 // TestClaudeParseStopSequenceWithoutIsError checks that a result line
 // carrying stop_reason stop_sequence with no top-level is_error still reads
 // as a clean stop.
