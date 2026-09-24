@@ -149,12 +149,42 @@ all.
 
 ### `reviewed`
 - Written by: `flywheel review <task> --verdict pass|correct|reject --session S [--model M]`, from
-  an isolated copy of the tree; `flywheel log --kind reviewed` remains valid input.
+  an isolated copy of the tree; by the review agent, `flywheel review <task> --agent --session S
+  [--worker NAME] [--round N]` (issue #389); `flywheel log --kind reviewed` remains valid input.
 - Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`), `session`,
-  `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`).
-- Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`. Unlike
+  `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`). The review agent's
+  event also carries `adapter` (the agent that reviewed; a verdict passed in by hand names none, and
+  the next agent round is one more than the task's `reviewed` events that do), verdict `correct`
+  when any finding is a blocker or major and `pass` otherwise, and the note
+  `<n> finding(s): <b> blocker, <m> major, <k> minor`.
+- Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`, except
+  that a `reviewed` event written by the review agent (persona `reviewer` with an `adapter`) never
+  sets `passed` — its `pass` leaves the status unchanged, because the agent reads and the gauges
+  measure: only validate+inspect (or a hand-recorded review, which re-runs the gates) pass a unit
+  (issue #389). Unlike
   `inspected`, verify's T8 does not restrict who may write a `reviewed` event — `inspected` (§4) is
   the path every current command actually takes.
+
+### `review_finding`
+- Written by: the review agent only, `flywheel review <task> --agent --session S` (issue #389). The
+  agent (the staffing `reviewer` role's adapter and model, else the default worker, or `--worker`)
+  runs in the unit's worktree under the git guard with a read-only tool policy (claude: `Read`,
+  `Grep`, `Glob`, `git diff/log/show`, `go vet/test`; `Edit`, `Write` and `NotebookEdit` refused),
+  on a prompt holding its instructions, the unit's effective brief, the attempt's gate readings and
+  the diff from the dispatch base (capped at 200 KB), kept at `.flywheel/reviews/<task>.<round>.prompt.md`
+  beside its stream `.flywheel/reviews/<task>.<round>.jsonl`. The findings contract is checked,
+  not trusted: an answer whose file does not exist (and is not a changed path), whose `line` is not
+  0 or a real line, with an empty claim or scenario, or with more than 3 nits is refused, and the
+  agent runs once more, fresh, into `<task>.<round>b.jsonl`; a second refusal records nothing and
+  `flywheel review --agent` exits 1 naming both transcripts.
+- Carries: `task`, `attempt` (the unit's latest), `session` (the reviewer, never a worker session
+  of the task: refused T4), `model`, `tree`, `severity` (`blocker`, `major`, `minor` or `nit`),
+  `category`, `title` (the claim), `observed` (the failure scenario), `ask` (the fix hint), `path`
+  (the file), `line_no` (the file line; `line` is already the product line), and `finding`, a stable
+  id `<task>-r<round>-<n>`. `Validate` requires the task, session, a severity in the set, the title
+  and the path.
+- Effect: no status change. Every finding and the round's closing `reviewed` event go out in one
+  `AppendEvents` write; an answer without a parsable `{"findings": [...]}` block records nothing.
 
 ### `blocked`
 - Written by: the controller (`flywheel controller`), when a task's `needs:` target is scrapped.
@@ -529,8 +559,11 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   `report`, `reviewed`, `blocked`, `lost`, `landed`, `amended`, `staffed`, `goal`) carries no
   persona restriction in `ruleT8`. In practice most of them are written only by a specific CLI
   command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report` only by `flywheel
-  run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`), which is
-  what keeps them honest — not a persona field.
+  run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`;
+  `review_finding` only by `flywheel review --agent`), which is what keeps them honest — not a
+  persona field. The staffing `reviewer` role (`staffing.reviewer.adapter|model|session`) names who
+  runs the review agent; `Validate` refuses a reviewer session that also holds the lead or
+  inspector role, and the agent itself refuses (T4) a session that is a worker session of the task.
 
 The one place "a worker never inspects its own work" is a real, live check rather than a skill
 convention is T4: `InspectTask` and `ruleT4` both refuse an `inspected` event whose `--session` was
