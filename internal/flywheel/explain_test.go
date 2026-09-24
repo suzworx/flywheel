@@ -164,6 +164,11 @@ func TestExplainLineFormats(t *testing.T) {
 			e:    Event{Kind: "landed", Commit: "abc123def", Tree: "fedcba9876543210", Note: "merge PR #1"},
 			want: []string{"landed abc123def", "tree fedcba98", "— merge PR #1"},
 		},
+		{
+			name: "review_finding",
+			e:    Event{Kind: "review_finding", Severity: "major", Finding: "T1-r2-1", Path: "a.go", LineNo: 7, Title: "error swallowed"},
+			want: []string{"major finding T1-r2-1 at a.go:7: error swallowed"},
+		},
 	}
 
 	for _, tt := range tests {

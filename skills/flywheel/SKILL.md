@@ -206,6 +206,8 @@ build does), or keep one verify worktree: reset it to main's HEAD, clean it, and
 unit's owned files. Then run `flywheel validate <task> --workdir <tree>` to measure gates on a
 stable tree, followed by `flywheel inspect <task> --verdict pass --workdir <tree>` using the same
 tree (so T3 finds a passing supervisor reading on that hash), and commit only the unit's files.
+A flywheel command run inside a unit's `flywheel run --worktree` worktree
+(`.flywheel/worktrees/<task>`) uses the main checkout's ledger, not the worktree's stale copy.
 
 ### 5. Correct or land
 - Needs changes → send a **correction** to the worker by resuming the **emitted session id** with a
