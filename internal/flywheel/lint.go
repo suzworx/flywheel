@@ -102,6 +102,18 @@ func LintBrief(dir, path string) (LintResult, error) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("live-gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
 		}
 	}
+	// gate[quiet]: and live-gate[quiet]: are the known markers (issue #411);
+	// any other marker parses as a plain gate, so it is flagged, not refused.
+	for i, line := range strings.Split(content, "\n") {
+		if i >= 40 {
+			break
+		}
+		if key, _, ok := cutKey(strings.TrimSuffix(line, "\r")); ok {
+			if base, marker, found := gateMarker(key); found && marker != "quiet" {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%s has unknown marker [%s]; the known marker is [quiet], and the line runs as a plain %s", key, marker, base))
+			}
+		}
+	}
 	if !header.NeedsDeclared {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}

@@ -277,3 +277,15 @@ func TestLintNegated(t *testing.T) {
 		})
 	}
 }
+
+// TestLintBriefQuietGateMarkers checks gate[quiet]: and live-gate[quiet]:
+// pass cleanly and count as gates, while an unknown marker is a warning, not
+// a problem (issue #411).
+func TestLintBriefQuietGateMarkers(t *testing.T) {
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\ngate[quiet]: ./hil\nlive-gate[quiet]: ./probe\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+	res = lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\ngate[loud]: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, []string{"gate[loud] has unknown marker [loud]; the known marker is [quiet], and the line runs as a plain gate"})
+}

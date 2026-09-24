@@ -147,6 +147,18 @@ type Limits struct {
 	// run file untouched, or no run file since dispatch) before it is marked
 	// lost, a Go duration; "" means 24h (issue #402).
 	LostAfter string `json:"lost_after,omitempty"`
+	// QuietWait is how long a quiet gate waits for the host to go idle (and
+	// an ordinary gate waits for a running quiet gate to end), a Go
+	// duration; "" means 30m (issue #411).
+	QuietWait string `json:"quiet_wait,omitempty"`
+}
+
+// QuietWaitDuration parses QuietWait ("" means 30 minutes).
+func (l Limits) QuietWaitDuration() (time.Duration, error) {
+	if l.QuietWait == "" {
+		return 30 * time.Minute, nil
+	}
+	return time.ParseDuration(l.QuietWait)
 }
 
 // LostAfterDuration parses LostAfter ("" means 24 hours).
@@ -438,6 +450,11 @@ func (c Config) Validate() error {
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.lost_after %q must be > 0", c.Limits.LostAfter))
 	}
+	if d, err := c.Limits.QuietWaitDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q: %v", c.Limits.QuietWait, err))
+	} else if d <= 0 {
+		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q must be > 0", c.Limits.QuietWait))
+	}
 	if c.Limits.Budget != nil && c.Limits.Budget.WaveTokens < 0 {
 		problems = append(problems, fmt.Sprintf("limits.budget.wave_tokens %d must be >= 0", c.Limits.Budget.WaveTokens))
 	}
@@ -651,6 +668,11 @@ func (c Config) Get(key string) (string, error) {
 			return "24h", nil
 		}
 		return c.Limits.LostAfter, nil
+	case "limits.quiet_wait":
+		if c.Limits.QuietWait == "" {
+			return "30m", nil
+		}
+		return c.Limits.QuietWait, nil
 	case "log.shards":
 		if c.Log != nil && c.Log.Shards {
 			return "true", nil
@@ -706,7 +728,7 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
+		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -729,8 +751,8 @@ func (c Config) validKeys() []string {
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are model, variant, adapter,
 // max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
-// limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait and
-// limits.lost_after.
+// limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
+// limits.lost_after and limits.quiet_wait.
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
@@ -816,6 +838,9 @@ func (c *Config) Set(key, value string) error {
 	case "limits.lost_after":
 		c.Limits.LostAfter = value
 		return nil
+	case "limits.quiet_wait":
+		c.Limits.QuietWait = value
+		return nil
 	case "fallbacks", "fallbacks.all":
 		return fmt.Errorf("%s: not settable; edit .flywheel/config.json", key)
 	case "log.shards":
@@ -860,7 +885,7 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
-		"limits.rate_limit_max_wait", "limits.rate_limit_retries",
+		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
 		"max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",

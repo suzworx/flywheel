@@ -2924,3 +2924,104 @@ func TestOwnsNegated(t *testing.T) {
 		t.Errorf("covers of identical owns with a negation = false, want true")
 	}
 }
+
+// initQuietTask is initTask with a brief whose one gate is `gate[quiet]:`
+// (issue #411), plus a fake clock that advances on every quiet poll: onPoll
+// runs after each poll with its 1-based count. Another task's lease on this
+// host is written live for a day.
+func initQuietTask(t *testing.T, onPoll func(dir string, n int)) string {
+	t.Helper()
+	dir, err := initTask(t, nil)
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	brief := "owns: a.go\nneeds: none\ngate[quiet]: exit 0\n\n# TASK: quiet\n"
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "quiet brief"})
+	clock := time.Now()
+	oldNow, oldSleep := now, quietSleep
+	t.Cleanup(func() { now, quietSleep = oldNow, oldSleep })
+	now = func() time.Time { return clock }
+	polls := 0
+	quietSleep = func(d time.Duration) {
+		polls++
+		clock = clock.Add(d)
+		onPoll(dir, polls)
+	}
+	host, _ := os.Hostname()
+	exp := clock.Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	for _, task := range []string{"T1", "T2"} {
+		if err := WriteLease(dir, Lease{Task: task, Attempt: "r1", PID: os.Getpid(), Host: host, ExpiresAt: exp}); err != nil {
+			t.Fatalf("WriteLease(%s) error = %v", task, err)
+		}
+	}
+	return dir
+}
+
+// TestQuietGateWaitsForIdle checks a quiet gate waits while another task has
+// a live lease on this host — the validating task's own lease is ignored —
+// and runs once that lease goes, after two polls (issue #411).
+func TestQuietGateWaitsForIdle(t *testing.T) {
+	polls := 0
+	dir := initQuietTask(t, func(dir string, n int) {
+		polls = n
+		if n == 2 {
+			if err := RemoveLease(dir, "T2", "r1"); err != nil {
+				t.Errorf("RemoveLease() error = %v", err)
+			}
+		}
+	})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if polls != 2 {
+		t.Errorf("polls = %d, want 2 (the gate waits until T2's lease goes)", polls)
+	}
+	if len(res.Gates) != 1 || res.Gates[0].RC != 0 || res.Gates[0].Inconclusive || !res.GatesOK {
+		t.Errorf("gates = %+v, GatesOK = %v; want one passing gate", res.Gates, res.GatesOK)
+	}
+	if _, err := os.Stat(quietLockPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("quiet.lock still present after the gate (stat err %v)", err)
+	}
+}
+
+// TestQuietGateInconclusive checks a quiet gate whose host never goes idle
+// within limits.quiet_wait is recorded inconclusive with a "host busy" note,
+// on the GateOut and the validated event, and never runs (issue #411).
+func TestQuietGateInconclusive(t *testing.T) {
+	dir := initQuietTask(t, func(string, int) {})
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	want := "host busy: T2"
+	if len(res.Gates) != 1 || !res.Gates[0].Inconclusive || res.Gates[0].Note != want {
+		t.Fatalf("gates = %+v, want one inconclusive gate noting %q", res.Gates, want)
+	}
+	if res.GatesOK {
+		t.Error("GatesOK = true, want false: an unmeasured reading is not a pass")
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" {
+			found = true
+			if e.Reason != "inconclusive" || e.Note != want || e.RC != nil {
+				t.Errorf("event reason/note/rc = %q/%q/%v, want inconclusive/%q/nil", e.Reason, e.Note, e.RC, want)
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded")
+	}
+	if _, err := os.Stat(quietLockPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("quiet.lock still present after the timeout (stat err %v)", err)
+	}
+}

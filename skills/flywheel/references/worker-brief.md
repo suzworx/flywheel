@@ -56,6 +56,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
   dispatch or an ordinary `flywheel validate <task>`. A `pass` verdict is refused (T3) until a
   passing live reading exists on the same tree.
+- **gate[quiet]:** / **live-gate[quiet]:** — the same one-command line for a gate that host
+  contention distorts (device timing, hardware in the loop). It waits, up to
+  `limits.quiet_wait` (default `30m`), until no other task's worker runs on this host, and
+  `flywheel run` refuses new dispatches while it runs; a host that never goes idle records the
+  reading `inconclusive` (`host busy: <tasks>`), never a failure. `flywheel lint` warns on any
+  other `[marker]`.
 - **No long-running or silent commands** — a brief never instructs a worker to run a gate that
   builds an app before crawling, or any command that emits nothing for minutes: the stall
   detector then reads the worker as hung. One unit died twice with `rc=-1 reason=stalled` at 4

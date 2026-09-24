@@ -769,3 +769,47 @@ func TestLostAfterConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestQuietWaitConfig covers limits.quiet_wait (issue #411): the 30m default,
+// Get/Set, the key lists, and validation refusing an unparseable or
+// non-positive duration.
+func TestQuietWaitConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if v, err := cfg.Get("limits.quiet_wait"); err != nil || v != "30m" {
+		t.Errorf("default Get(limits.quiet_wait) = %q, %v; want 30m", v, err)
+	}
+	if d, err := cfg.Limits.QuietWaitDuration(); err != nil || d != 30*time.Minute {
+		t.Errorf("default QuietWaitDuration() = %v, %v; want 30m", d, err)
+	}
+	if err := cfg.Set("limits.quiet_wait", "5m"); err != nil {
+		t.Fatalf("Set(limits.quiet_wait, 5m) error = %v", err)
+	}
+	if v, _ := cfg.Get("limits.quiet_wait"); v != "5m" {
+		t.Errorf("Get(limits.quiet_wait) = %q, want 5m", v)
+	}
+	if d, _ := cfg.Limits.QuietWaitDuration(); d != 5*time.Minute {
+		t.Errorf("QuietWaitDuration() = %v, want 5m", d)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := cfg.Set("bogus", "x"); err == nil || !strings.Contains(err.Error(), "limits.quiet_wait") {
+		t.Errorf("Set(bogus) error = %v, want limits.quiet_wait among settable keys", err)
+	}
+	if _, err := cfg.Get("bogus"); err == nil || !strings.Contains(err.Error(), "limits.quiet_wait") {
+		t.Errorf("Get(bogus) error = %v, want limits.quiet_wait among valid keys", err)
+	}
+	for _, tc := range []struct{ value, want string }{
+		{"soon", "limits.quiet_wait"},
+		{"0s", "must be > 0"},
+		{"-1m", "must be > 0"},
+	} {
+		c := DefaultConfig()
+		if err := c.Set("limits.quiet_wait", tc.value); err != nil {
+			t.Fatalf("Set(limits.quiet_wait, %s) error = %v", tc.value, err)
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate() with quiet_wait %q = %v, want error containing %q", tc.value, err, tc.want)
+		}
+	}
+}

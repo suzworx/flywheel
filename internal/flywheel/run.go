@@ -312,6 +312,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Quiet gate (issue #411): a quiet gate holds the host to itself, so no
+	// new worker starts on it while quiet.lock is held by a live process.
+	if holder, held := quietLockHeld(dir); held {
+		return Result{}, &RuleRefusal{
+			Rule: "quiet",
+			Fix:  fmt.Sprintf("a quiet gate (%s gate %s) is running on this host; dispatch after it ends", holder.Task, holder.Gate),
+		}
+	}
+
 	// Limits (issue #46): refuse before anything is recorded when this host
 	// already runs limits.per_host attempts, or when the ledger's recorded
 	// spend has reached limits.budget.wave_cost_usd (the ledger is the wave).

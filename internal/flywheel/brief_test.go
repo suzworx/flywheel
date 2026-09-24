@@ -243,3 +243,34 @@ func TestParseBriefHeaderBytesMatchesFileParse(t *testing.T) {
 		t.Errorf("ParseBriefHeaderBytes = %+v, want the file parse %+v", fromBytes, fromFile)
 	}
 }
+
+// TestParseQuietGate checks `gate[quiet]:` and `live-gate[quiet]:` lines keep
+// their commands in Gates/LiveGates and record their 1-based indices as quiet
+// (issue #411); an unknown marker is still an ordinary gate.
+func TestParseQuietGate(t *testing.T) {
+	h, err := ParseBriefHeaderBytes([]byte("owns: a.go\n" +
+		"gate: go build ./...\n" +
+		"gate[quiet]: ./hil-timing\n" +
+		"gate[fast]: go vet ./...\n" +
+		"live-gate[quiet]: ./device-probe\n" +
+		"live-gate: curl localhost\n" +
+		"\n# TASK\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"go build ./...", "./hil-timing", "go vet ./..."}; !reflect.DeepEqual(h.Gates, want) {
+		t.Errorf("Gates = %q, want %q", h.Gates, want)
+	}
+	if want := []string{"./device-probe", "curl localhost"}; !reflect.DeepEqual(h.LiveGates, want) {
+		t.Errorf("LiveGates = %q, want %q", h.LiveGates, want)
+	}
+	if want := []int{2}; !reflect.DeepEqual(h.QuietGates, want) {
+		t.Errorf("QuietGates = %v, want %v", h.QuietGates, want)
+	}
+	if want := []int{1}; !reflect.DeepEqual(h.QuietLiveGates, want) {
+		t.Errorf("QuietLiveGates = %v, want %v", h.QuietLiveGates, want)
+	}
+	if !isQuiet(h.QuietGates, 2) || isQuiet(h.QuietGates, 1) {
+		t.Errorf("isQuiet(QuietGates) wrong for %v", h.QuietGates)
+	}
+}
