@@ -318,3 +318,60 @@ func TestStaffingSetLeavesNothingBehindOnError(t *testing.T) {
 		t.Errorf("Staffing = %+v after a rejected Set, want nil", cfg.Staffing)
 	}
 }
+
+// TestReviewerRole checks the reviewer role (issue #389): its keys are
+// settable and readable, a bad adapter is refused, it must not share a
+// session with the lead or the inspector, and it shows in the summary.
+func TestReviewerRole(t *testing.T) {
+	cfg := Config{
+		Version: 1,
+		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
+	}
+	for key, val := range map[string]string{
+		"staffing.reviewer.adapter": "claude",
+		"staffing.reviewer.model":   "m-rev",
+		"staffing.reviewer.session": "rev-1",
+	} {
+		if err := cfg.Set(key, val); err != nil {
+			t.Fatalf("Set(%s): %v", key, err)
+		}
+		got, err := cfg.Get(key)
+		if err != nil || got != val {
+			t.Fatalf("Get(%s) = %q, %v; want %q", key, got, err, val)
+		}
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("reviewer alone should be valid: %v", err)
+	}
+	if line := StaffingLine("reviewer", cfg.Staffing.Reviewer); line != "reviewer: claude m-rev (session rev-1)" {
+		t.Errorf("StaffingLine = %q", line)
+	}
+	found := false
+	for _, k := range cfg.validKeys() {
+		if k == "staffing.reviewer.session" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("validKeys lacks staffing.reviewer.session")
+	}
+
+	for _, role := range []string{"lead", "inspector"} {
+		c := cfg
+		c.Staffing = &StaffingConfig{Reviewer: &RoleConfig{Session: "rev-1"}}
+		if role == "lead" {
+			c.Staffing.Lead = &RoleConfig{Session: "rev-1"}
+		} else {
+			c.Staffing.Inspector = &RoleConfig{Session: "rev-1"}
+		}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "staffing.reviewer") || !strings.Contains(err.Error(), role) {
+			t.Errorf("reviewer sharing the %s session: err = %v, want a staffing.reviewer refusal", role, err)
+		}
+	}
+
+	cfg.Staffing.Reviewer.Adapter = "nope"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "staffing.reviewer") {
+		t.Errorf("bad reviewer adapter: err = %v", err)
+	}
+}
