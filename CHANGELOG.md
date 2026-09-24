@@ -1,5 +1,93 @@
 # Changelog
 
+## [0.18.0](https://github.com/suzworx/flywheel/compare/v0.17.0...v0.18.0) (2026-09-24)
+
+
+### Features
+
+* a circuit breaker stops dispatching to a model that keeps failing on provider errors ([#304](https://github.com/suzworx/flywheel/issues/304)) ([7ed0312](https://github.com/suzworx/flywheel/commit/7ed03124f902a9349a28b60f7f1c7d7d67667330))
+* a codex adapter dispatches OpenAI Codex CLI workers through codex exec --json ([#312](https://github.com/suzworx/flywheel/issues/312)) ([3ff377f](https://github.com/suzworx/flywheel/commit/3ff377f81834e521ca85d698914bc7e23ac8a481))
+* a git guard on the worker's PATH refuses history-writing git commands, whatever the adapter ([#325](https://github.com/suzworx/flywheel/issues/325)) ([413366a](https://github.com/suzworx/flywheel/commit/413366ad1c7038be461f4ef9417aebb32504471b))
+* a passing flywheel doctor --record probe closes a model's breaker ([#334](https://github.com/suzworx/flywheel/issues/334)) ([8665c57](https://github.com/suzworx/flywheel/commit/8665c571c32a20da0daf4202c2f97333dd412a90))
+* a standard-library terminal layer for the interactive factory, and live factory on Windows ([#341](https://github.com/suzworx/flywheel/issues/341)) ([d4239b9](https://github.com/suzworx/flywheel/commit/d4239b9b4c3dfd0a8297f7577ab5f3efc0180200))
+* a tamper-evident event log — a hash chain checked by flywheel verify --log ([#299](https://github.com/suzworx/flywheel/issues/299)) ([7af5f48](https://github.com/suzworx/flywheel/commit/7af5f48c53d484a42fcf59631e2952e8f0a99986))
+* a token budget and a per-model dispatch rate limit ([#329](https://github.com/suzworx/flywheel/issues/329)) ([ad7105b](https://github.com/suzworx/flywheel/commit/ad7105b93ab3c16c8bde7658a30932434af7b8c2))
+* an approved fallback takes over while the default model's breaker is open ([#321](https://github.com/suzworx/flywheel/issues/321)) ([7e4c698](https://github.com/suzworx/flywheel/commit/7e4c698b211f406114122dcbb89de8272335c86c))
+* claim-edit --worktree attributes a sibling worktree's edit to another session ([#377](https://github.com/suzworx/flywheel/issues/377)) ([37dfc79](https://github.com/suzworx/flywheel/commit/37dfc79715e04391f2eafba50255876bc52556d3)), closes [#362](https://github.com/suzworx/flywheel/issues/362)
+* flywheel attest accepts a gate reading measured outside flywheel ([#378](https://github.com/suzworx/flywheel/issues/378)) ([b6bd3a6](https://github.com/suzworx/flywheel/commit/b6bd3a6c5ee64f5394de9756973759571dc17865)), closes [#367](https://github.com/suzworx/flywheel/issues/367)
+* flywheel audit --sample and --first-article select which units to audit ([#309](https://github.com/suzworx/flywheel/issues/309)) ([3915fbd](https://github.com/suzworx/flywheel/commit/3915fbd67224910b2ce71f09bac2b57a09a6d4c8))
+* flywheel audit --wave audits every passed, unaudited unit in the ledger ([#323](https://github.com/suzworx/flywheel/issues/323)) ([4e9650a](https://github.com/suzworx/flywheel/commit/4e9650aa885ee19ef6bc6a345e1d8b48d1314354))
+* flywheel audit re-measures a unit independently and records audited ([#301](https://github.com/suzworx/flywheel/issues/301)) ([ae96bd9](https://github.com/suzworx/flywheel/commit/ae96bd9948b8117866afb2865eb7ec15fdde9684))
+* flywheel context --role gives each role only its own open work ([#302](https://github.com/suzworx/flywheel/issues/302)) ([0564785](https://github.com/suzworx/flywheel/commit/0564785cf24b14262e4f10f47cfd83572f36d6ee))
+* flywheel context gives a joining agent the factory's state in one read ([#297](https://github.com/suzworx/flywheel/issues/297)) ([6b9e2c3](https://github.com/suzworx/flywheel/commit/6b9e2c3bf613b8f6d59349e51503d57deb646a9a))
+* flywheel doctor --worker checks a local model's endpoint directly ([#330](https://github.com/suzworx/flywheel/issues/330)) ([4551f8f](https://github.com/suzworx/flywheel/commit/4551f8fb4131a861e0094732e2cc0506c20566e6))
+* flywheel explain tells one unit's whole story from the ledger ([#283](https://github.com/suzworx/flywheel/issues/283)) ([34c90c3](https://github.com/suzworx/flywheel/commit/34c90c33719196d780e7da81c50268d7c5efcc59))
+* flywheel factory is interactive in a terminal — k9s-style views, filter, drill-down, a lines view ([#346](https://github.com/suzworx/flywheel/issues/346)) ([c1d7781](https://github.com/suzworx/flywheel/commit/c1d7781e329960470f8d1bbc6835febbac70282f))
+* flywheel gate exits 6 while work is left unjudged ([#291](https://github.com/suzworx/flywheel/issues/291)) ([38e8579](https://github.com/suzworx/flywheel/commit/38e8579bdec58ef6c3166006d2f726c279ee4487))
+* flywheel init --ci writes a flywheel-audit job that verifies the records on every PR ([#315](https://github.com/suzworx/flywheel/issues/315)) ([db13d3b](https://github.com/suzworx/flywheel/commit/db13d3be0532e4560fc200387869ff608d3af3fa))
+* flywheel init --git-hooks enforces a Flywheel-Task trailer and verifies units on push ([#308](https://github.com/suzworx/flywheel/issues/308)) ([89683f5](https://github.com/suzworx/flywheel/commit/89683f51829c72aab639ed3e10fecc547ac0ef1e))
+* flywheel init --local points OpenCode workers at a local model, offline ([#327](https://github.com/suzworx/flywheel/issues/327)) ([ac498b1](https://github.com/suzworx/flywheel/commit/ac498b1d87e6eda9c3c3e23634dd917b1c082d51))
+* flywheel init ends with a factory summary ([#328](https://github.com/suzworx/flywheel/issues/328)) ([0764bfa](https://github.com/suzworx/flywheel/commit/0764bfa15276cf2e3484b72746d8d53b1017c809))
+* flywheel land --merge lands a unit from its worktree through a local queue ([#345](https://github.com/suzworx/flywheel/issues/345)) ([d041b78](https://github.com/suzworx/flywheel/commit/d041b7894e42e0a51e20fb7bba0ab60c4e1ae642))
+* flywheel log --shard switches a repository to the sharded event log ([#47](https://github.com/suzworx/flywheel/issues/47), unit 4) ([#351](https://github.com/suzworx/flywheel/issues/351)) ([6431d4c](https://github.com/suzworx/flywheel/commit/6431d4cc111a67e16a3830d5671664d5f1152bcc))
+* flywheel next holds dispatches while the budget is spent or the model's breaker is open ([#311](https://github.com/suzworx/flywheel/issues/311)) ([ef8491e](https://github.com/suzworx/flywheel/commit/ef8491e5418f6868890462f5dde79bbd48db89c9))
+* flywheel run --increment N dispatches one increment of a brief as a fresh session ([#295](https://github.com/suzworx/flywheel/issues/295)) ([b7b4353](https://github.com/suzworx/flywheel/commit/b7b4353d3ba9280f53a2712266f9c7f0dd84b00a))
+* flywheel run --worktree runs each task in its own git worktree on branch fw/&lt;task&gt; ([#333](https://github.com/suzworx/flywheel/issues/333)) ([bd25089](https://github.com/suzworx/flywheel/commit/bd25089958447b5818d2029f6bc3fd8f9816a758))
+* flywheel run flags a worker that wrote git history, whatever its adapter (git-write) ([#318](https://github.com/suzworx/flywheel/issues/318)) ([94216f3](https://github.com/suzworx/flywheel/commit/94216f30096205ed53edc78628482a13f05fda62))
+* flywheel supervise measures every finished unit nobody has measured yet ([#298](https://github.com/suzworx/flywheel/issues/298)) ([48caa6e](https://github.com/suzworx/flywheel/commit/48caa6e1223188cddd8494f81a40a837f6e250ca))
+* flywheel watch streams the factory's events as readable lines ([#305](https://github.com/suzworx/flywheel/issues/305)) ([51e21be](https://github.com/suzworx/flywheel/commit/51e21be40c8fb6c80e632200d35bf2875d4be66d))
+* init --hooks installs a Claude Code Stop hook that runs flywheel gate ([#296](https://github.com/suzworx/flywheel/issues/296)) ([1e1fb25](https://github.com/suzworx/flywheel/commit/1e1fb2554c0c0efac8cee3614f48b2c154350de4))
+* land a hand-verified unit on a recorded exception ([#277](https://github.com/suzworx/flywheel/issues/277)) ([248c6aa](https://github.com/suzworx/flywheel/commit/248c6aafeefda22d17c62ad36bfbdb99ca1406e6))
+* land refuses while the task has untriaged signals, unless --allow-untriaged records why ([#287](https://github.com/suzworx/flywheel/issues/287)) ([24611e1](https://github.com/suzworx/flywheel/commit/24611e127e53d7ef081374cc71409a41741249f7))
+* make go install work by declaring the real module path ([#273](https://github.com/suzworx/flywheel/issues/273)) ([863ab73](https://github.com/suzworx/flywheel/commit/863ab7394a98511eee5c2b62cf840f382e686e3d))
+* measure spend against a frontier-only baseline in flywheel stats ([#292](https://github.com/suzworx/flywheel/issues/292)) ([98401f4](https://github.com/suzworx/flywheel/commit/98401f4f9874ecefc1f30798791d994395152e00))
+* product lines — config lines, a brief's line:, and run staffing a unit from its line ([#340](https://github.com/suzworx/flywheel/issues/340)) ([59e00b0](https://github.com/suzworx/flywheel/commit/59e00b0d90b3f85ce406161a0e306874264bbd08))
+* read a sharded event log — per-task shards merged in a deterministic order ([#47](https://github.com/suzworx/flywheel/issues/47), unit 1) ([#347](https://github.com/suzworx/flywheel/issues/347)) ([b7a9c4e](https://github.com/suzworx/flywheel/commit/b7a9c4eac649f052274e38c9a9a3a37552504bfe))
+* record the commands a worker ran, and name the gates it never ran ([#379](https://github.com/suzworx/flywheel/issues/379)) ([d260286](https://github.com/suzworx/flywheel/commit/d2602866b00e135f540678748cac61843161e481)), closes [#365](https://github.com/suzworx/flywheel/issues/365)
+* seal the legacy log on migration and verify every shard's chain ([#47](https://github.com/suzworx/flywheel/issues/47), unit 2b) ([#349](https://github.com/suzworx/flywheel/issues/349)) ([cb9dda1](https://github.com/suzworx/flywheel/commit/cb9dda1f5bdd4812fef88a08d9d68c50bcce5607))
+* stations — where each unit stands on its production line ([#358](https://github.com/suzworx/flywheel/issues/358)) ([fdd9651](https://github.com/suzworx/flywheel/commit/fdd965195fae3090bb85a6ab692a448529a78646))
+* supervise re-measures a passed unit whose owned files changed after its reading ([#303](https://github.com/suzworx/flywheel/issues/303)) ([d3a1e60](https://github.com/suzworx/flywheel/commit/d3a1e6057bc9632f479a9ba1450f1bb698f591e6))
+* T7 — flywheel land refuses a unit until its worker line's first article is audited conforming ([#317](https://github.com/suzworx/flywheel/issues/317)) ([f92c6ea](https://github.com/suzworx/flywheel/commit/f92c6eaa7e8823f4c51852b5208dbd54c7ca1701))
+* tail and watch a sharded log incrementally, with a process read cache ([#47](https://github.com/suzworx/flywheel/issues/47), unit 3) ([#350](https://github.com/suzworx/flywheel/issues/350)) ([199b364](https://github.com/suzworx/flywheel/commit/199b364fcf82c9f81ac042f68af47a9b54d8be98))
+* the factory floor by product line — each unit's line, a lines section and a LINE column ([#69](https://github.com/suzworx/flywheel/issues/69)) ([#342](https://github.com/suzworx/flywheel/issues/342)) ([252d1d2](https://github.com/suzworx/flywheel/commit/252d1d2297a396a657ec9fbe9939735f0773ac39))
+* the factory's staffing in config — lead, inspector, auditor, with the independence rule checked ([#354](https://github.com/suzworx/flywheel/issues/354)) ([a4fb86b](https://github.com/suzworx/flywheel/commit/a4fb86b8d2f1ab7121cb5cadff11603c7a900bf1))
+* the handoff carries untriaged signals forward to the next head ([#294](https://github.com/suzworx/flywheel/issues/294)) ([7398c7f](https://github.com/suzworx/flywheel/commit/7398c7f58b0e63042e348be92bd10e1d5434b265))
+* the k9s-style factory model — views, cursor, command bar, filter, drill-down ([#344](https://github.com/suzworx/flywheel/issues/344)) ([4f49fb3](https://github.com/suzworx/flywheel/commit/4f49fb36ad83b45a12f9bdee6fe8c5b3a84ee91e))
+* the live floor shows the configured roles, and a floor that disagrees raises an andon ([#357](https://github.com/suzworx/flywheel/issues/357)) ([2cfb03b](https://github.com/suzworx/flywheel/commit/2cfb03b7efe393fd752540e5632c98efdd8fb14a))
+* verify a pass measured in an external workdir, and report inconclusive ([#270](https://github.com/suzworx/flywheel/issues/270)) ([e7d80d6](https://github.com/suzworx/flywheel/commit/e7d80d68c3bb4dae05544d28fbc3e4b712ee9873))
+* write a sharded event log — routing, stamping and a chain per shard ([#47](https://github.com/suzworx/flywheel/issues/47), unit 2a) ([#348](https://github.com/suzworx/flywheel/issues/348)) ([0276f5a](https://github.com/suzworx/flywheel/commit/0276f5a4aca363c04b5fb68a94a9827506a33093))
+
+
+### Bug Fixes
+
+* a sibling worktree's edits belong to any dispatched unit there that has not landed ([#282](https://github.com/suzworx/flywheel/issues/282)) ([64b776d](https://github.com/suzworx/flywheel/commit/64b776de6ce84af69399076fe8206d41374639a2))
+* a sibling worktree's own lead claims excuse its changed paths in the owns check ([#343](https://github.com/suzworx/flywheel/issues/343)) ([ab9d69e](https://github.com/suzworx/flywheel/commit/ab9d69ef799aefdbeadf818d77844cb096352887))
+* a worker that stops without writing, or on a permission denial, is not done ([#375](https://github.com/suzworx/flywheel/issues/375)) ([73c15c9](https://github.com/suzworx/flywheel/commit/73c15c9f91b7c473bb762235d20ae50a4ce963da)), closes [#364](https://github.com/suzworx/flywheel/issues/364)
+* an inconclusive gate names the in-flight unit that owns the blocking files ([#376](https://github.com/suzworx/flywheel/issues/376)) ([2dd2bab](https://github.com/suzworx/flywheel/commit/2dd2bab100add13dc8b58e527a517f037c23f82f))
+* an owns amendment after a fresh dispatch takes effect, and a narrowing is refused ([#285](https://github.com/suzworx/flywheel/issues/285)) ([02ced2e](https://github.com/suzworx/flywheel/commit/02ced2e3db77bbc367a5159de44925587c890c76))
+* claude workers get the PLAN rule as a system prompt ([#371](https://github.com/suzworx/flywheel/issues/371)) ([c5e5c13](https://github.com/suzworx/flywheel/commit/c5e5c133123f3bd0eb5895c0ca6ec5844ae7fd04))
+* confine the claude worker to its worktree, and flag a write outside it ([#359](https://github.com/suzworx/flywheel/issues/359)) ([#370](https://github.com/suzworx/flywheel/issues/370)) ([210afbe](https://github.com/suzworx/flywheel/commit/210afbebe97c855a3996a30368f61fa8a661c541))
+* detect a worker's plan when it is markdown-formatted or preceded by prose ([#288](https://github.com/suzworx/flywheel/issues/288)) ([cd0d8f3](https://github.com/suzworx/flywheel/commit/cd0d8f3bbeff26265f65425b4976a963371da599))
+* enforce limits.per_host and the wave budget, which were parsed and never read ([#293](https://github.com/suzworx/flywheel/issues/293)) ([db181f3](https://github.com/suzworx/flywheel/commit/db181f3092fdd328e903889b088889905fb64bff))
+* feedback reports the real untriaged signals ([#279](https://github.com/suzworx/flywheel/issues/279)) ([adba847](https://github.com/suzworx/flywheel/commit/adba8474ff0cbd202d2d877cb11e969aea247f1e))
+* flywheel next waits a task whose owns overlap one in flight or one it already chose ([#326](https://github.com/suzworx/flywheel/issues/326)) ([a5e56a5](https://github.com/suzworx/flywheel/commit/a5e56a5b372d1cda207fb9a95ffbdcc57166be9a))
+* git-write needs a worker write the guard saw, not just a moved HEAD ([#361](https://github.com/suzworx/flywheel/issues/361)) ([#373](https://github.com/suzworx/flywheel/issues/373)) ([7efd0eb](https://github.com/suzworx/flywheel/commit/7efd0eb9cfe4d3d79943618d8b951926ad0f0f1b))
+* needs: none means no dependency, and needs: takes a comma list ([#310](https://github.com/suzworx/flywheel/issues/310)) ([e8c100c](https://github.com/suzworx/flywheel/commit/e8c100c3688bbdbe93f96e4274f03201a15ed89d))
+* planned and amended keep the planner's identity and goal link; review records the reviewer's model ([#280](https://github.com/suzworx/flywheel/issues/280)) ([3e87c47](https://github.com/suzworx/flywheel/commit/3e87c47db0ce3370fec3eec98e7c650e5bd48992))
+* record the claude adapter's token usage from the result line ([#290](https://github.com/suzworx/flywheel/issues/290)) ([35ebaa9](https://github.com/suzworx/flywheel/commit/35ebaa9f4a028197564bff2312be12cfc8b536ee))
+* refuse an amendment that cannot change what is measured ([#274](https://github.com/suzworx/flywheel/issues/274)) ([dbaa1bd](https://github.com/suzworx/flywheel/commit/dbaa1bdca16866f8a09a0aefd5f70d2c09f8482c))
+* supervise re-measures a failed unit once its owned files change ([#320](https://github.com/suzworx/flywheel/issues/320)) ([a5caab3](https://github.com/suzworx/flywheel/commit/a5caab30663dea4a4b481ee6ac0d6c171fc7ae3b))
+* the owns check counts a unit's committed changes since its dispatch, not only uncommitted ones ([#338](https://github.com/suzworx/flywheel/issues/338)) ([8f326e5](https://github.com/suzworx/flywheel/commit/8f326e5ea60c1fb45d5a600c7b24e296e0abc15d))
+* validate names owned files git will never commit ([#363](https://github.com/suzworx/flywheel/issues/363)) ([#374](https://github.com/suzworx/flywheel/issues/374)) ([b9bd964](https://github.com/suzworx/flywheel/commit/b9bd964130ce084ba948abf4e5b669e352860635))
+* warn when a re-plan cannot change a dispatched attempt's gates; lint backticks in gates ([#366](https://github.com/suzworx/flywheel/issues/366)) ([#372](https://github.com/suzworx/flywheel/issues/372)) ([9384d01](https://github.com/suzworx/flywheel/commit/9384d01924ec257da5097d3a47ccb0ce427e3ac1))
+
+
+### Documentation
+
+* HUMAN.md walks a person through leading the agents from the terminal ([#337](https://github.com/suzworx/flywheel/issues/337)) ([66f6ff7](https://github.com/suzworx/flywheel/commit/66f6ff7812856ce72e9862c3f3a9b15ee65650c2))
+* planner gates for units that write prose about the codebase ([#368](https://github.com/suzworx/flywheel/issues/368)) ([#369](https://github.com/suzworx/flywheel/issues/369)) ([d436840](https://github.com/suzworx/flywheel/commit/d43684038db3796939d18398629ab8b6c3648b0f))
+* README describes the factory as it is — agent CLIs, audit, watch, measured unit cost ([#313](https://github.com/suzworx/flywheel/issues/313)) ([c8320ce](https://github.com/suzworx/flywheel/commit/c8320ceeb71f1ccf925b33435190c5177e4ae95c))
+
 ## [0.17.0](https://github.com/suzworx/flywheel/compare/v0.16.0...v0.17.0) (2026-09-17)
 
 
