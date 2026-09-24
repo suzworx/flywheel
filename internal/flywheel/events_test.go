@@ -1110,3 +1110,50 @@ func TestReviewFindingEvent(t *testing.T) {
 		t.Errorf("round trip = %+v", got)
 	}
 }
+
+// TestNoteEvent: a note is a journal line (issue #409) — Task optional, Note
+// required — and a learning's scope is flywheel (default), or project, only.
+func TestNoteEvent(t *testing.T) {
+	if err := Validate(Event{Kind: "note", Note: "dispatched t1"}); err != nil {
+		t.Errorf("task-less note: %v", err)
+	}
+	if err := Validate(Event{Kind: "note", Task: "t1", Session: "s1", Note: "merged"}); err != nil {
+		t.Errorf("note with task and session: %v", err)
+	}
+	if err := Validate(Event{Kind: "note", Task: "t1"}); err == nil || !strings.Contains(err.Error(), "note event must carry a note") {
+		t.Errorf("note without text: %v", err)
+	}
+	if err := Validate(Event{Kind: "note", Task: "bad task", Note: "x"}); err == nil {
+		t.Error("note with a malformed task was accepted")
+	}
+	if err := Validate(Event{Kind: "bogus", Task: "t1"}); err == nil || !strings.Contains(err.Error(), "review_finding, note") {
+		t.Errorf("kind error text does not list note: %v", err)
+	}
+	learning := Event{Task: "t1", Kind: "learning", Severity: "P2", Title: "t", Observed: "o", Evidence: "e", Ask: "a"}
+	for _, s := range []string{"", "flywheel", "project"} {
+		l := learning
+		l.Scope = s
+		if err := Validate(l); err != nil {
+			t.Errorf("scope %q: %v", s, err)
+		}
+	}
+	l := learning
+	l.Scope = "product"
+	if err := Validate(l); err == nil || !strings.Contains(err.Error(), "flywheel, project") {
+		t.Errorf("scope product accepted or unclear: %v", err)
+	}
+	if err := Validate(Event{Kind: "note", Note: "x", Scope: "project"}); err == nil {
+		t.Error("a note carrying a scope was accepted")
+	}
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{Kind: "note", Note: "result: merged"}); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Kind != "note" || evs[0].Note != "result: merged" {
+		t.Errorf("round trip = %+v", evs)
+	}
+}

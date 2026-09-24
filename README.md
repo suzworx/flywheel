@@ -405,6 +405,9 @@ Consumer repos keep their learnings in `.flywheel/learnings.md` — the log of w
 becomes spec (flywheel will generate it from signals,
 [#38](https://github.com/suzworx/flywheel/issues/38)). This repo gitignores that file and tracks
 its own learnings as issues under [epic #10](https://github.com/suzworx/flywheel/issues/10).
+A learning is scoped `flywheel` (the default; the only kind `feedback export`/`submit` send upstream)
+or `project` (`feedback add --scope project`, kept local), and a journal line is a `flywheel log --kind note`,
+never a learning ([#409](https://github.com/suzworx/flywheel/issues/409)).
 
 ## License
 

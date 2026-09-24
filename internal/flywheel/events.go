@@ -132,6 +132,10 @@ type Event struct {
 	Ask      string   `json:"ask,omitempty"`
 	Signals  []string `json:"signals,omitempty"`
 	ID       string   `json:"id,omitempty"`
+	// Scope is a learning's audience (issue #409): "flywheel" (the default when
+	// empty, so every older learning stays flywheel-scoped) is feedback about
+	// flywheel and goes upstream; "project" is the project's own and stays local.
+	Scope string `json:"scope,omitempty"`
 	// Review finding fields (issue #389): a review_finding event reuses
 	// Severity (blocker, major, minor or nit), Title (the claim), Observed (the
 	// failure scenario), Ask (the fix hint) and Path (the file), and adds the
@@ -179,6 +183,13 @@ var kinds = map[string]bool{
 	"probed":          true,
 	"sharded":         true,
 	"review_finding":  true,
+	"note":            true,
+}
+
+// learningScopeOK reports whether s is a learning scope (issue #409): empty
+// (flywheel), "flywheel" or "project".
+func learningScopeOK(s string) bool {
+	return s == "" || s == "flywheel" || s == "project"
 }
 
 // FindingSeverities is the set of severities a review_finding event may carry
@@ -259,10 +270,11 @@ func attemptOK(s string) bool {
 // floorLevel reports whether kind may carry an empty task: staffed, lead_edit
 // and the three session kinds describe the floor itself rather than a task,
 // goal events are validated against Goal instead of Task, probed events
-// come from the doctor probe run, and sharded events are seal records.
+// come from the doctor probe run, sharded events are seal records, and a note
+// is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note":
 		return true
 	default:
 		return false
@@ -322,7 +334,21 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, note", e.Kind)
+	}
+	if e.Kind == "note" {
+		if e.Task != "" && !taskOK(e.Task) {
+			return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
+		}
+		if e.Note == "" {
+			return fmt.Errorf("note event must carry a note")
+		}
+	}
+	if e.Scope != "" && e.Kind != "learning" {
+		return fmt.Errorf("event kind %q cannot carry a scope", e.Kind)
+	}
+	if !learningScopeOK(e.Scope) {
+		return fmt.Errorf("learning event scope %q is not one of flywheel, project", e.Scope)
 	}
 	if e.Kind == "review_finding" {
 		if e.Session == "" || e.Title == "" || e.Path == "" {

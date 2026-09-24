@@ -316,6 +316,9 @@ func runLog(args []string) {
 		logFlagError(fs, args, "--goal applies to --kind planned only", logWithout("goal"), "")
 	case o.kind == "amended" && o.note == "":
 		logFlagError(fs, args, "--kind amended requires --note <why>", nil, `--note "<why>"`)
+	case o.kind == "note" && o.note == "":
+		// A note is a journal line (issue #409): the text is the whole event.
+		logFlagError(fs, args, "--kind note requires --note <text>", logWithout("note"), `--note "<text>"`)
 	}
 	if o.goal != "" {
 		if _, ok := findGoal(o.dir, o.goal); !ok {

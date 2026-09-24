@@ -320,6 +320,9 @@ func TestLogMissingFlagErrors(t *testing.T) {
 		{"amended without --note",
 			[]string{"--task", "T", "--kind", "amended", "--brief", "B", "--dir", dir},
 			[]string{"requires --note", "try: flywheel log --task T --kind amended --brief", `--note "<why>"`}},
+		{"note without --note",
+			[]string{"--task", "T", "--kind", "note", "--dir", dir},
+			[]string{"--kind note requires --note <text>", "try: flywheel log --task T --kind note --dir", `--note "<text>"`}},
 		{"no --kind",
 			[]string{"--task", "T", "--brief", "my brief.md", "--dir", dir},
 			[]string{"--kind is required", `try: flywheel log --task T --brief "my brief.md"`, "--kind <kind>"}},
@@ -412,5 +415,28 @@ func TestLogShardWarnsForNestedFactory(t *testing.T) {
 	}
 	if !strings.Contains(stderrBuf.String(), "pins a flywheel release") {
 		t.Errorf("stderr = %q, want the pinned-release warning for the root workflow", stderrBuf.String())
+	}
+}
+
+// TestNoteEventLogged checks flywheel log --kind note records a journal line
+// through the generic append path, with or without a task (issue #409).
+func TestNoteEventLogged(t *testing.T) {
+	dir := t.TempDir()
+	if stderr, code := runLogProcess(t, "--kind", "note", "--note", "action: dispatched t1", "--no-state", "--dir", dir); code != 0 {
+		t.Fatalf("task-less note: exit %d; stderr:\n%s", code, stderr)
+	}
+	if stderr, code := runLogProcess(t, "--kind", "note", "--task", "t1", "--session", "s1", "--note", "result: merged", "--no-state", "--dir", dir); code != 0 {
+		t.Fatalf("note on t1: exit %d; stderr:\n%s", code, stderr)
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Kind != "note" || events[0].Task != "" || events[0].Note != "action: dispatched t1" ||
+		events[1].Task != "t1" || events[1].Session != "s1" || events[1].Note != "result: merged" {
+		t.Errorf("events = %+v", events)
+	}
+	if len(flywheel.Learnings(events)) != 0 {
+		t.Error("a note became a learning")
 	}
 }
