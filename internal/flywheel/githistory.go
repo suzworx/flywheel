@@ -56,8 +56,9 @@ func gitQuery(dir string, args ...string) (out string, absent bool, err error) {
 //
 // It compares end points only: a push, or a write undone before the attempt
 // ends, leaves them equal. Concurrent attempts in one worktree share HEAD, and
-// every worktree of a repository shares refs/stash, so a change is flagged on
-// each attempt that overlapped it.
+// every worktree of a repository shares refs/stash, so a change is seen by
+// each attempt that overlapped it; gitWriteVerdict turns it into a git-write
+// signal only when the guard recorded a write by the worker (#361).
 func gitWriteNote(dir, before string, captured bool) (changed bool, note string) {
 	if !captured {
 		return false, ""
@@ -70,6 +71,20 @@ func gitWriteNote(dir, before string, captured bool) (changed bool, note string)
 		return false, ""
 	}
 	return true, "git history changed during the attempt: " + before + " -> " + after
+}
+
+// gitWriteVerdict decides the git-write signal from gitWriteNote's result and
+// the write subcommands the git guard refused during the attempt (#361): a
+// moved history is charged to the worker only with evidence that it tried a
+// write; otherwise another process moved it and the note says so.
+func gitWriteVerdict(changed bool, note string, refused []string) (signal bool, outNote string) {
+	if !changed {
+		return false, ""
+	}
+	if len(refused) > 0 {
+		return true, note + "; the worker tried: " + strings.Join(refused, ", ")
+	}
+	return false, note + "; no worker git write was recorded by the guard (another process moved it, e.g. the lead committing in a shared worktree)"
 }
 
 // joinNote appends extra to note with "; " when both are non-empty.

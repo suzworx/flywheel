@@ -599,6 +599,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var fixture *os.File
 	var watchdog *time.Timer
 	var startNote string
+	// The git guard's bin directory (installGitGuard's path); its sibling log
+	// holds the worker's write-class git calls, the evidence gitWriteCheck
+	// needs (#361). Before the guard is installed the log does not exist.
+	guardBin := filepath.Join(wt, ".flywheel", "runs", o.Task+"."+attempt+".bin")
 
 	// Every path after dispatched records a finished event: if the function
 	// returns an error, close the run's files, kill a still-running child and
@@ -633,7 +637,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			note = startNote
 		}
 		stopRenewer()
-		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
+		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		if aerr := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Reason: reason, Note: joinNote(note, gitNote), SHA256: runSHA}); aerr == nil {
 			progress(o.Progress, o.Task+" "+attempt+" finished rc=1 reason="+reason+" note="+note)
 			if gitWrote {
@@ -689,13 +693,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
 		cmd.Dir = wt
-		guardBin, guardEnv, err := installGitGuard(wt, o.Task, attempt)
+		gb, guardEnv, err := installGitGuard(wt, o.Task, attempt)
 		if err != nil {
 			// Fail closed: a worker never runs without the git guard (#325
 			// review). The attempt is recorded as failed like any other
 			// launch error.
 			return Result{}, fmt.Errorf("git guard not installed (%w); workers never run git unguarded", err)
 		}
+		guardBin = gb
 		defer os.RemoveAll(guardBin)
 		cmd.Env = workerEnv(dir)
 		if len(guardEnv) > 0 {
@@ -945,7 +950,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		errRel := ".flywheel/runs/" + o.Task + "." + attempt + ".err"
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
+		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(note, gitNote), SHA256: runSHA, Wrote: wrote}); err != nil {
 			return Result{}, err
 		}
@@ -986,7 +991,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			_ = cmd.Wait()
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
-		gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
+		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: gitNote, Steps: steps, SHA256: runSHA, Wrote: wrote,
@@ -1072,7 +1077,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	// Did the worker change git history? Every exit path runs the same check
 	// before its finished event (issue #314, #318 review).
-	gitWrote, gitNote := gitWriteNote(wt, histBefore, histOK)
+	gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 	note = joinNote(note, gitNote)
 
 	if err := AppendEvent(dir, Event{
@@ -1412,6 +1417,17 @@ func flagGitWrite(dir, task, attempt, session, runRel, note string, w io.Writer)
 	}
 	progress(w, task+" "+attempt+" git-write: "+note+"; workers never commit, stash, reset, checkout or push")
 	return nil
+}
+
+// gitWriteCheck compares wt's git history with the dispatch state and decides
+// the git-write signal from the writes the git guard in guardBin logged
+// (#361): a moved HEAD alone is not the worker's doing. The log is removed
+// once read. note goes on the finished event whether or not signal is set.
+func gitWriteCheck(wt, before string, captured bool, guardBin string) (signal bool, note string) {
+	changed, note := gitWriteNote(wt, before, captured)
+	refused, _ := readGitGuardLog(guardBin)
+	_ = os.Remove(gitGuardLogPath(guardBin))
+	return gitWriteVerdict(changed, note, refused)
 }
 
 func recordSignal(dir, task, attempt, session, condition, runRel string) error {

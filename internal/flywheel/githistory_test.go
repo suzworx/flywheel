@@ -81,6 +81,7 @@ func TestGitWriteCommitDuringRunRecordsSignal(t *testing.T) {
 
 	// Hook that makes a commit during the run.
 	commandHook = func(r RunRequest) {
+		guardLogWrite(dir, r.Attempt, "refused commit")
 		cmd := exec.Command("git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "worker-commit")
 		cmd.Dir = dir
 		_ = cmd.Run()
@@ -194,6 +195,7 @@ func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
 
 	// Hook that modifies the file and stashes it.
 	commandHook = func(r RunRequest) {
+		guardLogWrite(dir, r.Attempt, "refused stash")
 		if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("modified content\n"), 0o644); err != nil {
 			return
 		}
@@ -248,7 +250,8 @@ func TestGitWriteSilentRunStillFlagged(t *testing.T) {
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
-	commandHook = func(RunRequest) {
+	commandHook = func(r RunRequest) {
+		guardLogWrite(dir, r.Attempt, "refused commit")
 		cmd := exec.Command("git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "worker-commit")
 		cmd.Dir = dir
 		_ = cmd.Run()
@@ -292,5 +295,70 @@ func TestGitWriteUnreadableFinalStateCounts(t *testing.T) {
 	}
 	if changed, _ := gitWriteNote(dir, before, false); changed {
 		t.Error("gitWriteNote with nothing captured reported a change")
+	}
+}
+
+// guardLogWrite appends line to the git guard's log for T1's attempt in dir,
+// as the guard does when the worker runs a write-class git command (#361);
+// the sim adapter installs no guard, so a test hook records it this way.
+func guardLogWrite(dir, attempt, line string) {
+	bin := filepath.Join(dir, ".flywheel", "runs", "T1."+attempt+".bin")
+	f, err := os.OpenFile(gitGuardLogPath(bin), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(line + "\n")
+}
+
+// TestGitWriteEvidence checks the three verdicts: no change, a change with a
+// write the guard recorded, and a change with none (#361).
+func TestGitWriteEvidence(t *testing.T) {
+	if signal, note := gitWriteVerdict(false, "", []string{"commit"}); signal || note != "" {
+		t.Errorf("unchanged: %v %q, want false \"\"", signal, note)
+	}
+	signal, note := gitWriteVerdict(true, "moved", []string{"commit", "stash"})
+	if !signal || note != "moved; the worker tried: commit, stash" {
+		t.Errorf("changed with refused writes: %v %q", signal, note)
+	}
+	signal, note = gitWriteVerdict(true, "moved", nil)
+	if signal || !strings.HasPrefix(note, "moved; no worker git write was recorded by the guard") {
+		t.Errorf("changed without evidence: %v %q", signal, note)
+	}
+}
+
+// TestGitWriteSharedWorktreeNoSignal checks that HEAD moved by another process
+// (the lead committing in a shared worktree) with no write in the guard's log
+// raises no git-write signal, and the finished note says why (#361).
+func TestGitWriteSharedWorktreeNoSignal(t *testing.T) {
+	dir := setupTask(t)
+	gitRepoWithCommit(t, dir)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	commandHook = func(RunRequest) {
+		cmd := exec.Command("git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "lead-commit")
+		cmd.Dir = dir
+		_ = cmd.Run()
+	}
+	t.Cleanup(func() { commandHook = nil })
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noted := false
+	for _, e := range events {
+		if e.Kind == "signal" && e.Signal == "git-write" {
+			t.Errorf("git-write signal without a recorded worker write: %+v", e)
+		}
+		if e.Kind == "finished" && strings.Contains(e.Note, "no worker git write was recorded") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Error("finished note does not say no worker git write was recorded")
 	}
 }
