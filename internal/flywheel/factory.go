@@ -36,11 +36,28 @@ type FloorLine struct {
 	Busy        int
 }
 
-// Staffing reports the recorded factory roles. Lead is the rendered floor
-// line: `<session> (<model>)` from the latest staffed event for the lead
-// role, or "not registered" when no staffed event exists.
+// Staffing is the floor's roles (issues #69, #355): Lead keeps the rendered
+// line the floor has always shown, and Roles carries every role the config
+// names or the floor registered.
 type Staffing struct {
-	Lead string
+	Lead  string
+	Roles []FloorRole
+}
+
+// FloorRole is one role on the floor: what the config asks for and what the
+// floor registered. Mismatch is true when both name a session and they
+// differ.
+type FloorRole struct {
+	Name       string // lead, inspector, auditor
+	Configured string // the configured role as one line, for text output; "" when unconfigured
+	// The configured parts, kept apart from Configured: a display string
+	// cannot be split back into columns (#357 review).
+	ConfAdapter string
+	ConfModel   string
+	ConfSession string
+	Session     string // the latest staffed event's session; "" when never staffed
+	Model       string // that event's model
+	Mismatch    bool
 }
 
 // staffRole is one registered role holder: the latest staffed event's session
@@ -63,6 +80,7 @@ type Unit struct {
 	RunState string // silent, running, exploring, long-step, stalled, no-writes, capped, provider-error, failed, failed-dirty, done
 	Peak     int    // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string // the product line from the latest dispatched event (issue #69); "" when none
+	Station  string // where the unit stands on its line (issue #69 follow-up)
 }
 
 // peakReasoningFor returns the task's latest finished event's peak_reasoning
@@ -121,9 +139,12 @@ type ProductLine struct {
 	Name     string
 	Worker   string
 	Owns     []string
-	Units    int // units whose Line is Name
-	Building int // of those, Stage "building"
-	Landed   int // of those, Stage "landed"
+	Units    int            // units whose Line is Name
+	Building int            // of those, Stage "building"
+	Landed   int            // of those, Stage "landed"
+	Stations map[string]int // units per station, by Stations' names
+	WIP      int            // units at a station InWIP reports
+	Limit    int            // lines[].wip, 0 when unlimited
 }
 
 // buildProductLines returns one ProductLine per cfg.Lines entry, in config
@@ -136,7 +157,7 @@ func buildProductLines(cfg Config, units []Unit) []ProductLine {
 	}
 	lineMap := map[string]*ProductLine{}
 	for _, cl := range cfg.Lines {
-		lineMap[cl.Name] = &ProductLine{Name: cl.Name, Worker: cl.Worker, Owns: cl.Owns}
+		lineMap[cl.Name] = &ProductLine{Name: cl.Name, Worker: cl.Worker, Owns: cl.Owns, Limit: cl.WIP, Stations: map[string]int{}}
 	}
 	noneEntry := &ProductLine{Name: "(none)", Worker: ""}
 	for _, u := range units {
@@ -148,6 +169,10 @@ func buildProductLines(cfg Config, units []Unit) []ProductLine {
 			}
 			if u.Stage == "landed" {
 				pl.Landed++
+			}
+			pl.Stations[u.Station]++
+			if InWIP(u.Station) {
+				pl.WIP++
 			}
 		} else {
 			noneEntry.Units++
@@ -346,16 +371,16 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	}
 	st := Derive(w.events)
 	stallTimeout := int(cfg.DefaultWorker().stallTimeoutDuration().Seconds())
-	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout)
+	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout, cfg)
 	if uerr != nil {
 		return Floor{}, uerr
 	}
 	fl := Floor{Dir: dir, Refreshed: now}
 	fl.Lines = buildLines(cfg, byModel)
 	fl.ProductLines = buildProductLines(cfg, units)
-	fl.Staffing = buildStaffing(w.events)
+	fl.Staffing = buildStaffing(cfg, w.events)
 	fl.Units = units
-	fl.Andon = buildAndon(units)
+	fl.Andon = buildAndon(units, fl.Staffing.Roles)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -483,7 +508,7 @@ func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtim
 // for its run state, and tallies in-flight units by model. stallTimeout is
 // the default worker's configured stall_timeout in seconds, passed through to
 // classifyRun (issue #85).
-func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int) ([]Unit, map[string]int, error) {
+func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int, cfg Config) ([]Unit, map[string]int, error) {
 	var units []Unit
 	byModel := map[string]int{}
 	for _, t := range st.Tasks {
@@ -514,6 +539,12 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
 		}
+		if u.Line == "" {
+			// A unit planned but never dispatched still belongs to the line
+			// its brief resolves to.
+			u.Line = LineOf(cfg, dir, w.events, t.ID)
+		}
+		u.Station = StationFor(t, w.events)
 		if liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
@@ -549,27 +580,51 @@ func buildLines(cfg Config, byModel map[string]int) []FloorLine {
 	return lines
 }
 
-// buildStaffing reports the recorded lead: the latest staffed event per role
-// (persona holds the role), rendered as `<session> (<model>)` with the
-// parentheses dropped when the model is empty. "not registered" only when no
-// staffed event exists.
-func buildStaffing(events []Event) Staffing {
-	roles := map[string]staffRole{}
+// buildStaffing reports the recorded factory roles: the lead line for backward
+// compatibility, and a Roles list for each role the config names or the floor
+// registered, with mismatch detection.
+func buildStaffing(cfg Config, events []Event) Staffing {
+	staffed := map[string]staffRole{}
 	for _, e := range events {
-		if e.Kind != "staffed" {
-			continue
+		if e.Kind == "staffed" {
+			staffed[e.Persona] = staffRole{Session: e.Session, Model: e.Model}
 		}
-		roles[e.Persona] = staffRole{Session: e.Session, Model: e.Model}
 	}
-	r, ok := roles["lead"]
+	r, ok := staffed["lead"]
 	if !ok {
-		return Staffing{Lead: "not registered"}
+		r = staffRole{}
 	}
 	line := r.Session
 	if r.Model != "" {
 		line = line + " (" + r.Model + ")"
 	}
-	return Staffing{Lead: line}
+	if line == "" {
+		line = "not registered"
+	}
+
+	s := Staffing{Lead: line}
+	if cfg.Staffing == nil {
+		return s
+	}
+
+	for _, role := range cfg.Staffing.roles() {
+		if role.Cfg == nil || (role.Cfg.Adapter == "" && role.Cfg.Model == "" && role.Cfg.Session == "") {
+			if fl, ok := staffed[role.Name]; ok {
+				s.Roles = append(s.Roles, FloorRole{
+					Name: role.Name, Session: fl.Session, Model: fl.Model, Mismatch: false,
+				})
+			}
+			continue
+		}
+		floor := staffed[role.Name]
+		mismatch := role.Cfg.Session != "" && floor.Session != "" && floor.Session != role.Cfg.Session
+		s.Roles = append(s.Roles, FloorRole{
+			Name: role.Name, Configured: RoleSummary(role.Cfg),
+			ConfAdapter: role.Cfg.Adapter, ConfModel: role.Cfg.Model, ConfSession: role.Cfg.Session,
+			Session: floor.Session, Model: floor.Model, Mismatch: mismatch,
+		})
+	}
+	return s
 }
 
 // shortSession truncates a long session id for the table.
@@ -599,13 +654,18 @@ func ageOfTime(t, now time.Time) int {
 }
 
 // buildAndon lists the units in silent, stalled, capped, provider-error,
-// failed or failed-dirty, newest first.
-func buildAndon(units []Unit) []Andon {
+// failed or failed-dirty, newest first, and adds andon entries for mismatching roles.
+func buildAndon(units []Unit, roles []FloorRole) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
 		case "silent", "stalled", "no-writes", "capped", "provider-error", "failed", "failed-dirty":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
+		}
+	}
+	for _, r := range roles {
+		if r.Mismatch {
+			out = append(out, Andon{Task: "staffing/" + r.Name, State: "mismatch", Age: 0})
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Andon) int {
