@@ -283,7 +283,8 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
   unit's owns check. A lead-side edit made after dispatch can be declared afterwards with
   `flywheel claim-edit --paths <p1,p2> --session <session>`, so the owns check attributes it
   instead of refusing the unit; the claim is bound to the content it declared, so a later change
-  to the same path is outside again (issue #258).
+  to the same path is outside again (issue #258). Another session's edit in a sibling worktree is
+  claimed the same way with `--worktree <dir>`, which hashes the paths in that worktree (issue #362).
 - Run `flywheel status` afterwards.
 
 ## CLI

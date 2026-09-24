@@ -368,6 +368,10 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   content does not hash to the recorded `baseline` value: an unbound claim (no entry for the path)
   never excuses anything. The owns check re-reads the event log immediately before attributing, so
   a claim appended while the gates ran still qualifies for that reading.
+- With `--worktree <dir>` the claim names another session's edit in a sibling worktree: the paths
+  are hashed relative to that worktree and the event carries it as `workdir`, so it excuses
+  `"<worktree>: <path>"` (attributed `"<worktree>: <path> -> lead <session>"`) under the same
+  guards, and never the same relative path in the unit's own tree (issue #362).
 - Sibling worktrees (issue #339): a path changed in another worktree recorded at the unit's
   dispatch, owned by no in-flight unit's brief there, is attributed `"<worktree>: <path> -> lead
   <session>"` when that worktree's own ledger has a `lead_edit` claim covering it under the same
