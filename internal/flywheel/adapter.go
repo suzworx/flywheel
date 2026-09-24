@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -71,6 +72,17 @@ type Observation struct {
 	// "resets " (e.g. "10:20am (America/Los_Angeles)"); set only when Reason
 	// is "rate-limited" (issue #380).
 	ResetText string
+	// Background marks a shell call started with run_in_background; ToolUseID
+	// is its tool_use id, a provisional key until its tool_result names the
+	// shell. On a "tool_result" observation ToolUseID is the call it answers
+	// and ShellID the background shell (or subagent) id its text reported
+	// (issue #390).
+	Background bool
+	ToolUseID  string
+	ShellID    string
+	// Input is the raw JSON text of a tool_use block's input; run.go matches
+	// a background shell id against it to see the shell collected (issue #390).
+	Input string
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -450,6 +462,8 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Tokens = claudeTokens(m)
 		obs.Aggregate = true
 		obs.Denials = claudeDenials(m)
+	case typ == "user":
+		return claudeToolResultObs(m)
 	default:
 		return Observation{}, false
 	}
@@ -457,6 +471,52 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Session = s
 	}
 	return obs, true
+}
+
+// claudeBackgroundID matches the id a background Bash call or subagent
+// reports in its tool_result text (issue #390).
+var claudeBackgroundID = regexp.MustCompile(`(?:running in background with ID|agentId):\s*([A-Za-z0-9_-]+)`)
+
+// claudeToolResultObs decodes a user line's tool_result blocks: the first
+// whose text reports a background shell or subagent id becomes a
+// "tool_result" observation, ToolUseID the call it answers and ShellID that
+// id. It never ends a turn. Any other user line returns false (issue #390).
+func claudeToolResultObs(m map[string]json.RawMessage) (Observation, bool) {
+	var msg struct {
+		Content []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(m["message"], &msg); err != nil {
+		return Observation{}, false
+	}
+	for _, block := range msg.Content {
+		if block.Type != "tool_result" || block.ToolUseID == "" {
+			continue
+		}
+		// content is a string or an array of {"type":"text","text":...}.
+		var text string
+		if json.Unmarshal(block.Content, &text) != nil {
+			var parts []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(block.Content, &parts)
+			var texts []string
+			for _, p := range parts {
+				if p.Type == "text" {
+					texts = append(texts, p.Text)
+				}
+			}
+			text = strings.Join(texts, "\n")
+		}
+		if sm := claudeBackgroundID.FindStringSubmatch(text); sm != nil {
+			return Observation{Kind: "tool_result", ToolUseID: block.ToolUseID, ShellID: sm[1]}, true
+		}
+	}
+	return Observation{}, false
 }
 
 // claudeDenials decodes a result line's permission_denials: one entry per
@@ -517,9 +577,14 @@ func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 				Path:   claudeToolPath(block),
 				Text:   strings.Join(texts, "\n"),
 				Tokens: tok,
+				Input:  string(block["input"]),
 			}
 			if rawString(block, "name") == "Bash" {
 				obs.Command = claudeToolInput(block, "command")
+				if claudeToolInputBool(block, "run_in_background") {
+					obs.Background = true
+					obs.ToolUseID = rawString(block, "id")
+				}
 			}
 			return obs, true
 		case "text":
@@ -761,6 +826,21 @@ func claudeToolInput(block map[string]json.RawMessage, key string) string {
 		return ""
 	}
 	return rawString(input, key)
+}
+
+// claudeToolInputBool reports whether input.<key> of a tool_use block is the
+// JSON boolean true.
+func claudeToolInputBool(block map[string]json.RawMessage, key string) bool {
+	inputRaw, ok := block["input"]
+	if !ok {
+		return false
+	}
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(inputRaw, &input); err != nil {
+		return false
+	}
+	var b bool
+	return json.Unmarshal(input[key], &b) == nil && b
 }
 
 // claudeTokens decodes message.usage into a Tokens pointer, or nil when

@@ -4134,6 +4134,89 @@ func limitRun(t *testing.T, retries *int, maxWait string) (Result, []time.Durati
 	return res, sleeps, reqs, evs
 }
 
+// TestResumeAbandonedJob checks that an abandoned-job attempt is resumed
+// once, without a wait, on the same session with a job delta naming the
+// killed command, and that a second abandoned-job is returned as is (issue
+// #390).
+func TestResumeAbandonedJob(t *testing.T) {
+	const session = "ses_job_001"
+	head := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_bg","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`+"\n", session) +
+		fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_bg","content":"Command running in background with ID: bsh01"}]}}`+"\n", session)
+	fg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_fg","name":"Bash","input":{"command":"go test ./..."}}]}}`+"\n", session)
+	end := fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	run := func(t *testing.T, streams []string) (Result, []RunRequest) {
+		dir := setupTask(t)
+		brief := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n# TASK: x\n"
+		if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+			t.Fatalf("write brief: %v", err)
+		}
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("os.Executable() error = %v", err)
+		}
+		binDir := t.TempDir()
+		fake := filepath.Join(binDir, "claude")
+		if runtime.GOOS == "windows" {
+			fake += ".exe"
+		}
+		if err := linkOrCopy(exe, fake); err != nil {
+			t.Fatalf("install fake claude: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		var paths []string
+		for i, s := range streams {
+			p := filepath.Join(t.TempDir(), fmt.Sprintf("stream%d.jsonl", i+1))
+			if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			paths = append(paths, p)
+		}
+		t.Setenv(fakeClaudeEnv, paths[0])
+		var reqs []RunRequest
+		commandHook = func(r RunRequest) {
+			reqs = append(reqs, r)
+			_ = os.Setenv(fakeClaudeEnv, paths[min(len(reqs), len(paths))-1])
+		}
+		defer func() { commandHook = nil }()
+		var buf bytes.Buffer
+		res, err := RunResumingLimits(dir, RunOptions{Task: "T1", Progress: &buf},
+			func(d time.Duration) { t.Errorf("sleep(%s) called; an abandoned-job resume never waits", d) },
+			time.Now)
+		if err != nil {
+			t.Fatalf("RunResumingLimits() error = %v; progress:\n%s", err, buf.String())
+		}
+		return res, reqs
+	}
+	t.Run("resumes once", func(t *testing.T) {
+		res, reqs := run(t, []string{head + bg + end, head + fg + end})
+		if len(reqs) != 2 || reqs[0].Resume || !reqs[1].Resume || reqs[1].Session != session {
+			t.Fatalf("dispatch requests = %+v, want a fresh run then a resume of %s", reqs, session)
+		}
+		delta, err := os.ReadFile(reqs[1].PromptFile)
+		if err != nil || !strings.HasSuffix(filepath.ToSlash(reqs[1].PromptFile), ".flywheel/briefs/T1.job-1.txt") {
+			t.Fatalf("resume prompt %s: %v, want .flywheel/briefs/T1.job-1.txt", reqs[1].PromptFile, err)
+		}
+		want := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n" + fmt.Sprintf(jobContinue, "go test ./...")
+		if string(delta) != want {
+			t.Errorf("delta = %q, want %q", delta, want)
+		}
+		if res.Reason != "stop" {
+			t.Errorf("result = %+v, want the resume's stop", res)
+		}
+	})
+	t.Run("second abandoned-job", func(t *testing.T) {
+		res, reqs := run(t, []string{head + bg + end, head + bg + end, head + fg + end})
+		if len(reqs) != 2 || res.Reason != "abandoned-job" {
+			t.Errorf("requests = %d, result = %+v, want 2 dispatches and abandoned-job returned", len(reqs), res)
+		}
+	})
+}
+
 // finishedOf returns the finished events, and whether any signal was recorded.
 func finishedOf(evs []Event) (fins []Event, signaled bool) {
 	for _, e := range evs {
@@ -4198,6 +4281,104 @@ func TestRunRetriesRateLimit(t *testing.T) {
 			t.Errorf("sleeps %v, %d dispatches, result %+v; want no resume past the max wait", sleeps, len(reqs), res)
 		}
 	})
+}
+
+// runFakeClaudeStream runs task T1 on a fake claude worker that replays
+// stream, and returns the task dir and the result.
+func runFakeClaudeStream(t *testing.T, stream string) (string, Result) {
+	t.Helper()
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	path := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(path, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, path)
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	return dir, res
+}
+
+// TestRunAbandonedJob: a clean stop that leaves a background Bash job
+// uncollected finishes abandoned-job, names the command and records no
+// signal; collecting it by the shell id its tool_result reported keeps the
+// stop, and a background call whose result gives no id is not tracked
+// (issue #390).
+func TestRunAbandonedJob(t *testing.T) {
+	const session = "ses_bg_001"
+	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_012eoA","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`, session)
+	result := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"Command running in background with ID: bzkt5tsmf. Output is being written to: C:\\tasks\\bzkt5tsmf.output"}]}}`, session)
+	noID := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"started"}]}}`, session)
+	collect := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_out","name":"BashOutput","input":{"bash_id":"bzkt5tsmf"}}]}}`, session)
+	build := func(lines ...string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+		for _, line := range lines {
+			b.WriteString(line + "\n")
+		}
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"text","text":"I'll wait for the run's completion notification."}]}}`+"\n", session)
+		fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name   string
+		tools  []string
+		reason string
+	}{
+		{"uncollected", []string{bg, result}, "abandoned-job"},
+		{"collected", []string{bg, result, collect}, "stop"},
+		{"no id", []string{bg, noID}, "stop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, res := runFakeClaudeStream(t, build(tc.tools...))
+			if res.Reason != tc.reason {
+				t.Errorf("Result.Reason = %q, want %q", res.Reason, tc.reason)
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var fin *Event
+			for i := range evs {
+				if evs[i].Kind == "finished" {
+					fin = &evs[i]
+				}
+				if tc.reason == "abandoned-job" && evs[i].Kind == "signal" {
+					t.Errorf("signal %q recorded, want none", evs[i].Signal)
+				}
+			}
+			if fin == nil || fin.Reason != tc.reason {
+				t.Fatalf("finished = %+v, want reason %s", fin, tc.reason)
+			}
+			if tc.reason == "abandoned-job" {
+				if !strings.Contains(fin.Note, "background job never collected: go test ./...") {
+					t.Errorf("finished note = %q, want it to name the job", fin.Note)
+				}
+				if len(res.Jobs) != 1 || res.Jobs[0] != "go test ./..." || ExitCode(res) != 4 {
+					t.Errorf("Jobs = %v, ExitCode = %d, want [go test ./...] and 4", res.Jobs, ExitCode(res))
+				}
+			}
+		})
+	}
 }
 
 // TestRunPlanBeforeTool checks a claude run whose first assistant message

@@ -55,6 +55,10 @@ type Result struct {
 	// ResetText is the rate limit's reset clause when Reason is
 	// "rate-limited" (issue #380); RunResumingLimits waits for it.
 	ResetText string
+	// Jobs are the commands of the background shells the worker started and
+	// never collected when Reason is "abandoned-job" (issue #390);
+	// RunResumingLimits names them in the resume delta.
+	Jobs []string
 }
 
 // workerPermissionPolicy is the embedded OpenCode permission policy written to
@@ -106,6 +110,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
 - Never commit, push, or write secrets.
+- Never end your turn while a background job you started is running: run long commands in the foreground and wait for them.
 - Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `
 
@@ -790,6 +795,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wroteSeen := map[string]bool{}
 	var wroteOrder []string
 	var commands []string // shell commands in order, at most 100 (issue #365)
+	// Background shells started and not yet collected, shell id → command, in
+	// start order; pending holds a background call, tool_use id → command,
+	// until its tool_result names the shell id (issue #390).
+	shells := map[string]string{}
+	pending := map[string]string{}
+	var shellOrder []string
 	lastText := ""
 	lastReason := ""
 	resetText := ""      // a rate limit's reset clause (issue #380)
@@ -934,6 +945,28 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					c = string(r[:300])
 				}
 				commands = append(commands, c)
+			}
+			// Any later tool call whose input names an open shell's id
+			// collects it, whatever the tool (issue #390).
+			if obs.Input != "" {
+				for id := range shells {
+					if strings.Contains(obs.Input, id) {
+						delete(shells, id)
+					}
+				}
+			}
+			if obs.Background && obs.ToolUseID != "" {
+				pending[obs.ToolUseID] = obs.Command
+			}
+		case "tool_result":
+			// A background call's result names its shell id: the call is
+			// tracked from here on under that id (issue #390).
+			if c, ok := pending[obs.ToolUseID]; ok && obs.ShellID != "" {
+				delete(pending, obs.ToolUseID)
+				if _, seen := shells[obs.ShellID]; !seen {
+					shellOrder = append(shellOrder, obs.ShellID)
+				}
+				shells[obs.ShellID] = c
 			}
 		case "step":
 			if obs.Reason != "" {
@@ -1104,6 +1137,21 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		reason = "start-failed"
 		note = firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 	}
+	// A clean stop that leaves a background shell it started uncollected
+	// ended its session while the job ran, and the job died with it: the run
+	// is abandoned-job, not done, and records no signal (issue #390).
+	var jobs []string
+	if reason == "stop" {
+		for _, id := range shellOrder {
+			if c, open := shells[id]; open {
+				jobs = append(jobs, c)
+			}
+		}
+		if len(jobs) > 0 {
+			reason = "abandoned-job"
+			note = joinNote(note, clipNote("background job never collected: "+strings.Join(jobs, ", ")))
+		}
+	}
 
 	// A clean stop records the reply as the worker's report, as always. Any
 	// other reason (length, error, start-failed, ...) means the reply is a
@@ -1235,7 +1283,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
-	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText}, nil
+	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText, Jobs: jobs}, nil
 }
 
 // gateContention describes one shared-gate finding at dispatch: this task's
