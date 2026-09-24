@@ -350,7 +350,12 @@ func (a claudeAdapter) Name() string {
 // checkout or push") is enforced by the permission layer. An empty list
 // appends no flag. A resume (r.Resume with a non-empty r.Session) leads the
 // prompt with resumeMessage instead of freshPrompt and adds
-// --resume <session>, mirroring opencodeAdapter.Command.
+// --resume <session>, mirroring opencodeAdapter.Command. The worker rules
+// (workerRules, PLAN check-in included) reach OpenCode through the policy's
+// "instructions" file; claude gets them as --append-system-prompt, on fresh
+// and resumed runs alike (issue #360). The value is multi-line, which is safe
+// as a command-line argument because claude is a native binary, not an npm
+// shim run through cmd.exe.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	prompt, _ := os.ReadFile(r.PromptFile)
 	msg := freshPrompt(r)
@@ -365,6 +370,7 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		"--max-turns", "200",
 		"--model", r.Model,
 		"--permission-mode", "acceptEdits",
+		"--append-system-prompt", workerRules,
 	}
 	if len(r.AllowedTools) > 0 {
 		args = append(args, "--allowedTools")
@@ -382,8 +388,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 
 // Parse decodes one line of `claude -p ... --output-format stream-json
 // --verbose`. system/init becomes "start" (session from session_id);
-// assistant becomes "tool" from the first tool_use content block, else
-// "text" from the first text block (message.usage supplies Tokens either
+// assistant becomes "tool" from the first tool_use content block (Text the
+// text blocks before it), else "text" from the first text block
+// (message.usage supplies Tokens either
 // way); a "result" line, or any line carrying a top-level is_error, becomes
 // "step" (Reason from stop_reason/subtype/is_error — see claudeReason; Cost
 // from total_cost_usd; Tokens from the top-level usage, the session total).
@@ -428,8 +435,10 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 }
 
 // claudeAssistantObs decodes one assistant line's message.content: the first
-// tool_use block when present, else the first text block; both carry Tokens
-// from message.usage. False means content had neither.
+// tool_use block when present, its Text the text blocks before it joined
+// with "\n" (a model writes its plan there, before its first tool call —
+// issue #360), else the first text block; both carry Tokens from
+// message.usage. False means content had neither.
 func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 	msgRaw, ok := m["message"]
 	if !ok {
@@ -444,7 +453,7 @@ func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 		_ = json.Unmarshal(raw, &content)
 	}
 	tok := claudeTokens(msg)
-	var textBlock map[string]json.RawMessage
+	var texts []string
 	for _, block := range content {
 		switch rawString(block, "type") {
 		case "tool_use":
@@ -452,16 +461,15 @@ func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 				Kind:   "tool",
 				Tool:   claudeToolName(rawString(block, "name")),
 				Path:   claudeToolPath(block),
+				Text:   strings.Join(texts, "\n"),
 				Tokens: tok,
 			}, true
 		case "text":
-			if textBlock == nil {
-				textBlock = block
-			}
+			texts = append(texts, rawString(block, "text"))
 		}
 	}
-	if textBlock != nil {
-		return Observation{Kind: "text", Text: rawString(textBlock, "text"), Tokens: tok}, true
+	if len(texts) > 0 {
+		return Observation{Kind: "text", Text: texts[0], Tokens: tok}, true
 	}
 	return Observation{}, false
 }

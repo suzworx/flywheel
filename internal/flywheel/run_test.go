@@ -3822,3 +3822,80 @@ func TestBriefHasIncrement(t *testing.T) {
 		})
 	}
 }
+
+// fakeClaudeEnv names the stream file the test binary replays when it runs
+// as a fake claude (see TestMain and TestRunPlanBeforeTool).
+const fakeClaudeEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STREAM"
+
+// TestMain lets the test binary stand in for the claude CLI: copied to a
+// PATH directory as claude and started with fakeClaudeEnv set, it prints that
+// file as its stream-json output and exits 0.
+func TestMain(m *testing.M) {
+	if stream := os.Getenv(fakeClaudeEnv); stream != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
+		b, err := os.ReadFile(stream)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(b)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// TestRunPlanBeforeTool checks a claude run whose first assistant message
+// holds the PLAN text beside a tool_use records worker_plan and, past step
+// 20, no no-plan (issue #360).
+func TestRunPlanBeforeTool(t *testing.T) {
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	if err := linkOrCopy(exe, filepath.Join(binDir, "claude"+filepath.Ext(exe))); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const session = "ses_plan_tool_001"
+	plan, _ := json.Marshal("PLAN files-to-read: a.go\nPLAN files-to-change: a.go\nPLAN order: edit\nPLAN checks: go test")
+	tool := `{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}}`
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"text","text":%s},%s]}}`+"\n", session, plan, tool)
+	for i := 0; i < 21; i++ {
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[%s]}}`+"\n", session, tool)
+	}
+	fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(stream, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, stream)
+
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	plans := 0
+	for _, e := range evs {
+		switch e.Kind {
+		case "worker_plan":
+			plans++
+		case "no-plan":
+			t.Errorf("events include a no-plan event when the PLAN came beside a tool call: %v", e)
+		}
+	}
+	if plans != 1 {
+		t.Errorf("worker_plan events = %d, want exactly 1; events = %v", plans, evs)
+	}
+}
