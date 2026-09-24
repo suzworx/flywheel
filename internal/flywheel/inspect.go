@@ -15,6 +15,12 @@ type InspectOptions struct {
 	Verdict string
 	Session string
 	Note    string
+	// Commit, when set, inspects that commit's tree (landedTree's
+	// normalisation, resolved in Workdir or Dir) instead of hashing the
+	// working tree, and the inspected event records it (issue #367): a
+	// merged commit whose gates were attested passes T3 exactly like a
+	// measured tree.
+	Commit string
 }
 
 // RuleRefusal is a poka-yoke refusal: the transition rule that fired and the
@@ -55,10 +61,20 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	if r := sessionClash(task, events, o.Session); r != "" {
 		return &RuleRefusal{Rule: "T4", Fix: r}
 	}
+	work := wd(o.Workdir, o.Dir, events, task)
+	var commitTree string
+	if o.Commit != "" {
+		if o.Workdir == "" {
+			work = o.Dir
+		}
+		if commitTree = landedTree(work, o.Commit); commitTree == "" {
+			return fmt.Errorf("inspect %s: commit %s is not in the repository at %s", task, o.Commit, work)
+		}
+	}
 	var tree string
 	note := o.Note
 	if o.Verdict == "pass" {
-		res := requireReadings(o.Dir, wd(o.Workdir, o.Dir, events, task), task, events)
+		res := requireReadings(o.Dir, work, task, events, commitTree)
 		if res.err != nil {
 			return res.err
 		}
@@ -77,16 +93,18 @@ func InspectTask(dir, task string, o InspectOptions) error {
 				note = suffix
 			}
 		}
+	} else if commitTree != "" {
+		tree = commitTree
 	} else {
-		tree, err = hashTree(wd(o.Workdir, o.Dir, events, task))
+		tree, err = hashTree(work)
 		if err != nil {
 			return err
 		}
 	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
-		Tree: tree, Session: o.Session, Note: note, Persona: "inspector",
-		Workdir: workdirField(wd(o.Workdir, o.Dir, events, task), o.Dir),
+		Tree: tree, Commit: o.Commit, Session: o.Session, Note: note, Persona: "inspector",
+		Workdir: workdirField(work, o.Dir),
 	}); err != nil {
 		return err
 	}
@@ -131,8 +149,10 @@ var hashTree = treeHash
 // complete reading, T3 is relaxed (issue #218): the reading may be taken on
 // another tree whose diff from the current tree lies entirely outside the
 // unit's owns. The accepted tree is returned in readingTree so the inspected
-// event's note can name it. A non-empty refusal.Rule is a refusal.
-func requireReadings(dir, wd, task string, events []Event) readingsResult {
+// event's note can name it. A non-empty refusal.Rule is a refusal. A non-empty
+// tree is the tree to check (inspect --commit, issue #367) instead of hashing
+// wd.
+func requireReadings(dir, wd, task string, events []Event, tree string) readingsResult {
 	header, _, err := AttemptBrief(dir, events, task)
 	if err != nil {
 		if errors.Is(err, errNoPlannedBrief) {
@@ -143,9 +163,10 @@ func requireReadings(dir, wd, task string, events []Event) readingsResult {
 	if len(header.Gates) == 0 {
 		return readingsResult{refusal: RuleRefusal{Rule: "T3", Fix: "brief declares no gate: lines; add gate: lines to the brief header"}}
 	}
-	tree, err := hashTree(wd)
-	if err != nil {
-		return readingsResult{err: err}
+	if tree == "" {
+		if tree, err = hashTree(wd); err != nil {
+			return readingsResult{err: err}
+		}
 	}
 	latest := latestFinished(events, task)
 	t, ok, err := readingsForPass(wd, events, header, task, tree, latest)
@@ -240,7 +261,7 @@ func relaxedReadingTree(wd string, events []Event, header BriefHeader, task, tre
 		}
 		qualifies := e.Kind == "validated" && e.Reason != "host-blocked" && e.RC != nil && *e.RC == 0 ||
 			e.Kind == "owns_checked" && len(e.Outside) == 0
-		if qualifies && t.After(cands[e.Tree]) {
+		if qualifies && externalReadingOK(e) && t.After(cands[e.Tree]) {
 			cands[e.Tree] = t
 		}
 	}
@@ -335,12 +356,14 @@ func latestFinished(events []Event, task string) time.Time {
 
 // hasPassingValidated reports whether task has, after after, a validated event
 // for gate idx on tree whose reading is passing (rc 0 and not host-blocked).
+// An external reading counts only when it names its evidence, session and
+// commit (issue #367).
 func hasPassingValidated(events []Event, task, idx, tree string, after time.Time) bool {
 	for _, e := range events {
 		if e.Task != task || e.Kind != "validated" || e.Gate != idx || e.Tree != tree {
 			continue
 		}
-		if e.Reason == "host-blocked" {
+		if e.Reason == "host-blocked" || !externalReadingOK(e) {
 			continue
 		}
 		if e.RC == nil || *e.RC != 0 {
@@ -360,7 +383,7 @@ func hasCleanOwnsChecked(events []Event, task, tree string, after time.Time) boo
 		if e.Task != task || e.Kind != "owns_checked" || e.Tree != tree {
 			continue
 		}
-		if len(e.Outside) != 0 {
+		if len(e.Outside) != 0 || !externalReadingOK(e) {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(after) {

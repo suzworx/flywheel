@@ -15,15 +15,16 @@ import (
 
 func init() {
 	register("claim-edit", "declare a lead's own mid-wave edit so the owns check attributes it", runClaimEdit)
-	registerHelp("claim-edit", "flywheel claim-edit --paths P1,P2 --session S [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := claimEditFlags(); return fs })
+	registerHelp("claim-edit", "flywheel claim-edit --paths P1,P2 --session S [--worktree DIR] [--note TEXT] [--dir DIR]", func() *flag.FlagSet { fs, _ := claimEditFlags(); return fs })
 }
 
 // claimEditOptions holds the parsed claim-edit flags.
 type claimEditOptions struct {
-	dir     string
-	paths   string
-	session string
-	note    string
+	dir      string
+	paths    string
+	session  string
+	note     string
+	worktree string
 }
 
 // claimEditFlags defines claim-edit's flags once, so help and run share them.
@@ -35,12 +36,13 @@ func claimEditFlags() (*flag.FlagSet, *claimEditOptions) {
 	fs.StringVar(&o.paths, "paths", "", "comma-separated repo-relative paths the lead edited")
 	fs.StringVar(&o.session, "session", "", "the lead session that made the edits")
 	fs.StringVar(&o.note, "note", "", "free-form note")
+	fs.StringVar(&o.worktree, "worktree", "", "a sibling worktree whose paths the claim names; the claim is recorded in this repository's ledger")
 	return fs, o
 }
 
 // claimEditUsage prints the flywheel claim-edit usage line.
 func claimEditUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel claim-edit --paths P1,P2 --session S [--note TEXT] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel claim-edit --paths P1,P2 --session S [--worktree DIR] [--note TEXT] [--dir DIR]")
 }
 
 // runClaimEdit implements `flywheel claim-edit`: it reads each claimed path,
@@ -51,6 +53,11 @@ func claimEditUsage(w io.Writer) {
 // marker, so "I deleted this file" is expressible too. A claim pattern that
 // is not a literal path is refused: a wildcard cannot be bound to one content
 // hash, and ownsContains would let it exempt the whole tree (issue #258).
+// With --worktree the claim names paths in a sibling worktree — another
+// session's edit there, not the lead's own: the paths are hashed relative to
+// that worktree and the event, still appended to this repository's ledger,
+// carries the worktree as its Workdir, so the owns check excuses them only in
+// that sibling, never in the unit's own tree (issue #362).
 func runClaimEdit(args []string) {
 	fs, o := claimEditFlags()
 	pos, err := parseArgs(fs, args)
@@ -87,13 +94,32 @@ func runClaimEdit(args []string) {
 			os.Exit(2)
 		}
 	}
-	if err := flywheel.AppendEvent(o.dir, flywheel.Event{Kind: "lead_edit", Session: o.session, Owns: owns, Baseline: claimBaseline(o.dir, owns), Note: o.note}); err != nil {
+	base, workdir := o.dir, ""
+	if o.worktree != "" {
+		abs, err := filepath.Abs(o.worktree)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel claim-edit: --worktree %s: %v\n", o.worktree, err)
+			claimEditUsage(os.Stderr)
+			os.Exit(2)
+		}
+		if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "flywheel claim-edit: --worktree %s is not an existing directory\n", o.worktree)
+			claimEditUsage(os.Stderr)
+			os.Exit(2)
+		}
+		base, workdir = abs, filepath.ToSlash(abs)
+	}
+	if err := flywheel.AppendEvent(o.dir, flywheel.Event{Kind: "lead_edit", Session: o.session, Owns: owns, Baseline: claimBaseline(base, owns), Note: o.note, Workdir: workdir}); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel claim-edit: %v\n", err)
 		os.Exit(1)
 	}
 	if _, err := flywheel.WriteState(o.dir); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel claim-edit: %v\n", err)
 		os.Exit(1)
+	}
+	if workdir != "" {
+		fmt.Printf("claimed lead edit in %s: %s -> session %s\n", workdir, strings.Join(owns, ", "), o.session)
+		return
 	}
 	fmt.Printf("claimed lead edit: %s -> session %s\n", strings.Join(owns, ", "), o.session)
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1634,6 +1635,60 @@ func TestValidateInconclusiveGate(t *testing.T) {
 	}
 }
 
+// TestInconclusiveNoteNamesOwner checks an inconclusive note names the
+// in-flight unit owning each blocking path it can attribute (issue #365):
+// directly through inconclusiveNote, and end to end through ValidateTask
+// with a second dispatched task whose brief owns the blocking path.
+func TestInconclusiveNoteNamesOwner(t *testing.T) {
+	owner := func(p string) string {
+		if p == "a.ts" {
+			return "T3"
+		}
+		return ""
+	}
+	if got, want := inconclusiveNote([]string{"a.ts", "b.ts"}, owner), "blocked by a.ts (owned by T3), b.ts"; got != want {
+		t.Errorf("inconclusiveNote(owner) = %q, want %q", got, want)
+	}
+	if got, want := inconclusiveNote([]string{"a.ts", "b.ts"}, nil), "blocked by a.ts, b.ts"; got != want {
+		t.Errorf("inconclusiveNote(nil) = %q, want %q", got, want)
+	}
+
+	dir, err := initTask(t, []string{`printf 'FAIL b.txt:3: broken\n'; exit 1`})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	otherTaskPlanned(t, dir, "B", "b.txt")
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T01:00:00Z", Task: "B", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatalf("AppendEvent() dispatched B error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("stray\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if !res.Gates[0].Inconclusive {
+		t.Fatalf("Inconclusive = false, want true (only B's changed path is named)")
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	found := false
+	for _, e := range evs {
+		if e.Kind == "validated" && e.Task == "T1" {
+			found = true
+			if !strings.Contains(e.Note, "b.txt (owned by B)") {
+				t.Errorf("event note = %q, want it to contain %q", e.Note, "b.txt (owned by B)")
+			}
+		}
+	}
+	if !found {
+		t.Error("no validated event recorded")
+	}
+}
+
 // TestValidateInconclusiveGateOwnsPathIsOrdinary checks that naming a path
 // inside owns keeps the failure ordinary, even when an outside changed path
 // is also named.
@@ -2691,6 +2746,82 @@ func TestValidateIgnoredOwned(t *testing.T) {
 		}
 		if !res.OwnsOK {
 			t.Errorf("OwnsOK = false, outside = %v, want true", res.Outside)
+		}
+	})
+}
+
+// TestValidateSiblingClaim checks a lead_edit claim naming a sibling worktree
+// (claim-edit --worktree) excuses that worktree's path while the content still
+// matches the claim, and never excuses the same relative path in the unit's
+// own tree (issue #362).
+func TestValidateSiblingClaim(t *testing.T) {
+	setup := func(t *testing.T) (dir, wt string) {
+		t.Helper()
+		dir, err := initTask(t, []string{"exit 0"})
+		if err != nil {
+			t.Fatalf("initTask() error = %v", err)
+		}
+		wt = t.TempDir()
+		initRepo(t, wt)
+		dispatchedWithWorktree(t, dir, wt)
+		if err := os.WriteFile(filepath.Join(wt, "ci.yml"), []byte("another session\n"), 0o644); err != nil {
+			t.Fatalf("write ci.yml: %v", err)
+		}
+		return dir, wt
+	}
+	claim := func(t *testing.T, dir, wt string) {
+		t.Helper()
+		if err := AppendEvent(dir, Event{TS: "2026-09-12T02:00:00Z", Kind: "lead_edit", Session: "lead-x", Owns: []string{"ci.yml"}, Baseline: claimBaselineOf(t, wt, "ci.yml"), Workdir: filepath.ToSlash(wt)}); err != nil {
+			t.Fatalf("AppendEvent() lead_edit error = %v", err)
+		}
+	}
+	validate := func(t *testing.T, dir string) GaugeResult {
+		t.Helper()
+		res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+		if err != nil {
+			t.Fatalf("ValidateTask() error = %v", err)
+		}
+		return res
+	}
+	t.Run("no claim is outside", func(t *testing.T) {
+		dir, wt := setup(t)
+		res := validate(t, dir)
+		if res.OwnsOK || !slices.Contains(res.Outside, wt+": ci.yml") {
+			t.Errorf("OwnsOK = %v, outside = %v, want %q outside", res.OwnsOK, res.Outside, wt+": ci.yml")
+		}
+	})
+	t.Run("claim attributes", func(t *testing.T) {
+		dir, wt := setup(t)
+		claim(t, dir, wt)
+		res := validate(t, dir)
+		want := wt + ": ci.yml -> lead lead-x"
+		if !res.OwnsOK || len(res.Outside) != 0 {
+			t.Errorf("OwnsOK = %v, outside = %v, want ok", res.OwnsOK, res.Outside)
+		}
+		if !slices.Contains(res.Attributed, want) {
+			t.Errorf("attributed = %v, want it to contain %q", res.Attributed, want)
+		}
+	})
+	t.Run("changed after the claim is outside", func(t *testing.T) {
+		dir, wt := setup(t)
+		claim(t, dir, wt)
+		if err := os.WriteFile(filepath.Join(wt, "ci.yml"), []byte("changed again\n"), 0o644); err != nil {
+			t.Fatalf("rewrite ci.yml: %v", err)
+		}
+		res := validate(t, dir)
+		if res.OwnsOK || !slices.Contains(res.Outside, wt+": ci.yml") {
+			t.Errorf("OwnsOK = %v, outside = %v, want %q outside", res.OwnsOK, res.Outside, wt+": ci.yml")
+		}
+	})
+	t.Run("never excuses the unit's own tree", func(t *testing.T) {
+		dir, wt := setup(t)
+		if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte("another session\n"), 0o644); err != nil {
+			t.Fatalf("write own ci.yml: %v", err)
+		}
+		claim(t, dir, wt)
+		res := validate(t, dir)
+		if res.OwnsOK || !slices.Contains(res.Outside, "ci.yml") {
+			t.Errorf("OwnsOK = %v, outside = %v, want ci.yml outside", res.OwnsOK, res.Outside)
 		}
 	})
 }

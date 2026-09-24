@@ -600,3 +600,71 @@ func TestInspectPassRefusedByLaterFinished(t *testing.T) {
 		t.Errorf("rule = %q, want T3", got)
 	}
 }
+
+// taskStatus returns task's derived status.
+func taskStatus(t *testing.T, dir, task string) string {
+	t.Helper()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	for _, ts := range Derive(events).Tasks {
+		if ts.ID == task {
+			return ts.Status
+		}
+	}
+	return ""
+}
+
+// TestInspectCommit inspects a merged commit's tree (issue #367): without an
+// attestation the pass is refused T3; after Attest it passes on the commit's
+// tree even though the working tree has moved on, the task becomes passed,
+// and it then lands on that commit (T5 satisfied).
+func TestInspectCommit(t *testing.T) {
+	dir, commit := attestSetup(t, []string{"exit 0"}, "a.go")
+	logFinished(t, dir, "T1", "worker-1")
+	// The working tree moves on after the merge: only --commit names the
+	// tree the external run measured.
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x // later\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	opts := InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1", Commit: commit}
+	if err := InspectTask(dir, "T1", opts); err == nil || refusalRule(t, err) != "T3" {
+		t.Fatalf("InspectTask(--commit) before attest error = %v, want a T3 refusal", err)
+	}
+	if _, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1"); err != nil {
+		t.Fatalf("Attest() error = %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1"}); err == nil || refusalRule(t, err) != "T3" {
+		t.Fatalf("InspectTask() on the moved working tree error = %v, want a T3 refusal", err)
+	}
+	if err := InspectTask(dir, "T1", opts); err != nil {
+		t.Fatalf("InspectTask(--commit) after attest error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	last := events[len(events)-1]
+	if last.Kind != "inspected" || last.Commit != commit || last.Tree != landedTree(dir, commit) {
+		t.Errorf("inspected event = %+v, want commit %s and its tree", last, commit)
+	}
+	if got := taskStatus(t, dir, "T1"); got != "passed" {
+		t.Fatalf("status = %q, want passed", got)
+	}
+	if err := LandTask(dir, "T1", commit, "", false, ""); err != nil {
+		t.Fatalf("LandTask() error = %v", err)
+	}
+	if got := taskStatus(t, dir, "T1"); got != "landed" {
+		t.Errorf("status = %q, want landed", got)
+	}
+}
+
+// TestInspectCommitUnknown refuses a commit that is not in the repository.
+func TestInspectCommitUnknown(t *testing.T) {
+	dir, _ := attestSetup(t, []string{"exit 0"}, "a.go")
+	err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1", Commit: "deadbeefdeadbeef"})
+	if err == nil || !strings.Contains(err.Error(), "not in the repository") {
+		t.Fatalf("InspectTask() error = %v, want an unknown-commit error", err)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -232,6 +233,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.BriefPaths = briefPaths
 	res.GatesOK = true
 	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
+	// one owner lookup per pass, from the pass's snapshot, never per gate
+	// (issue #365).
+	owner := pathOwners(o.Dir, events, task)
 
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
@@ -240,7 +244,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		// resolving once per pass would record a history position no reading
 		// was taken at (issue #240).
 		commit := headCommit(wd)
-		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false)
+		out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false, owner)
 		if err != nil {
 			return GaugeResult{}, err
 		}
@@ -259,7 +263,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			// at the moment it ran, never one hoisted from the pass start
 			// (issue #240).
 			commit := headCommit(wd)
-			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true)
+			out, err := runAndRecordGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true, owner)
 			if err != nil {
 				return GaugeResult{}, err
 			}
@@ -283,8 +287,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // ".flywheel/evidence/<task>/<attempt>/gate-<logSuffix>.log", and a
 // validated event carrying gateID as its Gate field. live sets GateOut.Live
 // (issue #152); the recorded reading is otherwise identical to an ordinary
-// gate's.
-func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool) (GateOut, error) {
+// gate's. owner (pathOwners, built once per pass; may be nil) names the
+// in-flight unit owning each path an inconclusive note lists (issue #365).
+func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, err := runGate(wd, gate)
@@ -321,7 +326,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string
 	} else if rc != 0 {
 		if paths := inconclusivePaths(wd, owns, out); len(paths) > 0 {
 			inconclusive = true
-			note = inconclusiveNote(paths)
+			note = inconclusiveNote(paths, owner)
 			ev.Reason = "inconclusive"
 			ev.Note = note
 		}
@@ -407,6 +412,10 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 						attributed = append(attributed, wtPath+": "+p+" -> "+owner)
 						continue
 					}
+					if s := siblingClaim(fresh, task, wtPath, p, reading); s != "" {
+						attributed = append(attributed, wtPath+": "+p+" -> lead "+s)
+						continue
+					}
 					outside = append(outside, wtPath+": "+p)
 				}
 			}
@@ -456,6 +465,34 @@ func inFlightOwners(events []Event, task string) []string {
 	}
 	sort.Strings(owners)
 	return owners
+}
+
+// pathOwners resolves, once, the effective owns of every in-flight task other
+// than task (inFlightOwners, in its sorted order; a task whose brief cannot be
+// read is skipped) and returns a lookup giving the first owner whose owns
+// contain p, or "" (issue #365). ValidateTask builds it once per pass from the
+// pass's events snapshot and hands it to every gate for the inconclusive note.
+func pathOwners(dir string, events []Event, task string) func(p string) string {
+	type owned struct {
+		task string
+		owns []string
+	}
+	var all []owned
+	for _, other := range inFlightOwners(events, task) {
+		header, _, err := AttemptBrief(dir, events, other)
+		if err != nil {
+			continue
+		}
+		all = append(all, owned{other, header.Owns})
+	}
+	return func(p string) string {
+		for _, o := range all {
+			if ownsContains(o.owns, p) {
+				return o.task
+			}
+		}
+		return ""
+	}
 }
 
 // attributeOutside splits changed paths already known to sit outside task's
@@ -526,10 +563,13 @@ func leadClaimingSession(wd string, events []Event, task, p string, reading time
 
 // claimingSession is leadClaimingSession with the worker guard supplied by
 // the caller: isWorker reports a session that may never count as the lead.
+// A lead_edit with a non-empty Workdir names paths in a sibling worktree
+// (claim-edit --worktree) and is skipped here: it never excuses the same
+// relative path in the tree being checked (issue #362).
 func claimingSession(wd string, events []Event, p string, reading time.Time, isWorker func(sess string) bool) string {
 	sess := ""
 	for _, e := range events {
-		if e.Kind != "lead_edit" || !ownsContains(e.Owns, p) {
+		if e.Kind != "lead_edit" || e.Workdir != "" || !ownsContains(e.Owns, p) {
 			continue
 		}
 		want, ok := e.Baseline[p]
@@ -537,6 +577,43 @@ func claimingSession(wd string, events []Event, p string, reading time.Time, isW
 			continue
 		}
 		if isWorker(e.Session) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, e.TS)
+		if err != nil || !t.Before(reading) {
+			continue
+		}
+		sess = e.Session
+	}
+	return sess
+}
+
+// siblingClaim returns the session of the lead_edit event in the unit's own
+// ledger that claims path p (relative to the sibling worktree wtPath) for this
+// reading, or "" when none does (issue #362): another session's edit in a
+// sibling worktree, declared with claim-edit --worktree. The event's Workdir
+// must name wtPath (filepath.Clean of both, compared with isPathEqual), its
+// Owns must contain p exactly, its Baseline[p] must still equal p's current
+// content in wtPath, its session must not be a worker session of task, and
+// its TS must be strictly before the reading. The last matching event wins,
+// like claimingSession.
+func siblingClaim(events []Event, task, wtPath, p string, reading time.Time) string {
+	sess := ""
+	for _, e := range events {
+		if e.Kind != "lead_edit" || e.Workdir == "" {
+			continue
+		}
+		if !isPathEqual(filepath.Clean(e.Workdir), filepath.Clean(wtPath)) {
+			continue
+		}
+		if !slices.Contains(e.Owns, p) {
+			continue
+		}
+		want, ok := e.Baseline[p]
+		if !ok || fileSHA(wtPath, p) != want {
+			continue
+		}
+		if workerSessionOf(task, events, e.Session) {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339Nano, e.TS)
@@ -1095,12 +1172,23 @@ func inconclusivePaths(wd string, owns []string, out []byte) []string {
 
 // inconclusiveNote builds the note for an inconclusive gate reading: "blocked
 // by <paths>", comma-joined, at most five paths, the whole note capped at 200
-// characters.
-func inconclusiveNote(paths []string) string {
+// characters. A path an in-flight unit owns reads "<path> (owned by <task>)"
+// (issue #365), so a shared gate failing on another unit's files names whose
+// they are; owner may be nil, and returns "" for an unowned path.
+func inconclusiveNote(paths []string, owner func(string) string) string {
 	if len(paths) > 5 {
 		paths = paths[:5]
 	}
-	note := "blocked by " + strings.Join(paths, ", ")
+	listed := make([]string, len(paths))
+	for i, p := range paths {
+		listed[i] = p
+		if owner != nil {
+			if t := owner(p); t != "" {
+				listed[i] = p + " (owned by " + t + ")"
+			}
+		}
+	}
+	note := "blocked by " + strings.Join(listed, ", ")
 	if len(note) > 200 {
 		note = note[:200]
 	}

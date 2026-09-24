@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -283,6 +284,16 @@ func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 		return []VerifyItem{{Task: task, Rule: "T3", Pass: false, Reason: err.Error()}}, nil
 	}
 	var items []VerifyItem
+	// An external reading (issue #367) must name its evidence, session and
+	// commit; one that does not is a violation on its own, and never counts
+	// towards a pass (externalReadingOK in the reading predicates).
+	for _, e := range events {
+		if e.Task == task && e.Source != "" && (e.Kind == "validated" || e.Kind == "owns_checked") && !externalReadingOK(e) {
+			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false,
+				Reason: fmt.Sprintf("external %s reading on tree %s lacks evidence, a session or the commit it measured", e.Kind, short(e.Tree))})
+		}
+	}
+	var attested []string
 	for i, insp := range events {
 		if insp.Task != task || insp.Kind != "inspected" || insp.Verdict != "pass" {
 			continue
@@ -312,6 +323,9 @@ func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 		}
 		switch outcome {
 		case readingsOK:
+			if ev := attestedEvidence(events, task, insp.Tree); ev != "" {
+				attested = append(attested, ev)
+			}
 			continue
 		case readingsInconclusive:
 			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false, Inconclusive: true,
@@ -336,9 +350,26 @@ func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 		}
 	}
 	if len(items) == 0 {
-		return []VerifyItem{{Task: task, Rule: "T3", Pass: true, Reason: "every inspected pass has readings"}}, nil
+		reason := "every inspected pass has readings"
+		if len(attested) > 0 {
+			reason += "; attested: " + strings.Join(attested, ", ")
+		}
+		return []VerifyItem{{Task: task, Rule: "T3", Pass: true, Reason: reason}}, nil
 	}
 	return items, nil
+}
+
+// attestedEvidence returns the evidence of the latest sound external validated
+// reading of task on tree (issue #367), or "" when tree's readings were all
+// measured by flywheel.
+func attestedEvidence(events []Event, task, tree string) string {
+	ev := ""
+	for _, e := range events {
+		if e.Task == task && e.Kind == "validated" && e.Tree == tree && e.Source == "external" && externalReadingOK(e) {
+			ev = e.Evidence
+		}
+	}
+	return ev
 }
 
 // readingsOutcome is how a T3 readings check for one inspected pass ended.
@@ -438,7 +469,8 @@ func workerSessions(events []Event, task string) map[string]bool {
 	return workers
 }
 
-// ruleT4 checks that no inspected or excepted event comes from a worker session.
+// ruleT4 checks that no inspected, excepted or external (attested, issue #367)
+// event comes from a worker session.
 func ruleT4(task string, events []Event) []VerifyItem {
 	workers := workerSessions(events, task)
 	var items []VerifyItem
@@ -453,6 +485,10 @@ func ruleT4(task string, events []Event) []VerifyItem {
 		if e.Kind == "excepted" && workers[e.Session] {
 			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
 				Reason: fmt.Sprintf("excepted event uses worker session %q", e.Session)})
+		}
+		if e.Source == "external" && workers[e.Session] {
+			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
+				Reason: fmt.Sprintf("external %s reading attested by worker session %q", e.Kind, e.Session)})
 		}
 	}
 	if len(items) == 0 {
