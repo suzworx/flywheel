@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -809,6 +810,63 @@ func TestFloorPausedModel(t *testing.T) {
 	}
 	if andonHas(fl.Andon, "model/m1") {
 		t.Errorf("andon after the reset = %v, want no model/m1", fl.Andon)
+	}
+}
+
+// TestFloorWorktreeBase checks a unit dispatched into a worktree carries its
+// workdir and 7-character base, the text view grows a TREE column showing the
+// worktree's last path element and base, and the JSON view carries both; a unit
+// in the main checkout shows neither (issue #394).
+func TestFloorWorktreeBase(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC)
+	wt := filepath.Join(dir, ".flywheel", "worktrees", "CP-A")
+	for _, e := range []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "CP-A", Kind: "planned", Brief: "a.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "CP-A", Kind: "dispatched", Attempt: "r1", Workdir: wt, Base: "abcdef1234567890"},
+		{TS: "2026-09-15T00:00:00Z", Task: "main", Kind: "planned", Brief: "m.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "main", Kind: "dispatched", Attempt: "r1", Base: "1234567890abcdef"},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "CP-A")
+	if !ok || u.Workdir != wt || u.Base != "abcdef1" {
+		t.Fatalf("unit CP-A = %+v, want workdir %q base abcdef1", u, wt)
+	}
+	m, ok := unitBy(fl.Units, "main")
+	if !ok || m.Workdir != "" || m.Base != "1234567" {
+		t.Fatalf("unit main = %+v, want no workdir, base 1234567", m)
+	}
+	var text, js strings.Builder
+	RenderText(&text, fl, 100, false)
+	for _, want := range []string{"TREE", "CP-A@abcdef1"} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("rendered text lacks %q:\n%s", want, text.String())
+		}
+	}
+	for _, line := range strings.Split(text.String(), "\n") {
+		if len(line) > 100 {
+			t.Errorf("line wider than 100: %q", line)
+		}
+	}
+	RenderJSON(&js, fl)
+	wantWD, _ := json.Marshal(wt)
+	if !strings.Contains(js.String(), `"workdir": `+string(wantWD)) || !strings.Contains(js.String(), `"base": "abcdef1"`) {
+		t.Errorf("JSON lacks workdir and base:\n%s", js.String())
+	}
+	// Without a worktree unit the text view has no TREE column.
+	fl.Units = []Unit{m}
+	text.Reset()
+	RenderText(&text, fl, 100, false)
+	if strings.Contains(text.String(), "TREE") {
+		t.Errorf("text without a worktree unit shows TREE:\n%s", text.String())
 	}
 }
 

@@ -128,16 +128,20 @@ with `--kind amended`; gates change only with `flywheel run <task> --delta <file
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
 (attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
 adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,
+or `sim`), and `flywheel run --worker <name>` picks between several configured workers. For
+parallel units, `flywheel run --worktree <task>` is the default: each unit builds in its own
+`.flywheel/worktrees/<task>` on branch `fw/<task>`, so parallel workers never share a tree, and
+flywheel commands run there use the main ledger. The floor's TREE column shows each unit's
+worktree and base commit. The
+hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
 or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
 hand-built **fresh run** below is the OpenCode-specific fallback.
-
 **Never background a dispatch with a bare `&`**: a shell job nobody tracks finishes unseen (issue
 #393). Use the host's tracked background mode (one that re-invokes you when the command exits), or
 block on `flywheel wait <task>... [--timeout D]`: it returns when each named task finishes its current
 (or first) attempt and prints `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
 4 any unclean, 8 timeout). `flywheel run <task> --notify CMD` also runs `CMD` when the run returns on
 any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"` in its environment.
-
 The OpenCode fallback (e.g. one increment of a brief):
 verify flags first
 (`opencode run --help`), label with `--title`, auto-approve with `--auto`, emit JSON so you capture

@@ -86,8 +86,10 @@ flowchart LR
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
-  records the run automatically.
+  records the run automatically. For parallel units `flywheel run --worktree` is the default: each
+  unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` opens an interactive, k9s-style view of the floor (`:units` `:workers` `:andon` `:events` `:lines` to switch, `/` to filter, enter to explain a unit, `l` for its log, `?` for help, `q` to quit; `--plain` keeps the plain redraw), and `flywheel watch` streams every event as one readable line.
+  When any unit runs in a worktree, the plain floor's (`flywheel factory --plain`) units table adds a TREE column with that worktree and its base commit (`CP-A@abcdef1`), and the `--json` view carries `workdir` and `base`.
 - **Know when a unit finishes** — never background a dispatch with a bare `&` and hope to notice:
   `flywheel wait <task>... [--timeout D]` blocks until each named task finishes its current (or
   first) attempt, printing `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
