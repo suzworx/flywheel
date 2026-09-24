@@ -12,7 +12,9 @@ Every record is one JSON line appended to `.flywheel/events.jsonl` by `AppendEve
 never rewritten — `flywheel log` (or a command that calls `AppendEvent` internally) is the only way
 to add a line. `flywheel state` derives `.flywheel/state.json` and the status block in
 `flywheel.md` from the log alone (`Derive`): the log is the one source of truth, everything else is
-a read-only projection of it.
+a read-only projection of it. A command whose `--dir` is inside a unit's worktree
+(`<root>/.flywheel/worktrees/<task>`, made by `flywheel run --worktree`) uses the main checkout's
+ledger at `<root>`, never the worktree's stale copy (issue #395).
 
 Every skill in `skills/` that drives this loop cites `protocol v1` and links back here;
 `cmd/flywheel/docs_test.go` fails the build the moment a skill stops citing it, or this file's
@@ -438,7 +440,10 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   dispatch, owned by no in-flight unit's brief there, is attributed `"<worktree>: <path> -> lead
   <session>"` when that worktree's own ledger has a `lead_edit` claim covering it under the same
   three guards (the worker-session guard against each of that worktree's in-flight units), and only
-  while that worktree still has a dispatched, unlanded unit.
+  while that worktree still has a dispatched, unlanded unit. A sibling that is another unit's
+  `run --worktree` worktree, `<repo>/.flywheel/worktrees/<task>`, is read against the MAIN ledger
+  instead: while `<task>` is dispatched and unlanded there, every changed path in it is attributed
+  `"<worktree>: <path> -> <task>"` (issue #386).
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.

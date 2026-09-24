@@ -403,11 +403,16 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 			if err != nil {
 				continue
 			}
+			taskOwner := taskWorktreeOwner(dir, fresh, wtPath)
 			for _, p := range wtChanged {
 				if isFlywheelOwnPath(p) {
 					continue
 				}
 				if bh, ok := wtBase[p]; !ok || fileSHA(wtPath, p) != bh {
+					if taskOwner != "" {
+						attributed = append(attributed, wtPath+": "+p+" -> "+taskOwner)
+						continue
+					}
 					if owner := worktreeOwner(wtPath, p, reading); owner != "" {
 						attributed = append(attributed, wtPath+": "+p+" -> "+owner)
 						continue
@@ -662,6 +667,31 @@ func unlandedOwners(events []Event) []string {
 	}
 	sort.Strings(owners)
 	return owners
+}
+
+// taskWorktreeOwner returns T when wtPath is the task worktree
+// <abs dir>/.flywheel/worktrees/<T> that `flywheel run --worktree` made
+// (TaskWorktree) and T is dispatched and unlanded in the MAIN ledger events,
+// else "" (issue #386). A task worktree's ledger lives in the main checkout;
+// the copy inside the worktree is a stale snapshot from its branch point, so
+// worktreeOwner cannot see T in flight there. Any path in T's worktree is T's
+// work.
+func taskWorktreeOwner(dir string, events []Event, wtPath string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	root := filepath.Clean(filepath.Join(abs, ".flywheel", "worktrees"))
+	wt := filepath.Clean(wtPath)
+	if !isPathEqual(filepath.Dir(wt), root) {
+		return ""
+	}
+	for _, t := range unlandedOwners(events) {
+		if isPathEqual(filepath.Join(root, t), wt) {
+			return t
+		}
+	}
+	return ""
 }
 
 // worktreeOwner reports the task in worktree W whose brief owns the changed
