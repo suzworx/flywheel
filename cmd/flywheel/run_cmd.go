@@ -97,12 +97,13 @@ func runRun(args []string) {
 		os.Exit(2)
 	}
 
-	res, err := flywheel.Run(o.dir, flywheel.RunOptions{
+	// A worker cut off by a rate limit is resumed after the reset (issue #380).
+	res, err := flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
 		Task: task, Worker: o.worker, Model: o.model, Resume: o.resume, ForceModel: o.forceModel,
 		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, Increment: o.increment,
 		Worktree: o.worktree, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
 		Progress: os.Stdout, Stderr: os.Stderr,
-	})
+	}, time.Sleep, time.Now)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel run: %v\n", err)
 		if flywheel.IsNoWorkerSession(err) {

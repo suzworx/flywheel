@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -280,6 +281,58 @@ func TestConfigSetIntegerParseError(t *testing.T) {
 	}
 	if got := cfg.DefaultWorker().MaxParallel; got != 4 {
 		t.Errorf("MaxParallel = %d, want unchanged 4 after failed Set", got)
+	}
+}
+
+// TestConfigRateLimitKeys checks limits.rate_limit_retries and
+// limits.rate_limit_max_wait: their defaults (3, 5h), Get/Set, 0 disabling
+// retries, and Validate refusing a negative count or a bad duration (issue
+// #380).
+func TestConfigRateLimitKeys(t *testing.T) {
+	cfg := DefaultConfig()
+	for key, want := range map[string]string{"limits.rate_limit_retries": "3", "limits.rate_limit_max_wait": "5h"} {
+		if v, err := cfg.Get(key); err != nil || v != want {
+			t.Errorf("default Get(%q) = %q, %v; want %q", key, v, err, want)
+		}
+	}
+	if d, err := cfg.Limits.RateLimitMaxWaitDuration(); err != nil || d != 5*time.Hour {
+		t.Errorf("default RateLimitMaxWaitDuration() = %v, %v; want 5h", d, err)
+	}
+	if err := cfg.Set("limits.rate_limit_retries", "0"); err != nil {
+		t.Fatalf("Set(limits.rate_limit_retries, 0) error = %v", err)
+	}
+	if err := cfg.Set("limits.rate_limit_max_wait", "90m"); err != nil {
+		t.Fatalf("Set(limits.rate_limit_max_wait, 90m) error = %v", err)
+	}
+	if cfg.Limits.RateLimitRetryCount() != 0 {
+		t.Errorf("RateLimitRetryCount() = %d after setting 0, want 0 (disabled)", cfg.Limits.RateLimitRetryCount())
+	}
+	if v, _ := cfg.Get("limits.rate_limit_max_wait"); v != "90m" {
+		t.Errorf("Get(limits.rate_limit_max_wait) = %q, want 90m", v)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := cfg.Set("limits.rate_limit_retries", "x"); err == nil || !strings.Contains(err.Error(), "integer") {
+		t.Errorf("Set(limits.rate_limit_retries, x) error = %v, want an integer error", err)
+	}
+	for _, tc := range []struct{ key, value, want string }{
+		{"limits.rate_limit_retries", "-1", "limits.rate_limit_retries -1 must be >= 0"},
+		{"limits.rate_limit_max_wait", "soon", "limits.rate_limit_max_wait"},
+		{"limits.rate_limit_max_wait", "-5m", "must be > 0"},
+	} {
+		bad := DefaultConfig()
+		if err := bad.Set(tc.key, tc.value); err != nil {
+			t.Fatalf("Set(%q, %q) error = %v", tc.key, tc.value, err)
+		}
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate() with %s=%s = %v, want %q", tc.key, tc.value, err, tc.want)
+		}
+	}
+	for _, k := range []string{"limits.rate_limit_retries", "limits.rate_limit_max_wait"} {
+		if !slices.Contains(cfg.validKeys(), k) || !slices.Contains(cfg.settableKeys(), k) {
+			t.Errorf("%s missing from validKeys or settableKeys", k)
+		}
 	}
 }
 

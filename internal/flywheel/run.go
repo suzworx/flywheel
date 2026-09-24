@@ -52,6 +52,9 @@ type Result struct {
 	Steps   int
 	Tokens  *Tokens
 	Cost    float64
+	// ResetText is the rate limit's reset clause when Reason is
+	// "rate-limited" (issue #380); RunResumingLimits waits for it.
+	ResetText string
 }
 
 // workerPermissionPolicy is the embedded OpenCode permission policy written to
@@ -777,6 +780,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var commands []string // shell commands in order, at most 100 (issue #365)
 	lastText := ""
 	lastReason := ""
+	resetText := ""      // a rate limit's reset clause (issue #380)
 	var denials []string // the last step's permission denials (issue #364)
 	seenError := false
 	steps := 0
@@ -922,6 +926,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		case "step":
 			if obs.Reason != "" {
 				lastReason = obs.Reason
+			}
+			if obs.ResetText != "" {
+				resetText = obs.ResetText
 			}
 			if len(obs.Denials) > 0 {
 				denials = obs.Denials
@@ -1146,6 +1153,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			note = joinNote(note, "gates never run by the worker: "+strings.Join(gatesUnrun, ", "))
 		}
 	}
+	// A rate limit names its reset on the note and records no signal: an
+	// untriaged signal would block landing after a successful resume (issue
+	// #380).
+	if reason != "rate-limited" {
+		resetText = ""
+	} else if resetText != "" {
+		note = joinNote(note, "limit resets "+resetText)
+	}
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
@@ -1203,7 +1218,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
-	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost}, nil
+	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText}, nil
 }
 
 // gateContention describes one shared-gate finding at dispatch: this task's
@@ -1942,7 +1957,9 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 	}
 	var finished []finish
 	for _, e := range events {
-		if e.Kind != "finished" || e.Model != model {
+		// A rate limit says nothing about the provider's health: it neither
+		// counts as an error nor breaks an error streak (issue #380).
+		if e.Kind != "finished" || e.Model != model || e.Reason == "rate-limited" {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(probeAt) {

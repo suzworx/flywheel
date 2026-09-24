@@ -93,7 +93,11 @@ all.
 - Written by: the CLI, exactly once per attempt, on every code path out of a run (clean stop,
   silent, stalled, provider error, output cap, start failure).
 - Carries: `task`, `session`, `attempt`, `model` (every `finished` event carries the model, issue
-  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error`; `start-failed`; `silent`;
+  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error`; `rate-limited` — the
+  provider's rate or usage limit cut the run off (a claude 429 or limit message); the note names
+  `limit resets <time>`, no signal is recorded, the breaker does not count it, and `flywheel run`
+  resumes the same session after the reset (`limits.rate_limit_retries`,
+  `limits.rate_limit_max_wait`), issue #380; `start-failed`; `silent`;
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
@@ -593,7 +597,7 @@ a consumer scripts exit codes per command, never globally:
 | Exit | `flywheel run` reason |
 | --- | --- |
 | 3 | `silent` — no stdout line arrived within the start timeout |
-| 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, or `start-failed` |
+| 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, `rate-limited` (after any resumes), or `start-failed` |
 | 7 | `stalled` — the run had started but the run file stopped growing for the stall timeout (issue #158) |
 
 Everything upstream of these five commands — writing a brief, deciding what belongs in `owns:`,

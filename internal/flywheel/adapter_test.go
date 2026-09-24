@@ -309,8 +309,9 @@ func TestClaudeParseToolUseFixture(t *testing.T) {
 // TestClaudeParseLimitFixture parses testdata/claude-limit.jsonl, one REAL
 // line captured from `claude -p ...` on this machine after it hit its
 // session limit: stop_reason stop_sequence and subtype "success", but with
-// a top-level is_error: true and a session-limit result message. is_error
-// wins, so the step Reason is "error".
+// a top-level is_error: true, api_error_status 429 and a session-limit result
+// message. That is a rate limit, not a clean stop and not a provider error:
+// the step Reason is "rate-limited" with the reset clause (issue #380).
 func TestClaudeParseLimitFixture(t *testing.T) {
 	a, _ := AdapterFor("claude")
 	lines := fixtureLines("claude-limit.jsonl", t)
@@ -318,8 +319,21 @@ func TestClaudeParseLimitFixture(t *testing.T) {
 		t.Fatalf("claude-limit.jsonl has %d lines, want 1", len(lines))
 	}
 	obs, ok := a.Parse([]byte(lines[0]))
-	if !ok || obs.Kind != "step" || obs.Reason != "error" || obs.Session != "340a5fef-5f5d-4fb6-a42d-0a7d55b65a38" {
-		t.Errorf("limit result line = %v, %v, want step error with the session", obs, ok)
+	if !ok || obs.Kind != "step" || obs.Reason != "rate-limited" || obs.Session != "340a5fef-5f5d-4fb6-a42d-0a7d55b65a38" {
+		t.Errorf("limit result line = %v, %v, want step rate-limited with the session", obs, ok)
+	}
+	if obs.ResetText != "10:20am (America/Los_Angeles)" {
+		t.Errorf("ResetText = %q, want %q", obs.ResetText, "10:20am (America/Los_Angeles)")
+	}
+	for _, tc := range []struct{ line, reason string }{
+		{`{"type":"result","subtype":"success","is_error":true,"result":"boom"}`, "error"},
+		{`{"type":"result","is_error":true,"api_error_status":429,"result":"slow down"}`, "rate-limited"},
+		{`{"type":"result","is_error":true,"result":"Claude AI usage limit reached"}`, "rate-limited"},
+		{`{"type":"result","is_error":true,"api_error_status":500,"result":"overloaded"}`, "error"},
+	} {
+		if obs, ok := a.Parse([]byte(tc.line)); !ok || obs.Reason != tc.reason || obs.ResetText != "" {
+			t.Errorf("Parse(%s) = %v, %v, want Reason %q and no ResetText", tc.line, obs, ok, tc.reason)
+		}
 	}
 }
 
