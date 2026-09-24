@@ -75,7 +75,9 @@ A brief is a plain-text file with these parts:
    behind a pipe that swallows it. A gate run through `|` (e.g. `go test | tee`) makes `$?` report
    the pipe's tail; give the bare command and its true status, or the gauges will catch the gap.
 9. **Never commit, never push, never secrets.** Committing is the orchestrator's/user's call; the
-   tree-rewriting commands in rule 2 are never yours to run. No credentials, keys, or tokens in
+   tree-rewriting commands in rule 2 are never yours to run. Workers never run git write
+   commands (`git add`, `git add -N`, `git rm --cached`, … included); flywheel commits each
+   attempt of a `--worktree` unit on `fw/<task>` itself. No credentials, keys, or tokens in
    any output you produce for the brief.
 10. **Detect your OS and shell — don't assume.** Check what you're running on (`$PSVersionTable` /
    `$env:OS` on Windows; `uname` / `$SHELL` on macOS/Linux) and use that shell's syntax, not a

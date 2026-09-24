@@ -53,7 +53,9 @@ type Event struct {
 	Header *BriefHeader `json:"header,omitempty"`
 	// Commit is a landed event's commit id (flywheel land --commit) and the
 	// HEAD commit of the workdir a validated/owns_checked reading was taken
-	// at (issue #196): "which commit" has one name in the ledger.
+	// at (issue #196), and on a finished event of a --worktree unit the
+	// commit flywheel made of the attempt on fw/<task> (issue #391): "which
+	// commit" has one name in the ledger.
 	Commit string `json:"commit,omitempty"`
 	// Base is the commit HEAD pointed at in the worker's tree when the attempt was
 	// dispatched (issue #332).

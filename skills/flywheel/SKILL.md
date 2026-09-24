@@ -92,7 +92,8 @@ When you start a session, register yourself on the floor:
   limit, out of credits, a consent gate such as China hosting), report the blocker and halt
   ([references/worker-brief.md#8-blocker-protocol-do-not-take-over](references/worker-brief.md#8-blocker-protocol-do-not-take-over)).
 - **No unrequested commits, pushes, or secrets.** Commit and push only when the user asks;
-  standing instructions in `CLAUDE.md` or `AGENTS.md` count as asking. Workers never commit. Never
+  standing instructions in `CLAUDE.md` or `AGENTS.md` count as asking. Workers never run git write commands; flywheel commits each
+  attempt of a `--worktree` unit on `fw/<task>` (the `finished` event's `commit`). Never
   put secrets or keys in a brief.
 - **Workers never rewrite the shared tree or index.** Every dispatch carries the deny policy via
   `OPENCODE_CONFIG`

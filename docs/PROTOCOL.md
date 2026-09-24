@@ -113,7 +113,15 @@ all.
   the worker ran, in order, at most 100, each clipped to 300 characters; omitted when it ran none,
   issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
-  gate's first 40 characters; live gates are not checked; omitted when empty, issue #365).
+  gate's first 40 characters; live gates are not checked; omitted when empty, issue #365),
+  `commit` (on a `stop` finish of a `--worktree` unit only, issue #391: workers never run git write
+  commands, so flywheel commits the attempt itself on `fw/<task>` — built in a temporary index from
+  HEAD plus every changed path inside the attempt's effective owns, flywheel's own bookkeeping
+  excluded, message `<task> <attempt>` with a `Flywheel-Task: <task>` trailer, author and committer
+  `flywheel <flywheel@localhost>`, the branch moved by compare-and-swap, and the worktree's index
+  refreshed for the committed paths; omitted when nothing owned changed. Changed paths outside owns
+  stay uncommitted and are named on the note as `left uncommitted (outside owns): <paths>`; a
+  commit failure never fails the run and is noted as `attempt commit failed: <err>`).
 - `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
   normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
   `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider

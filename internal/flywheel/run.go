@@ -1180,10 +1180,26 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Workers never write git history: flywheel commits a clean stop's owned
+	// changes on fw/<task> itself when the attempt ran in its task worktree
+	// (issue #391). A commit failure never fails the run; it goes on the note.
+	attemptCommit := ""
+	if o.Worktree && reason == "stop" {
+		sha, outside, cerr := commitAttempt(dir, wt, o.Task, attempt, myOwns)
+		attemptCommit = sha
+		if cerr != nil {
+			note = joinNote(note, clipNote("attempt commit failed: "+cerr.Error()))
+		}
+		if len(outside) > 0 {
+			note = joinNote(note, clipNote("left uncommitted (outside owns): "+strings.Join(outside, ", ")))
+		}
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
+		Commit: attemptCommit,
 	}); err != nil {
 		return Result{}, err
 	}
