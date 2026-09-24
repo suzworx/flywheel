@@ -29,6 +29,7 @@ type feedbackOptions struct {
 	evidence string
 	ask      string
 	signals  string
+	scope    string
 	reason   string
 	out      string
 	yes      bool
@@ -47,6 +48,7 @@ func feedbackFlags() (*flag.FlagSet, *feedbackOptions) {
 	fs.StringVar(&o.evidence, "evidence", "", "evidence path")
 	fs.StringVar(&o.ask, "ask", "", "the ask")
 	fs.StringVar(&o.signals, "signals", "", "comma-separated signal names")
+	fs.StringVar(&o.scope, "scope", "flywheel", "who the learning is for: flywheel (sent upstream) or project (kept local)")
 	fs.StringVar(&o.reason, "reason", "", "dismissal reason")
 	fs.StringVar(&o.out, "out", "", "write the report to this file instead of stdout")
 	fs.BoolVar(&o.yes, "yes", false, "send the report upstream without showing it first")
@@ -58,7 +60,7 @@ func feedbackFlags() (*flag.FlagSet, *feedbackOptions) {
 func feedbackUsageLines() string {
 	return strings.Join([]string{
 		"flywheel feedback [--dir DIR]",
-		"       flywheel feedback add --task ID --severity P0|P1|P2 --title T --observed O --evidence E --ask A [--signals a,b] [--dir DIR]",
+		"       flywheel feedback add --task ID --severity P0|P1|P2 --title T --observed O --evidence E --ask A [--signals a,b] [--scope flywheel|project] [--dir DIR]",
 		"       flywheel feedback dismiss L-NN --reason WHY [--dir DIR]",
 		"       flywheel feedback regen [--dir DIR]",
 		"       flywheel feedback export [--out PATH] [--dir DIR]",
@@ -121,6 +123,9 @@ func runFeedbackList(args []string) {
 	}
 	for _, l := range flywheel.Learnings(events) {
 		line := fmt.Sprintf("%s %s %s", l.ID, l.Severity, l.Title)
+		if l.ProjectScoped() {
+			line += " [project]"
+		}
 		if l.Dismissed {
 			line += fmt.Sprintf(" (dismissed: %s)", l.Reason)
 		}
@@ -174,6 +179,11 @@ func runFeedbackAdd(args []string) {
 		feedbackUsage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.scope != "flywheel" && o.scope != "project" {
+		fmt.Fprintf(os.Stderr, "flywheel feedback add: --scope must be flywheel or project (got %q)\n", o.scope)
+		feedbackUsage(os.Stderr)
+		os.Exit(2)
+	}
 	var signals []string
 	if o.signals != "" {
 		for _, s := range strings.Split(o.signals, ",") {
@@ -184,7 +194,7 @@ func runFeedbackAdd(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", err)
 		os.Exit(1)
 	}
-	id, title, appendErr, renderErr := flywheel.AddLearning(o.dir, o.task, o.severity, o.title, o.observed, o.evidence, o.ask, signals)
+	id, title, appendErr, renderErr := flywheel.AddLearning(o.dir, o.task, o.severity, o.title, o.observed, o.evidence, o.ask, signals, o.scope)
 	if appendErr != nil {
 		fmt.Fprintf(os.Stderr, "flywheel feedback add: %v\n", appendErr)
 		os.Exit(1)
@@ -206,7 +216,7 @@ func runFeedbackAdd(args []string) {
 // seam the command-layer tests drive, because runFeedbackAdd exits the
 // process. The mutation itself, lock and all, is flywheel.AddLearning.
 func addLearning(dir, task, severity, title, observed, evidence, ask string, signals []string) (id, titleOut string, appendErr, renderErr error) {
-	return flywheel.AddLearning(dir, task, severity, title, observed, evidence, ask, signals)
+	return flywheel.AddLearning(dir, task, severity, title, observed, evidence, ask, signals, "flywheel")
 }
 
 // feedbackRenderFailure explains a render failure that happened after the
@@ -303,16 +313,27 @@ func runFeedbackExport(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback export: %v\n", err)
 		os.Exit(1)
 	}
-	report := flywheel.FeedbackReport(version, flywheel.Learnings(events))
+	views := flywheel.Learnings(events)
+	report := flywheel.FeedbackReport(version, views)
 	if o.out == "" {
 		fmt.Print(report)
-		return
-	}
-	if err := flywheel.WriteFeedbackReport(o.out, report); err != nil {
+	} else if err := flywheel.WriteFeedbackReport(o.out, report); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel feedback export: %v\n", err)
 		os.Exit(1)
+	} else {
+		fmt.Println(o.out)
 	}
-	fmt.Println(o.out)
+	printKeptLocal(os.Stderr, "export", views)
+}
+
+// printKeptLocal tells the operator, on w, how many undismissed
+// project-scoped learnings export or submit left out (issue #409); it prints
+// nothing when there are none. It goes to stderr so the report on stdout stays
+// exactly what would be sent.
+func printKeptLocal(w io.Writer, sub string, views []flywheel.LearningView) {
+	if n := flywheel.ProjectKeptLocal(views); n > 0 {
+		fmt.Fprintf(w, "flywheel feedback %s: (%d project-scoped learning(s) kept local)\n", sub, n)
+	}
 }
 
 // runFeedbackSubmit sends the sanitised report upstream. Consent is not
@@ -344,7 +365,8 @@ func runFeedbackSubmit(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel feedback submit: %v\n", err)
 		os.Exit(1)
 	}
-	res, err := flywheel.FeedbackSubmit(o.dir, cfg, version, flywheel.Learnings(events), flywheel.FeedbackSubmitOptions{Yes: o.yes})
+	views := flywheel.Learnings(events)
+	res, err := flywheel.FeedbackSubmit(o.dir, cfg, version, views, flywheel.FeedbackSubmitOptions{Yes: o.yes})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel feedback submit: %v\n", err)
 		if flywheel.IsRuleRefusal(err) {
@@ -356,6 +378,7 @@ func runFeedbackSubmit(args []string) {
 		}
 		os.Exit(1)
 	}
+	printKeptLocal(os.Stderr, "submit", views)
 	if res.NotSent {
 		fmt.Print(res.Report)
 		fmt.Fprintf(os.Stderr, "flywheel feedback submit: not sent; re-run with --yes to send it\n")

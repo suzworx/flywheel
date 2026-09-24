@@ -460,6 +460,26 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
 - Carries: `session` (required) and no `task`.
 - Effect: floor-level like `session_start`.
 
+### `learning`
+- Written by: `flywheel feedback add --task <id> --severity P0|P1|P2 --title T --observed O
+  --evidence E --ask A [--signals a,b] [--scope flywheel|project]`, or a `flywheel log --json` batch.
+- Carries: `task`, `severity`, `title`, `observed`, `evidence`, `ask` (all required), `signals`, and
+  `scope` (issue #409): `flywheel` — the default, and what an event without `scope` means — is
+  feedback about flywheel; `project` is the project's own learning (its product bugs, say).
+  `Validate` refuses any other scope, and a scope on any other kind.
+- Effect: numbered L-01, L-02, … in log order whatever the scope; the generated
+  `.flywheel/learnings.md` renders a `## Feedback for flywheel` and a `## Project learnings` section.
+  `flywheel feedback export` and `submit` carry only undismissed flywheel-scoped learnings and say
+  how many project ones stayed local.
+
+### `note`
+- Written by: anyone keeping a journal, via `flywheel log --kind note [--task T] --note "<text>"
+  [--session S]` (issue #409). `--note` is required.
+- Carries: `note` (required), and optionally `task` and `session`.
+- Effect: none — a journal line (`action: dispatched…`, `result: … merged`) is never a learning,
+  so it never reaches learnings.md or an upstream report. `flywheel explain` shows it as
+  `note: <text>`.
+
 ### `lead_edit`
 - Written by: the lead, via `flywheel claim-edit --paths <p1,p2> --session <session> [--note ...]`,
   to declare an edit it made itself after a unit's dispatch (issue #228).

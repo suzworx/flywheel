@@ -157,6 +157,10 @@ func explainLine(e Event) string {
 	case "learning":
 		return fmt.Sprintf("learning %s %s", e.Severity, e.Title)
 
+	case "note":
+		// A journal line (issue #409): the text is the whole event.
+		return "note: " + e.Note
+
 	case "blocked", "lost":
 		line := fmt.Sprintf("%s %s: %s", e.Kind, e.Attempt, e.Reason)
 		if e.Note != "" {
