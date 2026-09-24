@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/suzworx/flywheel/compare/v0.18.0...v0.18.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* a rate-limited worker is recorded as rate-limited and resumed after the reset ([#381](https://github.com/suzworx/flywheel/issues/381)) ([6861729](https://github.com/suzworx/flywheel/commit/68617290a140274dc76ba9f0909a3d7ac6e170ee)), closes [#380](https://github.com/suzworx/flywheel/issues/380)
+
 ## [0.18.0](https://github.com/suzworx/flywheel/compare/v0.17.0...v0.18.0) (2026-09-24)
 
 
