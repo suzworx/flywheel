@@ -732,3 +732,40 @@ func TestConfigBreakerValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestLostAfterConfig covers limits.lost_after (issue #402): the 24h default,
+// Get/Set, and validation refusing an unparseable or non-positive duration.
+func TestLostAfterConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if v, err := cfg.Get("limits.lost_after"); err != nil || v != "24h" {
+		t.Errorf("default Get(limits.lost_after) = %q, %v; want 24h", v, err)
+	}
+	if d, err := cfg.Limits.LostAfterDuration(); err != nil || d != 24*time.Hour {
+		t.Errorf("default LostAfterDuration() = %v, %v; want 24h", d, err)
+	}
+	if err := cfg.Set("limits.lost_after", "6h"); err != nil {
+		t.Fatalf("Set(limits.lost_after, 6h) error = %v", err)
+	}
+	if v, _ := cfg.Get("limits.lost_after"); v != "6h" {
+		t.Errorf("Get(limits.lost_after) = %q, want 6h", v)
+	}
+	if d, _ := cfg.Limits.LostAfterDuration(); d != 6*time.Hour {
+		t.Errorf("LostAfterDuration() = %v, want 6h", d)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	for _, tc := range []struct{ value, want string }{
+		{"soon", "limits.lost_after"},
+		{"0s", "must be > 0"},
+		{"-1h", "must be > 0"},
+	} {
+		c := DefaultConfig()
+		if err := c.Set("limits.lost_after", tc.value); err != nil {
+			t.Fatalf("Set(limits.lost_after, %s) error = %v", tc.value, err)
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate() with lost_after %q = %v, want error containing %q", tc.value, err, tc.want)
+		}
+	}
+}

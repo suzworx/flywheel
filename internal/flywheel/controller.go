@@ -219,9 +219,9 @@ type TickResult struct {
 }
 
 // Tick runs one controller tick at now: it acquires (or renews) the
-// controller lock, reads the events, leases and config, calls Reconcile and
+// controller lock, reads the events, leases, run files and config, calls Reconcile and
 // executes the durable actions — MARK_LOST appends a lost event (reason
-// lease-expired, the note carrying the lease evidence) and BLOCK appends a
+// lease-expired or idle, the note carrying the evidence; see MarkLost) and BLOCK appends a
 // blocked event whose reason names the needs target. REQUEST_INSPECTION,
 // WAIT and DISPATCH are reported in the result only and append nothing. The
 // tick is idempotent: the same inputs append nothing the second time.
@@ -238,19 +238,18 @@ func Tick(dir string, now time.Time) (TickResult, error) {
 	if err != nil {
 		return TickResult{}, fmt.Errorf("read events %s: %w", dir, err)
 	}
-	leases, err := ReadLeases(dir)
+	obs, err := observe(dir)
 	if err != nil {
-		return TickResult{}, fmt.Errorf("read leases %s: %w", dir, err)
+		return TickResult{}, err
 	}
-	actions := Reconcile(Derive(events), events, Observed{Leases: leases}, PolicyFromConfig(cfg), now)
+	actions := Reconcile(Derive(events), events, obs, PolicyFromConfig(cfg), now)
 	var res TickResult
 	res.TS = now.UTC().Format(time.RFC3339Nano)
 	for _, a := range actions {
 		switch a.Kind {
 		case "MARK_LOST":
-			if err := AppendEvent(dir, Event{TS: res.TS, Task: a.Task, Kind: "lost",
-				Attempt: a.Attempt, Reason: "lease-expired", Note: a.Evidence}); err != nil {
-				return TickResult{}, fmt.Errorf("append lost for %s: %w", a.Task, err)
+			if err := appendLost(dir, res.TS, a); err != nil {
+				return TickResult{}, err
 			}
 			res.Lost++
 			res.Actions++
