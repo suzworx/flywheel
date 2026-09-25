@@ -31,7 +31,15 @@ type RunRequest struct {
 	// NoWorkerRules marks a non-worker dispatch such as the review agent
 	// (issue #389): claude gets no --append-system-prompt workerRules.
 	NoWorkerRules bool
+	// MCPConfig is the worker's MCP servers as a compact --mcp-config JSON
+	// string (worker.mcpConfig(), populated by Run); empty means none
+	// (issue #425).
+	MCPConfig string
 }
+
+// emptyMCPConfig is the explicit empty MCP server set a claude dispatch
+// passes when the worker config lists none (issue #425).
+const emptyMCPConfig = `{"mcpServers":{}}`
 
 // The message placed on the command line before --file. Brief text itself is
 // never an argument: on Windows the opencode binary is an npm shim that passes
@@ -417,7 +425,12 @@ func (a claudeAdapter) Name() string {
 // and resumed runs alike (issue #360), unless r.NoWorkerRules marks a
 // non-worker dispatch such as the review agent (issue #389). The value is multi-line, which is safe
 // as a command-line argument because claude is a native binary, not an npm
-// shim run through cmd.exe.
+// shim run through cmd.exe. Every dispatch passes --strict-mcp-config with
+// --mcp-config r.MCPConfig, or an explicit empty set ({"mcpServers":{}})
+// when it is empty, so a worker loads no MCP server — not the user's mail,
+// calendar, drive or plugin servers that --setting-sources user would still
+// load — unless its worker config lists them (issue #425). The review agent
+// sets no MCPConfig and so inherits the empty set.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	resuming := r.Resume && r.Session != ""
 	args := []string{
@@ -440,6 +453,11 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		args = append(args, "--disallowedTools")
 		args = append(args, r.DisallowedTools...)
 	}
+	mcp := r.MCPConfig
+	if mcp == "" {
+		mcp = emptyMCPConfig
+	}
+	args = append(args, "--strict-mcp-config", "--mcp-config", mcp)
 	if resuming {
 		args = append(args, "--resume", r.Session)
 	}

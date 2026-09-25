@@ -218,6 +218,8 @@ defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-
 gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
 policy is enforced by the permission layer, not by asking nicely. An explicitly configured list
 replaces its default; it is not merged with it, so an operator can widen or narrow deliberately.
+A claude worker loads no MCP servers (`--strict-mcp-config`) unless its `mcp` key lists them in
+the `--mcp-config` shape, e.g. `"mcp": {"mcpServers": {"fs": {"command": "mcp-fs"}}}` (issue #425).
 
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a

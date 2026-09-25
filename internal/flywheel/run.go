@@ -723,6 +723,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
 		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
+		MCPConfig: worker.mcpConfig(),
 	}
 	if commandHook != nil {
 		commandHook(req)
