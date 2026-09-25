@@ -229,6 +229,7 @@ the first whose own breaker is closed).
 A worker cut off by a provider rate limit finishes `rate-limited` (exit 4, no signal, not a breaker error), and `flywheel run` waits for the reset and resumes the same session:
 `limits.rate_limit_retries` is how many times it resumes (default 3; 0 disables).
 `limits.rate_limit_max_wait` is the longest it waits for a reset, a Go duration (default `5h`).
+`limits.rate_limit_pause_at` pauses a claude model before the limit hits, once its stream reports that share of the window used (default `0.95`; negative disables), until the exact reset the stream gave.
 An abandoned attempt — lease expired, or no lease and its run file idle longer than `limits.lost_after` (a Go duration, default `24h`) — is marked `lost` by `flywheel run`, `flywheel next` and the controller, so it never blocks a dispatch as an owns or exclusive collision.
 A gate that needs the host to itself (device or timing measurements) is written `gate[quiet]: <command>`: validate waits up to `limits.quiet_wait` (default `30m`) for no other worker or gate on the host, holds new dispatches while it runs, and records the reading inconclusive (`host busy: ...`), never failed, when the host stays busy.
 Until the reset the whole model is paused: `flywheel run` refuses new units on it (exit 6, rule `rate-limit`), `flywheel next` HOLDs, and the floor shows `rate-limited until HH:MM` with a `model/<model>` andon entry.
@@ -278,7 +279,7 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
    ```bash
    npx skills add suzworx/flywheel --skill flywheel
    npx skills add suzworx/flywheel --skill flywheel-worker
-   # ... flywheel-planner, flywheel-foreman, flywheel-inspector,
+   # ... flywheel-planner, flywheel-foreman, flywheel-inspector, flywheel-reviewer,
    #     flywheel-auditor, flywheel-steward, flywheel-operator
    ```
 
@@ -366,6 +367,7 @@ Each role ships as a skill folder any agent can load:
 - [`flywheel-foreman`](skills/flywheel-foreman/SKILL.md) — run a line of workers; retry by policy.
 - [`flywheel-worker`](skills/flywheel-worker/SKILL.md) — execute one brief, run its gates, report evidence.
 - [`flywheel-inspector`](skills/flywheel-inspector/SKILL.md) — QC verdicts: pass, rework, scrap, escalate.
+- [`flywheel-reviewer`](skills/flywheel-reviewer/SKILL.md) — independent diff review: findings with a failure scenario, never a pass.
 - [`flywheel-auditor`](skills/flywheel-auditor/SKILL.md) — independent audit of first articles and samples.
 - [`flywheel-steward`](skills/flywheel-steward/SKILL.md) — turn signals and nonconformances into learnings.
 - [`flywheel-operator`](skills/flywheel-operator/SKILL.md) — install, configure, assign personas.

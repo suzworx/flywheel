@@ -42,6 +42,7 @@ func TestDocsProtocolCitations(t *testing.T) {
 		"../../skills/flywheel-worker/SKILL.md",
 		"../../skills/flywheel-foreman/SKILL.md",
 		"../../skills/flywheel-inspector/SKILL.md",
+		"../../skills/flywheel-reviewer/SKILL.md",
 		"../../skills/flywheel-auditor/SKILL.md",
 		"../../skills/flywheel-planner/SKILL.md",
 		"../../skills/flywheel-steward/SKILL.md",

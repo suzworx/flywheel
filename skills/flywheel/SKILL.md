@@ -210,6 +210,17 @@ refuses the unit (T9) until you triage it.
   reading is what vouches for the tree *as it is now*; `flywheel inspect` and `flywheel verify`
   refuse without one. Never pass on the worker's claim alone — run the gauges and let the reading
   speak.
+- **Review loop (`flywheel review <task> --agent --fix --session <reviewer>`):** after validate and
+  before inspect, run the independent reviewer
+  ([`flywheel-reviewer`](../flywheel-reviewer/SKILL.md)). It reads the brief, the readings and the
+  diff from the dispatch base, and reports findings; `--fix [--rounds N]` sends the open findings
+  back to the worker, who answers each id `FINDING <id>: fixed|disputed`, and re-reviews. Read
+  the thread at `.flywheel/reviews/<task>.md`. Only a later round or your
+  `flywheel review <task> --dismiss <id> --session <lead> --note <why>` closes a finding. An
+  inspected pass is refused while a blocking finding is open (rule `review`), so re-run validate
+  after the fixes and then inspect. Set `staffing.reviewer` to a different model from the workers
+  (`flywheel config set staffing.reviewer.model <model>`); a reviewer that shares a session with
+  another role is refused.
 - **Independent validation when needed:** re-run the gates yourself on sensitive or suspicious
   changes; treat "tests passed" as a claim to be verified, not a fact. `flywheel validate <task>`
   is that re-run and its evidence. You may run validation commands independently — but send any

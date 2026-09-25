@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fixtureLines returns the newline-delimited lines of a testdata fixture.
@@ -916,6 +917,52 @@ func TestParseCommands(t *testing.T) {
 		obs, ok := a.Parse([]byte(c.line))
 		if !ok || obs.Kind != "tool" || obs.Command != c.want {
 			t.Errorf("%s Parse(%s) = %+v, %v; want tool with Command %q", c.adapter, c.line, obs, ok, c.want)
+		}
+	}
+}
+
+// TestClaudeRateLimitEvent parses testdata/claude-ratelimit-event.jsonl:
+// every rate_limit_event line is a "rate_limit" observation carrying the
+// utilization, the exact reset, the status and the window; a malformed line
+// is false (issue #417).
+func TestClaudeRateLimitEvent(t *testing.T) {
+	lines := fixtureLines("claude-ratelimit-event.jsonl", t)
+	want := []struct {
+		util   float64
+		reset  int64
+		status string
+		window string
+	}{
+		{0.91, 1790304000, "allowed_warning", "five_hour"},
+		{0.96, 1790304000, "allowed_warning", "five_hour"},
+		{0.12, 1790322000, "allowed", "seven_day"},
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("fixture has %d lines, want %d", len(lines), len(want))
+	}
+	a := claudeAdapter{}
+	for i, line := range lines {
+		obs, ok := a.Parse([]byte(line))
+		w := want[i]
+		if !ok || obs.Kind != "rate_limit" || obs.Utilization != w.util || !obs.ResetsAt.Equal(time.Unix(w.reset, 0)) ||
+			obs.LimitStatus != w.status || obs.LimitWindow != w.window {
+			t.Errorf("line %d: Parse = %+v, %v; want rate_limit %+v", i+1, obs, ok, w)
+		}
+		if obs.Session == "" {
+			t.Errorf("line %d: session not read", i+1)
+		}
+	}
+	for _, bad := range []string{
+		`{"type":"rate_limit_event"}`,
+		`{"type":"rate_limit_event","rate_limit_info":"oops"}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"resetsAt":1790304000}}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":-1}}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","utilization":1.5}}`,
+		`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","utilization":"high"}}`,
+		`{"type":"rate_limit_event",`,
+	} {
+		if obs, ok := a.Parse([]byte(bad)); ok {
+			t.Errorf("Parse(%s) = %+v, true; want false", bad, obs)
 		}
 	}
 }

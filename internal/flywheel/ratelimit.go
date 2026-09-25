@@ -66,44 +66,86 @@ func parseResetTime(text string, now time.Time) (time.Time, bool) {
 // (issue #383): a rate limit belongs to the subscription, so every unit on the
 // model waits for the reset. The latest finished event for model carrying a
 // reset_at decides it, unless a later finished event on that model stopped
-// cleanly (the window has reopened).
+// cleanly (the window has reopened). It pauses before the wall at the default
+// limits.rate_limit_pause_at; callers holding the config use
+// rateLimitPausedAt.
 func rateLimitPaused(events []Event, model string, now time.Time) (until time.Time, paused bool) {
+	p, ok := rateLimitPausedAt(events, model, now, Limits{}.RateLimitPauseThreshold())
+	return p.Until, ok
+}
+
+// ratePause is why and until when a model is paused. Utilization and Window
+// are set only when the pause is the utilization threshold, not a hit limit.
+type ratePause struct {
+	Until       time.Time
+	Utilization float64
+	Window      string
+}
+
+// reason is " (<n>% of the <window> window used)" for a utilization pause, ""
+// for a hit limit.
+func (p ratePause) reason() string {
+	if p.Utilization == 0 {
+		return ""
+	}
+	window := p.Window
+	if window == "" {
+		window = "rate-limit"
+	}
+	return fmt.Sprintf(" (%.0f%% of the %s window used)", p.Utilization*100, window)
+}
+
+// rateLimitPausedAt is rateLimitPaused with the pause threshold (issue #417):
+// besides a hit limit, the model is paused when its latest finished event's
+// rate_limit_event utilization is at least pauseAt (0 disables) and its
+// limit_reset_at is still ahead. A later finish below the threshold, or the
+// reset passing, releases it.
+func rateLimitPausedAt(events []Event, model string, now time.Time, pauseAt float64) (ratePause, bool) {
+	latest := true
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
 		if e.Kind != "finished" || e.Model != model {
 			continue
 		}
+		if latest {
+			latest = false
+			if e.ResetAt == "" && pauseAt > 0 && e.LimitUtilization >= pauseAt && e.LimitResetAt != "" {
+				if at, err := time.Parse(time.RFC3339, e.LimitResetAt); err == nil && now.Before(at) {
+					return ratePause{Until: at, Utilization: e.LimitUtilization, Window: e.LimitWindow}, true
+				}
+			}
+		}
 		if e.Reason == "stop" {
-			return time.Time{}, false
+			return ratePause{}, false
 		}
 		if e.ResetAt == "" {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, e.ResetAt)
 		if err != nil || !now.Before(at) {
-			return time.Time{}, false
+			return ratePause{}, false
 		}
-		return at, true
+		return ratePause{Until: at}, true
 	}
-	return time.Time{}, false
+	return ratePause{}, false
 }
 
-// pausedModels lists every model in events that rateLimitPaused holds at now,
-// with its reset time, in first-seen order.
-func pausedModels(events []Event, now time.Time) (models []string, until map[string]time.Time) {
-	until = map[string]time.Time{}
+// pausedModels lists every model in events that rateLimitPausedAt holds at
+// now, with its pause, in first-seen order.
+func pausedModels(events []Event, now time.Time, pauseAt float64) (models []string, pauses map[string]ratePause) {
+	pauses = map[string]ratePause{}
 	seen := map[string]bool{}
 	for _, e := range events {
-		if e.Kind != "finished" || e.ResetAt == "" || e.Model == "" || seen[e.Model] {
+		if e.Kind != "finished" || (e.ResetAt == "" && e.LimitResetAt == "") || e.Model == "" || seen[e.Model] {
 			continue
 		}
 		seen[e.Model] = true
-		if at, ok := rateLimitPaused(events, e.Model, now); ok {
+		if p, ok := rateLimitPausedAt(events, e.Model, now, pauseAt); ok {
 			models = append(models, e.Model)
-			until[e.Model] = at
+			pauses[e.Model] = p
 		}
 	}
-	return models, until
+	return models, pauses
 }
 
 // pauseClock is a reset time as the viewer's local HH:MM with the RFC 3339
@@ -163,6 +205,10 @@ func resumeLimits(dir string, o RunOptions, sleep func(time.Duration), now func(
 		t := now()
 		var wait time.Duration
 		if at, ok := parseResetTime(res.ResetText, t); ok {
+			wait = at.Sub(t) + time.Minute
+		} else if at, err := time.Parse(time.RFC3339, res.ResetAt); err == nil && at.After(t) {
+			// No clause, but the stream's rate_limit_event gave the exact
+			// reset (issue #417).
 			wait = at.Sub(t) + time.Minute
 		} else {
 			wait = backoff
