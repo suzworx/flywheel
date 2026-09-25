@@ -52,7 +52,18 @@ jobs:
       # go build is covered: vet type-checks every package, test builds them,
       # and the checks job cross-compiles and installs the binary.
       - run: go vet ./...
-      - run: go test ./...
+      # Linux runs the suite under the race detector: the tests run in parallel
+      # (t.Parallel), so a data race in shared package state would otherwise
+      # only show as a rare flake (issue #440). -race needs cgo, which the
+      # Linux runner has.
+      - name: go test
+        if: runner.os != 'Linux'
+        run: go test ./...
+      - name: go test -race
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
   scale:
     runs-on: ubicloud-standard-2
