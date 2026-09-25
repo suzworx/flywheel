@@ -134,6 +134,19 @@ func VerifyLogChain(dir string) (LogChain, error) {
 	return verifyLegacyChain(dir)
 }
 
+// danglingReason names why line i's prev matches no earlier line of lines:
+// when it is the hash of a LATER line of the same file, the lines were
+// reordered (a git merge or conflict resolution of a committed ledger), and
+// no record is missing (issue #422). It is still a break.
+func danglingReason(lines []string, i int, prev string) string {
+	for j := i + 1; j < len(lines); j++ {
+		if lines[j] != "" && lineHash([]byte(lines[j])) == prev {
+			return fmt.Sprintf("reordered: line %d chains to line %d, which comes after it (a git merge or an edit reordered the log; no record is missing)", i+1, j+1)
+		}
+	}
+	return "prev matches no earlier line"
+}
+
 // verifyLegacyChain checks the legacy events.jsonl chain.
 func verifyLegacyChain(dir string) (LogChain, error) {
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
@@ -186,6 +199,8 @@ func verifyLegacyChain(dir string) (LogChain, error) {
 			if !seen[record.Prev] {
 				result.BreakLine = lineNum
 				result.BreakPrev = record.Prev
+				result.BreakReason = danglingReason(lines, i, record.Prev)
+				result.File = "events.jsonl"
 				return result, nil
 			}
 		}
@@ -346,7 +361,7 @@ func verifyFileLegacyChain(path, rel string) (LogChain, error) {
 			if !seen[record.Prev] {
 				result.BreakLine = lineNum
 				result.BreakPrev = record.Prev
-				result.BreakReason = "prev matches no earlier line"
+				result.BreakReason = danglingReason(lines, i, record.Prev)
 				result.File = rel
 				return result, nil
 			}
@@ -426,7 +441,7 @@ func verifyFileChain(path, rel string) (LogChain, error) {
 		} else if record.Prev == shardGenesis || !seen[record.Prev] {
 			result.BreakLine = lineNum
 			result.BreakPrev = record.Prev
-			result.BreakReason = "prev matches no earlier line"
+			result.BreakReason = danglingReason(lines, i, record.Prev)
 			result.File = rel
 			return result, nil
 		}

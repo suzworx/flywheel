@@ -1087,7 +1087,8 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(note, gitNote), outsideNote), SHA256: runSHA, Wrote: wrote, Commands: commands}); err != nil {
+		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, myOwns)
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, Commands: commands, Checkpoint: checkpoint}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -1128,10 +1129,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
+		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "stalled", wrote, myOwns)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Note: joinNote(gitNote, outsideNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
-			Commands: commands,
+			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Commands: commands, Checkpoint: checkpoint,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1300,11 +1302,18 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// An unclean end keeps the attempt's written owned files under
+	// refs/flywheel/checkpoints/<task>/<attempt> (issue #422); a checkpoint
+	// failure goes on the note, never fails the run.
+	checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, reason, wrote, myOwns)
+	note = joinNote(note, cpNote)
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
+		Checkpoint: checkpoint,
 	}); err != nil {
 		return Result{}, err
 	}
