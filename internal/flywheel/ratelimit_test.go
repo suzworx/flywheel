@@ -72,8 +72,67 @@ func TestRateLimitPaused(t *testing.T) {
 			t.Errorf("%s: until = %v, want %v", c.name, until, reset)
 		}
 	}
-	models, at := pausedModels([]Event{limited("a", reset), limited("b", now.Add(-time.Minute)), limited("a", reset)}, now)
-	if len(models) != 1 || models[0] != "a" || !at["a"].Equal(reset) {
+	models, at := pausedModels([]Event{limited("a", reset), limited("b", now.Add(-time.Minute)), limited("a", reset)}, now, 0.95)
+	if len(models) != 1 || models[0] != "a" || !at["a"].Until.Equal(reset) {
 		t.Errorf("pausedModels = %v %v, want [a] at %v", models, at, reset)
+	}
+}
+
+// TestPauseAtUtilization: a model whose latest finish recorded utilization at
+// or above the threshold with a future limit_reset_at is paused until that
+// reset, before the limit hits; a later finish below the threshold, an
+// expired reset or a disabled threshold releases it; the refusal text and the
+// andon line name the cause (issue #417).
+func TestPauseAtUtilization(t *testing.T) {
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	reset := now.Add(90 * time.Minute)
+	fin := func(model, reason string, util float64, at time.Time) Event {
+		return Event{Kind: "finished", Task: "T1", Model: model, Reason: reason, LimitUtilization: util,
+			LimitResetAt: at.Format(time.RFC3339), LimitWindow: "five_hour"}
+	}
+	cases := []struct {
+		name    string
+		events  []Event
+		pauseAt float64
+		paused  bool
+	}{
+		{"at the threshold", []Event{fin("m", "stop", 0.96, reset)}, 0.95, true},
+		{"exactly the threshold", []Event{fin("m", "stop", 0.95, reset)}, 0.95, true},
+		{"below the threshold", []Event{fin("m", "stop", 0.91, reset)}, 0.95, false},
+		{"lower configured threshold", []Event{fin("m", "stop", 0.91, reset)}, 0.9, true},
+		{"disabled", []Event{fin("m", "stop", 0.99, reset)}, 0, false},
+		{"expired reset", []Event{fin("m", "stop", 0.99, now.Add(-time.Minute))}, 0.95, false},
+		{"later clean finish below", []Event{fin("m", "stop", 0.96, reset), fin("m", "stop", 0.12, reset)}, 0.95, false},
+		{"later finish without an event", []Event{fin("m", "stop", 0.96, reset), {Kind: "finished", Model: "m", Reason: "stop"}}, 0.95, false},
+		{"older high finish only", []Event{fin("m", "error", 0.97, reset), fin("m", "error", 0.5, reset)}, 0.95, false},
+		{"a different model", []Event{fin("other", "stop", 0.99, reset)}, 0.95, false},
+	}
+	for _, c := range cases {
+		p, paused := rateLimitPausedAt(c.events, "m", now, c.pauseAt)
+		if paused != c.paused {
+			t.Errorf("%s: paused = %v, want %v", c.name, paused, c.paused)
+		}
+		if paused && (!p.Until.Equal(reset) || p.Utilization == 0) {
+			t.Errorf("%s: pause = %+v, want until %v with the utilization", c.name, p, reset)
+		}
+	}
+	p, _ := rateLimitPausedAt([]Event{fin("m", "stop", 0.96, reset)}, "m", now, 0.95)
+	if got, want := p.reason(), " (96% of the five_hour window used)"; got != want {
+		t.Errorf("reason() = %q, want %q", got, want)
+	}
+	// A hit limit keeps its own reset and names no utilization.
+	hit := fin("m", "rate-limited", 0.99, reset)
+	hit.ResetAt = reset.Format(time.RFC3339)
+	if p, ok := rateLimitPausedAt([]Event{hit}, "m", now, 0.95); !ok || p.reason() != "" {
+		t.Errorf("hit limit: pause = %+v, %v; want paused with no utilization reason", p, ok)
+	}
+	// The default-threshold wrapper pauses at 0.95.
+	if _, ok := rateLimitPaused([]Event{fin("m", "stop", 0.96, reset)}, "m", now); !ok {
+		t.Errorf("rateLimitPaused at 0.96 = false, want paused at the default 0.95")
+	}
+	andon := pausedAndon([]Event{fin("m", "stop", 0.96, reset)}, now, 0.95)
+	want := "paused until " + reset.Local().Format("15:04") + " (96% used)"
+	if len(andon) != 1 || andon[0].Task != "model/m" || andon[0].State != want {
+		t.Errorf("pausedAndon = %+v, want model/m %q", andon, want)
 	}
 }

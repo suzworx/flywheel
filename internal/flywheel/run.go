@@ -56,6 +56,10 @@ type Result struct {
 	// ResetText is the rate limit's reset clause when Reason is
 	// "rate-limited" (issue #380); RunResumingLimits waits for it.
 	ResetText string
+	// ResetAt is a rate-limited finish's reset (RFC 3339): the stream's exact
+	// rate_limit_event reset when it carried one (issue #417), else the parsed
+	// ResetText; empty when neither gave one.
+	ResetAt string
 	// Jobs are the commands of the background shells the worker started and
 	// never collected when Reason is "abandoned-job" (issue #390);
 	// RunResumingLimits names them in the resume delta.
@@ -388,10 +392,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// fresh attempt goes to the model (issue #383). A resume is exempt, since
 	// RunResumingLimits resumes only after the reset.
 	if !o.Resume {
-		if until, paused := rateLimitPaused(events, model, now()); paused {
+		if p, paused := rateLimitPausedAt(events, model, now(), cfg.Limits.RateLimitPauseThreshold()); paused {
 			return Result{}, &RuleRefusal{
 				Rule: "rate-limit",
-				Fix:  fmt.Sprintf("%s is paused by a rate limit until %s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(until)),
+				Fix:  fmt.Sprintf("%s is paused by a rate limit until %s%s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(p.Until), p.reason()),
 			}
 		}
 	}
@@ -824,8 +828,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var shellOrder []string
 	lastText := ""
 	lastReason := ""
-	resetText := ""      // a rate limit's reset clause (issue #380)
-	var denials []string // the last step's permission denials (issue #364)
+	resetText := ""           // a rate limit's reset clause (issue #380)
+	var limitObs *Observation // the latest rate_limit_event (issue #417)
+	var denials []string      // the last step's permission denials (issue #364)
 	seenError := false
 	steps := 0
 	session := ""
@@ -989,6 +994,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 				shells[obs.ShellID] = c
 			}
+		case "rate_limit":
+			lo := obs
+			limitObs = &lo
 		case "step":
 			if obs.Reason != "" {
 				lastReason = obs.Reason
@@ -1238,12 +1246,27 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// untriaged signal would block landing after a successful resume (issue
 	// #380).
 	// The parsed reset pauses the model for every unit until then (issue #383).
+	// The stream's rate_limit_event carries the exact reset epoch; it wins
+	// over the parsed clause, and its utilization and reset go on every
+	// finish that saw one, so dispatch can pause before the wall (issue #417).
 	resetAt := ""
+	var limitUtil float64
+	limitResetAt, limitWindow := "", ""
+	if limitObs != nil {
+		limitUtil, limitWindow = limitObs.Utilization, limitObs.LimitWindow
+		if !limitObs.ResetsAt.IsZero() {
+			limitResetAt = limitObs.ResetsAt.UTC().Format(time.RFC3339)
+		}
+	}
 	if reason != "rate-limited" {
 		resetText = ""
-	} else if resetText != "" {
-		note = joinNote(note, "limit resets "+resetText)
-		if at, ok := parseResetTime(resetText, now()); ok {
+	} else {
+		if resetText != "" {
+			note = joinNote(note, "limit resets "+resetText)
+		}
+		if limitResetAt != "" {
+			resetAt = limitResetAt
+		} else if at, ok := parseResetTime(resetText, now()); ok && resetText != "" {
 			resetAt = at.Format(time.RFC3339)
 		}
 	}
@@ -1267,7 +1290,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
-		Commit: attemptCommit,
+		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1320,7 +1343,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
-	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText, Jobs: jobs}, nil
+	return Result{Attempt: attempt, Session: session, RC: rc, Reason: reason, Steps: steps, Tokens: tokPtr, Cost: cost, ResetText: resetText, ResetAt: resetAt, Jobs: jobs}, nil
 }
 
 // gateContention describes one shared-gate finding at dispatch: this task's

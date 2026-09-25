@@ -85,6 +85,14 @@ type Event struct {
 	// ResetAt is a rate-limited finished event's parsed reset time, RFC 3339
 	// (issue #383): the model is paused for every unit until then.
 	ResetAt string `json:"reset_at,omitempty"`
+	// LimitUtilization, LimitResetAt (RFC 3339) and LimitWindow are the
+	// latest rate_limit_event a finished attempt's stream carried: the share
+	// of the window used, its exact reset and the window name (issue #417).
+	// A model whose latest finish used at least limits.rate_limit_pause_at
+	// pauses until LimitResetAt, before the limit hits.
+	LimitUtilization float64 `json:"limit_utilization,omitempty"`
+	LimitResetAt     string  `json:"limit_reset_at,omitempty"`
+	LimitWindow      string  `json:"limit_window,omitempty"`
 	// Workdir is the git working tree a validated, owns_checked or inspected
 	// reading was taken in, recorded only when it differs from the flywheel
 	// root (issue #244): the ledger says where a reading happened, so verify
