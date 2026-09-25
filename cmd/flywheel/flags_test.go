@@ -267,3 +267,21 @@ func TestReviewLoopFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewPanelFlags parses the review panel's flags (issue #420): --panel
+// with --agent, alone or with the loop's --fix and --rounds.
+func TestReviewPanelFlags(t *testing.T) {
+	fs, o := reviewFlags()
+	if o.panel {
+		t.Error("--panel defaults to true")
+	}
+	if err := fs.Parse([]string{"--agent", "--panel", "--fix", "--rounds", "2", "--session", "rev"}); err != nil {
+		t.Fatalf("reviewFlags: %v", err)
+	}
+	if !o.agent || !o.panel || !o.fix || o.rounds != 2 || o.session != "rev" {
+		t.Errorf("--panel parsed = %#v", *o)
+	}
+	if !strings.Contains(reviewUsageLine, "--agent --panel --session <session>") {
+		t.Errorf("usage %q does not name --agent --panel", reviewUsageLine)
+	}
+}

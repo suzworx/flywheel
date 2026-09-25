@@ -709,3 +709,109 @@ func TestInspectCommitUnknown(t *testing.T) {
 		t.Fatalf("InspectTask() error = %v, want an unknown-commit error", err)
 	}
 }
+
+// panelEvents is one panel member's review of T1 on tree: a reviewed event
+// with dimension dim, and its findings (issue #420).
+func panelEvents(tree, dim string, findings ...ReviewFinding) []Event {
+	evs, _, _ := dimensionReviewEvents("T1", "r1", 1, "rev-1", "m", "claude", tree, dim, findings)
+	return evs
+}
+
+// TestInspectRefusesIncompletePanel checks rule panel (issue #420): once the
+// panel has reviewed a task, a pass needs every configured dimension pass on
+// the inspected tree — a missing or correct dimension is refused and named;
+// review.required applies the rule before any panel review; and a task
+// neither reviewed by the panel nor required passes as before.
+func TestInspectRefusesIncompletePanel(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := func() error { return InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}) }
+
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Set("review.required", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	err = pass()
+	if err == nil || refusalRule(t, err) != "panel" {
+		t.Fatalf("required, never reviewed: err = %v, want rule panel", err)
+	}
+	for _, want := range []string{"correctness=missing", "docs=missing", "flywheel review T1 --agent --panel"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q lacks %q", err, want)
+		}
+	}
+
+	var evs []Event
+	for _, d := range []string{"correctness", "tests", "errors", "contract"} {
+		evs = append(evs, panelEvents(tree, d)...)
+	}
+	blocker := ReviewFinding{Severity: "major", Category: "docs", File: "a.go", Line: 1, Claim: "README lies", Scenario: "s"}
+	evs = append(evs, panelEvents(tree, "docs", blocker)...)
+	if err := AppendEvents(dir, evs); err != nil {
+		t.Fatal(err)
+	}
+	err = pass()
+	if err == nil {
+		t.Fatal("pass accepted with docs=correct")
+	}
+	// The open docs finding refuses first (rule review); dismissing it rules
+	// on it, so docs counts as pass and the panel is complete.
+	if got := refusalRule(t, err); got != "review" {
+		t.Errorf("rule = %q, want review (the open docs finding)", got)
+	}
+	if m := VerdictMatrix(mustEvents(t, dir), "T1", tree, DefaultPanel); m["docs"] != "correct" || m["tests"] != "pass" {
+		t.Errorf("matrix = %v, want docs correct, tests pass", m)
+	}
+	if err := DismissFinding(dir, "T1", "T1-r1-docs-1", "lead-1", "not in this unit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pass(); err != nil {
+		t.Errorf("pass refused with a complete panel: %v", err)
+	}
+
+	// Not required, but reviewed by the panel on another tree: missing here.
+	other, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logFinished(t, other, "T1", "w1")
+	if _, err := ValidateTask(other, "T1", ValidateOptions{Dir: other}); err != nil {
+		t.Fatal(err)
+	}
+	if err := InspectTask(other, "T1", InspectOptions{Dir: other, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Fatalf("never panel-reviewed, not required: pass refused: %v", err)
+	}
+	if err := AppendEvents(other, panelEvents("stale-tree", "tests")); err != nil {
+		t.Fatal(err)
+	}
+	err = InspectTask(other, "T1", InspectOptions{Dir: other, Verdict: "pass", Session: "i1"})
+	if err == nil || refusalRule(t, err) != "panel" || !strings.Contains(err.Error(), "tests=missing") {
+		t.Errorf("panel-reviewed on another tree: err = %v, want rule panel naming tests=missing", err)
+	}
+}
+
+// mustEvents reads dir's ledger or fails the test.
+func mustEvents(t *testing.T, dir string) []Event {
+	t.Helper()
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evs
+}

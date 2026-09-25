@@ -1653,3 +1653,47 @@ func TestVerifyAttested(t *testing.T) {
 		t.Errorf("T3 failures naming a malformed external reading = %d, want 2: %+v", bad, res.Items)
 	}
 }
+
+// TestVerifyPanel checks P1 (issue #420): an inspected pass recorded after
+// the panel reviewed the task, on a tree some dimension had not passed,
+// fails and names the dimension; a complete panel passes; a chain never
+// panel-reviewed passes unless review.required; and a panel review after the
+// pass never fails it retroactively.
+func TestVerifyPanel(t *testing.T) {
+	if fails := verifyAll(t, buildCleanChain(t), "T1"); fails["P1"] {
+		t.Error("P1 failed a chain never panel-reviewed")
+	}
+	pass := Event{Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: "t"}
+	panel := []string{"correctness", "tests"}
+	chain := func(evs ...[]Event) []Event {
+		out := []Event{{Task: "T1", Kind: "started", Attempt: "r1", Session: "w1"}}
+		for _, e := range evs {
+			out = append(out, e...)
+		}
+		return out
+	}
+	partial := chain(panelEvents("t", "correctness"), []Event{pass})
+	items := ruleP1("T1", partial, panel, false)
+	if len(items) != 1 || items[0].Pass || !strings.Contains(items[0].Reason, "tests=missing") || strings.Contains(items[0].Reason, "correctness") {
+		t.Errorf("pass with tests missing: P1 = %+v", items)
+	}
+	wrongTree := chain(panelEvents("t0", "correctness"), panelEvents("t0", "tests"), []Event{pass})
+	if items := ruleP1("T1", wrongTree, panel, false); items[0].Pass || !strings.Contains(items[0].Reason, "correctness=missing, tests=missing") {
+		t.Errorf("panel complete on another tree: P1 = %+v", items)
+	}
+	complete := chain(panelEvents("t", "correctness"), panelEvents("t", "tests"), []Event{pass})
+	if items := ruleP1("T1", complete, panel, false); !items[0].Pass {
+		t.Errorf("complete panel failed P1: %+v", items)
+	}
+	never := chain([]Event{pass})
+	if items := ruleP1("T1", never, panel, false); !items[0].Pass {
+		t.Errorf("never panel-reviewed, not required, failed P1: %+v", items)
+	}
+	if items := ruleP1("T1", never, panel, true); items[0].Pass {
+		t.Errorf("review.required with no panel passed P1: %+v", items)
+	}
+	later := chain([]Event{pass}, panelEvents("t", "correctness"))
+	if items := ruleP1("T1", later, panel, false); !items[0].Pass {
+		t.Errorf("a panel review after the pass failed P1: %+v", items)
+	}
+}

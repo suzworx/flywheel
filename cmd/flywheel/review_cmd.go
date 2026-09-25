@@ -15,6 +15,7 @@ import (
 const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--dir DIR]\n" +
+	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree]] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]"
 
 func init() {
@@ -32,6 +33,7 @@ type reviewOptions struct {
 	note      string
 	checklist repeatable
 	agent     bool
+	panel     bool
 	worker    string
 	round     int
 	fix       bool
@@ -56,6 +58,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.BoolVar(&o.agent, "agent", false, "run the review agent: it reads the unit's diff and records findings and a verdict")
 	fs.StringVar(&o.worker, "worker", "", "with --agent: the worker that reviews (default: the staffing reviewer role, else the default worker)")
 	fs.IntVar(&o.round, "round", 0, "with --agent: the review round (default: the task's next round)")
+	fs.BoolVar(&o.panel, "panel", false, "with --agent: run the review panel (review.panel), one persona per dimension, and print the verdict matrix")
 	fs.BoolVar(&o.fix, "fix", false, "with --agent: loop review, send open blocking findings back to the worker, review again")
 	fs.IntVar(&o.rounds, "rounds", 3, "with --fix: review rounds at most")
 	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the default worker)")
@@ -90,6 +93,15 @@ func runReview(args []string) {
 	task := pos[0]
 	if o.dismiss != "" {
 		runReviewDismiss(task, o)
+		return
+	}
+	if o.panel {
+		if !o.agent {
+			fmt.Fprintf(os.Stderr, "flywheel review: --panel needs --agent\n")
+			reviewUsage(os.Stderr)
+			os.Exit(2)
+		}
+		runReviewPanel(task, o)
 		return
 	}
 	if o.agent && o.fix {
@@ -221,7 +233,7 @@ func runReviewFix(task string, o *reviewOptions) {
 // lead's decision that a finding is closed (issue #389). A worker session of
 // the task is refused (T4, exit 6).
 func runReviewDismiss(task string, o *reviewOptions) {
-	if o.agent || o.fix || o.verdict != "" || o.model != "" || len(o.checklist) > 0 {
+	if o.agent || o.panel || o.fix || o.verdict != "" || o.model != "" || len(o.checklist) > 0 {
 		fmt.Fprintf(os.Stderr, "flywheel review: --dismiss takes only --session, --note and --dir\n")
 		reviewUsage(os.Stderr)
 		os.Exit(2)
@@ -234,4 +246,88 @@ func runReviewDismiss(task string, o *reviewOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s finding %s dismissed by %s\n", task, o.dismiss, o.session)
+}
+
+// runReviewPanel implements `flywheel review <task> --agent --panel` (issue
+// #420): the review panel, one persona per configured dimension, run
+// sequentially; with --fix, the review loop with a whole panel as each
+// round's review. It prints each finding (or each open blocking finding left
+// with --fix), then the verdict matrix, and exits 0 when every dimension is
+// pass, 1 when one is not or on an error, 6 on a rule refusal and 2 on a
+// usage error.
+func runReviewPanel(task string, o *reviewOptions) {
+	switch {
+	case o.verdict != "" || o.note != "" || o.model != "" || len(o.checklist) > 0:
+		fmt.Fprintf(os.Stderr, "flywheel review: --panel records its own verdicts; drop --verdict, --note, --model and --check\n")
+	case o.worker != "":
+		fmt.Fprintf(os.Stderr, "flywheel review: --panel members name their own reviewer (review.panel in .flywheel/config.json); drop --worker\n")
+	case o.round < 0:
+		fmt.Fprintf(os.Stderr, "flywheel review: --round %d must be >= 1\n", o.round)
+	case o.fix && o.round != 0:
+		fmt.Fprintf(os.Stderr, "flywheel review: --fix records its own rounds; drop --round\n")
+	case !o.fix && (o.fixWorker != "" || o.worktree || o.rounds != 3):
+		fmt.Fprintf(os.Stderr, "flywheel review: --rounds, --fix-worker and --worktree need --fix\n")
+	case o.rounds < 1:
+		fmt.Fprintf(os.Stderr, "flywheel review: --rounds %d must be >= 1\n", o.rounds)
+	default:
+		runReviewPanelChecked(task, o)
+		return
+	}
+	reviewUsage(os.Stderr)
+	os.Exit(2)
+}
+
+// runReviewPanelChecked runs the panel once its flags are checked.
+func runReviewPanelChecked(task string, o *reviewOptions) {
+	var last flywheel.PanelResult
+	panel := func(round int) error {
+		res, err := flywheel.ReviewPanel(o.dir, task, flywheel.ReviewPanelOptions{
+			Session: o.session, Workdir: o.workdir, Round: round, Progress: os.Stderr,
+		})
+		last = res
+		return err
+	}
+	fail := func(err error) {
+		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
+	if !o.fix {
+		if err := panel(o.round); err != nil {
+			fail(err)
+		}
+		for _, m := range last.Members {
+			for _, f := range m.Findings {
+				fmt.Printf("[%s] %s %s:%d %s\n", f.Severity, f.Category, f.File, f.Line, f.Claim)
+			}
+		}
+	} else {
+		res, err := flywheel.ReviewLoop(o.dir, task, flywheel.ReviewLoopOptions{
+			Rounds: o.rounds, ReviewSession: o.session, Worker: o.fixWorker, Progress: os.Stderr,
+			Review: func(round int) (flywheel.ReviewAgentResult, error) {
+				return flywheel.ReviewAgentResult{Round: round}, panel(round)
+			},
+			Correct: func(delta string) (flywheel.Result, error) {
+				return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
+					Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree,
+					Progress: os.Stderr, Stderr: os.Stderr,
+				}, time.Sleep, time.Now)
+			},
+		})
+		if err != nil {
+			fail(err)
+		}
+		for _, f := range res.Open {
+			fmt.Printf("OPEN %s [%s] %s %s:%d %s\n", f.Finding, f.Severity, f.Category, f.Path, f.LineNo, f.Title)
+		}
+		fmt.Printf("review loop: %s after %d panel review(s), %d correction(s)\n", res.Verdict, res.Reviews, res.Corrections)
+	}
+	fmt.Printf("review panel round %d on tree %s:\n%s", last.Round, last.Tree, flywheel.FormatMatrix(last.Matrix, last.Panel))
+	for _, d := range last.Panel {
+		if last.Matrix[d] != "pass" {
+			os.Exit(1)
+		}
+	}
 }
