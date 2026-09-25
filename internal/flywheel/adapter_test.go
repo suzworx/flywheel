@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -559,8 +560,65 @@ func TestClaudeCommandFresh(t *testing.T) {
 			t.Errorf("args[%d] = --resume, want no --resume on a fresh run: %v", i, args)
 		}
 	}
-	if len(args) < 2 || !strings.HasPrefix(args[1], freshMessage) {
-		t.Errorf("args[1] = %q, want it to lead with freshMessage", args[1])
+	if got := claudeStdin(t, a, RunRequest{PromptFile: briefPath}); !strings.HasPrefix(got, freshMessage+"\n") {
+		t.Errorf("stdin = %q, want it to lead with freshMessage", got)
+	}
+}
+
+// claudeStdin returns the prompt adapter a writes to the child's stdin for r.
+func claudeStdin(t *testing.T, a Adapter, r RunRequest) string {
+	t.Helper()
+	sr := promptStdin(a, r)
+	if sr == nil {
+		t.Fatalf("%s adapter has no stdin prompt", a.Name())
+	}
+	b, err := io.ReadAll(sr)
+	if err != nil {
+		t.Fatalf("read stdin prompt: %v", err)
+	}
+	return string(b)
+}
+
+// TestClaudePromptOnStdin checks the claude prompt never reaches the command
+// line, which Windows caps at ~32K characters (issue #427): the args carry no
+// prompt text and no newline outside --append-system-prompt, and stdin yields
+// the message, a newline, then the prompt file, fresh and resumed alike.
+func TestClaudePromptOnStdin(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	promptPath := filepath.Join(t.TempDir(), "brief.txt")
+	body := "line one of the brief\nline two & | ^ %PATH%\n"
+	if err := os.WriteFile(promptPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	for _, tc := range []struct {
+		req RunRequest
+		msg string
+	}{
+		{RunRequest{Task: "T1", Attempt: "r1", Model: "m1", PromptFile: promptPath}, freshMessage},
+		{RunRequest{Task: "T1", Attempt: "r1", Model: "m1", PromptFile: promptPath, NoWorkerRules: true}, freshMessage},
+		{RunRequest{Task: "T1", Attempt: "c1", Model: "m1", PromptFile: promptPath, Session: "s1", Resume: true}, resumeMessage},
+	} {
+		_, args := a.Command(tc.req)
+		for i, arg := range args {
+			if i > 0 && args[i-1] == "--append-system-prompt" {
+				continue
+			}
+			if strings.Contains(arg, "\n") || strings.Contains(arg, "line one") || strings.Contains(arg, tc.msg) {
+				t.Errorf("resume=%v: args[%d] = %q carries prompt text", tc.req.Resume, i, arg)
+			}
+		}
+		if len(args) == 0 || args[0] != "-p" {
+			t.Errorf("resume=%v: args = %v, want -p first", tc.req.Resume, args)
+		}
+		if got, want := claudeStdin(t, a, tc.req), tc.msg+"\n"+body; got != want {
+			t.Errorf("resume=%v: stdin = %q, want %q", tc.req.Resume, got, want)
+		}
+	}
+	if got := claudeStdin(t, a, RunRequest{PromptFile: filepath.Join(t.TempDir(), "missing")}); got != freshMessage+"\n" {
+		t.Errorf("missing prompt file: stdin = %q, want the message alone", got)
+	}
+	if o, _ := AdapterFor("opencode"); promptStdin(o, RunRequest{}) != nil {
+		t.Errorf("opencode has a stdin prompt, want its --file")
 	}
 }
 
@@ -583,8 +641,8 @@ func TestClaudeCommandResume(t *testing.T) {
 	if !found {
 		t.Errorf("args = %v, want --resume ses_emitted_9", args)
 	}
-	if len(args) < 2 || !strings.HasPrefix(args[1], resumeMessage) {
-		t.Errorf("args[1] = %q, want it to lead with resumeMessage", args[1])
+	if got := claudeStdin(t, a, RunRequest{PromptFile: deltaPath, Session: "ses_emitted_9", Resume: true}); !strings.HasPrefix(got, resumeMessage+"\n") {
+		t.Errorf("stdin = %q, want it to lead with resumeMessage", got)
 	}
 }
 
@@ -600,8 +658,8 @@ func TestClaudeCommandResumeWithoutSession(t *testing.T) {
 			t.Errorf("args[%d] = --resume, want no --resume when Session is empty: %v", i, args)
 		}
 	}
-	if len(args) < 2 || !strings.HasPrefix(args[1], freshMessage) {
-		t.Errorf("args[1] = %q, want it to lead with freshMessage when Session is empty", args[1])
+	if got := claudeStdin(t, a, RunRequest{PromptFile: deltaPath, Resume: true}); !strings.HasPrefix(got, freshMessage+"\n") {
+		t.Errorf("stdin = %q, want it to lead with freshMessage when Session is empty", got)
 	}
 }
 
@@ -850,18 +908,13 @@ func TestClaudeCommandIncrement(t *testing.T) {
 	if err := os.WriteFile(briefPath, []byte("do the thing"), 0o644); err != nil {
 		t.Fatalf("write brief: %v", err)
 	}
-	bin, args := a.Command(RunRequest{
-		Task: "T1", Attempt: "r1", Model: "claude-sonnet-5", PromptFile: briefPath, Increment: 2,
-	})
-	if bin != "claude" {
+	req := RunRequest{Task: "T1", Attempt: "r1", Model: "claude-sonnet-5", PromptFile: briefPath, Increment: 2}
+	if bin, _ := a.Command(req); bin != "claude" {
 		t.Errorf("bin = %q, want claude", bin)
 	}
-	if len(args) < 2 {
-		t.Fatalf("args too short: %v", args)
-	}
-	want := freshMessage + " Do increment 2 only, then report and STOP."
-	if !strings.HasPrefix(args[1], want) {
-		t.Errorf("args[1] = %q, want to start with %q", args[1], want)
+	want := freshMessage + " Do increment 2 only, then report and STOP.\ndo the thing"
+	if got := claudeStdin(t, a, req); got != want {
+		t.Errorf("stdin = %q, want %q", got, want)
 	}
 }
 

@@ -274,6 +274,36 @@ func TestValidateFindings(t *testing.T) {
 	}
 }
 
+// TestReviewAgentLargePrompt: a review prompt over 40 KB, past Windows' ~32K
+// command-line cap, reaches the fake reviewer intact on stdin (issue #427).
+func TestReviewAgentLargePrompt(t *testing.T) {
+	dir := reviewAgentRepo(t, "Nothing wrong.\n```json\n{\"findings\": []}\n```")
+	big := "package x\n\nfunc Changed() {}\n" + strings.Repeat("// a long diff line with & | ^ %PATH% in it\n", 1200)
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(big), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	got := filepath.Join(t.TempDir(), "stdin.txt")
+	t.Setenv(fakeClaudeStdinEnv, got)
+	res, err := ReviewAgent(dir, "T1", ReviewAgentOptions{Session: "rev-1"})
+	if err != nil {
+		t.Fatalf("ReviewAgent() error = %v", err)
+	}
+	prompt, err := os.ReadFile(res.Prompt)
+	if err != nil {
+		t.Fatalf("read prompt: %v", err)
+	}
+	stdin, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("fake reviewer saved no stdin: %v", err)
+	}
+	if len(prompt) <= 40*1024 || !strings.Contains(string(prompt), "a long diff line") {
+		t.Fatalf("prompt = %d bytes, want over 40 KB carrying the diff", len(prompt))
+	}
+	if string(stdin) != freshMessage+"\n"+string(prompt) {
+		t.Errorf("stdin = %d bytes, want freshMessage then the whole %d-byte prompt", len(stdin), len(prompt))
+	}
+}
+
 // TestReviewerNoWorkerRules: the reviewer's claude args carry no worker
 // rules; a normal worker request still does (issue #389).
 func TestReviewerNoWorkerRules(t *testing.T) {

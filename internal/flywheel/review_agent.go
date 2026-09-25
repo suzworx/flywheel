@@ -545,6 +545,11 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 	bin, args := adap.Command(req)
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = workdir
+	// The review prompt carries the diff, far past Windows' ~32K command-line
+	// cap; an adapter that prompts on stdin keeps it off the line (issue #427).
+	if sr := promptStdin(adap, req); sr != nil {
+		cmd.Stdin = sr
+	}
 	guard, guardEnv, err := installGitGuard(workdir, task, req.Attempt)
 	if err != nil {
 		return "", fmt.Errorf("git guard not installed (%w); a reviewer never runs git unguarded", err)
