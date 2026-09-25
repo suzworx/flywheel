@@ -153,12 +153,21 @@ all.
   gate's first 40 characters; live gates are not checked; omitted when empty, issue #365),
   `commit` (on a `stop` finish of a `--worktree` unit only, issue #391: workers never run git write
   commands, so flywheel commits the attempt itself on `fw/<task>` — built in a temporary index from
-  HEAD plus every changed path inside the attempt's effective owns, flywheel's own bookkeeping
+  HEAD plus every changed path inside the attempt's owns — the resolved brief's owns plus this
+  dispatch's own prompt's `owns:` lines, so a correction delta that widens owns is committed
+  (issue #477), the same set validate measures; checkpoints use it too — flywheel's own bookkeeping
   excluded, message `<task> <attempt>` with a `Flywheel-Task: <task>` trailer, author and committer
   `flywheel <flywheel@localhost>`, the branch moved by compare-and-swap, and the worktree's index
   refreshed for the committed paths; omitted when nothing owned changed. Changed paths outside owns
-  stay uncommitted and are named on the note as `left uncommitted (outside owns): <paths>`; a
-  commit failure never fails the run and is noted as `attempt commit failed: <err>`).
+  stay uncommitted, are named on the note as `left uncommitted (outside owns): <paths>`, printed as
+  `warning: <task> <attempt>: attempt commit left <n> changed path(s) uncommitted (outside owns):
+  <paths>` and recorded as `uncommitted`; a commit failure never fails the run and is noted as
+  `attempt commit failed: <err>`).
+- `uncommitted` (issue #477): the changed paths the attempt commit left out. Only a `finished` event
+  may carry it. While any of the task's latest `finished` event's `uncommitted` paths is still
+  changed (dirty or untracked) in the tree validate measures, the owns check fails with the single
+  outside entry `left uncommitted by the attempt commit: <paths>` (replacing those bare paths,
+  and even when a baseline or claim would excuse them): a PR cut from `fw/<task>` would lack them.
 - `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
   normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
   `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider

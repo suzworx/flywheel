@@ -491,6 +491,23 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 			}
 		}
 	}
+	// A path the attempt commit left out (issue #477) is not on fw/<task>:
+	// while it is still changed here the owns check fails, naming it once
+	// under its reason instead of as a bare outside path, even when a
+	// baseline or a claim would excuse it.
+	if left := leftUncommitted(wd, events, task); len(left) > 0 {
+		named := make(map[string]bool, len(left))
+		for _, p := range left {
+			named[p] = true
+		}
+		var kept []string
+		for _, p := range outside {
+			if !named[p] {
+				kept = append(kept, p)
+			}
+		}
+		outside = append(kept, "left uncommitted by the attempt commit: "+strings.Join(left, ", "))
+	}
 	res.Outside = outside
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
@@ -510,6 +527,36 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	}
 	_, _ = WriteState(dir)
 	return res, nil
+}
+
+// leftUncommitted returns the uncommitted paths of task's latest finished
+// event (issue #477) that are still changed (dirty or untracked) in wd, in
+// recorded order; nil when there are none or wd cannot be read.
+func leftUncommitted(wd string, events []Event, task string) []string {
+	var recorded []string
+	for _, e := range events {
+		if e.Task == task && e.Kind == "finished" {
+			recorded = e.Uncommitted
+		}
+	}
+	if len(recorded) == 0 {
+		return nil
+	}
+	changed, err := changedPaths(wd)
+	if err != nil {
+		return nil
+	}
+	dirty := make(map[string]bool, len(changed))
+	for _, p := range changed {
+		dirty[p] = true
+	}
+	var left []string
+	for _, p := range recorded {
+		if dirty[p] {
+			left = append(left, p)
+		}
+	}
+	return left
 }
 
 // inFlightOwners returns, sorted, every task id other than task whose derived

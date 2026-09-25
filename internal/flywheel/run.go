@@ -516,6 +516,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("parse prompt %s: %w", promptSrc, err)
 	}
+	// The attempt's owns (issue #477): myOwns was resolved before this
+	// dispatch's event existed, so on a correction it is the previous
+	// attempt's; this prompt's own owns: lines (a delta may widen them) are
+	// unioned in, as AttemptBrief does for validate, so the attempt commit and
+	// the checkpoint cover what validate measures.
+	attemptOwns := unionStrings(myOwns, promptHeader.Owns)
 
 	// Shared gate (issue #223): a gate line this dispatch will run that an
 	// in-flight task's brief declares byte-identically means those units will
@@ -1134,7 +1140,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		note := firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
-		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, myOwns)
+		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, attemptOwns)
 		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, Checkpoint: checkpoint}); err != nil {
 			return Result{}, err
 		}
@@ -1176,7 +1182,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
-		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "stalled", wrote, myOwns)
+		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "stalled", wrote, attemptOwns)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
@@ -1344,22 +1350,27 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// Workers never write git history: flywheel commits a clean stop's owned
 	// changes on fw/<task> itself when the attempt ran in its task worktree
 	// (issue #391). A commit failure never fails the run; it goes on the note.
+	// Paths it leaves out are warned, noted and recorded on the finished event
+	// as uncommitted, which fails validate's owns check (issue #477).
 	attemptCommit := ""
+	var uncommitted []string
 	if o.Worktree && reason == "stop" {
-		sha, outside, cerr := commitAttempt(dir, wt, o.Task, attempt, myOwns)
+		sha, outside, cerr := commitAttempt(dir, wt, o.Task, attempt, attemptOwns)
 		attemptCommit = sha
 		if cerr != nil {
 			note = joinNote(note, clipNote("attempt commit failed: "+cerr.Error()))
 		}
 		if len(outside) > 0 {
+			uncommitted = outside
 			note = joinNote(note, clipNote("left uncommitted (outside owns): "+strings.Join(outside, ", ")))
+			progress(o.Progress, fmt.Sprintf("warning: %s %s: attempt commit left %d changed path(s) uncommitted (outside owns): %s", o.Task, attempt, len(outside), strings.Join(outside, ", ")))
 		}
 	}
 
 	// An unclean end keeps the attempt's written owned files under
 	// refs/flywheel/checkpoints/<task>/<attempt> (issue #422); a checkpoint
 	// failure goes on the note, never fails the run.
-	checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, reason, wrote, myOwns)
+	checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, reason, wrote, attemptOwns)
 	note = joinNote(note, cpNote)
 
 	if err := AppendEvent(dir, Event{
@@ -1367,7 +1378,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
-		Checkpoint: checkpoint,
+		Checkpoint: checkpoint, Uncommitted: uncommitted,
 	}); err != nil {
 		return Result{}, err
 	}

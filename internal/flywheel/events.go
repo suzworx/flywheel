@@ -65,6 +65,10 @@ type Event struct {
 	// attempt's changed owned files, kept under
 	// refs/flywheel/checkpoints/<task>/<attempt> (issue #422).
 	Checkpoint string `json:"checkpoint,omitempty"`
+	// Uncommitted is a finished event's changed paths the attempt commit on
+	// fw/<task> left out because they sit outside the attempt's owns (issue
+	// #477); validate fails the owns check while any of them is still changed.
+	Uncommitted []string `json:"uncommitted,omitempty"`
 	// Paths is a recovered event's tasks the applied actions touched (issue #422).
 	Paths []string `json:"paths,omitempty"`
 	// LeadImplemented marks a landed event whose unit the lead implemented
@@ -421,6 +425,9 @@ func Validate(e Event) error {
 	}
 	if e.Checkpoint != "" && e.Kind != "finished" {
 		return fmt.Errorf("event kind %q cannot carry a checkpoint", e.Kind)
+	}
+	if len(e.Uncommitted) > 0 && e.Kind != "finished" {
+		return fmt.Errorf("event kind %q cannot carry uncommitted", e.Kind)
 	}
 	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
 		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")
