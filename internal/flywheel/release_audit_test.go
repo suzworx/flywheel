@@ -191,11 +191,78 @@ func TestReleaseAuditChangelogWrongCompareBase(t *testing.T) {
 	}
 }
 
+// TestReleaseAuditMissingTag: the fixture has no origin remote, so a tag
+// missing here cannot be checked on origin and establishes no violation.
 func TestReleaseAuditMissingTag(t *testing.T) {
 	t.Parallel()
 	_, res := auditRelease(t, defaultChangelog, func(o *ReleaseAuditOptions) { o.Version = "v0.3.0"; o.Run = cannedRun("0.3.0") })
-	if c := releaseCheck(t, res, "tag"); c.Status != "fail" {
-		t.Errorf("tag = %+v, want fail", c)
+	if c := releaseCheck(t, res, "tag"); c.Status != "inconclusive" || !strings.Contains(c.Detail, "origin could not be checked") {
+		t.Errorf("tag = %+v, want inconclusive: origin could not be checked", c)
+	}
+	for _, n := range []string{"changelog", "docs"} {
+		if c := releaseCheck(t, res, n); c.Status != "skipped" || c.Detail != "tag not in this clone" {
+			t.Errorf("%s = %+v, want skipped: tag not in this clone", n, c)
+		}
+	}
+	if res.Verdict != "inconclusive" {
+		t.Errorf("verdict = %s, want inconclusive", res.Verdict)
+	}
+}
+
+// releaseOrigin returns a bare copy of a release repo (tags v0.1.0, v0.2.0)
+// and a clone of it made without tags, whose origin is the bare repo.
+func releaseOrigin(t *testing.T) (bare, clone string) {
+	t.Helper()
+	src := releaseRepo(t, defaultChangelog, releaseDocs)
+	root := t.TempDir()
+	bare, clone = filepath.Join(root, "origin.git"), filepath.Join(root, "clone")
+	cfg := []string{"--config", "gc.auto=0", "--config", "maintenance.auto=false", "--config", "core.autocrlf=false"}
+	git(t, root, append([]string{"clone", "-q", "--bare"}, append(cfg, src, bare)...))
+	git(t, root, append([]string{"clone", "-q", "--no-tags"}, append(cfg, bare, clone)...))
+	return bare, clone
+}
+
+// auditReleaseIn runs AuditRelease on dir for version against a v0.2.0 server.
+func auditReleaseIn(t *testing.T, dir, version string) ReleaseAuditResult {
+	t.Helper()
+	srv := newUpgradeServer(t, "v0.2.0", "linux", "amd64", []byte("bin"))
+	t.Cleanup(srv.Close)
+	o := releaseOpts(srv)
+	o.Version = version
+	res, err := AuditRelease(dir, o)
+	if err != nil {
+		t.Fatalf("AuditRelease() error = %v", err)
+	}
+	return res
+}
+
+func TestReleaseAuditTagOnlyOnOrigin(t *testing.T) {
+	t.Parallel()
+	_, clone := releaseOrigin(t)
+	res := auditReleaseIn(t, clone, "0.2.0")
+	if c := releaseCheck(t, res, "tag"); c.Status != "inconclusive" || !strings.Contains(c.Detail, "exists on origin but not in this clone") ||
+		!strings.Contains(c.Detail, "git fetch origin tag v0.2.0") {
+		t.Errorf("tag = %+v, want inconclusive naming the fetch", c)
+	}
+	for _, n := range []string{"changelog", "docs"} {
+		if c := releaseCheck(t, res, n); c.Status != "skipped" || c.Detail != "tag not in this clone" {
+			t.Errorf("%s = %+v, want skipped: tag not in this clone", n, c)
+		}
+	}
+	if res.Verdict != "inconclusive" {
+		t.Errorf("verdict = %s, want inconclusive", res.Verdict)
+	}
+	if tags := git(t, clone, []string{"tag", "-l"}); tags != "" {
+		t.Errorf("the audit fetched tags into the clone: %q", tags)
+	}
+}
+
+func TestReleaseAuditTagMissingEverywhere(t *testing.T) {
+	t.Parallel()
+	_, clone := releaseOrigin(t)
+	res := auditReleaseIn(t, clone, "0.3.0")
+	if c := releaseCheck(t, res, "tag"); c.Status != "fail" || c.Detail != "v0.3.0 does not exist here or on origin" {
+		t.Errorf("tag = %+v, want fail: does not exist here or on origin", c)
 	}
 	for _, n := range []string{"changelog", "docs"} {
 		if c := releaseCheck(t, res, n); c.Status != "skipped" || c.Detail != "no tag" {
@@ -204,6 +271,20 @@ func TestReleaseAuditMissingTag(t *testing.T) {
 	}
 	if res.Verdict != "fail" {
 		t.Errorf("verdict = %s, want fail", res.Verdict)
+	}
+}
+
+func TestReleaseAuditTagNoOrigin(t *testing.T) {
+	t.Parallel()
+	dir := releaseRepo(t, defaultChangelog, releaseDocs)
+	git(t, dir, []string{"tag", "-d", "v0.2.0"})
+	res := auditReleaseIn(t, dir, "0.2.0")
+	if c := releaseCheck(t, res, "tag"); c.Status != "inconclusive" || !strings.Contains(c.Detail, "origin could not be checked") ||
+		!strings.Contains(c.Detail, "no violation established") {
+		t.Errorf("tag = %+v, want inconclusive: origin could not be checked", c)
+	}
+	if res.Verdict != "inconclusive" {
+		t.Errorf("verdict = %s, want inconclusive", res.Verdict)
 	}
 }
 
