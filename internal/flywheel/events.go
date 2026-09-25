@@ -61,6 +61,12 @@ type Event struct {
 	// dispatched (issue #332).
 	Base string `json:"base,omitempty"`
 	Note string `json:"note,omitempty"`
+	// Checkpoint is an unclean finished event's snapshot commit of the
+	// attempt's changed owned files, kept under
+	// refs/flywheel/checkpoints/<task>/<attempt> (issue #422).
+	Checkpoint string `json:"checkpoint,omitempty"`
+	// Paths is a recovered event's tasks the applied actions touched (issue #422).
+	Paths []string `json:"paths,omitempty"`
 	// LeadImplemented marks a landed event whose unit the lead implemented
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`
@@ -210,6 +216,9 @@ var kinds = map[string]bool{
 	// worktree before dispatch (issue #430): Linked, RC, DurationMS and Note
 	// (the setup output tail).
 	"worktree_setup": true,
+	// recovered records `flywheel recover --apply` (issue #422): Note the
+	// safe actions applied, Paths the tasks they touched.
+	"recovered": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -300,7 +309,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered":
 		return true
 	default:
 		return false
@@ -361,7 +370,13 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered", e.Kind)
+	}
+	if e.Kind == "recovered" && (e.Note == "" || e.Task != "") {
+		return fmt.Errorf("recovered event must carry a note (the actions applied) and no task (Paths names them)")
+	}
+	if e.Checkpoint != "" && e.Kind != "finished" {
+		return fmt.Errorf("event kind %q cannot carry a checkpoint", e.Kind)
 	}
 	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
 		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")

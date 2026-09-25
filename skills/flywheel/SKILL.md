@@ -103,6 +103,17 @@ When you start a session, register yourself on the floor:
 
 ## The loop (compact)
 
+### 0. Recover — every session starts with `flywheel recover`
+Before planning or dispatching anything, run `flywheel recover` (read-only). It checks the log's
+hash chain and every verify rule, compares each unit's worktree, lease and run file with the
+ledger, and prints one next action per unit with its reason and exact command. Act on that list,
+not on memory of the last session. `flywheel recover --apply` runs only the safe actions
+(mark-lost, re-validate, a conflict-free rebase) and records a `recovered` event. Resume, review,
+inspect and land stay yours. `investigate` means the world disagrees with the log: look before
+you act. An interrupted attempt's written files are kept under
+`refs/flywheel/checkpoints/<task>/<attempt>`; `flywheel checkpoint diff|restore <task>` brings
+them back (issue #422).
+
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,
 no secrets): an `owns:`/`needs:` header, goal, exact change, don't-touch list of uncommitted

@@ -194,6 +194,10 @@ all.
   (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
   <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
   `git` first on PATH never reaches it.
+- `checkpoint` (issue #422): on an unclean finish (`error`, `rate-limited`, `stalled`, `silent`,
+  `abandoned-job`, `length`) of an attempt that wrote files, the sha of the snapshot of its changed
+  owned paths at `refs/flywheel/checkpoints/<task>/<attempt>` (see `recovered` below). Only a
+  `finished` event may carry it.
 - Workers load no MCP servers unless the worker config lists them (issue #425). Every claude
   dispatch passes `--strict-mcp-config` with `--mcp-config` set to the worker's `mcp` value (the
   Claude CLI's `{"mcpServers": {...}}` shape, compacted), or to the empty set `{"mcpServers":{}}`
@@ -395,6 +399,70 @@ all.
   warning `base <sha7> (unit <T>) was squash-merged as <sha7>; run: flywheel rebase <task>` as the
   `owns_checked` note (the reading still runs), `flywheel land` refuses (rule `stacked`, below), and
   the floor shows the done unit's run state as `stacked` on the andon.
+
+### `recovered`
+- Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
+  one safe action.
+- Carries: no `task`; `note` (the actions applied, `; `-separated, e.g. `mark-lost T r1
+  (lease-expired) checkpoint 1a2b3c4`, `re-validate T`, `rebase T onto 5d6e7f8`), `paths` (the
+  tasks they touched, sorted). `Validate` requires the note and refuses a task.
+- Effect: no status change; the applied actions record their own events (`lost`, `validated`,
+  `owns_checked`, `rebased`).
+- `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR]` (read-only without `--apply`)
+  is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
+  over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a
+  `landed` task is **history**: it can no longer be acted on, so it is reported and counted
+  (`integrity.history`; the text shows the count and the first five, `--all` every one) and never
+  fails integrity or the exit status. Then per task (as `Derive` sees it) it checks:
+  - the task worktree (`.flywheel/worktrees/<task>`, else the attempt's recorded workdir). Its HEAD
+    must contain the attempt's `finished.commit` (`git merge-base --is-ancestor`). A lead commit or
+    merge on top is consistent; a later `rebased` event explains a move; a git failure is unknown,
+    never a mismatch. Its uncommitted paths are compared with the attempt's `wrote` list. The
+    dispatch baseline with unchanged content and the paths `worktree_setup` linked are excused; the
+    rest are `unexplained`.
+  - the lease (`live`, `dead`, `none`).
+  - the run file (`complete` when its last byte is a newline, `torn`, `missing`).
+  - a stacked base, a paused model, and the task's checkpoints.
+
+  A task not `landed` whose latest event is older than `--dormant-after` (default `168h`; `0`
+  disables) is **dormant** (JSON `dormant: true`). Its next action is still computed, but the text
+  shows dormant tasks as one summary line (count and ids) unless `--all`, and `--apply` never acts
+  on one: it is listed as `dormant`. Landed tasks are likewise one summary line (`N landed units`)
+  unless `--all`. Exit 0 when integrity passes and no task's next action is `investigate`, else 1.
+- The next action per task, first match wins:
+
+  | Condition | Action | Command |
+  | --- | --- | --- |
+  | `landed` | `none` | |
+  | not in flight, worktree HEAD is not the attempt's commit | `investigate` | |
+  | not in flight, uncommitted paths no attempt wrote | `investigate` | |
+  | dispatched/running, lease live | `none` | |
+  | dispatched/running, lost by the `lost` rules above | `mark-lost` | `flywheel recover --apply` |
+  | dispatched/running, otherwise | `none` | |
+  | unclean finish or `lost`, model paused | `wait-reset` | `flywheel wait <task>` |
+  | finished `rate-limited` or `abandoned-job` | `resume-session` | `flywheel run <task> --resume` |
+  | `lost`, or any other unclean finish | `none` (dispatch or correct) | |
+  | finished `stop` or `passed`, stacked | `rebase` | `flywheel rebase <task>` |
+  | `passed` | `land` | `flywheel land <task>` |
+  | any other status than `finished` | `none` | |
+  | no `owns_checked` reading since the finish | `re-validate` | `flywheel validate <task>` |
+  | the tree changed since that reading | `re-validate` | `flywheel validate <task>` |
+  | readings complete and passing, review panel applies and is incomplete | `review` | `flywheel review <task> --agent --panel ...` |
+  | readings complete and passing | `inspect` | `flywheel inspect <task> --verdict pass ...` |
+  | otherwise (readings failed on the current tree) | `none` (correct) | |
+
+- `--apply` runs only `mark-lost` (as the controller does, and it checkpoints the lost attempt's
+  changed owned files, since a killed process never reached its `finished` event),
+  `re-validate` (a measurement) and `rebase` when the base is certainly squashed and `git rebase`
+  reports no conflict (a conflict is aborted and listed). `resume-session`, `wait-reset`, `review`,
+  `inspect`, `land` and `investigate` are never run; they are listed for the lead.
+- **Checkpoints.** An attempt that ends uncleanly (`error`, `rate-limited`, `stalled`, `silent`,
+  `abandoned-job`, `length`) after writing files has its changed owned paths snapshotted: a
+  temporary index reads HEAD, adds those paths, writes a tree, and `commit-tree` makes
+  `checkpoint <task> <attempt>` on top of HEAD, kept at `refs/flywheel/checkpoints/<task>/<attempt>`
+  — never the branch, never the real index. The `finished` event carries the sha as `checkpoint`; a
+  checkpoint failure goes on its note and never fails the run. `flywheel checkpoint list|diff|restore|drop`
+  manages them; `restore` refuses over uncommitted changes to the checkpoint's paths unless `--force`.
 
 ### `landed`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
@@ -878,7 +946,11 @@ repository to resolve tree objects in when the readings were taken in an externa
 #244); without it, a `workdir` recorded on the task's reading events is used when that path still
 exists. `--log` checks the event log's hash chain (T10, issue #57): every event's `prev` must match
 the SHA-256 of some earlier complete line; `--log` fails (exit 6) at the first line whose `prev`
-matches none, indicating a line was edited or removed. An `INCONCLUSIVE` item is `pass:false` with
+matches none, indicating a line was edited or removed. When that dangling `prev` is the hash of a
+LATER line in the same file, the break reason is `reordered: line N chains to line M, which comes
+after it (a git merge or an edit reordered the log; no record is missing)`. A git merge or conflict
+resolution of a committed ledger does this. It is still a break, but no record is missing (issue
+#422); otherwise the reason is `prev matches no earlier line`. An `INCONCLUSIVE` item is `pass:false` with
 `inconclusive:true`: the pass's tree could not be resolved in any repository this verifier can
 see, so T3 can neither confirm the readings nor assert a breach. Naming a task explicitly still
 runs every rule for it even if the log has never heard of it — a missing planned brief, for

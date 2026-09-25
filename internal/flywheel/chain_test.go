@@ -177,6 +177,54 @@ func TestVerifyLogChainDeletedLineBreaks(t *testing.T) {
 	if chain.BreakLine != 2 {
 		t.Errorf("expected BreakLine=2 (old line 3 is now line 2), got %d", chain.BreakLine)
 	}
+	if chain.BreakReason != "prev matches no earlier line" {
+		t.Errorf("a removed record: BreakReason = %q", chain.BreakReason)
+	}
+}
+
+// TestVerifyLogChainReorderedBreak checks a swap of two lines (a git merge of
+// a committed ledger) is still a break but is named a reorder, in the legacy
+// log and in a shard: the dangling prev is a LATER line's hash (issue #422).
+func TestVerifyLogChainReorderedBreak(t *testing.T) {
+	dir := t.TempDir()
+	for i := 1; i <= 4; i++ {
+		if err := AppendEvent(dir, Event{Task: fmt.Sprintf("T%d", i), Kind: "planned"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, ".flywheel", "events.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := splitLines(string(data))
+	lines[1], lines[2] = lines[2], lines[1]
+	if err := os.WriteFile(path, []byte(joinLines(lines)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := VerifyLogChain(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "reordered: line 2 chains to line 3, which comes after it"
+	if chain.OK() || chain.BreakLine != 2 || !strings.HasPrefix(chain.BreakReason, want) || !strings.Contains(chain.BreakReason, "no record is missing") {
+		t.Errorf("legacy chain = %+v, want a break at line 2 named %q", chain, want)
+	}
+
+	l1 := `{"task":"T","kind":"planned","prev":"` + shardGenesis + `"}`
+	l2 := `{"task":"T","kind":"amended","prev":"` + lineHash([]byte(l1)) + `"}`
+	l3 := `{"task":"T","kind":"dispatched","prev":"` + lineHash([]byte(l2)) + `"}`
+	shard := filepath.Join(t.TempDir(), "T.jsonl")
+	if err := os.WriteFile(shard, []byte(l1+"\n"+l3+"\n"+l2+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := verifyFileChain(shard, "events/T.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.OK() || sc.BreakLine != 2 || !strings.HasPrefix(sc.BreakReason, want) {
+		t.Errorf("shard chain = %+v, want a break at line 2 named %q", sc, want)
+	}
 }
 
 func TestVerifyLogChainInterleavedOK(t *testing.T) {

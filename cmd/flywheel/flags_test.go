@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,6 +56,8 @@ var allFlagsFuncs = map[string]flagsAny{
 	"context":    func() (*flag.FlagSet, any) { fs, o := contextFlags(); return fs, o },
 	"upgrade":    func() (*flag.FlagSet, any) { fs, o := upgradeFlags(); return fs, o },
 	"rebase":     func() (*flag.FlagSet, any) { fs, o := rebaseFlags(); return fs, o },
+	"recover":    func() (*flag.FlagSet, any) { fs, o := recoverFlags(); return fs, o },
+	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
 }
 
 // optionDir reads the dir an options struct bound; "" when it has no dir.
@@ -318,5 +323,52 @@ func TestReviewPanelFlags(t *testing.T) {
 	}
 	if !strings.Contains(reviewUsageLine, "--agent --panel --session <session>") {
 		t.Errorf("usage %q does not name --agent --panel", reviewUsageLine)
+	}
+}
+
+// TestRecoverJSON checks `flywheel recover --json` (issue #422): the report
+// decodes with each unit's next action, it is read-only (the log is byte
+// identical after), and the exit is 0 for an intact ledger with nothing to
+// investigate.
+func TestRecoverJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nneeds: none\ngate: true\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []flywheel.Event{
+		{TS: "2026-09-20T00:00:00Z", Task: "T", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-20T00:01:00Z", Task: "T", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-20T00:02:00Z", Task: "T", Kind: "finished", Attempt: "r1", Reason: "stop"},
+	} {
+		if err := flywheel.AppendEvent(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logPath := filepath.Join(dir, ".flywheel", "events.jsonl")
+	before, _ := os.ReadFile(logPath)
+	var stdout, stderr strings.Builder
+	code := recoverMain([]string{"--json", "--dir", dir}, &stdout, &stderr, time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC))
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr %q, stdout %s", code, stderr.String(), stdout.String())
+	}
+	var rep flywheel.RecoverReport
+	if err := json.Unmarshal([]byte(stdout.String()), &rep); err != nil {
+		t.Fatalf("decode: %v\n%s", err, stdout.String())
+	}
+	if !rep.Integrity.Pass || len(rep.Tasks) != 1 || rep.Tasks[0].Next.Action != "re-validate" || rep.Tasks[0].Next.Command != "flywheel validate T" {
+		t.Errorf("report = %+v", rep)
+	}
+	if after, _ := os.ReadFile(logPath); string(after) != string(before) {
+		t.Error("recover without --apply changed the event log")
+	}
+	if code := recoverMain([]string{"extra"}, &stdout, &stderr, time.Now()); code != 2 {
+		t.Errorf("a positional argument exits %d, want 2", code)
+	}
+	fs, o := recoverFlags()
+	if o.dormantAfter != 168*time.Hour || o.all {
+		t.Errorf("defaults: dormant-after %s, all %v; want 168h, false", o.dormantAfter, o.all)
+	}
+	if err := fs.Parse([]string{"--dormant-after", "0", "--all"}); err != nil || o.dormantAfter != 0 || !o.all {
+		t.Errorf("parse --dormant-after 0 --all: %v, %+v", err, *o)
 	}
 }
