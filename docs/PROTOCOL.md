@@ -552,7 +552,8 @@ all.
   check; no other kind may carry `version` or `checks`.
 - Effect: no status change. Every repository file is read at the tag, never the working tree. The
   verdict is `fail` when any check failed, else `inconclusive` when any could not be established (a
-  download or a run of the binary failed), else `pass`. It is recorded whatever the verdict; a
+  download or a run of the binary failed, or the tag is missing only from this clone or origin could
+  not be asked; a tag missing on origin too fails `tag`), else `pass`. It is recorded whatever the verdict; a
   missing session or a usage error records nothing.
 
 ### `probed`

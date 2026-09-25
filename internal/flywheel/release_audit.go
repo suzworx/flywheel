@@ -103,12 +103,11 @@ func AuditRelease(dir string, o ReleaseAuditOptions) (ReleaseAuditResult, error)
 	}
 	defer os.RemoveAll(tmp)
 
-	tagOK := false
-	if _, err := gitWith(dir, nil, "rev-parse", "--verify", "--quiet", res.Tag+"^{commit}"); err != nil {
-		res.Checks = append(res.Checks, ReleaseCheck{"tag", "fail", res.Tag + " does not exist"})
-	} else {
-		tagOK = true
-		res.Checks = append(res.Checks, ReleaseCheck{"tag", "pass", res.Tag})
+	tc, tagOK := checkReleaseTag(dir, res.Tag)
+	res.Checks = append(res.Checks, tc)
+	noTag := "no tag"
+	if tc.Status == "inconclusive" {
+		noTag = "tag not in this clone"
 	}
 	var section string
 	if tagOK {
@@ -116,7 +115,7 @@ func AuditRelease(dir string, o ReleaseAuditOptions) (ReleaseAuditResult, error)
 		res.Prev, section, c = checkChangelog(dir, res.Tag, ver, o.Prev)
 		res.Checks = append(res.Checks, c)
 	} else {
-		res.Checks = append(res.Checks, ReleaseCheck{"changelog", "skipped", "no tag"})
+		res.Checks = append(res.Checks, ReleaseCheck{"changelog", "skipped", noTag})
 	}
 	bin, c := checkBinary(up, res.Tag, ver, o, tmp)
 	res.Checks = append(res.Checks, c)
@@ -126,18 +125,46 @@ func AuditRelease(dir string, o ReleaseAuditOptions) (ReleaseAuditResult, error)
 		if tagOK {
 			res.Checks = append(res.Checks, checkReleaseDocs(dir, res.Tag, cmds))
 		} else {
-			res.Checks = append(res.Checks, ReleaseCheck{"docs", "skipped", "no tag"})
+			res.Checks = append(res.Checks, ReleaseCheck{"docs", "skipped", noTag})
 		}
 	} else {
 		res.Checks = append(res.Checks, ReleaseCheck{"commands", "skipped", "binary check did not pass"})
 		detail := "binary check did not pass"
 		if !tagOK {
-			detail = "no tag"
+			detail = noTag
 		}
 		res.Checks = append(res.Checks, ReleaseCheck{"docs", "skipped", detail})
 	}
 	res.Checks = append(res.Checks, checkCalibration(o))
 	return res, recordReleaseAudit(dir, o, &res)
+}
+
+// checkReleaseTag checks tag resolves to a commit here. When it does not, it
+// asks origin read-only (never fetching): a tag only on origin means a stale
+// clone, and an origin that cannot be asked establishes nothing; both are
+// inconclusive. Only a tag missing here and on origin fails.
+func checkReleaseTag(dir, tag string) (ReleaseCheck, bool) {
+	if _, err := gitWith(dir, nil, "rev-parse", "--verify", "--quiet", tag+"^{commit}"); err == nil {
+		return ReleaseCheck{"tag", "pass", tag}, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--tags", "origin", "refs/tags/"+tag)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			err = fmt.Errorf("%v: %s", err, msg)
+		}
+		return ReleaseCheck{"tag", "inconclusive", tag + " is not in this clone and origin could not be checked, no violation established: " + err.Error()}, false
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		return ReleaseCheck{"tag", "inconclusive", tag + " exists on origin but not in this clone, no violation established; run git fetch origin tag " + tag}, false
+	}
+	return ReleaseCheck{"tag", "fail", tag + " does not exist here or on origin"}, false
 }
 
 // recordReleaseAudit sets res.Verdict and appends the release_audited event.
