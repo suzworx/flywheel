@@ -201,6 +201,31 @@ func TestGitGuardRefusalExitsOne(t *testing.T) {
 	if !bytes.Contains(errb.Bytes(), []byte("workers never")) {
 		t.Errorf("GitGuard(commit...) stderr %q does not contain 'workers never'", errb.String())
 	}
+	if bytes.Contains(errb.Bytes(), []byte("--no-index")) {
+		t.Errorf("GitGuard(commit...) stderr %q carries the index clause", errb.String())
+	}
+}
+
+// TestGitGuardRefusesAddIntentToAdd checks git add -N is refused and the
+// refusal names the read-only way to diff a new file (issue #478).
+func TestGitGuardRefusesAddIntentToAdd(t *testing.T) {
+	// not parallel: isolateGuardEnv and t.Setenv change PATH and the guard env
+	isolateGuardEnv(t)
+	t.Setenv("GIT_INDEX_FILE", "")
+	args := []string{"add", "-N", "x"}
+	if refused, sub := GitGuardRefused(args); !refused || sub != "add" {
+		t.Fatalf("GitGuardRefused(add -N x) = %v, %q, want true, add", refused, sub)
+	}
+	var out, errb bytes.Buffer
+	if rc := GitGuard(args, nil, &out, &errb); rc != 1 {
+		t.Errorf("GitGuard(add -N x) returned %d, want 1", rc)
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("--no-index")) {
+		t.Errorf("GitGuard(add -N x) stderr %q does not name --no-index", errb.String())
+	}
+	if !bytes.Contains(errb.Bytes(), []byte("3 = whitespace errors")) {
+		t.Errorf("GitGuard(add -N x) stderr %q does not state the exit status", errb.String())
+	}
 }
 
 func TestGitGuardSkipsGuardDir(t *testing.T) {
