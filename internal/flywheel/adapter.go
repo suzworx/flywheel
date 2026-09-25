@@ -1,8 +1,10 @@
 package flywheel
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -104,6 +106,24 @@ type Adapter interface {
 	Name() string
 	Command(r RunRequest) (bin string, args []string)
 	Parse(line []byte) (Observation, bool)
+}
+
+// StdinPrompter is an optional Adapter whose prompt goes to the child's
+// stdin instead of the command line (issue #427): Windows caps a command
+// line at ~32K characters, so a large brief or review prompt passed as an
+// argument fails before the process starts. Stdin returns the whole prompt
+// in memory, so the runner has no file to close; it sets cmd.Stdin to it.
+type StdinPrompter interface {
+	Stdin(r RunRequest) io.Reader
+}
+
+// promptStdin returns adap's stdin prompt for r, or nil when adap passes its
+// prompt some other way.
+func promptStdin(adap Adapter, r RunRequest) io.Reader {
+	if sp, ok := adap.(StdinPrompter); ok {
+		return sp.Stdin(r)
+	}
+	return nil
 }
 
 // obsPaths returns every path an observation touched: Paths when set, else
@@ -374,12 +394,12 @@ func (a claudeAdapter) Name() string {
 	return "claude"
 }
 
-// Command builds the dispatch arguments. Unlike opencodeAdapter's --file,
-// the Claude CLI's -p flag takes the prompt text itself, so the prompt file
-// is read here; a read failure yields an empty prompt rather than a panic,
-// surfacing downstream as a start-failed run like any other unreadable
-// brief. --permission-mode acceptEdits grants file edits without a prompt
-// and nothing else — notably NOT Bash, so a worker running under it alone
+// Command builds the dispatch arguments. The prompt is never an argument
+// (issue #427): -p selects print mode with no prompt text, and the documented
+// CLI behaviour of `claude -p` with no prompt argument is to read the prompt
+// from stdin, which Stdin supplies. --permission-mode acceptEdits grants
+// file edits without a prompt and nothing else — notably NOT Bash, so a
+// worker running under it alone
 // could not run its own gates (issue #192). The dispatch therefore also
 // passes the worker's resolved tool policy: --allowedTools (r.AllowedTools,
 // by default "Bash") so the worker can run its gate lines, and
@@ -390,8 +410,7 @@ func (a claudeAdapter) Name() string {
 // the worker's permissions come from the flags above, and a checkout's
 // project or local settings (for example permissions.additionalDirectories
 // naming the repository root) must not widen where the worker may write
-// (issue #359). A resume (r.Resume with a non-empty r.Session) leads the
-// prompt with resumeMessage instead of freshPrompt and adds
+// (issue #359). A resume (r.Resume with a non-empty r.Session) adds
 // --resume <session>, mirroring opencodeAdapter.Command. The worker rules
 // (workerRules, PLAN check-in included) reach OpenCode through the policy's
 // "instructions" file; claude gets them as --append-system-prompt, on fresh
@@ -400,14 +419,9 @@ func (a claudeAdapter) Name() string {
 // as a command-line argument because claude is a native binary, not an npm
 // shim run through cmd.exe.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
-	prompt, _ := os.ReadFile(r.PromptFile)
-	msg := freshPrompt(r)
 	resuming := r.Resume && r.Session != ""
-	if resuming {
-		msg = resumeMessage
-	}
 	args := []string{
-		"-p", msg + "\n" + string(prompt),
+		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--max-turns", "200",
@@ -430,6 +444,19 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		args = append(args, "--resume", r.Session)
 	}
 	return "claude", args
+}
+
+// Stdin returns the prompt claude reads on stdin: the lead message
+// (freshPrompt, or resumeMessage on a resume with a session), a newline, then
+// the prompt file. A read failure yields an empty prompt rather than a panic,
+// surfacing downstream as a failed run like any other unreadable brief.
+func (a claudeAdapter) Stdin(r RunRequest) io.Reader {
+	prompt, _ := os.ReadFile(r.PromptFile)
+	msg := freshPrompt(r)
+	if r.Resume && r.Session != "" {
+		msg = resumeMessage
+	}
+	return io.MultiReader(strings.NewReader(msg+"\n"), bytes.NewReader(prompt))
 }
 
 // Parse decodes one line of `claude -p ... --output-format stream-json

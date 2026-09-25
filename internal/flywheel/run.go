@@ -739,6 +739,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
 		cmd.Dir = wt
+		// An adapter that prompts on stdin (claude, issue #427) keeps the
+		// prompt off the command line; nil leaves stdin empty as before.
+		if sr := promptStdin(adap, req); sr != nil {
+			cmd.Stdin = sr
+		}
 		gb, guardEnv, err := installGitGuard(wt, o.Task, attempt)
 		if err != nil {
 			// Fail closed: a worker never runs without the git guard (#325

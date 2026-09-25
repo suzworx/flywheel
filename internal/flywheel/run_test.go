@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -4131,11 +4132,27 @@ func TestBriefHasIncrement(t *testing.T) {
 // as a fake claude (see TestMain and TestRunPlanBeforeTool).
 const fakeClaudeEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STREAM"
 
+// fakeClaudeStdinEnv names the file the fake claude saves its stdin to.
+const fakeClaudeStdinEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STDIN"
+
 // TestMain lets the test binary stand in for the claude CLI: copied to a
 // PATH directory as claude and started with fakeClaudeEnv set, it prints that
-// file as its stream-json output and exits 0.
+// file as its stream-json output and exits 0. It first drains its stdin, where
+// claude reads its prompt (issue #427), so the pipe never blocks, and saves
+// it to the fakeClaudeStdinEnv file when that is set.
 func TestMain(m *testing.M) {
 	if stream := os.Getenv(fakeClaudeEnv); stream != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
+		prompt, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if p := os.Getenv(fakeClaudeStdinEnv); p != "" {
+			if err := os.WriteFile(p, prompt, 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		b, err := os.ReadFile(stream)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -4525,6 +4542,55 @@ func TestRunPlanBeforeTool(t *testing.T) {
 	}
 	if plans != 1 {
 		t.Errorf("worker_plan events = %d, want exactly 1; events = %v", plans, evs)
+	}
+}
+
+// TestRunLargePrompt checks a 100 KB brief, over Windows' ~32K command-line
+// cap, dispatches to claude and reaches it whole on stdin (issue #427).
+func TestRunLargePrompt(t *testing.T) {
+	dir := setupTask(t)
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	brief := "one line brief\n" + strings.Repeat("a long brief line with & | ^ %PATH% in it\n", 2500)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const session = "ses_large_001"
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	lines := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session) +
+		fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	if err := os.WriteFile(stream, []byte(lines), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, stream)
+	got := filepath.Join(t.TempDir(), "stdin.txt")
+	t.Setenv(fakeClaudeStdinEnv, got)
+
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v; progress:\n%s", err, buf.String())
+	}
+	prompt, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("fake claude saved no stdin: %v", err)
+	}
+	if len(brief) < 100*1024 || string(prompt) != freshMessage+"\n"+brief {
+		t.Errorf("stdin = %d bytes (%.80q), want freshMessage then the whole %d-byte brief", len(prompt), prompt, len(brief))
 	}
 }
 
