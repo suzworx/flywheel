@@ -193,7 +193,7 @@ func Derive(events []Event) State {
 			// adapter) never passes a unit; its pass leaves the status
 			// unchanged and only validate+inspect or a hand-recorded review
 			// (which re-runs the gates) set passed. Its correct still counts.
-			agent := e.Persona == "reviewer" && e.Adapter != ""
+			agent := agentReviewed(e) // persona reviewer or reviewer:<dimension> with an adapter (issue #420)
 			switch e.Verdict {
 			case "pass":
 				if !agent {

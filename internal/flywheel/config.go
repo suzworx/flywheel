@@ -57,6 +57,51 @@ type Config struct {
 	Audit      *AuditPolicy      `json:"audit,omitempty"`
 	Log        *LogConfig        `json:"log,omitempty"`
 	Staffing   *StaffingConfig   `json:"staffing,omitempty"`
+	Review     *ReviewConfig     `json:"review,omitempty"`
+}
+
+// ReviewConfig configures the review panel (issue #420): the personas that
+// review every unit, one dimension each, and whether a pass needs the panel.
+type ReviewConfig struct {
+	Panel []PanelMember `json:"panel,omitempty"`
+	// Required makes a complete panel a condition of every inspected pass,
+	// not only of a task the panel has already reviewed. Default false.
+	Required bool `json:"required,omitempty"`
+}
+
+// PanelMember is one reviewer on the panel: its persona (the dimension) and
+// optionally who runs it — a worker in config, or an adapter and model.
+type PanelMember struct {
+	Persona string `json:"persona"`
+	Adapter string `json:"adapter,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Worker  string `json:"worker,omitempty"`
+}
+
+// ReviewPanel is the configured panel, or DefaultPanel's members when unset.
+func (c Config) ReviewPanel() []PanelMember {
+	if c.Review != nil && len(c.Review.Panel) > 0 {
+		return c.Review.Panel
+	}
+	out := make([]PanelMember, len(DefaultPanel))
+	for i, p := range DefaultPanel {
+		out[i] = PanelMember{Persona: p}
+	}
+	return out
+}
+
+// PanelDimensions is the panel's persona names, in order.
+func (c Config) PanelDimensions() []string {
+	var out []string
+	for _, m := range c.ReviewPanel() {
+		out = append(out, m.Persona)
+	}
+	return out
+}
+
+// ReviewRequired reports review.required.
+func (c Config) ReviewRequired() bool {
+	return c.Review != nil && c.Review.Required
 }
 
 // Worker configures a single CLI worker.
@@ -597,6 +642,30 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.Review != nil {
+		seenPersona := map[string]bool{}
+		for i, m := range c.Review.Panel {
+			where := fmt.Sprintf("review.panel[%d]", i)
+			switch {
+			case !personaKnown(m.Persona):
+				problems = append(problems, fmt.Sprintf("%s: persona %q must be one of %s", where, m.Persona, strings.Join(PanelPersonas(), ", ")))
+			case seenPersona[m.Persona]:
+				problems = append(problems, fmt.Sprintf("%s: duplicate persona %q", where, m.Persona))
+			}
+			seenPersona[m.Persona] = true
+			if m.Worker != "" {
+				if _, ok := c.Worker(m.Worker); !ok {
+					problems = append(problems, fmt.Sprintf("%s: worker %q is not in workers[]", where, m.Worker))
+				}
+				if m.Adapter != "" {
+					problems = append(problems, fmt.Sprintf("%s: set worker or adapter, not both", where))
+				}
+			}
+			if m.Adapter != "" && (m.Adapter == "sim" || !adapterKnown(m.Adapter, false)) {
+				problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"claude\", \"opencode\" or \"codex\" (a review agent)", where, m.Adapter))
+			}
+		}
+	}
 	if len(problems) == 0 {
 		return nil
 	}
@@ -713,6 +782,10 @@ func (c Config) Get(key string) (string, error) {
 			return "true", nil
 		}
 		return "false", nil
+	case "review.panel":
+		return strings.Join(c.PanelDimensions(), ","), nil
+	case "review.required":
+		return strconv.FormatBool(c.ReviewRequired()), nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -764,7 +837,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "stall_timeout", "variant",
+		"log.shards", "max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -787,7 +860,8 @@ func (c Config) validKeys() []string {
 // workers.<name>.<key>. The settable keys are model, variant, adapter,
 // max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
-// limits.rate_limit_pause_at, limits.lost_after and limits.quiet_wait.
+// limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
+// (a comma-separated persona list) and review.required (true or false).
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
@@ -887,6 +961,44 @@ func (c *Config) Set(key, value string) error {
 		return fmt.Errorf("%s: not settable; edit .flywheel/config.json", key)
 	case "log.shards":
 		return fmt.Errorf("log.shards is not settable; run flywheel log --shard (the sharded layout is one-way)")
+	case "review.panel":
+		// A comma-separated persona list; each member keeps the worker,
+		// adapter and model it already had. Validation is WriteConfig's.
+		had := map[string]PanelMember{}
+		if c.Review != nil {
+			for _, m := range c.Review.Panel {
+				had[m.Persona] = m
+			}
+		}
+		var panel []PanelMember
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			m, ok := had[p]
+			if !ok {
+				m = PanelMember{Persona: p}
+			}
+			panel = append(panel, m)
+		}
+		if len(panel) == 0 {
+			return fmt.Errorf("review.panel: value %q names no persona; known: %s", value, strings.Join(PanelPersonas(), ", "))
+		}
+		if c.Review == nil {
+			c.Review = &ReviewConfig{}
+		}
+		c.Review.Panel = panel
+		return nil
+	case "review.required":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("review.required: value %q must be true or false", value)
+		}
+		if c.Review == nil {
+			c.Review = &ReviewConfig{}
+		}
+		c.Review.Required = b
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -928,7 +1040,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "stall_timeout", "variant",
+		"max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

@@ -19,8 +19,8 @@ You are the **reviewer**: a second pair of eyes between the gauges and QC. The w
 unit, `flywheel validate` measured it; you read what the gauges cannot. Your instructions are the
 reviewer prompt the framework embeds (`internal/flywheel/review_prompt.md`) — this skill agrees
 with it. The model is [`../flywheel/references/factory.md`](../flywheel/references/factory.md), and
-your findings are checked against [protocol v1](../../docs/PROTOCOL.md) (rule `review` at inspect,
-R1 at verify).
+your findings are checked against [protocol v1](../../docs/PROTOCOL.md) (rules `review` and
+`panel` at inspect, R1 and P1 at verify).
 
 ## You do
 
@@ -108,6 +108,30 @@ And the ones this repository's history shows:
 - You never pass a unit. An open blocker makes `flywheel inspect --verdict pass` refuse (rule
   `review`); only validate plus inspect pass a unit.
 
+## On a panel
+
+Under `flywheel review <task> --agent --panel` you are ONE member of a review panel, and you own
+ONE dimension. Your prompt is the shared reviewer prompt plus your persona file
+(`internal/flywheel/review_personas/<dimension>.md`), which gives your mission and checklist.
+
+| Persona | Owns |
+|---|---|
+| `correctness` | the right result: the brief done, boundaries, ordering, shared state |
+| `tests` | tests that would fail without the change, error paths exercised, no host-dependent tests |
+| `errors` | error handling and resources: swallowed errors, lost causes, cleanup on every path |
+| `contract` | flags, event kinds and fields, exit codes, config keys, backwards compatibility |
+| `docs` | README, PROTOCOL, help and skill text the change makes untrue |
+| `security` (opt-in) | injected commands and paths, leaked secrets, agents bypassing a guard |
+| `cross-os` (opt-in) | Windows/Linux/macOS paths, CRLF, rename and process differences |
+
+- Report ONLY findings in your dimension, with `category` set to it exactly. A finding outside it
+  gets the whole answer refused (retried once, then nothing is recorded). Leave other dimensions to
+  their owners. An empty answer is a real `pass` for your dimension.
+- Every configured dimension must be `pass` on the exact tree before the unit can pass: the verdict
+  matrix shows `pass`, `correct` or `missing` for each, `flywheel inspect --verdict pass` refuses a
+  missing or correct dimension (rule `panel`), and `flywheel verify` fails P1 for one that slipped
+  through.
+
 ## You never
 
 - Edit, write, create, move or delete a file. You read and you report.
@@ -122,6 +146,8 @@ The lead runs these; you are the agent they start.
 - `flywheel review <task> --agent --session <reviewer>` — one review round on the unit's diff.
 - `flywheel review <task> --agent --fix [--rounds N] --session <reviewer>` — the loop: review, send
   the open findings to the worker, re-review, until nothing blocking is open or the rounds run out.
+- `flywheel review <task> --agent --panel [--fix] --session <reviewer>` — the review panel: one
+  persona per `review.panel` dimension, then the verdict matrix; `--fix` loops whole panels.
 - `flywheel review <task> --dismiss <id> --session <lead> --note <why>` — the lead closes a
   finding by hand.
 - `flywheel explain <task>` — the unit's whole story from the ledger.

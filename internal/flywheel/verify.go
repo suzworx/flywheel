@@ -112,7 +112,35 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 	items = append(items, ruleT5(task, events)...)
 	items = append(items, ruleT8(task, events)...)
 	items = append(items, ruleR1(task, events)...)
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, ruleP1(task, events, cfg.PanelDimensions(), cfg.ReviewRequired())...)
 	return items, nil
+}
+
+// ruleP1 checks that no inspected pass was recorded on a tree the review
+// panel had not completed, where the panel applied (issue #420): review.required,
+// or the panel had reviewed the task before that pass. The panel and
+// review.required are today's configuration; a complete panel is every
+// dimension pass in VerdictMatrix over the events before the pass, on the
+// pass's tree.
+func ruleP1(task string, events []Event, panel []string, required bool) []VerifyItem {
+	var items []VerifyItem
+	for i, e := range events {
+		if e.Task != task || e.Kind != "inspected" || e.Verdict != "pass" || !panelApplies(events[:i], task, required) {
+			continue
+		}
+		if bad := panelIncomplete(VerdictMatrix(events[:i], task, e.Tree, panel), panel); len(bad) > 0 {
+			items = append(items, VerifyItem{Task: task, Rule: "P1", Pass: false,
+				Reason: fmt.Sprintf("inspected pass by %q on tree %s recorded without a complete review panel: %s", e.Session, e.Tree, strings.Join(bad, ", "))})
+		}
+	}
+	if len(items) == 0 {
+		return []VerifyItem{{Task: task, Rule: "P1", Pass: true, Reason: "no inspected pass without a complete review panel"}}
+	}
+	return items
 }
 
 // ruleR1 checks that no inspected pass was recorded while a blocking review

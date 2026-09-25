@@ -18,10 +18,25 @@ func findingKey(e Event) string {
 }
 
 // agentReviewed reports whether e is a reviewed event written by the review
-// agent (persona reviewer, an adapter recorded), not a verdict passed in by
-// hand.
+// agent (persona reviewer or reviewer:<dimension>, an adapter recorded), not
+// a verdict passed in by hand. A panel member's event keeps persona reviewer
+// and carries its dimension in Category (issue #420).
 func agentReviewed(e Event) bool {
-	return e.Kind == "reviewed" && e.Persona == "reviewer" && e.Adapter != ""
+	return e.Kind == "reviewed" && (e.Persona == "reviewer" || strings.HasPrefix(e.Persona, "reviewer:")) && e.Adapter != ""
+}
+
+// reviewDimension is the dimension of a panel member's reviewed event: its
+// Category, else the suffix of a reviewer:<dimension> persona; "" for the
+// general reviewer.
+func reviewDimension(e Event) string {
+	if e.Category != "" {
+		return e.Category
+	}
+	dim, _ := strings.CutPrefix(e.Persona, "reviewer:")
+	if dim == e.Persona {
+		return ""
+	}
+	return dim
 }
 
 // leadDismissal reports whether e is a lead's dismissal of a finding: a
@@ -63,22 +78,46 @@ func OpenFindings(events []Event, task string) []Event {
 			}
 		}
 	}
-	// open holds the findings of the last completed agent round; pending
-	// those raised since it. A completed round replaces open with its own.
-	var open, pending []Event
-	for _, e := range events {
+	// Per category, open holds the findings of the last completed agent
+	// round that reviewed it; pending those raised since. A general round
+	// completes every category; a panel member's round (issue #420) only its
+	// own dimension, so a clean tests review never closes a correctness
+	// finding.
+	// Both hold ledger indices.
+	open, pending := map[string][]int{}, map[string][]int{}
+	for i, e := range events {
 		if e.Task != task {
 			continue
 		}
 		switch {
 		case e.Kind == "review_finding":
-			pending = append(pending, e)
+			pending[e.Category] = append(pending[e.Category], i)
 		case agentReviewed(e):
-			open, pending = pending, nil
+			if dim := reviewDimension(e); dim != "" {
+				open[dim], pending[dim] = pending[dim], nil
+				continue
+			}
+			for c := range open {
+				open[c] = nil
+			}
+			for c, p := range pending {
+				open[c], pending[c] = p, nil
+			}
+		}
+	}
+	isOpen := map[int]bool{}
+	for _, m := range []map[string][]int{open, pending} {
+		for _, idx := range m {
+			for _, i := range idx {
+				isOpen[i] = true
+			}
 		}
 	}
 	var out []Event
-	for _, e := range append(open, pending...) {
+	for i, e := range events {
+		if !isOpen[i] {
+			continue
+		}
 		if !dismissedID[e.Finding] && !dismissedKey[findingKey(e)] {
 			out = append(out, e)
 		}
