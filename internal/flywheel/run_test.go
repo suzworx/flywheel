@@ -4982,3 +4982,97 @@ func TestResetFromEvent(t *testing.T) {
 		})
 	}
 }
+
+// setupRepo is worktreeRepo with worktree.setup set to command (issue #430).
+func setupRepo(t *testing.T, command string) string {
+	t.Helper()
+	dir := worktreeRepo(t)
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Worktree = &WorktreeConfig{Setup: command}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestWorktreeSetupRuns checks run --worktree runs worktree.setup in the
+// task's worktree before the worker starts (issue #430): the marker the
+// command writes is there when the fake worker runs, and one worktree_setup
+// event records rc 0, before the dispatched event.
+func TestWorktreeSetupRuns(t *testing.T) {
+	dir := setupRepo(t, `echo "setting up $FLYWHEEL_TASK" && echo ok > setup.marker`)
+	wt := filepath.Join(dir, ".flywheel", "worktrees", "T1")
+	markerSeen := false
+	commandHook = func(RunRequest) {
+		_, err := os.Stat(filepath.Join(wt, "setup.marker"))
+		markerSeen = err == nil
+	}
+	t.Cleanup(func() { commandHook = nil })
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !markerSeen {
+		t.Error("setup.marker not in the worktree when the worker ran")
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupAt, dispatchedAt := -1, -1
+	for i, e := range events {
+		switch {
+		case e.Task == "T1" && e.Kind == "worktree_setup":
+			setupAt = i
+			if e.RC == nil || *e.RC != 0 || e.Attempt != "r1" || !strings.Contains(e.Note, "setting up T1") {
+				t.Errorf("worktree_setup = %+v, want rc 0, attempt r1, the output tail", e)
+			}
+		case e.Task == "T1" && e.Kind == "dispatched":
+			dispatchedAt = i
+		}
+	}
+	if setupAt < 0 || dispatchedAt < 0 || setupAt > dispatchedAt {
+		t.Errorf("worktree_setup at %d, dispatched at %d; want setup recorded before dispatched", setupAt, dispatchedAt)
+	}
+}
+
+// TestWorktreeSetupFailureRefuses checks a setup that exits non-zero refuses
+// the dispatch with rule setup (issue #430): no dispatched event, no worker.
+func TestWorktreeSetupFailureRefuses(t *testing.T) {
+	dir := setupRepo(t, `echo "install broke"; exit 1`)
+	workerRan := false
+	commandHook = func(RunRequest) { workerRan = true }
+	t.Cleanup(func() { commandHook = nil })
+	_, err := Run(dir, RunOptions{Task: "T1", Worktree: true})
+	var rr *RuleRefusal
+	if !errors.As(err, &rr) || rr.Rule != "setup" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal with rule setup", err)
+	}
+	if !strings.Contains(rr.Fix, "install broke") || !strings.Contains(rr.Fix, "exited 1") {
+		t.Errorf("fix = %q, want the exit and the output tail", rr.Fix)
+	}
+	if workerRan {
+		t.Error("worker started after a failed setup")
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setups := 0
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			t.Errorf("dispatched event recorded after a failed setup: %+v", e)
+		}
+		if e.Task == "T1" && e.Kind == "worktree_setup" {
+			setups++
+			if e.RC == nil || *e.RC != 1 {
+				t.Errorf("worktree_setup rc = %v, want 1", e.RC)
+			}
+		}
+	}
+	if setups != 1 {
+		t.Errorf("worktree_setup events = %d, want 1", setups)
+	}
+}
