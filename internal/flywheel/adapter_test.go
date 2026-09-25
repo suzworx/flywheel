@@ -1103,3 +1103,20 @@ func TestClaudeRateLimitEvent(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeToolNameMultiEdit checks MultiEdit and NotebookEdit tool_use
+// lines are edit observations with their target paths, so wrote sees them
+// (issue #463).
+func TestClaudeToolNameMultiEdit(t *testing.T) {
+	t.Parallel()
+	a, _ := AdapterFor("claude")
+	for _, tc := range []struct{ line, path string }{
+		{`{"type":"assistant","session_id":"s","message":{"content":[{"type":"tool_use","name":"MultiEdit","input":{"file_path":"internal/a.go","edits":[{"old_string":"x","new_string":"y"}]}}]}}`, "internal/a.go"},
+		{`{"type":"assistant","session_id":"s","message":{"content":[{"type":"tool_use","name":"NotebookEdit","input":{"notebook_path":"nb/b.ipynb","new_source":"print(1)"}}]}}`, "nb/b.ipynb"},
+	} {
+		obs, ok := a.Parse([]byte(tc.line))
+		if !ok || obs.Kind != "tool" || obs.Tool != "edit" || obs.Path != tc.path {
+			t.Errorf("Parse(%s) = %+v, %v, want tool edit with path %q", tc.line, obs, ok, tc.path)
+		}
+	}
+}

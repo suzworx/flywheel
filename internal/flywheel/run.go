@@ -1096,7 +1096,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	// wrote is the distinct edit/write paths collected during the stream,
 	// sorted for a stable finished-event field (issue #163).
-	wrote := append([]string(nil), wroteOrder...)
+	// A shell write never shows as a tool observation, so wrote also takes
+	// the tree's changes since dispatch; wroteFromTree names those no
+	// observation covered (issue #463).
+	wroteFromTree := treeWrites(wt, baseline, wroteOrder)
+	wrote := append(append([]string(nil), wroteOrder...), wroteFromTree...)
 	sort.Strings(wrote)
 
 	// outsideNote names the written paths outside the tree the worker ran in:
@@ -1131,7 +1135,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, myOwns)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, Commands: commands, Checkpoint: checkpoint}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, Checkpoint: checkpoint}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -1175,7 +1179,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "stalled", wrote, myOwns)
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote,
+			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
 			Commands: commands, Checkpoint: checkpoint,
 		}); err != nil {
 			return Result{}, err
@@ -1361,7 +1365,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak, Wrote: wrote, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
+		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
 		Checkpoint: checkpoint,
 	}); err != nil {
@@ -1978,6 +1982,48 @@ func wroteProgressLine(task, attempt, reason string, wrote []string) string {
 	}
 	paths := clipNote(strings.Join(wrote, ", "))
 	return fmt.Sprintf("%s %s wrote %d file(s) before failing: %s", task, attempt, len(wrote), paths)
+}
+
+// treeWrites returns, sorted, the worktree-relative forward-slash paths
+// changed in wt at finish that were not dirty at dispatch or whose sha
+// differs from the dispatch baseline, minus .flywheel/ and any path a stream
+// observation already names (issue #463). It reads with the same read-only
+// changedPaths/fileSHA the baseline uses; git failing is nil, and it adds at
+// most enough paths to keep wrote at 50.
+func treeWrites(wt string, baseline map[string]string, observed []string) []string {
+	changed, err := changedPaths(wt)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, p := range observed {
+		seen[treeKey(relTo(wt, p))] = true
+	}
+	var out []string
+	for _, p := range changed {
+		if len(observed)+len(out) >= 50 {
+			break
+		}
+		if p == ".flywheel" || strings.HasPrefix(p, ".flywheel/") || seen[treeKey(p)] {
+			continue
+		}
+		if h, ok := baseline[p]; ok && h == fileSHA(wt, p) {
+			continue
+		}
+		seen[treeKey(p)] = true
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// treeKey folds a worktree-relative path for comparison: case-insensitive on
+// Windows, as its file system is.
+func treeKey(p string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(p)
+	}
+	return p
 }
 
 // unrunGates returns the ids ("1", "2", ..) of the attempt's gates that no

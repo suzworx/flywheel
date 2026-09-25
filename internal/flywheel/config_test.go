@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1046,6 +1047,125 @@ func TestSetupConfig(t *testing.T) {
 		c.Worktree.SetupTimeout = bad
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "worktree.setup_timeout") {
 			t.Errorf("Validate(setup_timeout %q) = %v, want a worktree.setup_timeout error", bad, err)
+		}
+	}
+}
+
+// auditorStaffing returns a config whose lead and auditor are both
+// claude/claude-opus-5-5, the auditor with the given independence.
+func auditorStaffing(independence, leadSession, auditSession string) Config {
+	return Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}}, Staffing: &StaffingConfig{
+		Lead:    &RoleConfig{Adapter: "claude", Model: "claude-opus-5-5", Session: leadSession},
+		Auditor: &RoleConfig{Adapter: "claude", Model: "claude-opus-5-5", Session: auditSession, Independence: independence},
+	}}
+}
+
+// TestConfigAuditorIndependenceDefaultRefusesSameModel checks the default
+// still refuses an auditor on the lead's agent and model, and names the way
+// out (issue #463).
+func TestConfigAuditorIndependenceDefaultRefusesSameModel(t *testing.T) {
+	t.Parallel()
+	err := auditorStaffing("", "", "").Validate()
+	if err == nil || !strings.Contains(err.Error(), "same agent and model as the lead") || !strings.Contains(err.Error(), `set staffing.auditor.independence to "session"`) {
+		t.Errorf("Validate() = %v, want the same-agent-and-model refusal naming independence", err)
+	}
+}
+
+// TestConfigAuditorIndependenceSessionAccepted checks independence
+// "session" lets a single-model factory staff an auditor (issue #463).
+func TestConfigAuditorIndependenceSessionAccepted(t *testing.T) {
+	t.Parallel()
+	if err := auditorStaffing("session", "lead-1", "audit-1").Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil for independence \"session\"", err)
+	}
+}
+
+// TestConfigAuditorIndependenceSessionStillRefusesSameSession checks
+// independence "session" never lets the auditor share the lead's session.
+func TestConfigAuditorIndependenceSessionStillRefusesSameSession(t *testing.T) {
+	t.Parallel()
+	err := auditorStaffing("session", "one", "one").Validate()
+	if err == nil || !strings.Contains(err.Error(), `session "one" also holds the lead role`) {
+		t.Errorf("Validate() = %v, want the same-session refusal", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "same agent and model") {
+		t.Errorf("Validate() = %v, want no same-agent-and-model problem under independence \"session\"", err)
+	}
+}
+
+// TestConfigAuditorIndependenceBadValue checks an unknown independence is
+// refused.
+func TestConfigAuditorIndependenceBadValue(t *testing.T) {
+	t.Parallel()
+	err := auditorStaffing("model", "", "").Validate()
+	if err == nil || !strings.Contains(err.Error(), `staffing.auditor: independence "model" must be "session" or empty`) {
+		t.Errorf("Validate() = %v, want the bad-independence problem", err)
+	}
+}
+
+// TestConfigAuditorIndependenceOnlyAuditor checks independence on any role
+// but the auditor is refused.
+func TestConfigAuditorIndependenceOnlyAuditor(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}}, Staffing: &StaffingConfig{
+		Reviewer: &RoleConfig{Adapter: "claude", Model: "claude-opus-5-5", Independence: "session"},
+	}}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "staffing.reviewer: independence applies only to the auditor") {
+		t.Errorf("Validate() = %v, want the auditor-only problem", err)
+	}
+}
+
+// loadConfigText writes body as a temp dir's .flywheel/config.json and
+// returns LoadConfig's error.
+func loadConfigText(t *testing.T, body string) error {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", configFileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := LoadConfig(dir)
+	return err
+}
+
+// TestConfigUnknownKeyHint checks an unknown key names the nearest key Config
+// accepts anywhere in its tree, or keeps today's message when none is near
+// (issue #463).
+func TestConfigUnknownKeyHint(t *testing.T) {
+	t.Parallel()
+	worker := func(extra string) string {
+		return `{"version":1,"workers":[{"name":"w","adapter":"sim",` + extra + `}]}`
+	}
+	for _, tc := range []struct{ body, key, hint string }{
+		{worker(`"disallowedTools":["Bash"]`), "disallowedTools", "disallowed_tools"},
+		{worker(`"allowedTools":["Read"]`), "allowedTools", "allowed_tools"},
+		{`{"version":1,"workers":[{"name":"w","adapter":"sim"}],"stafing":{}}`, "stafing", "staffing"},
+		{`{"version":1,"workers":[{"name":"w","adapter":"sim"}],"zzqqxxvv":1}`, "zzqqxxvv", ""},
+	} {
+		err := loadConfigText(t, tc.body)
+		if err == nil {
+			t.Errorf("LoadConfig(%s) = nil, want an unknown-key error", tc.key)
+			continue
+		}
+		var se *json.SyntaxError
+		if errors.As(err, &se) {
+			t.Errorf("LoadConfig(%s) = syntax error %v", tc.key, err)
+		}
+		if tc.hint == "" {
+			if strings.Contains(err.Error(), "did you mean") || !strings.Contains(err.Error(), `json: unknown field "`+tc.key+`"`) {
+				t.Errorf("LoadConfig(%s) = %v, want today's message with no hint", tc.key, err)
+			}
+			continue
+		}
+		want := `unknown key "` + tc.key + `"; did you mean "` + tc.hint + `"?`
+		if !strings.Contains(err.Error(), want) || !strings.HasPrefix(err.Error(), "parse ") || !strings.Contains(err.Error(), "config.json") {
+			t.Errorf("LoadConfig(%s) = %v, want %q with the path", tc.key, err, want)
+		}
+		if errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "unknown field") {
+			t.Errorf("LoadConfig(%s) unwraps to %v, want the decoder's error", tc.key, errors.Unwrap(err))
 		}
 	}
 }

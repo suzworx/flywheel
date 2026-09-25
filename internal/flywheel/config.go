@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -34,6 +35,11 @@ type RoleConfig struct {
 	Adapter string `json:"adapter,omitempty"` // opencode, claude, codex, sim, or "cli" for a person
 	Model   string `json:"model,omitempty"`
 	Session string `json:"session,omitempty"`
+	// Independence is the auditor's independence rule (issue #463): "" (the
+	// agent and model must differ from every other role's) or "session" (the
+	// same agent and model is allowed; flywheel audit's session check is the
+	// independence). Only the auditor may set it.
+	Independence string `json:"independence,omitempty"`
 }
 
 // StaffingConfig names the factory's roles.
@@ -510,12 +516,101 @@ func LoadConfig(dir string) (Config, bool, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
+		if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+			if name, uerr := strconv.Unquote(name); uerr == nil {
+				if hint := nearestConfigKey(name); hint != "" {
+					return Config{}, false, unknownKeyError{fmt.Sprintf("parse %s: unknown key %q; did you mean %q?", path, name, hint), err}
+				}
+			}
+		}
 		return Config{}, false, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, false, err
 	}
 	return c, true, nil
+}
+
+// unknownKeyError is a config parse error for an unknown key that names the
+// nearest known key (issue #463); it unwraps to the decoder's error.
+type unknownKeyError struct {
+	msg string
+	err error
+}
+
+func (e unknownKeyError) Error() string { return e.msg }
+func (e unknownKeyError) Unwrap() error { return e.err }
+
+// nearestConfigKey returns the json key Config accepts anywhere in its tree
+// nearest to name (issue #463): an exact match once both are lowercased with
+// '_' and '-' removed, else the smallest Levenshtein distance <= 2 on the
+// lowercased names, else "".
+func nearestConfigKey(name string) string {
+	fold := func(s string) string {
+		return strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(s))
+	}
+	keys := configKeys(reflect.TypeOf(Config{}), map[reflect.Type]bool{}, map[string]bool{})
+	for _, k := range keys {
+		if fold(k) == fold(name) {
+			return k
+		}
+	}
+	best, bestD := "", 3
+	for _, k := range keys {
+		if d := levenshtein(strings.ToLower(name), strings.ToLower(k)); d < bestD {
+			best, bestD = k, d
+		}
+	}
+	return best
+}
+
+// configKeys collects, sorted, every json tag name in t's struct tree,
+// following pointers, slices and map values.
+func configKeys(t reflect.Type, seen map[reflect.Type]bool, keys map[string]bool) []string {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Struct && !seen[t] {
+		seen[t] = true
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			if tag, _, _ := strings.Cut(f.Tag.Get("json"), ","); tag != "" && tag != "-" {
+				keys[tag] = true
+			}
+			configKeys(f.Type, seen, keys)
+		}
+	}
+	out := make([]string, 0, len(keys))
+	for k := range keys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// levenshtein returns the edit distance between a and b, by rune.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
 }
 
 // Validate checks the configuration and reports every problem found, one per
@@ -704,6 +799,14 @@ func (c Config) Validate() error {
 			if role.Cfg != nil && role.Cfg.Adapter != "" && !adapterKnown(role.Cfg.Adapter, true) {
 				problems = append(problems, fmt.Sprintf("staffing.%s: adapter %q must be %s, or \"cli\"", role.Name, role.Cfg.Adapter, strings.Join(quoted(workerAdapters), ", ")))
 			}
+			if role.Cfg != nil && role.Cfg.Independence != "" {
+				if role.Cfg.Independence != "session" {
+					problems = append(problems, fmt.Sprintf("staffing.%s: independence %q must be \"session\" or empty", role.Name, role.Cfg.Independence))
+				}
+				if role.Name != "auditor" {
+					problems = append(problems, fmt.Sprintf("staffing.%s: independence applies only to the auditor", role.Name))
+				}
+			}
 		}
 		// An audit is independent only when the auditor is neither the same
 		// session nor the same agent and model as the lead or the inspector
@@ -716,8 +819,10 @@ func (c Config) Validate() error {
 				if a.Session != "" && role.Cfg.Session == a.Session {
 					problems = append(problems, fmt.Sprintf("staffing.auditor: session %q also holds the %s role (an audit is only independent when it is)", a.Session, role.Name))
 				}
-				if a.Adapter != "" && a.Model != "" && role.Cfg.Adapter == a.Adapter && role.Cfg.Model == a.Model {
-					problems = append(problems, fmt.Sprintf("staffing.auditor: must not be the same agent and model as the %s (an audit is only independent when it is)", role.Name))
+				// independence "session" relies on flywheel audit's
+				// fresh-session check instead (issue #463).
+				if a.Independence != "session" && a.Adapter != "" && a.Model != "" && role.Cfg.Adapter == a.Adapter && role.Cfg.Model == a.Model {
+					problems = append(problems, fmt.Sprintf("staffing.auditor: must not be the same agent and model as the %s (an audit is only independent when it is; set staffing.auditor.independence to \"session\" to rely on a fresh session instead)", role.Name))
 				}
 			}
 		}

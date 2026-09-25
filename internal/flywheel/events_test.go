@@ -881,6 +881,33 @@ func TestWroteFieldRoundTrips(t *testing.T) {
 	}
 }
 
+// TestWroteFromTreeRoundTrips checks a finished event's wrote_from_tree
+// (issue #463) survives the log under its own key and parses back strictly.
+func TestWroteFromTreeRoundTrips(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := AppendEvent(dir, Event{
+		TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop",
+		Wrote: []string{"a.go", "shell.go"}, WroteFromTree: []string{"shell.go"},
+	}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(evs) != 1 || len(evs[0].WroteFromTree) != 1 || evs[0].WroteFromTree[0] != "shell.go" {
+		t.Fatalf("ReadEvents() = %+v, want wrote_from_tree [shell.go]", evs)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events.jsonl: %v", err)
+	}
+	if !strings.Contains(string(b), `"wrote_from_tree":["shell.go"]`) {
+		t.Errorf("events.jsonl = %q, want wrote_from_tree:[\"shell.go\"]", b)
+	}
+}
+
 // TestCommitFieldRoundTrips checks the event's commit field (issue #196)
 // round-trips through the log under the "commit" key and is omitted when
 // empty, and that an event carrying it validates.

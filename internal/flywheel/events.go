@@ -79,8 +79,13 @@ type Event struct {
 	PeakReasoning   int     `json:"peak_reasoning,omitempty"`
 	// Wrote is a finished event's distinct paths written by edit/write tool
 	// calls during the attempt, sorted, at most 50 entries; empty when the
-	// attempt made no edits (issue #163).
+	// attempt made no edits (issue #163). It also holds the paths the worker
+	// changed in the tree since dispatch (issue #463).
 	Wrote []string `json:"wrote,omitempty"`
+	// WroteFromTree is the subset of a finished event's Wrote that came only
+	// from the tree, not from a tool observation: a shell write, say (issue
+	// #463).
+	WroteFromTree []string `json:"wrote_from_tree,omitempty"`
 	// Linked is a worktree_setup event's needs-state "(link)" paths linked
 	// from the repo into the task's worktree (issue #430).
 	Linked []string `json:"linked,omitempty"`
