@@ -75,6 +75,9 @@ type Event struct {
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
 	Wrote []string `json:"wrote,omitempty"`
+	// Linked is a worktree_setup event's needs-state "(link)" paths linked
+	// from the repo into the task's worktree (issue #430).
+	Linked []string `json:"linked,omitempty"`
 	// Commands are the shell commands a worker ran, in order, at most 100,
 	// each clipped to 300 characters (issue #365).
 	Commands []string `json:"commands,omitempty"`
@@ -199,6 +202,10 @@ var kinds = map[string]bool{
 	// rebased records `flywheel rebase` moving a unit onto a new base (issue
 	// #414): Base is the new base, Note "was <old>, onto <ref>".
 	"rebased": true,
+	// worktree_setup records `flywheel run --worktree` preparing the task's
+	// worktree before dispatch (issue #430): Linked, RC, DurationMS and Note
+	// (the setup output tail).
+	"worktree_setup": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -349,7 +356,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, worktree_setup", e.Kind)
 	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")

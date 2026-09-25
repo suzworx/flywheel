@@ -42,6 +42,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   running any gate, when a declared path is missing from an isolated `--workdir`; give it with
   `--carry <path>` (repeatable) to copy that state from the repo into the workdir first. With no
   `--workdir` the declaration is a no-op — the tree already is the repo.
+  An entry annotated `(link)` — `needs-state: node_modules/ (link), apps/web/node_modules/ (link)`
+  — is also linked from the repo into the task's worktree on every `flywheel run --worktree`
+  dispatch (a directory junction on Windows, a symlink elsewhere), before the `worktree.setup`
+  command runs there (issue #430). A linked dependency tree is **shared** with the repo and every
+  other worktree: never `npm install` (or `pip install`) in it. A unit that changes dependencies
+  runs its own install in `worktree.setup` or a gate, into a tree it does not link.
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the

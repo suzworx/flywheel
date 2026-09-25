@@ -543,6 +543,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err != nil {
 			return Result{}, err
 		}
+		// Setup (issue #430): link the brief's needs-state "(link)" paths and
+		// run worktree.setup in the worktree before the worker starts, every
+		// dispatch (setup must be idempotent). Before the baseline, so what
+		// setup writes is never attributed to the worker. A failure refuses
+		// the dispatch: no dispatched event, no worker.
+		if err := prepareWorktree(dir, wt, o.Task, attempt, cfg, promptHeader.NeedsStateLink); err != nil {
+			return Result{}, err
+		}
 	} else {
 		wt = dir
 	}
