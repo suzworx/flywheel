@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -15,7 +16,8 @@ import (
 const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--dir DIR]\n" +
-	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]"
+	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]\n" +
+	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--out FILE] [--dir DIR]"
 
 func init() {
 	register("review", "re-run a task's gates in an isolated worktree, or run the review agent (--agent)", runReview)
@@ -75,6 +77,10 @@ func reviewUsage(w io.Writer) {
 // refusal exits 6 with the rule id and the fix; a usage error exits 2; any
 // other error exits 1.
 func runReview(args []string) {
+	if len(args) > 0 && args[0] == "calibrate" {
+		runReviewCalibrate(args[1:])
+		return
+	}
 	fs, o := reviewFlags()
 	pos, err := parseArgs(fs, args)
 	if err != nil {
@@ -215,6 +221,82 @@ func runReviewFix(task string, o *reviewOptions) {
 	if res.Verdict != "pass" {
 		os.Exit(1)
 	}
+}
+
+// reviewCalibrateOptions holds the parsed `flywheel review calibrate` flags.
+type reviewCalibrateOptions struct {
+	dir     string
+	cases   string
+	session string
+	sample  int
+	seed    int64
+	worker  string
+	window  int
+	main    string
+	out     string
+}
+
+// reviewCalibrateFlags defines the calibrate flags once, so help and run
+// share them.
+func reviewCalibrateFlags() (*flag.FlagSet, *reviewCalibrateOptions) {
+	fs := flag.NewFlagSet("review calibrate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	o := &reviewCalibrateOptions{}
+	fs.StringVar(&o.dir, "dir", ".", "the repository whose past PR states are reviewed")
+	fs.StringVar(&o.cases, "cases", "docs/calibration/external-review-bugs.json", "the calibration case file")
+	fs.StringVar(&o.session, "session", "", "reviewer session (required)")
+	fs.IntVar(&o.sample, "sample", 10, "PR states to review, a deterministic sample")
+	fs.Int64Var(&o.seed, "seed", 1, "the sample's seed")
+	fs.StringVar(&o.worker, "worker", "", "the worker that reviews (default: the staffing reviewer role, else the default worker)")
+	fs.IntVar(&o.window, "window", 15, "a finding matches a case within this many lines")
+	fs.StringVar(&o.main, "main", "origin/main", "the ref each PR's merge-base is taken against")
+	fs.StringVar(&o.out, "out", "", "report file (default .flywheel/reviews/calibration-<UTC date>.md)")
+	return fs, o
+}
+
+// runReviewCalibrate implements `flywheel review calibrate` (issue #389): it
+// runs the review agent over a sample of past PR states and prints and
+// writes the recall report. It exits 0 on a report, 2 on a usage error, 6 on
+// a rule refusal and 1 on any other error.
+func runReviewCalibrate(args []string) {
+	fs, o := reviewCalibrateFlags()
+	pos, err := parseArgs(fs, args)
+	if err == nil && len(pos) > 0 {
+		err = fmt.Errorf("unexpected argument %q", pos[0])
+	}
+	if err == nil && (o.sample < 1 || o.window < 1) {
+		err = fmt.Errorf("--sample and --window must be >= 1")
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review calibrate: %v\n", err)
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
+	rep, err := flywheel.Calibrate(o.dir, o.cases, flywheel.CalibrateOptions{
+		Sample: o.sample, Seed: o.seed, Worker: o.worker, Session: o.session, Window: o.window, Main: o.main,
+		Progress: os.Stderr,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review calibrate: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
+	out := o.out
+	if out == "" {
+		out = filepath.Join(o.dir, ".flywheel", "reviews", "calibration-"+time.Now().UTC().Format("2006-01-02")+".md")
+	}
+	md := rep.Markdown()
+	fmt.Print(md)
+	if err = os.MkdirAll(filepath.Dir(out), 0o755); err == nil {
+		err = os.WriteFile(out, []byte(md), 0o644)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review calibrate: write %s: %v\n", out, err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "calibration report: %s\n", out)
 }
 
 // runReviewDismiss implements `flywheel review <task> --dismiss <id>`: the

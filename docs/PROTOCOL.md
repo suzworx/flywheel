@@ -194,7 +194,9 @@ all.
   not trusted: an answer whose file does not exist (and is not a changed path), whose `line` is not
   0 or a real line, with an empty claim or scenario, or with more than 3 nits is refused, and the
   agent runs once more, fresh, into `<task>.<round>b.jsonl`; a second refusal records nothing and
-  `flywheel review --agent` exits 1 naming both transcripts.
+  `flywheel review --agent` exits 1 naming both transcripts. `flywheel review calibrate --cases FILE
+  --session S` runs the same agent over a sample of past PR states in temporary worktrees and synthetic
+  ledgers (never this ledger) and reports its recall against the case file (docs/calibration/README.md).
 - Carries: `task`, `attempt` (the unit's latest), `session` (the reviewer, never a worker session
   of the task: refused T4), `model`, `tree`, `severity` (`blocker`, `major`, `minor` or `nit`),
   `category`, `title` (the claim), `observed` (the failure scenario), `ask` (the fix hint), `path`
