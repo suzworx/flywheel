@@ -834,3 +834,47 @@ func TestQuietWaitConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestRateLimitPauseAtConfig checks limits.rate_limit_pause_at: default 0.95,
+// Get/Set, a negative value disabling the pause (threshold 0), and Validate
+// refusing a value above 1 (issue #417).
+func TestRateLimitPauseAtConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if v, err := cfg.Get("limits.rate_limit_pause_at"); err != nil || v != "0.95" {
+		t.Errorf("default Get = %q, %v; want 0.95", v, err)
+	}
+	if p := cfg.Limits.RateLimitPauseThreshold(); p != 0.95 {
+		t.Errorf("default RateLimitPauseThreshold() = %v, want 0.95", p)
+	}
+	if err := cfg.Set("limits.rate_limit_pause_at", "0.9"); err != nil {
+		t.Fatalf("Set(0.9) error = %v", err)
+	}
+	if v, _ := cfg.Get("limits.rate_limit_pause_at"); v != "0.9" || cfg.Limits.RateLimitPauseThreshold() != 0.9 {
+		t.Errorf("after Set(0.9): Get = %q, threshold %v; want 0.9", v, cfg.Limits.RateLimitPauseThreshold())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := cfg.Set("limits.rate_limit_pause_at", "-1"); err != nil {
+		t.Fatalf("Set(-1) error = %v", err)
+	}
+	if p := cfg.Limits.RateLimitPauseThreshold(); p != 0 {
+		t.Errorf("RateLimitPauseThreshold() = %v after -1, want 0 (disabled)", p)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with -1 = %v, want nil", err)
+	}
+	if err := cfg.Set("limits.rate_limit_pause_at", "most"); err == nil || !strings.Contains(err.Error(), "number") {
+		t.Errorf("Set(most) error = %v, want a number error", err)
+	}
+	bad := DefaultConfig()
+	if err := bad.Set("limits.rate_limit_pause_at", "1.2"); err != nil {
+		t.Fatalf("Set(1.2) error = %v", err)
+	}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "limits.rate_limit_pause_at 1.2 must be <= 1") {
+		t.Errorf("Validate() with 1.2 = %v, want the <= 1 problem", err)
+	}
+	if k := "limits.rate_limit_pause_at"; !slices.Contains(cfg.validKeys(), k) || !slices.Contains(cfg.settableKeys(), k) {
+		t.Errorf("%s missing from validKeys or settableKeys", k)
+	}
+}

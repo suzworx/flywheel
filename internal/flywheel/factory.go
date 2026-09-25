@@ -442,7 +442,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.ProductLines = buildProductLines(cfg, units)
 	fl.Staffing = buildStaffing(cfg, w.events)
 	fl.Units = units
-	fl.Andon = buildAndon(units, fl.Staffing.Roles, pausedAndon(w.events, now))
+	fl.Andon = buildAndon(units, fl.Staffing.Roles, pausedAndon(w.events, now, cfg.Limits.RateLimitPauseThreshold()))
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -784,12 +784,18 @@ func latestIsAgentReview(events []Event, task string) bool {
 }
 
 // pausedAndon is one andon entry per model a rate limit pauses at now (issue
-// #383): task model/<model>, state "paused until HH:MM" in the viewer's zone.
-func pausedAndon(events []Event, now time.Time) []Andon {
-	models, until := pausedModels(events, now)
+// #383): task model/<model>, state "paused until HH:MM" in the viewer's zone,
+// with " (96% used)" when the utilization threshold is the cause (issue #417).
+func pausedAndon(events []Event, now time.Time, pauseAt float64) []Andon {
+	models, pauses := pausedModels(events, now, pauseAt)
 	var out []Andon
 	for _, m := range models {
-		out = append(out, Andon{Task: "model/" + m, State: "paused until " + until[m].Local().Format("15:04"), Age: 0})
+		p := pauses[m]
+		state := "paused until " + p.Until.Local().Format("15:04")
+		if p.Utilization > 0 {
+			state += fmt.Sprintf(" (%.0f%% used)", p.Utilization*100)
+		}
+		out = append(out, Andon{Task: "model/" + m, State: state, Age: 0})
 	}
 	return out
 }

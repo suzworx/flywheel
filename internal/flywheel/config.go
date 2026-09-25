@@ -154,6 +154,10 @@ type Limits struct {
 	// RateLimitMaxWait is the longest flywheel run waits for a rate limit to
 	// reset, a Go duration; "" means 5h (issue #380).
 	RateLimitMaxWait string `json:"rate_limit_max_wait,omitempty"`
+	// RateLimitPauseAt is the share of a rate-limit window (0..1) at which a
+	// model is paused until the window resets, before the limit hits: 0 means
+	// 0.95, a negative value disables it (issue #417).
+	RateLimitPauseAt float64 `json:"rate_limit_pause_at,omitempty"`
 	// LostAfter is how long an attempt with no live lease may sit idle (its
 	// run file untouched, or no run file since dispatch) before it is marked
 	// lost, a Go duration; "" means 24h (issue #402).
@@ -186,6 +190,18 @@ func (l Limits) RateLimitRetryCount() int {
 		return 3
 	}
 	return *l.RateLimitRetries
+}
+
+// RateLimitPauseThreshold is RateLimitPauseAt, 0.95 when unset and 0 (never
+// pause) when negative.
+func (l Limits) RateLimitPauseThreshold() float64 {
+	switch {
+	case l.RateLimitPauseAt == 0:
+		return 0.95
+	case l.RateLimitPauseAt < 0:
+		return 0
+	}
+	return l.RateLimitPauseAt
 }
 
 // RateLimitMaxWaitDuration parses RateLimitMaxWait ("" means 5 hours).
@@ -456,6 +472,9 @@ func (c Config) Validate() error {
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.rate_limit_max_wait %q must be > 0", c.Limits.RateLimitMaxWait))
 	}
+	if p := c.Limits.RateLimitPauseAt; p > 1 {
+		problems = append(problems, fmt.Sprintf("limits.rate_limit_pause_at %v must be <= 1", p))
+	}
 	if d, err := c.Limits.LostAfterDuration(); err != nil {
 		problems = append(problems, fmt.Sprintf("limits.lost_after %q: %v", c.Limits.LostAfter, err))
 	} else if d <= 0 {
@@ -669,6 +688,11 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.Itoa(c.Limits.PerHost), nil
 	case "limits.rate_limit_retries":
 		return strconv.Itoa(c.Limits.RateLimitRetryCount()), nil
+	case "limits.rate_limit_pause_at":
+		if c.Limits.RateLimitPauseAt == 0 {
+			return "0.95", nil
+		}
+		return strconv.FormatFloat(c.Limits.RateLimitPauseAt, 'g', -1, 64), nil
 	case "limits.rate_limit_max_wait":
 		if c.Limits.RateLimitMaxWait == "" {
 			return "5h", nil
@@ -739,7 +763,7 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
+		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -763,7 +787,7 @@ func (c Config) validKeys() []string {
 // workers.<name>.<key>. The settable keys are model, variant, adapter,
 // max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
-// limits.lost_after and limits.quiet_wait.
+// limits.rate_limit_pause_at, limits.lost_after and limits.quiet_wait.
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
@@ -843,6 +867,13 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Limits.RateLimitRetries = &n
 		return nil
+	case "limits.rate_limit_pause_at":
+		p, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("limits.rate_limit_pause_at: value %q must be a number", value)
+		}
+		c.Limits.RateLimitPauseAt = p
+		return nil
 	case "limits.rate_limit_max_wait":
 		c.Limits.RateLimitMaxWait = value
 		return nil
@@ -896,7 +927,7 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
-		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_retries",
+		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"max_parallel", "model", "stall_timeout", "variant",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",

@@ -4851,3 +4851,68 @@ func TestRunRefusedDuringQuietGate(t *testing.T) {
 		t.Fatalf("Run() after the quiet gate ended error = %v", err)
 	}
 }
+
+// TestResetFromEvent: a rate-limited finish takes reset_at from the stream's
+// latest rate_limit_event (the exact epoch) over the parsed result clause,
+// and every finish that saw an event records its utilization, reset and
+// window; with no event the parsed clause still decides (issue #417).
+func TestResetFromEvent(t *testing.T) {
+	const session = "ses_rle_001"
+	event := func(util float64) string {
+		return fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790304000,"rateLimitType":"five_hour","utilization":%v},"session_id":%q}`, util, session)
+	}
+	limited := fmt.Sprintf(`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You've hit your session limit · resets 10:20am (America/Los_Angeles)","session_id":%q}`, session)
+	clean := fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`, session)
+	build := func(lines ...string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+		fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"text","text":"working"}]}}`+"\n", session)
+		for _, line := range lines {
+			b.WriteString(line + "\n")
+		}
+		return b.String()
+	}
+	const exact = "2026-09-25T02:40:00Z" // 1790304000
+	for _, tc := range []struct {
+		name      string
+		stream    string
+		reason    string
+		resetAt   string // "" = must be empty; "parsed" = non-empty and not exact
+		util      float64
+		limitAt   string
+		limitWind string
+	}{
+		{"rate-limited with event", build(event(0.91), event(0.96), limited), "rate-limited", exact, 0.96, exact, "five_hour"},
+		{"rate-limited without event", build(limited), "rate-limited", "parsed", 0, "", ""},
+		{"clean with event", build(event(0.42), clean), "", "", 0.42, exact, "five_hour"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, res := runFakeClaudeStream(t, tc.stream)
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			fins, _ := finishedOf(evs)
+			if len(fins) != 1 {
+				t.Fatalf("finished events = %+v, want one", fins)
+			}
+			f := fins[0]
+			if tc.reason != "" && f.Reason != tc.reason {
+				t.Errorf("Reason = %q, want %q", f.Reason, tc.reason)
+			}
+			switch tc.resetAt {
+			case "parsed":
+				if f.ResetAt == "" || f.ResetAt == exact {
+					t.Errorf("ResetAt = %q, want the parsed clause", f.ResetAt)
+				}
+			default:
+				if f.ResetAt != tc.resetAt || res.ResetAt != tc.resetAt {
+					t.Errorf("ResetAt = %q (result %q), want %q", f.ResetAt, res.ResetAt, tc.resetAt)
+				}
+			}
+			if f.LimitUtilization != tc.util || f.LimitResetAt != tc.limitAt || f.LimitWindow != tc.limitWind {
+				t.Errorf("limit fields = %v %q %q, want %v %q %q", f.LimitUtilization, f.LimitResetAt, f.LimitWindow, tc.util, tc.limitAt, tc.limitWind)
+			}
+		})
+	}
+}
