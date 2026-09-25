@@ -459,7 +459,11 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 			return ReviewAgentResult{}, fmt.Errorf("review answer refused twice; nothing recorded, transcripts %s and %s:\n%s", first, res.Transcript, strings.Join(problems, "\n"))
 		}
 	}
-	return recordReview(dir, task, events, workdir, worker, o.Session, findings, res)
+	res, err = recordReview(dir, task, events, workdir, worker, o.Session, findings, res)
+	if err == nil {
+		refreshReviewThread(dir, task, o.Progress)
+	}
+	return res, err
 }
 
 // checkReviewAnswer parses the reviewer's answer and validates its findings;

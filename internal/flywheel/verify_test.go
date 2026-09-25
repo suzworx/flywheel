@@ -121,6 +121,38 @@ func TestVerifyT4InspectedFromWorkerSession(t *testing.T) {
 	}
 }
 
+// TestVerifyOpenFindings checks R1 (issue #389): an inspected pass recorded
+// (by hand, around the inspect refusal) while a blocking review finding was
+// open fails; one recorded after the finding was dismissed passes, and so does
+// a clean chain never reviewed.
+func TestVerifyOpenFindings(t *testing.T) {
+	if fails := verifyAll(t, buildCleanChain(t), "T1"); fails["R1"] {
+		t.Error("R1 failed a chain never reviewed")
+	}
+	pass := Event{Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Persona: "inspector", Tree: "t"}
+	start := []Event{{Task: "T1", Kind: "started", Attempt: "r1", Session: "w1"}}
+	bad := append(append(append([]Event(nil), start...), roundEvents(1, blockerA, minorB)...), pass)
+	items := ruleR1("T1", bad)
+	if len(items) != 1 || items[0].Pass || !strings.Contains(items[0].Reason, "T1-r1-1") || strings.Contains(items[0].Reason, "T1-r1-2") {
+		t.Errorf("pass over an open blocker: R1 = %+v", items)
+	}
+	minorOnly := append(append(append([]Event(nil), start...), roundEvents(1, minorB)...), pass)
+	if items := ruleR1("T1", minorOnly); !items[0].Pass {
+		t.Errorf("a minor finding failed R1: %+v", items)
+	}
+	dismissed := append(append(append([]Event(nil), start...), roundEvents(1, blockerA)...),
+		Event{Task: "T1", Kind: "finding_response", Session: "lead-1", Finding: "T1-r1-1", Verdict: "disputed", Note: "dismissed: by design"}, pass)
+	if items := ruleR1("T1", dismissed); !items[0].Pass {
+		t.Errorf("pass after a dismissal failed R1: %+v", items)
+	}
+	// Only the events before the pass count: a later review round never
+	// retroactively fails an earlier pass.
+	later := append(append(append([]Event(nil), start...), pass), roundEvents(1, blockerA)...)
+	if items := ruleR1("T1", later); !items[0].Pass {
+		t.Errorf("a finding raised after the pass failed R1: %+v", items)
+	}
+}
+
 func TestVerifyT5LandedWithoutInspectedPass(t *testing.T) {
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {

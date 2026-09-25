@@ -116,6 +116,7 @@ func DismissFinding(dir, task, id, session, note string) error {
 		return err
 	}
 	_, _ = WriteState(dir)
+	refreshReviewThread(dir, task, nil)
 	return nil
 }
 
@@ -265,6 +266,7 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 		if err := recordFindingResponses(dir, task, run, res.Open, &res); err != nil {
 			return res, err
 		}
+		refreshReviewThread(dir, task, o.Progress)
 	}
 }
 
