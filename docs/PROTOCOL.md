@@ -514,6 +514,19 @@ all.
   cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
   The auditor's independence is checked again right before the event is appended. T7 gating is opt-in: see T7 below.
 
+### `release_audited`
+- Written by: `flywheel audit --release <version> --session S` (issue #420), after a release is published.
+- Floor level: carries no `task`.
+- Carries: `session`, `version` (the tag, `v0.21.1`), `verdict` (`pass`, `fail` or `inconclusive`),
+  `checks` (one `name=status` string per check, in order: `tag`, `changelog`, `binary`, `commands`,
+  `docs`, `calibration`; status `pass`, `fail`, `skipped` or `inconclusive`) and `note` (the same
+  list joined by `, `). `Validate` requires the session, the version, the verdict and at least one
+  check; no other kind may carry `version` or `checks`.
+- Effect: no status change. Every repository file is read at the tag, never the working tree. The
+  verdict is `fail` when any check failed, else `inconclusive` when any could not be established (a
+  download or a run of the binary failed), else `pass`. It is recorded whatever the verdict; a
+  missing session or a usage error records nothing.
+
 ### `probed`
 - Written by: `flywheel doctor --record`.
 - Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`).

@@ -13,8 +13,13 @@ import (
 
 func init() {
 	register("audit", "re-measure a unit in a clean copy and check its record, from an independent session", runAudit)
-	registerHelp("audit", "flywheel audit (<task> | --sample RATE | --first-article | --wave) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]", func() *flag.FlagSet { fs, _ := auditFlags(); return fs })
+	registerHelp("audit", auditUsageLine, func() *flag.FlagSet { fs, _ := auditFlags(); return fs })
 }
+
+// auditUsageLine is audit's usage: the unit forms and the release form
+// (issue #420).
+const auditUsageLine = "flywheel audit (<task> | --sample RATE | --first-article | --wave) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]\n" +
+	"       flywheel audit --release VERSION --session S [--prev TAG] [--artifact ZIP --checksums FILE] [--notes FILE]... [--calibration FILE --min-recall F] [--json] [--dir DIR]"
 
 // auditOptions holds the parsed audit flags.
 type auditOptions struct {
@@ -28,6 +33,14 @@ type auditOptions struct {
 	wave         bool
 	seed         int64
 	list         bool
+	// The release audit's flags (issue #420).
+	release     string
+	prev        string
+	artifact    string
+	checksums   string
+	notes       repeatable
+	calibration string
+	minRecall   float64
 }
 
 // auditFlags defines audit's flags once, so help and run share them.
@@ -45,12 +58,19 @@ func auditFlags() (*flag.FlagSet, *auditOptions) {
 	fs.BoolVar(&o.wave, "wave", false, "audit every passed, unaudited unit in the ledger (the wave)")
 	fs.Int64Var(&o.seed, "seed", 0, "sample seed; 0 picks one from the clock and prints it")
 	fs.BoolVar(&o.list, "list", false, "print the selection and exit without auditing")
+	fs.StringVar(&o.release, "release", "", "audit the published release VERSION: changelog, binary, commands, docs, calibration")
+	fs.StringVar(&o.prev, "prev", "", "previous release tag for --release; default the highest lower vA.B.C tag")
+	fs.StringVar(&o.artifact, "artifact", "", "local release zip for --release instead of the download (needs --checksums)")
+	fs.StringVar(&o.checksums, "checksums", "", "local checksums.txt for --artifact")
+	fs.Var(&o.notes, "notes", "release-notes file whose flywheel code spans --release checks (repeatable)")
+	fs.StringVar(&o.calibration, "calibration", "", "review calibrate report for --release --min-recall")
+	fs.Float64Var(&o.minRecall, "min-recall", -1, "minimum calibration recall for --release; <0 skips the check")
 	return fs, o
 }
 
 // auditUsage prints the flywheel audit usage line.
 func auditUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel audit (<task> | --sample RATE | --first-article | --wave) --session S [--seed N] [--list] [--note TEXT] [--workdir PATH] [--json] [--dir DIR]")
+	fmt.Fprintln(w, "usage: "+auditUsageLine)
 }
 
 // runAudit implements `flywheel audit`: re-measure the task's declared gates
@@ -66,6 +86,9 @@ func runAudit(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel audit: %v\n", err)
 		auditUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.release != "" {
+		os.Exit(auditReleaseRun(o, pos, os.Stdout, os.Stderr))
 	}
 
 	// Count how many modes are set
@@ -223,4 +246,69 @@ func runAudit(args []string) {
 	if anyNonconformance {
 		os.Exit(5)
 	}
+}
+
+// auditReleaseMain parses args and runs the release audit, returning the
+// exit code (the test entry point).
+func auditReleaseMain(args []string, stdout, stderr io.Writer) int {
+	fs, o := auditFlags()
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		fmt.Fprintf(stderr, "flywheel audit: %v\n", err)
+		auditUsage(stderr)
+		return 2
+	}
+	return auditReleaseRun(o, pos, stdout, stderr)
+}
+
+// auditReleaseRun implements `flywheel audit --release` (issue #420): exit 0
+// on pass, 5 on fail (a nonconformance), 8 on inconclusive, 2 on a usage
+// error, 6 on a rule refusal and 1 on any other error.
+func auditReleaseRun(o *auditOptions, pos []string, stdout, stderr io.Writer) int {
+	usage := func(msg string) int {
+		fmt.Fprintf(stderr, "flywheel audit: %s\n", msg)
+		auditUsage(stderr)
+		return 2
+	}
+	switch {
+	case len(pos) > 0 || o.sample >= 0 || o.firstArticle || o.wave || o.list:
+		return usage("--release cannot be used with a task id, --sample, --first-article, --wave or --list")
+	case o.session == "":
+		return usage("--session is required to audit a release")
+	case (o.artifact == "") != (o.checksums == ""):
+		return usage("--artifact and --checksums go together")
+	case o.minRecall >= 0 && o.calibration == "":
+		return usage("--min-recall needs --calibration")
+	}
+	res, err := flywheel.AuditRelease(o.dir, flywheel.ReleaseAuditOptions{
+		Version: o.release, Prev: o.prev, Session: o.session, Artifact: o.artifact, Checksums: o.checksums,
+		Notes: o.notes, Calibration: o.calibration, MinRecall: o.minRecall,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "flywheel audit: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			return 6
+		}
+		return 1
+	}
+	if o.json {
+		data, err := json.MarshalIndent(res, "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "flywheel audit: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s\n", data)
+	} else {
+		for _, c := range res.Checks {
+			fmt.Fprintf(stdout, "%s  %s  %s\n", c.Name, c.Status, c.Detail)
+		}
+		fmt.Fprintf(stdout, "release %s: %s\n", res.Tag, res.Verdict)
+	}
+	switch res.Verdict {
+	case "fail":
+		return 5
+	case "inconclusive":
+		return 8
+	}
+	return 0
 }
