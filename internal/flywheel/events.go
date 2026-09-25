@@ -161,6 +161,13 @@ type Event struct {
 	LineNo   int    `json:"line_no,omitempty"`
 	Category string `json:"category,omitempty"`
 	Finding  string `json:"finding,omitempty"`
+	// Reanchored fields (issue #436): a reanchored event acknowledges one
+	// explained chain break. File is the log file as LogChain.File names it,
+	// BreakPrev the break line's dangling prev (full hex); it reuses LineNo
+	// (the break line), SHA256 (lineHash of the break line), Reason (reordered
+	// or removed) and Note (why).
+	File      string `json:"file,omitempty"`
+	BreakPrev string `json:"break_prev,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
@@ -219,6 +226,9 @@ var kinds = map[string]bool{
 	// recovered records `flywheel recover --apply` (issue #422): Note the
 	// safe actions applied, Paths the tasks they touched.
 	"recovered": true,
+	// reanchored acknowledges one explained chain break, append-only (issue
+	// #436): File, LineNo, BreakPrev, SHA256, Reason and Note.
+	"reanchored": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -309,7 +319,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored":
 		return true
 	default:
 		return false
@@ -370,7 +380,17 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored", e.Kind)
+	}
+	if e.Kind == "reanchored" {
+		if e.Note == "" || e.File == "" || e.BreakPrev == "" || e.SHA256 == "" || e.Task != "" || e.LineNo < 1 {
+			return fmt.Errorf("reanchored event must carry a note, file, line_no, break_prev and sha256, and no task")
+		}
+		if e.Reason != "reordered" && e.Reason != "removed" {
+			return fmt.Errorf("reanchored reason %q is not one of reordered, removed", e.Reason)
+		}
+	} else if e.File != "" || e.BreakPrev != "" {
+		return fmt.Errorf("event kind %q cannot carry file or break_prev", e.Kind)
 	}
 	if e.Kind == "recovered" && (e.Note == "" || e.Task != "") {
 		return fmt.Errorf("recovered event must carry a note (the actions applied) and no task (Paths names them)")

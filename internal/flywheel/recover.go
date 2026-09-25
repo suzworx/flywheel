@@ -504,7 +504,8 @@ func (r RecoverReport) Text() string {
 	fmt.Fprintf(&b, "flywheel recover at %s\n", r.At)
 	c, hist := r.Integrity.Chain, r.Integrity.History
 	if r.Integrity.Pass {
-		fmt.Fprintf(&b, "integrity: pass (log chain intact, %d lines; no rule fails on a unit not landed)\n", c.Lines)
+		// An acknowledged break (issue #436) passes and is named.
+		fmt.Fprintf(&b, "integrity: pass (log chain intact, %d lines%s; no rule fails on a unit not landed)\n", c.Lines, c.AckText())
 	} else {
 		b.WriteString("integrity: FAIL\n")
 		if !c.OK() {

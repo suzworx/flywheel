@@ -112,7 +112,9 @@ not on memory of the last session. `flywheel recover --apply` runs only the safe
 inspect and land stay yours. `investigate` means the world disagrees with the log: look before
 you act. An interrupted attempt's written files are kept under
 `refs/flywheel/checkpoints/<task>/<attempt>`; `flywheel checkpoint diff|restore <task>` brings
-them back (issue #422).
+them back (issue #422). A chain break a git merge explains (`reordered`) is acknowledged, never edited
+away: `flywheel log --reanchor --note "<why>"` (a `removed` break also needs `--force`, your decision
+that it is explained); recover and `verify --log` then pass and name it (issue #436).
 
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,

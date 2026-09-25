@@ -111,27 +111,52 @@ type LogChain struct {
 	File         string `json:"file,omitempty"`
 	Files        int    `json:"files,omitempty"`
 	BreakReason  string `json:"break_reason,omitempty"`
+	// Acknowledged are the breaks a reanchored event covers (issue #436):
+	// the scan passed over them.
+	Acknowledged []AckBreak `json:"acknowledged,omitempty"`
+	// breakHash is lineHash of a dangling-prev break line: what a
+	// reanchored event records as the acknowledged line's identity.
+	breakHash string
 }
 
-// OK reports whether the chain is intact.
+// OK reports whether the chain has no unacknowledged break.
 func (c LogChain) OK() bool { return c.BreakLine == 0 }
 
 // VerifyLogChain reads the log (legacy or sharded) and checks that every
 // line's prev equals the lineHash of some earlier line in the same file; it
-// stops at the first line whose prev matches none. Lines without prev are
-// counted but not checked. In sharded layout, it verifies the seal matches
-// the legacy file's current state.
+// stops at the first line whose prev matches none and no reanchored event
+// acknowledges (issue #436). Lines without prev are counted but not checked.
+// In sharded layout, it verifies the seal matches the legacy file's current
+// state.
 func VerifyLogChain(dir string) (LogChain, error) {
 	sharded, err := ShardedLayout(dir)
 	if err != nil {
 		return LogChain{}, err
 	}
+	acks := reanchorAcks(dir)
 
 	if sharded {
-		return verifyShardedChain(dir)
+		return verifyShardedChain(dir, acks)
 	}
 
-	return verifyLegacyChain(dir)
+	return verifyLegacyChain(dir, acks)
+}
+
+// danglingBreak records the dangling-prev break at line i of lines on result
+// and reports true, or — when a reanchored event in acks acknowledges it —
+// records the acknowledgement and reports false, so the scan continues.
+func danglingBreak(result *LogChain, acks []Event, rel string, lines []string, i int, prev string) bool {
+	reason := danglingReason(lines, i, prev)
+	if ack, ok := ackFor(acks, rel, i+1, lines[i], prev, reason); ok {
+		result.Acknowledged = append(result.Acknowledged, ack)
+		return false
+	}
+	result.BreakLine = i + 1
+	result.BreakPrev = prev
+	result.BreakReason = reason
+	result.File = rel
+	result.breakHash = lineHash([]byte(lines[i]))
+	return true
 }
 
 // danglingReason names why line i's prev matches no earlier line of lines:
@@ -148,7 +173,7 @@ func danglingReason(lines []string, i int, prev string) string {
 }
 
 // verifyLegacyChain checks the legacy events.jsonl chain.
-func verifyLegacyChain(dir string) (LogChain, error) {
+func verifyLegacyChain(dir string, acks []Event) (LogChain, error) {
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -196,11 +221,7 @@ func verifyLegacyChain(dir string) (LogChain, error) {
 			result.Chained++
 
 			// Check that prev matches some earlier line
-			if !seen[record.Prev] {
-				result.BreakLine = lineNum
-				result.BreakPrev = record.Prev
-				result.BreakReason = danglingReason(lines, i, record.Prev)
-				result.File = "events.jsonl"
+			if !seen[record.Prev] && danglingBreak(&result, acks, "events.jsonl", lines, i, record.Prev) {
 				return result, nil
 			}
 		}
@@ -215,7 +236,7 @@ func verifyLegacyChain(dir string) (LogChain, error) {
 
 // verifyShardedChain checks the sharded log chain: legacy file (if present),
 // every shard in logFilesOf order, and the seal.
-func verifyShardedChain(dir string) (LogChain, error) {
+func verifyShardedChain(dir string, acks []Event) (LogChain, error) {
 	files, err := logFilesOf(dir)
 	if err != nil {
 		return LogChain{}, err
@@ -231,9 +252,9 @@ func verifyShardedChain(dir string) (LogChain, error) {
 
 		// Legacy file uses legacy rules; shards use strict prev rules
 		if lf.Rel == "events.jsonl" {
-			chainResult, err = verifyFileLegacyChain(lf.Path, lf.Rel)
+			chainResult, err = verifyFileLegacyChain(lf.Path, lf.Rel, acks...)
 		} else {
-			chainResult, err = verifyFileChain(lf.Path, lf.Rel)
+			chainResult, err = verifyFileChain(lf.Path, lf.Rel, acks...)
 		}
 
 		if err != nil {
@@ -241,11 +262,13 @@ func verifyShardedChain(dir string) (LogChain, error) {
 		}
 		result.Lines += chainResult.Lines
 		result.Chained += chainResult.Chained
+		result.Acknowledged = append(result.Acknowledged, chainResult.Acknowledged...)
 		if !chainResult.OK() {
 			result.BreakLine = chainResult.BreakLine
 			result.BreakPrev = chainResult.BreakPrev
 			result.BreakReason = chainResult.BreakReason
 			result.File = chainResult.File
+			result.breakHash = chainResult.breakHash
 			return result, nil
 		}
 	}
@@ -311,7 +334,7 @@ func verifyShardedChain(dir string) (LogChain, error) {
 
 // verifyFileLegacyChain verifies one legacy file's chain using legacy rules
 // (lines without prev are skipped, not required).
-func verifyFileLegacyChain(path, rel string) (LogChain, error) {
+func verifyFileLegacyChain(path, rel string, acks ...Event) (LogChain, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -358,11 +381,7 @@ func verifyFileLegacyChain(path, rel string) (LogChain, error) {
 			result.Chained++
 
 			// Check that prev matches some earlier line
-			if !seen[record.Prev] {
-				result.BreakLine = lineNum
-				result.BreakPrev = record.Prev
-				result.BreakReason = danglingReason(lines, i, record.Prev)
-				result.File = rel
+			if !seen[record.Prev] && danglingBreak(&result, acks, rel, lines, i, record.Prev) {
 				return result, nil
 			}
 		}
@@ -376,7 +395,7 @@ func verifyFileLegacyChain(path, rel string) (LogChain, error) {
 }
 
 // verifyFileChain verifies one file's chain, returning a result with File set.
-func verifyFileChain(path, rel string) (LogChain, error) {
+func verifyFileChain(path, rel string, acks ...Event) (LogChain, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -438,11 +457,7 @@ func verifyFileChain(path, rel string) (LogChain, error) {
 				return result, nil
 			}
 			first = false
-		} else if record.Prev == shardGenesis || !seen[record.Prev] {
-			result.BreakLine = lineNum
-			result.BreakPrev = record.Prev
-			result.BreakReason = danglingReason(lines, i, record.Prev)
-			result.File = rel
+		} else if (record.Prev == shardGenesis || !seen[record.Prev]) && danglingBreak(&result, acks, rel, lines, i, record.Prev) {
 			return result, nil
 		}
 

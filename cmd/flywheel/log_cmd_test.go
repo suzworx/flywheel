@@ -345,6 +345,47 @@ func TestLogMissingFlagErrors(t *testing.T) {
 	}
 }
 
+// TestLogReanchorFlags checks flywheel log --reanchor (issue #436): --note is
+// required and --kind/--task/--json do not combine with it (exit 2); an
+// intact chain and an unforced removed break are refusals (exit 6).
+func TestLogReanchorFlags(t *testing.T) {
+	dir := t.TempDir()
+	for _, tt := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"--reanchor", "--dir", dir}, 2, "--reanchor requires --note"},
+		{[]string{"--reanchor", "--note", "x", "--kind", "note", "--dir", dir}, 2, "--kind cannot be used with --reanchor"},
+		{[]string{"--reanchor", "--note", "x", "--task", "T", "--dir", dir}, 2, "--task cannot be used with --reanchor"},
+		{[]string{"--reanchor", "--note", "x", "--json", "-", "--dir", dir}, 2, "--json cannot be used with --reanchor"},
+		{[]string{"--kind", "note", "--note", "x", "--force", "--dir", dir}, 2, "--force applies to --reanchor only"},
+		{[]string{"--reanchor", "--note", "x", "--dir", dir}, 6, "the log chain is intact; nothing to re-anchor"},
+	} {
+		stderr, code := runLogProcess(t, tt.args...)
+		if code != tt.code || !strings.Contains(stderr, tt.want) {
+			t.Errorf("flywheel log %v = %d %q, want %d and %q", tt.args, code, stderr, tt.code, tt.want)
+		}
+	}
+	for _, n := range []string{"one", "two", "three"} {
+		if err := flywheel.AppendEvent(dir, flywheel.Event{Kind: "note", Note: n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, ".flywheel", "events.jsonl")
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+lines[2]+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stderr, code := runLogProcess(t, "--reanchor", "--note", "x", "--dir", dir); code != 6 || !strings.Contains(stderr, "--force") {
+		t.Errorf("unforced removed reanchor = %d %q, want 6 naming --force", code, stderr)
+	}
+	if stderr, code := runLogProcess(t, "--reanchor", "--force", "--note", "x", "--dir", dir); code != 0 {
+		t.Errorf("forced reanchor = %d %q, want 0", code, stderr)
+	}
+}
+
 // shardTestClock is the fixed instant the migration tests stamp seals with.
 var shardTestClock = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
