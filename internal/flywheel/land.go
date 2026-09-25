@@ -131,6 +131,12 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 		if t7 != nil {
 			return t7
 		}
+		// stacked (issue #414): a unit whose base landed as a squash still
+		// carries the pre-squash commits; it must be rebased first. An
+		// exception landing may override it.
+		if base, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
+			return &RuleRefusal{Rule: "stacked", Fix: stackedFix(task, base, landedAs, baseTask)}
+		}
 	} else {
 		// Exception landing: covers a task that is not passed (T5), or a
 		// passed task T7 refuses (#317 review).

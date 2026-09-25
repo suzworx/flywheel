@@ -130,6 +130,9 @@ func runValidate(args []string) {
 			}
 		}
 	}
+	if res.Stacked != "" {
+		fmt.Printf("%s owns: warning: %s\n", task, res.Stacked)
+	}
 	if n := len(res.Ignored); n > 0 {
 		shown := strings.Join(res.Ignored, ", ")
 		if n > 10 {

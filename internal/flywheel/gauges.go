@@ -112,6 +112,11 @@ type GaugeResult struct {
 	// the gate ids the worker never ran itself (issue #365). A reading, never
 	// a gate.
 	GatesUnrun []string
+	// Stacked is the warning, also the owns_checked note, when the unit's
+	// base landed on main as a squash (issue #414): "base <sha7> (unit <T>)
+	// was squash-merged as <sha7>; run: flywheel rebase <task>". A reading,
+	// never a gate: the owns check still runs.
+	Stacked string
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
@@ -490,10 +495,16 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
 	res.Files = measureFiles(wd, owns, changed)
+	// A base squash-merged under the unit (issue #414) inflates the changed
+	// set with the base unit's pre-squash commits: warn, never refuse here.
+	if b, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
+		res.Stacked = stackedFix(task, b, landedAs, baseTask)
+	}
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Baselined: baselined, Attributed: attributed,
 		Ignored: res.Ignored, Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
+		Note: res.Stacked,
 	}); err != nil {
 		return GaugeResult{}, err
 	}
@@ -992,14 +1003,20 @@ func unitChangedPaths(wd, base, task string) ([]string, error) {
 	return result, nil
 }
 
-// dispatchBase returns the unit's base: the Base of the task's FIRST
-// dispatched event that recorded one, or "". The owns check covers the whole
-// unit — every attempt shares its owns — so a correction attempt's check
-// still counts what an earlier attempt committed; this matches baselineFor,
-// which also reads the first dispatch. attempt is unused and kept for the
-// call site's clarity.
+// dispatchBase returns the unit's base: the Base of the task's latest
+// rebased event (issue #414: `flywheel rebase` moved the unit), else the Base
+// of its FIRST dispatched event that recorded one, or "". The owns check
+// covers the whole unit — every attempt shares its owns — so a correction
+// attempt's check still counts what an earlier attempt committed; this
+// matches baselineFor, which also reads the first dispatch. attempt is unused
+// and kept for the call site's clarity.
 func dispatchBase(events []Event, task, attempt string) string {
 	_ = attempt
+	for i := len(events) - 1; i >= 0; i-- {
+		if e := events[i]; e.Task == task && e.Kind == "rebased" && e.Base != "" {
+			return e.Base
+		}
+	}
 	for _, e := range events {
 		if e.Task == task && e.Kind == "dispatched" && e.Base != "" {
 			return e.Base
