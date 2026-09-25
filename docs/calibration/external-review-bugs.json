@@ -1,0 +1,999 @@
+{
+ "source": "external PR reviewer (Devin) findings flagged as bugs on suzworx/flywheel PRs #232-#358",
+ "cases": [
+  {
+   "pr": 232,
+   "commit": "70bd1e17da7b7140af0ebc65add28fe0f22f32e8",
+   "path": "internal/flywheel/run.go",
+   "line": 207,
+   "claim": "\ud83d\udd34 **Correction deltas lose exclusive resources"
+  },
+  {
+   "pr": 232,
+   "commit": "70bd1e17da7b7140af0ebc65add28fe0f22f32e8",
+   "path": "internal/flywheel/run.go",
+   "line": 224,
+   "claim": "\ud83d\udd34 **Simultaneous dispatches share exclusive resources"
+  },
+  {
+   "pr": 233,
+   "commit": "bce8c1b47863f53adf24904453098142ad9bf13b",
+   "path": "internal/flywheel/feedback.go",
+   "line": 100,
+   "claim": "\ud83d\udd34 **Existing learning history is overwritten"
+  },
+  {
+   "pr": 233,
+   "commit": "bce8c1b47863f53adf24904453098142ad9bf13b",
+   "path": "internal/flywheel/feedback.go",
+   "line": 106,
+   "claim": "\ud83d\udd34 **Unrelated learning documents are deleted"
+  },
+  {
+   "pr": 234,
+   "commit": "c1a4197cb68625d683068b1d71da35292a854955",
+   "path": "internal/flywheel/inspect.go",
+   "line": 62,
+   "claim": "\ud83d\udd34 **Concurrent edits receive unvalidated passes"
+  },
+  {
+   "pr": 234,
+   "commit": "c1a4197cb68625d683068b1d71da35292a854955",
+   "path": "internal/flywheel/inspect.go",
+   "line": 251,
+   "claim": "\ud83d\udfe1 **Quoted owned paths bypass T3"
+  },
+  {
+   "pr": 234,
+   "commit": "c1a4197cb68625d683068b1d71da35292a854955",
+   "path": "internal/flywheel/verify.go",
+   "line": 220,
+   "claim": "\ud83d\udfe1 **External-workdir passes fail verification"
+  },
+  {
+   "pr": 236,
+   "commit": "652da4d1da3c2b1c42ab637de1855996fb3eaa9d",
+   "path": "internal/flywheel/gauges.go",
+   "line": 191,
+   "claim": "\ud83d\udfe1 **Later readings keep stale commit"
+  },
+  {
+   "pr": 237,
+   "commit": "241c82e9f3f7ca0fd6a66b4d7420ccea5b1c02ce",
+   "path": "internal/flywheel/feedback.go",
+   "line": 140,
+   "claim": "\ud83d\udd34 **Marker race destroys user files"
+  },
+  {
+   "pr": 237,
+   "commit": "241c82e9f3f7ca0fd6a66b4d7420ccea5b1c02ce",
+   "path": "internal/flywheel/feedback.go",
+   "line": 145,
+   "claim": "\ud83d\udfe1 **Unreadable root file duplicates learning"
+  },
+  {
+   "pr": 238,
+   "commit": "516a167c5db8d1e5dd64ae09453ba6dd23db99d6",
+   "path": "docs/index.html",
+   "line": 142,
+   "claim": "\ud83d\udfe1 **Script failures hide landing content"
+  },
+  {
+   "pr": 238,
+   "commit": "516a167c5db8d1e5dd64ae09453ba6dd23db99d6",
+   "path": "docs/index.html",
+   "line": 272,
+   "claim": "\ud83d\udfe1 **Install flow never installs flywheel"
+  },
+  {
+   "pr": 245,
+   "commit": "4ba0658006bedf3b316e1b09565616e64eb38ee9",
+   "path": "cmd/flywheel/feedback_cmd.go",
+   "line": 158,
+   "claim": "\ud83d\udfe1 **Concurrent replacement duplicates events"
+  },
+  {
+   "pr": 245,
+   "commit": "4ba0658006bedf3b316e1b09565616e64eb38ee9",
+   "path": "internal/flywheel/feedback.go",
+   "line": 178,
+   "claim": "\ud83d\udd34 **Ownership checks still race mutations"
+  },
+  {
+   "pr": 248,
+   "commit": "8067426d7535a489b670ead12e2de8c1cdfa8f54",
+   "path": "internal/flywheel/run.go",
+   "line": 934,
+   "claim": "\ud83d\udd34 **Active dispatch locks expire"
+  },
+  {
+   "pr": 250,
+   "commit": "d4077f59c2c15d591840a23c1db83132c88d0fdc",
+   "path": "docs/quickstart.md",
+   "line": 40,
+   "claim": "\ud83d\udfe1 **Non-Linux-AMD64 installation fails"
+  },
+  {
+   "pr": 250,
+   "commit": "d4077f59c2c15d591840a23c1db83132c88d0fdc",
+   "path": "docs/quickstart.md",
+   "line": 47,
+   "claim": "\ud83d\udfe1 **Windows install never reaches PATH"
+  },
+  {
+   "pr": 255,
+   "commit": "414206f9c46005ab6d44750bb266a904eeff0469",
+   "path": "internal/flywheel/verify.go",
+   "line": 292,
+   "claim": "\ud83d\udfe1 **Equal timestamps apply future corrections"
+  },
+  {
+   "pr": 255,
+   "commit": "414206f9c46005ab6d44750bb266a904eeff0469",
+   "path": "internal/flywheel/verify.go",
+   "line": 295,
+   "claim": "\ud83d\udfe1 **Amendments still rewrite historical gate sets"
+  },
+  {
+   "pr": 256,
+   "commit": "151cd8f1065a9861e91bd1148d4e943d4964cb73",
+   "path": "internal/flywheel/gauges.go",
+   "line": 342,
+   "claim": "\ud83d\udfe1 **Concurrent lead claims are ignored"
+  },
+  {
+   "pr": 256,
+   "commit": "151cd8f1065a9861e91bd1148d4e943d4964cb73",
+   "path": "internal/flywheel/gauges.go",
+   "line": 470,
+   "claim": "\ud83d\udd34 **Old lead claims excuse future edits"
+  },
+  {
+   "pr": 257,
+   "commit": "5f609e9b3725f6b9d281ced274253f4d9e24443b",
+   "path": "cmd/flywheel/feedback_cmd.go",
+   "line": 188,
+   "claim": "\ud83d\udfe1 **Read failures invite duplicate learnings"
+  },
+  {
+   "pr": 257,
+   "commit": "5f609e9b3725f6b9d281ced274253f4d9e24443b",
+   "path": "cmd/flywheel/feedback_cmd.go",
+   "line": 191,
+   "claim": "\ud83d\udfe1 **Concurrent additions report wrong learning"
+  },
+  {
+   "pr": 257,
+   "commit": "5f609e9b3725f6b9d281ced274253f4d9e24443b",
+   "path": "internal/flywheel/feedback.go",
+   "line": 190,
+   "claim": "\ud83d\udfe1 **Concurrent render drops newer learning"
+  },
+  {
+   "pr": 263,
+   "commit": "890c21528c1ca4dc6e872216d1baa162402d14f2",
+   "path": "internal/flywheel/attempt.go",
+   "line": 1,
+   "claim": "\ud83d\udd34 **Fresh dispatch uses stale header"
+  },
+  {
+   "pr": 263,
+   "commit": "890c21528c1ca4dc6e872216d1baa162402d14f2",
+   "path": "internal/flywheel/run.go",
+   "line": 330,
+   "claim": "\ud83d\udfe1 **Concurrent prompt edit desynchronizes header"
+  },
+  {
+   "pr": 264,
+   "commit": "41459e63e278bf9a1270e54847b86da4941b38ac",
+   "path": "internal/flywheel/feedback.go",
+   "line": 84,
+   "claim": "\ud83d\udfe1 **Raw feedback events bypass serialization"
+  },
+  {
+   "pr": 266,
+   "commit": "e696c3307839eb2f0e2c57e013d626e2f760c9d4",
+   "path": "internal/flywheel/lint.go",
+   "line": 57,
+   "claim": "\ud83d\udfe1 **Malformed patterns receive a broken remedy"
+  },
+  {
+   "pr": 268,
+   "commit": "a755909e5c6c279703949261f0c2490323cfcc42",
+   "path": "internal/flywheel/run.go",
+   "line": 227,
+   "claim": "\ud83d\udfe1 **Later dispatches compare stale gates"
+  },
+  {
+   "pr": 269,
+   "commit": "2d00ca752079ccae6da3467c9eddf027bd137cd1",
+   "path": "internal/flywheel/land.go",
+   "line": 86,
+   "claim": "\ud83d\udfe1 **Landed tree mismatches inspected tree"
+  },
+  {
+   "pr": 269,
+   "commit": "2d00ca752079ccae6da3467c9eddf027bd137cd1",
+   "path": "internal/flywheel/log.go",
+   "line": 26,
+   "claim": "\ud83d\udfe1 **Generic plan events lack identity"
+  },
+  {
+   "pr": 270,
+   "commit": "b9d93d247ed24900185ec7678784558452952b5e",
+   "path": "internal/flywheel/events.go",
+   "line": 306,
+   "claim": "\ud83d\udfe1 **Relative workdirs lose provenance"
+  },
+  {
+   "pr": 270,
+   "commit": "b9d93d247ed24900185ec7678784558452952b5e",
+   "path": "internal/flywheel/verify.go",
+   "line": 126,
+   "claim": "\ud83d\udfe1 **Later passes use wrong repository"
+  },
+  {
+   "pr": 270,
+   "commit": "b9d93d247ed24900185ec7678784558452952b5e",
+   "path": "internal/flywheel/verify.go",
+   "line": 346,
+   "claim": "\ud83d\udfe1 **Missing tree escapes rule refusal"
+  },
+  {
+   "pr": 273,
+   "commit": "58d26b211036da34383ed7d12fd1d981fde62815",
+   "path": ".github/workflows/ci.yml",
+   "line": 43,
+   "claim": "\ud83d\udfe1 **Install check exits before installation"
+  },
+  {
+   "pr": 274,
+   "commit": "28c6fb3c620d52824dac6bb1e299eb76070b0de6",
+   "path": "internal/flywheel/log.go",
+   "line": 49,
+   "claim": "\ud83d\udfe1 **Concurrent dispatch admits inert amendments"
+  },
+  {
+   "pr": 274,
+   "commit": "28c6fb3c620d52824dac6bb1e299eb76070b0de6",
+   "path": "internal/flywheel/log.go",
+   "line": 104,
+   "claim": "\ud83d\udfe1 **Inherited correction gates block amendments"
+  },
+  {
+   "pr": 276,
+   "commit": "b8421034895411351527bde37c1b4b27cd17ee46",
+   "path": ".github/workflows/watch.yml",
+   "line": 32,
+   "claim": "\ud83d\udfe1 **Resolved findings leave stale labels"
+  },
+  {
+   "pr": 276,
+   "commit": "b8421034895411351527bde37c1b4b27cd17ee46",
+   "path": ".github/workflows/watch.yml",
+   "line": 44,
+   "claim": "\ud83d\udfe1 **Fork failures create main incidents"
+  },
+  {
+   "pr": 277,
+   "commit": "aead155e109e67ddecc7ee980f9cabf6d2e073e1",
+   "path": "internal/flywheel/land.go",
+   "line": 120,
+   "claim": "\ud83d\udfe1 **Failed landing leaves active exception"
+  },
+  {
+   "pr": 277,
+   "commit": "aead155e109e67ddecc7ee980f9cabf6d2e073e1",
+   "path": "internal/flywheel/verify.go",
+   "line": 505,
+   "claim": "\ud83d\udd34 **Exception authorizes a different commit"
+  },
+  {
+   "pr": 279,
+   "commit": "19205d19b62ad490479f92a9684b82ac002de122",
+   "path": "internal/flywheel/feedback.go",
+   "line": 92,
+   "claim": "\ud83d\udfe1 **Recurring signals stay falsely triaged"
+  },
+  {
+   "pr": 280,
+   "commit": "b66373634940db50ef6d990ea61114caca2ef0cd",
+   "path": "cmd/flywheel/log_cmd.go",
+   "line": 184,
+   "claim": "\ud83d\udfe1 **Unknown amendment goals return wrong status"
+  },
+  {
+   "pr": 282,
+   "commit": "4cf9ad65dffeb2de65714e622664256659d09f37",
+   "path": "internal/flywheel/gauges.go",
+   "line": 532,
+   "claim": "\ud83d\udfe1 **Undispatched tasks hide sibling edits"
+  },
+  {
+   "pr": 283,
+   "commit": "3ca850abf9f89ed0e5f039cb168c81280231b6c6",
+   "path": "internal/flywheel/explain.go",
+   "line": 84,
+   "claim": "\ud83d\udfe1 **Small worker costs disappear"
+  },
+  {
+   "pr": 283,
+   "commit": "3ca850abf9f89ed0e5f039cb168c81280231b6c6",
+   "path": "internal/flywheel/explain.go",
+   "line": 219,
+   "claim": "\ud83d\udfe1 **Summary mixes incompatible task versions"
+  },
+  {
+   "pr": 285,
+   "commit": "c7c5021f3e865c22aba6908787c44912d9325d20",
+   "path": "internal/flywheel/attempt.go",
+   "line": 68,
+   "claim": "\ud83d\udfe1 **Legacy dispatches still allow owns narrowing"
+  },
+  {
+   "pr": 285,
+   "commit": "c7c5021f3e865c22aba6908787c44912d9325d20",
+   "path": "internal/flywheel/attempt.go",
+   "line": 175,
+   "claim": "\ud83d\udfe1 **Headerless JSON amendments remain ineffective"
+  },
+  {
+   "pr": 285,
+   "commit": "c7c5021f3e865c22aba6908787c44912d9325d20",
+   "path": "internal/flywheel/log.go",
+   "line": 250,
+   "claim": "\ud83d\udfe1 **Pattern-based owns narrowing is accepted"
+  },
+  {
+   "pr": 287,
+   "commit": "db9dd999e2d097d1a8eb473927add68b78824eac",
+   "path": "internal/flywheel/land.go",
+   "line": 117,
+   "claim": "\ud83d\udfe1 **Concurrent triage produces stale T9 decisions"
+  },
+  {
+   "pr": 288,
+   "commit": "18f1db87b4f1170a795f71911f9cf3cca8d1372e",
+   "path": "internal/flywheel/run.go",
+   "line": 688,
+   "claim": "\ud83d\udfe1 **Twentieth-turn plans still trigger no-plan"
+  },
+  {
+   "pr": 290,
+   "commit": "1d77a3074fd404cf9971ae38d5e73e63f0106425",
+   "path": "internal/flywheel/run.go",
+   "line": 680,
+   "claim": "\ud83d\udfe1 **Claude peak reasoning uses session total"
+  },
+  {
+   "pr": 291,
+   "commit": "07a629efe2b7f1bb33b8626741b3dc4cc2a47975",
+   "path": "internal/flywheel/gate.go",
+   "line": 32,
+   "claim": "\ud83d\udfe1 **Uninspected blocker names stale attempt"
+  },
+  {
+   "pr": 292,
+   "commit": "f2f5783437ff3b211dbeb66f2307ee73308040cd",
+   "path": "internal/flywheel/config.go",
+   "line": 165,
+   "claim": "\ud83d\udfe1 **Historical Claude reasoning counted twice"
+  },
+  {
+   "pr": 292,
+   "commit": "f2f5783437ff3b211dbeb66f2307ee73308040cd",
+   "path": "internal/flywheel/stats.go",
+   "line": 171,
+   "claim": "\ud83d\udfe1 **Invalid baseline config looks absent"
+  },
+  {
+   "pr": 293,
+   "commit": "245d589260626aa410377e7c31d63d43f3d7669f",
+   "path": "internal/flywheel/run.go",
+   "line": 255,
+   "claim": "\ud83d\udfe1 **Same-task attempts bypass host cap"
+  },
+  {
+   "pr": 295,
+   "commit": "89b708c3a827889ddc2241f1aaef05f1a6cf05a2",
+   "path": "internal/flywheel/events.go",
+   "line": 98,
+   "claim": "\ud83d\udfe1 **Negative increments enter task state"
+  },
+  {
+   "pr": 296,
+   "commit": "bc1c7ab58c5f0f8f73c211377e55cb8b0254d99c",
+   "path": "internal/flywheel/init.go",
+   "line": 542,
+   "claim": "\ud83d\udfe1 **Stop gate reads wrong repository"
+  },
+  {
+   "pr": 297,
+   "commit": "71aa64941f1214d7dc572ee0d1342839052d2be4",
+   "path": "cmd/flywheel/context_cmd.go",
+   "line": 63,
+   "claim": "\ud83d\udfe1 **Concurrent append breaks context reads"
+  },
+  {
+   "pr": 297,
+   "commit": "71aa64941f1214d7dc572ee0d1342839052d2be4",
+   "path": "cmd/flywheel/context_cmd.go",
+   "line": 83,
+   "claim": "\ud83d\udfe1 **JSON write failures report success"
+  },
+  {
+   "pr": 298,
+   "commit": "f6d2f5b4ef64467245c4772fc614d429c54f100e",
+   "path": "cmd/flywheel/supervise_cmd.go",
+   "line": 67,
+   "claim": "\ud83d\udd34 **Negative interval spins without delay"
+  },
+  {
+   "pr": 298,
+   "commit": "f6d2f5b4ef64467245c4772fc614d429c54f100e",
+   "path": "internal/flywheel/supervise.go",
+   "line": 56,
+   "claim": "\ud83d\udfe1 **Partial validation suppresses future measurement"
+  },
+  {
+   "pr": 298,
+   "commit": "f6d2f5b4ef64467245c4772fc614d429c54f100e",
+   "path": "internal/flywheel/supervise.go",
+   "line": 95,
+   "claim": "\ud83d\udfe1 **Current attempt can remain unmeasured"
+  },
+  {
+   "pr": 299,
+   "commit": "59fc811c3fdf2a0a0b0044b7130d5c895d5d83eb",
+   "path": "internal/flywheel/chain.go",
+   "line": 73,
+   "claim": "\ud83d\udfe1 **Non-record tails break new chains"
+  },
+  {
+   "pr": 299,
+   "commit": "59fc811c3fdf2a0a0b0044b7130d5c895d5d83eb",
+   "path": "internal/flywheel/events.go",
+   "line": 453,
+   "claim": "\ud83d\udfe1 **Concurrent first appends remain unchained"
+  },
+  {
+   "pr": 301,
+   "commit": "17ddfb1d48ef45b95a40404655f96f847825f43f",
+   "path": "internal/flywheel/audit.go",
+   "line": 105,
+   "claim": "\ud83d\udfe1 **Inconclusive records pass the audit"
+  },
+  {
+   "pr": 301,
+   "commit": "17ddfb1d48ef45b95a40404655f96f847825f43f",
+   "path": "internal/flywheel/audit.go",
+   "line": 109,
+   "claim": "\ud83d\udfe1 **Audit verdict names an unmeasured tree"
+  },
+  {
+   "pr": 301,
+   "commit": "17ddfb1d48ef45b95a40404655f96f847825f43f",
+   "path": "internal/flywheel/audit.go",
+   "line": 138,
+   "claim": "\ud83d\udfe1 **Audit overwrites the QC verdict"
+  },
+  {
+   "pr": 302,
+   "commit": "88a5692648b164976945747955264dba2c76c7cd",
+   "path": "cmd/flywheel/context_cmd.go",
+   "line": 81,
+   "claim": "\ud83d\udfe1 **Invalid roles depend on factory health"
+  },
+  {
+   "pr": 302,
+   "commit": "88a5692648b164976945747955264dba2c76c7cd",
+   "path": "internal/flywheel/context.go",
+   "line": 101,
+   "claim": "\ud83d\udfe1 **Completed audits remain open"
+  },
+  {
+   "pr": 303,
+   "commit": "4bb0e2ea86d8f1badd42bffd9241d162546e9e07",
+   "path": "internal/flywheel/supervise.go",
+   "line": 55,
+   "claim": "\ud83d\udfe1 **Quoted filenames bypass change detection"
+  },
+  {
+   "pr": 303,
+   "commit": "4bb0e2ea86d8f1badd42bffd9241d162546e9e07",
+   "path": "internal/flywheel/supervise.go",
+   "line": 121,
+   "claim": "\ud83d\udfe1 **Out-of-order events hide owned edits"
+  },
+  {
+   "pr": 303,
+   "commit": "4bb0e2ea86d8f1badd42bffd9241d162546e9e07",
+   "path": "internal/flywheel/supervise.go",
+   "line": 134,
+   "claim": "\ud83d\udfe1 **External worktrees are remeasured incorrectly"
+  },
+  {
+   "pr": 304,
+   "commit": "c4884350fa39f26ea806257b237b5a4c88615858",
+   "path": "internal/flywheel/run.go",
+   "line": 1674,
+   "claim": "\ud83d\udd34 **Half-open breaker admits multiple probes"
+  },
+  {
+   "pr": 305,
+   "commit": "36a335d29561b0fa72058b682755ec04ac534b9b",
+   "path": "internal/flywheel/watch.go",
+   "line": 28,
+   "claim": "\ud83d\udfe1 **Multiline fields break event framing"
+  },
+  {
+   "pr": 308,
+   "commit": "5c1b79c2cb569696770b0f8da884a97035c9b948",
+   "path": "internal/flywheel/githooks.go",
+   "line": 17,
+   "claim": "\ud83d\udfe1 **Malformed task trailers pass validation"
+  },
+  {
+   "pr": 308,
+   "commit": "5c1b79c2cb569696770b0f8da884a97035c9b948",
+   "path": "internal/flywheel/githooks.go",
+   "line": 35,
+   "claim": "\ud83d\udfe1 **Subdirectory factories verify the wrong ledger"
+  },
+  {
+   "pr": 309,
+   "commit": "37aea50e665672231b9169dc7eae705506cb34e6",
+   "path": "internal/flywheel/audit_select.go",
+   "line": 94,
+   "claim": "\ud83d\udfe1 **Retries misattribute earlier line audits"
+  },
+  {
+   "pr": 310,
+   "commit": "6d4c8479f73bf0c8824c491a8b19fc8798034290",
+   "path": "internal/flywheel/brief.go",
+   "line": 82,
+   "claim": "\ud83d\udfe1 **Repeated dependency lines retain duplicates"
+  },
+  {
+   "pr": 310,
+   "commit": "6d4c8479f73bf0c8824c491a8b19fc8798034290",
+   "path": "internal/flywheel/state.go",
+   "line": 176,
+   "claim": "\ud83d\udfe1 **Legacy explanations show false dependencies"
+  },
+  {
+   "pr": 311,
+   "commit": "1e35900395df66b5533b299f7e3058c74396cd41",
+   "path": "internal/flywheel/reconcile.go",
+   "line": 203,
+   "claim": "\ud83d\udfe1 **Half-open breaker recommends multiple probes"
+  },
+  {
+   "pr": 312,
+   "commit": "98653ca68d6c99a46f482777044ee269ab356318",
+   "path": "internal/flywheel/adapter.go",
+   "line": 84,
+   "claim": "\ud83d\udfe1 **Codex live telemetry stays empty"
+  },
+  {
+   "pr": 312,
+   "commit": "98653ca68d6c99a46f482777044ee269ab356318",
+   "path": "internal/flywheel/adapter.go",
+   "line": 551,
+   "claim": "\ud83d\udfe1 **Codex items inflate turn counts"
+  },
+  {
+   "pr": 312,
+   "commit": "98653ca68d6c99a46f482777044ee269ab356318",
+   "path": "internal/flywheel/adapter.go",
+   "line": 573,
+   "claim": "\ud83d\udfe1 **Codex changes lose dirty paths"
+  },
+  {
+   "pr": 315,
+   "commit": "750788e1754ee2194cccc85b302ae51e64e68a7f",
+   "path": "internal/flywheel/ci.go",
+   "line": 90,
+   "claim": "\ud83d\udfe1 **Valid factory paths block CI setup"
+  },
+  {
+   "pr": 317,
+   "commit": "014f6156e34bb0e069b28e8ad05dea5b496482a7",
+   "path": "internal/flywheel/land.go",
+   "line": 112,
+   "claim": "\ud83d\udd34 **Concurrent nonconformance permits landing"
+  },
+  {
+   "pr": 317,
+   "commit": "014f6156e34bb0e069b28e8ad05dea5b496482a7",
+   "path": "internal/flywheel/land.go",
+   "line": 112,
+   "claim": "\ud83d\udfe1 **T7 exceptions cannot be recorded"
+  },
+  {
+   "pr": 318,
+   "commit": "75f204463742eac3ca43c95ab37348c3f4d81aa5",
+   "path": "internal/flywheel/githistory.go",
+   "line": 28,
+   "claim": "\ud83d\udd34 **Pushes escape git-write detection"
+  },
+  {
+   "pr": 318,
+   "commit": "75f204463742eac3ca43c95ab37348c3f4d81aa5",
+   "path": "internal/flywheel/run.go",
+   "line": 988,
+   "claim": "\ud83d\udfe1 **Unborn HEAD hides git writes"
+  },
+  {
+   "pr": 318,
+   "commit": "75f204463742eac3ca43c95ab37348c3f4d81aa5",
+   "path": "internal/flywheel/run.go",
+   "line": 989,
+   "claim": "\ud83d\udfe1 **Timed-out git writes go unflagged"
+  },
+  {
+   "pr": 323,
+   "commit": "34f23ccf942477c94226abf84724a9412cabab78",
+   "path": "internal/flywheel/audit_select.go",
+   "line": 216,
+   "claim": "\ud83d\udfe1 **Wave selection becomes stale"
+  },
+  {
+   "pr": 325,
+   "commit": "ea235fe59c56af6e28699d39bf2ffa46ec2e2ca5",
+   "path": "internal/flywheel/gitguard.go",
+   "line": 41,
+   "claim": "\ud83d\udd34 **Shared tree writes remain allowed"
+  },
+  {
+   "pr": 325,
+   "commit": "ea235fe59c56af6e28699d39bf2ffa46ec2e2ca5",
+   "path": "internal/flywheel/gitguard.go",
+   "line": 83,
+   "claim": "\ud83d\udd34 **Git aliases bypass write refusals"
+  },
+  {
+   "pr": 325,
+   "commit": "ea235fe59c56af6e28699d39bf2ffa46ec2e2ca5",
+   "path": "internal/flywheel/gitguard.go",
+   "line": 97,
+   "claim": "\ud83d\udfe1 **Filtered branch reads are refused"
+  },
+  {
+   "pr": 326,
+   "commit": "1965decf891e615b90267ccd82ab89bcdfb1fcdd",
+   "path": "internal/flywheel/reconcile.go",
+   "line": 82,
+   "claim": "\ud83d\udfe1 **Effective claims disappear from recommendations"
+  },
+  {
+   "pr": 326,
+   "commit": "1965decf891e615b90267ccd82ab89bcdfb1fcdd",
+   "path": "internal/flywheel/reconcile.go",
+   "line": 373,
+   "claim": "\ud83d\udfe1 **Held tasks create false waits"
+  },
+  {
+   "pr": 327,
+   "commit": "934de2cac03a05acfec69485d01ba48a3e537c99",
+   "path": "cmd/flywheel/init_cmd.go",
+   "line": 76,
+   "claim": "\ud83d\udfe1 **Default local URL bypasses dependency"
+  },
+  {
+   "pr": 327,
+   "commit": "934de2cac03a05acfec69485d01ba48a3e537c99",
+   "path": "internal/flywheel/local.go",
+   "line": 62,
+   "claim": "\ud83d\udfe1 **Null worker policy crashes initialization"
+  },
+  {
+   "pr": 327,
+   "commit": "934de2cac03a05acfec69485d01ba48a3e537c99",
+   "path": "internal/flywheel/local.go",
+   "line": 119,
+   "claim": "\ud83d\udfe1 **Existing local worker keeps concurrency"
+  },
+  {
+   "pr": 328,
+   "commit": "3ace52e1899a6fe76ec56205e76b43400bd917b4",
+   "path": "internal/flywheel/summary.go",
+   "line": 55,
+   "claim": "\ud83d\udfe1 **Small budgets round to zero"
+  },
+  {
+   "pr": 328,
+   "commit": "3ace52e1899a6fe76ec56205e76b43400bd917b4",
+   "path": "internal/flywheel/summary.go",
+   "line": 61,
+   "claim": "\ud83d\udfe1 **Default breaker cooldown disappears"
+  },
+  {
+   "pr": 328,
+   "commit": "3ace52e1899a6fe76ec56205e76b43400bd917b4",
+   "path": "internal/flywheel/summary.go",
+   "line": 93,
+   "claim": "\ud83d\udfe1 **Missing enforcement layers appear installed"
+  },
+  {
+   "pr": 329,
+   "commit": "6a97c243d10a128432cd9cc86c13e10386c9ae7f",
+   "path": "internal/flywheel/reconcile.go",
+   "line": 344,
+   "claim": "\ud83d\udfe1 **Fallback dispatches exceed rate limit"
+  },
+  {
+   "pr": 330,
+   "commit": "08c9e2f7719792ffb1199a4176f2ae40fbc4229a",
+   "path": "cmd/flywheel/doctor_cmd.go",
+   "line": 69,
+   "claim": "\ud83d\udfe1 **Local setup probes wrong worker"
+  },
+  {
+   "pr": 333,
+   "commit": "368615e48135cfc210a55b150133e7826d7d6bca",
+   "path": "internal/flywheel/run.go",
+   "line": 1,
+   "claim": "\ud83d\udd34 **Task edits fail owns validation"
+  },
+  {
+   "pr": 333,
+   "commit": "368615e48135cfc210a55b150133e7826d7d6bca",
+   "path": "internal/flywheel/run.go",
+   "line": 489,
+   "claim": "\ud83d\udd34 **Clean worktree runs flag git writes"
+  },
+  {
+   "pr": 333,
+   "commit": "368615e48135cfc210a55b150133e7826d7d6bca",
+   "path": "internal/flywheel/worktree.go",
+   "line": 28,
+   "claim": "\ud83d\udfe1 **Existing paths bypass worktree validation"
+  },
+  {
+   "pr": 334,
+   "commit": "ea1f67648ffda7dc2fc3c95e8e324e7269bcc779",
+   "path": "internal/flywheel/doctor.go",
+   "line": 106,
+   "claim": "\ud83d\udfe1 **Stale probe overrides newer failure"
+  },
+  {
+   "pr": 334,
+   "commit": "ea1f67648ffda7dc2fc3c95e8e324e7269bcc779",
+   "path": "internal/flywheel/run.go",
+   "line": 1768,
+   "claim": "\ud83d\udfe1 **Probe success retains old failures"
+  },
+  {
+   "pr": 338,
+   "commit": "0c3d4c9dcf70f0984d2b27166dc32bb9b4ee7cf9",
+   "path": "internal/flywheel/gauges.go",
+   "line": 718,
+   "claim": "\ud83d\udd34 **Parallel commits contaminate owns checks"
+  },
+  {
+   "pr": 338,
+   "commit": "0c3d4c9dcf70f0984d2b27166dc32bb9b4ee7cf9",
+   "path": "internal/flywheel/gauges.go",
+   "line": 718,
+   "claim": "\ud83d\udfe1 **Merge-resolution edits escape owns checks"
+  },
+  {
+   "pr": 338,
+   "commit": "0c3d4c9dcf70f0984d2b27166dc32bb9b4ee7cf9",
+   "path": "internal/flywheel/gauges.go",
+   "line": 718,
+   "claim": "\ud83d\udfe1 **Renamed sources escape owns checks"
+  },
+  {
+   "pr": 340,
+   "commit": "410c8686d02b8080f8e6a47fe4e10ed03ad26830",
+   "path": "internal/flywheel/run.go",
+   "line": 159,
+   "claim": "\ud83d\udfe1 **Unknown lines bypass dispatch refusal"
+  },
+  {
+   "pr": 340,
+   "commit": "410c8686d02b8080f8e6a47fe4e10ed03ad26830",
+   "path": "internal/flywheel/run.go",
+   "line": 162,
+   "claim": "\ud83d\udfe1 **Edited briefs keep stale line staffing"
+  },
+  {
+   "pr": 341,
+   "commit": "c49c954d74081be109391a30a83df3be86757640",
+   "path": "internal/term/keys.go",
+   "line": 61,
+   "claim": "\ud83d\udfe1 **Fragmented escape sequences lose navigation"
+  },
+  {
+   "pr": 343,
+   "commit": "328f2c12bbb0ecf747b05cfd4f027e76428841a0",
+   "path": "internal/flywheel/gauges.go",
+   "line": 580,
+   "claim": "\ud83d\udfe1 **Worker claim bypasses sibling guard"
+  },
+  {
+   "pr": 344,
+   "commit": "eda41ab3d396471802245db3b24a52526ba51560",
+   "path": "internal/flywheel/tui.go",
+   "line": 189,
+   "claim": "\ud83d\udfe1 **Empty tables open blank drill-downs"
+  },
+  {
+   "pr": 344,
+   "commit": "eda41ab3d396471802245db3b24a52526ba51560",
+   "path": "internal/flywheel/tui.go",
+   "line": 428,
+   "claim": "\ud83d\udfe1 **Small terminals overflow their dimensions"
+  },
+  {
+   "pr": 344,
+   "commit": "eda41ab3d396471802245db3b24a52526ba51560",
+   "path": "internal/flywheel/tui.go",
+   "line": 576,
+   "claim": "\ud83d\udfe1 **Andon states lose their color"
+  },
+  {
+   "pr": 344,
+   "commit": "eda41ab3d396471802245db3b24a52526ba51560",
+   "path": "internal/flywheel/tui.go",
+   "line": 601,
+   "claim": "\ud83d\udfe1 **Breadcrumbs float above frame bottom"
+  },
+  {
+   "pr": 345,
+   "commit": "387cb0747b10d3e2dce800ff03ad9ebdaeb2c468",
+   "path": "internal/flywheel/landqueue.go",
+   "line": 105,
+   "claim": "\ud83d\udfe1 **Wrong worktree branch gets landed"
+  },
+  {
+   "pr": 345,
+   "commit": "387cb0747b10d3e2dce800ff03ad9ebdaeb2c468",
+   "path": "internal/flywheel/landqueue.go",
+   "line": 138,
+   "claim": "\ud83d\udd34 **Refused landing advances integration branch"
+  },
+  {
+   "pr": 346,
+   "commit": "28f6edcf9eedc32f1e5e3be1fd5f2c3f6ae20715",
+   "path": "internal/flywheel/tui_live.go",
+   "line": 61,
+   "claim": "\ud83d\udfe1 **Quit performs another failing refresh"
+  },
+  {
+   "pr": 346,
+   "commit": "28f6edcf9eedc32f1e5e3be1fd5f2c3f6ae20715",
+   "path": "internal/flywheel/tui_live.go",
+   "line": 153,
+   "claim": "\ud83d\udfe1 **Signals leave the terminal corrupted"
+  },
+  {
+   "pr": 347,
+   "commit": "1500264842a866aa30744f51598e5d32e1a2c8ad",
+   "path": "internal/flywheel/shard.go",
+   "line": 118,
+   "claim": "\ud83d\udfe1 **Legacy log failures drop events"
+  },
+  {
+   "pr": 347,
+   "commit": "1500264842a866aa30744f51598e5d32e1a2c8ad",
+   "path": "internal/flywheel/shard.go",
+   "line": 239,
+   "claim": "\ud83d\udfe1 **Same-size rewrites retain stale events"
+  },
+  {
+   "pr": 348,
+   "commit": "f3dab7f01f027c3aecacae2955277a57ed7862e9",
+   "path": "internal/flywheel/events.go",
+   "line": 473,
+   "claim": "\ud83d\udd34 **Shard tampering passes log verification"
+  },
+  {
+   "pr": 349,
+   "commit": "66a4b56c854013d69dc52006ecc92033aee45db0",
+   "path": "internal/flywheel/chain.go",
+   "line": 420,
+   "claim": "\ud83d\udd34 **Later genesis links pass verification"
+  },
+  {
+   "pr": 349,
+   "commit": "66a4b56c854013d69dc52006ecc92033aee45db0",
+   "path": "internal/flywheel/shard_seal.go",
+   "line": 104,
+   "claim": "\ud83d\udd34 **Resealing blesses legacy log edits"
+  },
+  {
+   "pr": 350,
+   "commit": "f145328e0c3d154a7762f318ffbc550a9766626e",
+   "path": "internal/flywheel/shard.go",
+   "line": 453,
+   "claim": "\ud83d\udfe1 **Replacement events disappear from tails"
+  },
+  {
+   "pr": 351,
+   "commit": "61d85fb78c9ccefe6450be3adc6318a3b81a6160",
+   "path": "cmd/flywheel/log_cmd.go",
+   "line": 107,
+   "claim": "\ud83d\udd34 **Failed config write leaves partial migration"
+  },
+  {
+   "pr": 351,
+   "commit": "61d85fb78c9ccefe6450be3adc6318a3b81a6160",
+   "path": "cmd/flywheel/log_cmd.go",
+   "line": 107,
+   "claim": "\ud83d\udfe1 **Migrated shard locks remain trackable"
+  },
+  {
+   "pr": 351,
+   "commit": "61d85fb78c9ccefe6450be3adc6318a3b81a6160",
+   "path": "cmd/flywheel/log_cmd.go",
+   "line": 142,
+   "claim": "\ud83d\udfe1 **Nested factories miss pinned-CI warning"
+  },
+  {
+   "pr": 354,
+   "commit": "86770c2cd57b8acf9bfd337907f4c91ad0507a5a",
+   "path": "cmd/flywheel/staff_cmd.go",
+   "line": 77,
+   "claim": "\ud83d\udfe1 **Invalid configuration records staffing"
+  },
+  {
+   "pr": 354,
+   "commit": "86770c2cd57b8acf9bfd337907f4c91ad0507a5a",
+   "path": "internal/flywheel/config.go",
+   "line": 483,
+   "claim": "\ud83d\udd34 **Same-session auditors pass validation"
+  },
+  {
+   "pr": 354,
+   "commit": "86770c2cd57b8acf9bfd337907f4c91ad0507a5a",
+   "path": "internal/flywheel/staffing.go",
+   "line": 73,
+   "claim": "\ud83d\udfe1 **Session-only roles disappear from summary"
+  },
+  {
+   "pr": 354,
+   "commit": "86770c2cd57b8acf9bfd337907f4c91ad0507a5a",
+   "path": "internal/flywheel/summary.go",
+   "line": 54,
+   "claim": "\ud83d\udfe1 **Configured roles absent from factory"
+  },
+  {
+   "pr": 356,
+   "commit": "70ec4d94f263a53d94fb26b33cfc5eb60068c442",
+   "path": "internal/flywheel/gauges_test.go",
+   "line": 38,
+   "claim": "\ud83d\udfe1 **Temporary repositories still permit maintenance"
+  },
+  {
+   "pr": 357,
+   "commit": "754baac4c4cba71cb196e4bc99294b0116c2a4bc",
+   "path": "internal/flywheel/factory.go",
+   "line": 648,
+   "claim": "\ud83d\udfe1 **Staffing andon opens missing task"
+  },
+  {
+   "pr": 357,
+   "commit": "754baac4c4cba71cb196e4bc99294b0116c2a4bc",
+   "path": "internal/flywheel/tui.go",
+   "line": 458,
+   "claim": "\ud83d\udfe1 **Role fields occupy wrong columns"
+  },
+  {
+   "pr": 358,
+   "commit": "17669d3d25e4d0fc152f6e4ddbaf7467b80f03c3",
+   "path": "internal/flywheel/config.go",
+   "line": 574,
+   "claim": "\ud83d\udfe1 **WIP keys missing from guidance"
+  },
+  {
+   "pr": 358,
+   "commit": "17669d3d25e4d0fc152f6e4ddbaf7467b80f03c3",
+   "path": "internal/flywheel/station.go",
+   "line": 77,
+   "claim": "\ud83d\udfe1 **Out-of-order dispatches misassign lines"
+  }
+ ]
+}
