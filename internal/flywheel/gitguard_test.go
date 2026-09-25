@@ -97,7 +97,41 @@ func TestGitGuardAllowsReads(t *testing.T) {
 	}
 }
 
+// isolateGuardEnv points GitGuardEnv at a test-owned bin directory and clears
+// GitGuardRepoEnv, so an in-process GitGuard never logs to the guard log of an
+// enclosing flywheel run attempt: a gate's go test inherits the worker's
+// environment (#442). The enclosing guard directory is dropped from PATH too.
+func isolateGuardEnv(t *testing.T) {
+	t.Helper()
+	if live := os.Getenv(GitGuardEnv); live != "" {
+		t.Setenv("PATH", removeGuardDir(os.Getenv("PATH"), filepath.Clean(live)))
+	}
+	t.Setenv(GitGuardEnv, filepath.Join(t.TempDir(), "test.bin"))
+	t.Setenv(GitGuardRepoEnv, "")
+}
+
+// TestGitGuardTestsIsolateLiveLog checks that a refusal under isolateGuardEnv
+// is logged to the test's own log, never to the enclosing attempt's (#442).
+func TestGitGuardTestsIsolateLiveLog(t *testing.T) {
+	live := filepath.Join(t.TempDir(), "T1.r1.bin")
+	t.Setenv(GitGuardEnv, live)
+	t.Run("isolated", func(t *testing.T) {
+		isolateGuardEnv(t)
+		var out, errb bytes.Buffer
+		if rc := GitGuard([]string{"commit", "-m", "test"}, nil, &out, &errb); rc != 1 {
+			t.Errorf("GitGuard(commit...) returned %d, want 1", rc)
+		}
+		if refused, _ := readGitGuardLog(os.Getenv(GitGuardEnv)); strings.Join(refused, ",") != "commit" {
+			t.Errorf("isolated log refused %v, want [commit]", refused)
+		}
+	})
+	if _, err := os.Stat(gitGuardLogPath(live)); !os.IsNotExist(err) {
+		t.Errorf("the live guard log was written (stat err %v), want none", err)
+	}
+}
+
 func TestGitGuardPassesThrough(t *testing.T) {
+	isolateGuardEnv(t)
 	var out, errb bytes.Buffer
 	rc := GitGuard([]string{"--version"}, nil, &out, &errb)
 	if rc != 0 {
@@ -109,6 +143,7 @@ func TestGitGuardPassesThrough(t *testing.T) {
 }
 
 func TestGitGuardRefusalExitsOne(t *testing.T) {
+	isolateGuardEnv(t)
 	var out, errb bytes.Buffer
 	rc := GitGuard([]string{"commit", "-m", "test"}, nil, &out, &errb)
 	if rc != 1 {
@@ -120,6 +155,7 @@ func TestGitGuardRefusalExitsOne(t *testing.T) {
 }
 
 func TestGitGuardSkipsGuardDir(t *testing.T) {
+	isolateGuardEnv(t)
 	guardDir := t.TempDir()
 	t.Setenv(GitGuardEnv, guardDir)
 
@@ -304,6 +340,7 @@ func newRepo(t *testing.T) string {
 // repository only: a gate's tests must be able to init and commit in their own
 // temporary repositories (#325).
 func TestGitGuardScopedToUnitRepo(t *testing.T) {
+	isolateGuardEnv(t)
 	unit, other := newRepo(t), newRepo(t)
 	t.Setenv(GitGuardRepoEnv, commonDir(t, unit))
 	commit := func(dir string) int {
@@ -326,6 +363,7 @@ func TestGitGuardScopedToUnitRepo(t *testing.T) {
 // TestGitGuardLogsWrites checks that the guard logs each write-class call
 // beside its bin directory, and nothing for a read (#361).
 func TestGitGuardLogsWrites(t *testing.T) {
+	isolateGuardEnv(t)
 	unit := newRepo(t)
 	binDir := filepath.Join(t.TempDir(), "T1.r1.bin")
 	t.Setenv(GitGuardEnv, binDir)

@@ -343,6 +343,64 @@ func TestGitStateDetectsIndexWrite(t *testing.T) {
 	}
 }
 
+// TestGitStateFetchedTagShared checks that a tag on a commit a remote-tracking
+// ref contains (a fetch by another process, #442) needs guard evidence, while
+// a local-only tag and a deleted tag stay the worker's (#423).
+func TestGitStateFetchedTagShared(t *testing.T) {
+	dir, origin := t.TempDir(), t.TempDir()
+	gitRepoWithCommit(t, dir)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "--bare", origin)
+	run("remote", "add", "origin", origin)
+	run("commit", "-q", "--allow-empty", "-m", "released")
+	run("push", "-q", "origin", "HEAD:refs/heads/main")
+	run("fetch", "-q", "origin")
+	run("commit", "-q", "--allow-empty", "-m", "local only")
+
+	tag := func(args ...string) gitChange {
+		t.Helper()
+		before, ok := readGitState(dir)
+		if !ok {
+			t.Fatal("readGitState: not ok")
+		}
+		run(append([]string{"tag"}, args...)...)
+		return gitWriteNote(dir, before, true)
+	}
+
+	ch := tag("v0.21.1", "HEAD~1")
+	if !ch.changed || ch.worker || !strings.Contains(ch.note, "tags: +v0.21.1 (on a remote-tracking commit)") {
+		t.Errorf("fetched tag: %+v, want a shared change naming +v0.21.1 on a remote-tracking commit", ch)
+	}
+	if signal, note := gitWriteVerdict(ch, nil); signal {
+		t.Errorf("fetched tag without guard evidence raised a signal: %q", note)
+	}
+	if signal, _ := gitWriteVerdict(ch, []string{"tag"}); !signal {
+		t.Error("fetched tag with a refused git tag raised no signal")
+	}
+
+	if ch = tag("-a", "-m", "release", "v0.21.2", "HEAD~1"); !ch.changed || ch.worker || !strings.Contains(ch.note, "+v0.21.2 (on a remote-tracking commit)") {
+		t.Errorf("annotated fetched tag: %+v, want a shared change", ch)
+	}
+
+	if ch = tag("v9"); !ch.changed || !ch.worker || !strings.Contains(ch.note, "tags: +v9") || strings.Contains(ch.note, "remote-tracking") {
+		t.Errorf("local-only tag: %+v, want a worker change naming +v9", ch)
+	}
+	if signal, _ := gitWriteVerdict(ch, nil); !signal {
+		t.Error("local-only tag without a guard record raised no signal")
+	}
+
+	if ch = tag("-d", "v0.21.1"); !ch.changed || !ch.worker || !strings.Contains(ch.note, "tags: -v0.21.1") {
+		t.Errorf("deleted tag: %+v, want a worker change naming -v0.21.1", ch)
+	}
+}
+
 // guardLogWrite appends line to the git guard's log for T1's attempt in dir,
 // as the guard does when the worker runs a write-class git command (#361);
 // the sim adapter installs no guard, so a test hook records it this way.

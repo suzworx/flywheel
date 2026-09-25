@@ -188,9 +188,12 @@ all.
   never charged to the worker), flywheel compares the worktree's HEAD, branch, stash, index (`git
   diff --cached --name-only`) and tags with the state captured at dispatch, and `note` names what
   changed: `HEAD: <old> -> <new>`, `stash`, `index: staged <paths>`, `index: unstaged <paths>`,
-  `tags: +<name>/-<name>`. An index or tag change is a `git-write` signal whatever the guard logged;
-  a HEAD or stash move is one only when the git guard logged a worker write (issue #361; otherwise
-  another process moved it and the note says so). Paths the worker staged are unstaged by flywheel
+  `tags: +<name>/-<name>`. An index change, a local-only tag or a deleted tag is a `git-write`
+  signal whatever the guard logged; a HEAD or stash move is one only when the git guard logged a
+  worker write (issue #361; otherwise another process moved it and the note says so). Tags are
+  shared by every worktree like the stash, so a tag added or moved onto a commit a remote-tracking
+  ref contains (a fetch; the note marks it `(on a remote-tracking commit)`) is a shared-ref change
+  and needs guard evidence too (issue #442). Paths the worker staged are unstaged by flywheel
   (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
   <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
   `git` first on PATH never reaches it.
