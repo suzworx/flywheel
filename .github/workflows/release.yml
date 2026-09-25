@@ -8,6 +8,12 @@ name: release
 on:
   push:
     branches: [main]
+  # A safety net: GitHub once delivered no push event for a release PR's merge
+  # (2026-09-25, v0.22.0), so no workflow ran and nothing was tagged until a
+  # manual dispatch. release-please is idempotent, so a daily run tags a merged
+  # release PR that a lost push event left untagged (issue #440).
+  schedule:
+    - cron: '41 9 * * *'
   workflow_dispatch:
 
 permissions:
