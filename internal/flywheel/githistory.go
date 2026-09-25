@@ -106,7 +106,7 @@ func gitQuery(dir string, args ...string) (out string, absent bool, err error) {
 // gitChange is what moved between the dispatch state and the final one.
 type gitChange struct {
 	changed bool     // anything moved, or the final state is unreadable
-	worker  bool     // the index or tags moved: the worker's write, guard log or not (#423)
+	worker  bool     // the index or a local-only/deleted tag moved: the worker's write, guard log or not (#423, #442)
 	staged  []string // paths staged during the attempt, for flywheel to unstage
 	note    string   // names what changed
 }
@@ -116,14 +116,17 @@ type gitChange struct {
 // moved is no change; a final state that cannot be read counts as a change
 // (#318 review). The note names each part: "HEAD: <old> -> <new>", "branch:
 // ...", "stash", "index: staged <paths>", "index: unstaged <paths>", "tags:
-// +<name>/-<name>".
+// +<name>/-<name>", a tag on a remote-tracking commit marked "(on a
+// remote-tracking commit)".
 //
 // It compares end points only: a push, or a write undone before the attempt
 // ends, leaves them equal. Concurrent attempts in one worktree share HEAD, and
-// every worktree of a repository shares refs/stash, so a history change is
-// seen by each attempt that overlapped it; gitWriteVerdict charges HEAD and
-// stash moves to the worker only with guard evidence (#361). An index or tag
-// change needs none: the guard may never be reached (#423). An unstaged path
+// every worktree of a repository shares refs/stash and the tags, so a history
+// change is seen by each attempt that overlapped it; gitWriteVerdict charges
+// HEAD and stash moves, and a tag added or moved onto a commit a
+// remote-tracking ref contains (a fetch, #442), to the worker only with guard
+// evidence (#361). An index change, a local-only tag or a deleted tag needs
+// none: the guard may never be reached (#423). An unstaged path
 // counts only while HEAD stayed put (a commit by another process empties the
 // staged list too).
 func gitWriteNote(dir string, before gitState, captured bool) gitChange {
@@ -155,8 +158,15 @@ func gitWriteNote(dir string, before gitState, captured bool) gitChange {
 		ch.worker = ch.worker || after.head == before.head
 	}
 	if tags := tagDelta(before.tags, after.tags); len(tags) > 0 {
+		shared := sharedTags(dir, setMinus(after.tags, before.tags))
+		for i, t := range tags {
+			if shared[t] {
+				tags[i] = t + " (on a remote-tracking commit)"
+			} else {
+				ch.worker = true
+			}
+		}
 		parts = append(parts, "tags: "+listClip(tags))
-		ch.worker = true
 	}
 	if len(parts) == 0 {
 		return gitChange{}
@@ -168,9 +178,11 @@ func gitWriteNote(dir string, before gitState, captured bool) gitChange {
 
 // gitWriteVerdict decides the git-write signal from gitWriteNote's result and
 // the write subcommands the git guard refused during the attempt (#361): a
-// moved HEAD or stash is charged to the worker only with evidence that it
-// tried a write; otherwise another process moved it and the note says so. An
-// index or tag write is the worker's without that evidence (#423).
+// moved HEAD or stash, or a tag on a remote-tracking commit (tags are shared
+// refs, #442), is charged to the worker only with evidence that it tried a
+// write; otherwise another process moved it and the note says so. An index
+// write, a local-only tag or a deleted tag is the worker's without that
+// evidence (#423).
 func gitWriteVerdict(ch gitChange, refused []string) (signal bool, outNote string) {
 	if !ch.changed {
 		return false, ""
@@ -227,6 +239,25 @@ func tagDelta(before, after []string) []string {
 		}
 	}
 	return out
+}
+
+// sharedTags returns the "+<name>" entries of tagDelta, among the added or
+// moved tags ("refs/tags/<name> <sha>"), whose commit (annotated tags peeled)
+// a remote-tracking ref contains: a fetch brings such a tag in (#442). A query
+// that fails leaves the tag out, so it stays charged (#423). Read-only git.
+func sharedTags(dir string, added []string) map[string]bool {
+	shared := map[string]bool{}
+	for _, t := range added {
+		f := strings.Fields(t)
+		if len(f) < 2 {
+			continue
+		}
+		out, absent, err := gitQuery(dir, "for-each-ref", "--contains", f[1]+"^{commit}", "--format=%(refname)", "refs/remotes")
+		if err == nil && !absent && out != "" {
+			shared["+"+strings.TrimPrefix(f[0], "refs/tags/")] = true
+		}
+	}
+	return shared
 }
 
 // listClip joins paths with ", ", naming at most ten.
