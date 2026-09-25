@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.24.0](https://github.com/suzworx/flywheel/compare/v0.23.1...v0.24.0) (2026-09-25)
+
+
+### Features
+
+* flywheel lint warns when no gate runs the full suite or owns misses a changed package's importer tests ([#480](https://github.com/suzworx/flywheel/issues/480)) ([57ba178](https://github.com/suzworx/flywheel/commit/57ba178942e7f1343d0bd81b3c63db1296a84a19)), closes [#462](https://github.com/suzworx/flywheel/issues/462)
+
+
+### Bug Fixes
+
+* the attempt commit takes a correction delta's owns, and paths it leaves out are warned, recorded as uncommitted, and fail validate ([#484](https://github.com/suzworx/flywheel/issues/484)) ([40b0250](https://github.com/suzworx/flywheel/commit/40b0250ff407204b9e307043dfd13dcbcab7b5fe)), closes [#477](https://github.com/suzworx/flywheel/issues/477)
+* the review fix loop sends only findings inside owns and stops with needs-owner, and review --fix takes --allow-overlap ([#482](https://github.com/suzworx/flywheel/issues/482)) ([0d52a39](https://github.com/suzworx/flywheel/commit/0d52a39b6b7a5828b9664d72b83c8c89d2587a2d))
+* workers are told git is read-only, index writes included, and the guard's index refusal names a read-only whitespace check ([#483](https://github.com/suzworx/flywheel/issues/483)) ([3957eed](https://github.com/suzworx/flywheel/commit/3957eed74376e0a8c96614b4e38cc3a9dafc6454)), closes [#478](https://github.com/suzworx/flywheel/issues/478)
+
 ## [0.23.1](https://github.com/suzworx/flywheel/compare/v0.23.0...v0.23.1) (2026-09-25)
 
 
