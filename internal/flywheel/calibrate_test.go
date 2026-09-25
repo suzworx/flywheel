@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -88,6 +89,89 @@ func TestCalibrateSample(t *testing.T) {
 	}
 }
 
+// TestCalibratePerPersona: with a panel (issue #420) each persona reviews the
+// same sampled PR states as the single reviewer would (same seed); the report
+// carries each persona's hits, misses, extra findings and recall, a persona
+// whose review fails is skipped alone, and the panel hits a case when any
+// persona hit it. An unknown persona is refused before any review.
+func TestCalibratePerPersona(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	initRepo(t, repo)
+	git(t, repo, []string{"branch", "-M", "main"})
+	git(t, repo, []string{"checkout", "-q", "-b", "feat"})
+	for _, f := range []string{"a.go", "b.go"} {
+		if err := os.WriteFile(filepath.Join(repo, f), []byte("package x\n\nfunc F() int { return 1 }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, repo, []string{"add", "a.go", "b.go"})
+	git(t, repo, []string{"commit", "-q", "-m", "feature"})
+	commit := git(t, repo, []string{"rev-parse", "HEAD"})
+	git(t, repo, []string{"checkout", "-q", "main"})
+	cases := filepath.Join(t.TempDir(), "cases.json")
+	body := `{"cases":[{"pr":7,"commit":"` + commit + `","path":"a.go","line":3,"claim":"A is wrong"},` +
+		`{"pr":7,"commit":"` + commit + `","path":"b.go","line":3,"claim":"B is wrong"},` +
+		`{"pr":8,"commit":"0123456789abcdef0123456789abcdef01234567","path":"a.go","line":1,"claim":"gone"}]}`
+	if err := os.WriteFile(cases, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	canned := map[string][]ReviewFinding{
+		"correctness": {{Severity: "major", File: "a.go", Line: 4, Claim: "wrong"}},
+		"tests":       {{Severity: "major", File: "b.go", Line: 3, Claim: "untested"}, {Severity: "minor", File: "c.go", Line: 1, Claim: "noise"}},
+		"":            {{Severity: "major", File: "a.go", Line: 3, Claim: "wrong"}},
+	}
+	var calls []string
+	review := func(_, _, _, dimension string) ([]ReviewFinding, error) {
+		calls = append(calls, dimension)
+		if dimension == "errors" {
+			return nil, errors.New("reviewer crashed")
+		}
+		return canned[dimension], nil
+	}
+	panel := []string{"correctness", "tests", "errors"}
+	rep, err := Calibrate(repo, cases, CalibrateOptions{Session: "cal", Main: "main", Panel: panel, Review: review})
+	if err != nil {
+		t.Fatalf("Calibrate: %v", err)
+	}
+	if strings.Join(calls, ",") != "correctness,tests,errors" {
+		t.Errorf("reviews run = %v, want each persona once on the one reachable PR state", calls)
+	}
+	want := []CalibrationPersona{
+		{Persona: "correctness", Groups: 1, Cases: 2, Hits: 1, Misses: 1, Extra: 0, Recall: 0.5},
+		{Persona: "tests", Groups: 1, Cases: 2, Hits: 1, Misses: 1, Extra: 1, Recall: 0.5},
+		{Persona: "errors"},
+	}
+	if !reflect.DeepEqual(rep.Personas, want) {
+		t.Errorf("Personas = %+v, want %+v", rep.Personas, want)
+	}
+	if rep.Cases != 2 || rep.Hits != 2 || rep.Recall != 1 || rep.Extra != 1 {
+		t.Errorf("panel union = %d/%d recall %.2f extra %d, want 2/2 1.00 1", rep.Hits, rep.Cases, rep.Recall, rep.Extra)
+	}
+	gr := rep.Reports[0]
+	if gr.Found != 3 || len(gr.Missed) != 0 || len(gr.Personas) != 3 || gr.Personas[2].Skipped == "" {
+		t.Errorf("group report = %+v, want 3 found, none missed, errors skipped", gr)
+	}
+	md := rep.Markdown()
+	for _, s := range []string{"## Per persona", "| correctness | 1 | 2 | 1 | 1 | 0 | 0.50 |", "| errors | 0 | 0 | 0 | 0 | 0 | 0.00 |",
+		"| **panel (any persona)** | 1 | 2 | 2 | 0 | 1 | 1.00 |"} {
+		if !strings.Contains(md, s) {
+			t.Errorf("markdown lacks %q:\n%s", s, md)
+		}
+	}
+	// The same seed samples the same PR state with and without a panel.
+	for seed := int64(1); seed <= 4; seed++ {
+		one, err1 := Calibrate(repo, cases, CalibrateOptions{Session: "cal", Main: "main", Sample: 1, Seed: seed, Review: review})
+		many, err2 := Calibrate(repo, cases, CalibrateOptions{Session: "cal", Main: "main", Sample: 1, Seed: seed, Panel: panel, Review: review})
+		if err1 != nil || err2 != nil || one.Reports[0].PR != many.Reports[0].PR || one.Personas != nil || strings.Contains(one.Markdown(), "Per persona") {
+			t.Errorf("seed %d: single %+v (%v) vs panel %+v (%v)", seed, one.Reports, err1, many.Reports, err2)
+		}
+	}
+	if _, err := Calibrate(repo, cases, CalibrateOptions{Session: "cal", Panel: []string{"nope"}, Review: review}); err == nil || !strings.Contains(err.Error(), `"nope"`) {
+		t.Errorf("unknown persona: err = %v", err)
+	}
+}
+
 func TestCalibrateRun(t *testing.T) {
 	t.Parallel()
 	repo := t.TempDir()
@@ -111,7 +195,10 @@ func TestCalibrateRun(t *testing.T) {
 	run := func(line int) (CalibrationReport, string) {
 		var wt string
 		rep, err := Calibrate(repo, cases, CalibrateOptions{Session: "cal", Main: "main",
-			Review: func(ledgerDir, workdir, task string) ([]ReviewFinding, error) {
+			Review: func(ledgerDir, workdir, task, dimension string) ([]ReviewFinding, error) {
+				if dimension != "" {
+					t.Fatalf("no panel: dimension %q, want the single reviewer", dimension)
+				}
 				wt = workdir
 				events, err := ReadEvents(ledgerDir)
 				if err != nil {

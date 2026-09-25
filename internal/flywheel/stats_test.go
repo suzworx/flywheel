@@ -1,8 +1,10 @@
 package flywheel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,6 +148,90 @@ func TestStatsReview(t *testing.T) {
 	}
 	if empty := reviewStats(nil); empty.Reviews != 0 || empty.MedianRoundsToClean != 0 {
 		t.Errorf("empty log review = %+v", empty)
+	}
+}
+
+// TestStatsPerPersona checks the per-persona and per-level review rows (issue
+// #420): each panel dimension's rounds, findings by severity and how they were
+// answered (fixed, disputed, dismissed); a general reviewer's finding stays
+// general even when its category names a dimension; the integration persona
+// at level group; and the release audit's failed checks at level release.
+func TestStatsPerPersona(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dim := func(task, d string, fs ...ReviewFinding) []Event {
+		evs, _, _ := dimensionReviewEvents(task, "r1", 1, "rev-1", "m", "claude", "t", d, fs)
+		return evs
+	}
+	majorC := ReviewFinding{Severity: "major", Category: "correctness", File: "c.go", Claim: "Leaks a handle", Scenario: "early return"}
+	minorT := ReviewFinding{Severity: "minor", Category: "tests", File: "c_test.go", Claim: "No edge case", Scenario: "empty input"}
+	general, _, _ := reviewEvents("T2", "r1", 1, "rev-1", "m", "claude", "t", []ReviewFinding{majorC})
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{Task: "T1", Kind: "started", Attempt: "r1", Session: "w-1"},
+		{Task: "T2", Kind: "planned", Brief: "b.txt"},
+		{Task: "T2", Kind: "started", Attempt: "r1", Session: "w-2"},
+	}
+	events = append(events, dim("T1", "correctness", majorC)...)
+	events = append(events, dim("T1", "tests", minorT)...)
+	events = append(events, general...)
+	events = append(events,
+		Event{Task: "T1", Kind: "finding_response", Session: "w-1", Finding: "T1-r1-correctness-1", Verdict: "fixed", Note: "flushed"},
+		Event{Task: "T1", Kind: "finding_response", Session: "lead-1", Finding: "T1-r1-tests-1", Verdict: "disputed", Note: "dismissed: covered elsewhere"},
+		Event{Task: "T2", Kind: "finding_response", Session: "w-2", Finding: "T2-r1-1", Verdict: "disputed", Note: "by design"},
+		Event{Task: "T1", Kind: "review_finding", Session: "rev-2", Category: IntegrationPersona, Severity: "blocker",
+			Reason: "group:g1", Finding: "group:g1-r1-1", Path: "a.go", Title: "clash"},
+		Event{Task: "group:g1", Kind: "group_reviewed", Session: "rev-2", Verdict: "correct", Note: "members T1,T2; 1 finding(s)"},
+		Event{Kind: "release_audited", Session: "aud", Version: "v0.2.0", Verdict: "fail", Checks: []string{"tag=pass", "notes=fail"}},
+	)
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Stats(dir)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	type row struct {
+		persona, level                                   string
+		reviews, findings, sev, fixed, disputed, dismiss int
+	}
+	want := []row{
+		{"correctness", "unit", 1, 1, 1, 1, 0, 0},
+		{"general", "unit", 1, 1, 1, 0, 1, 0},
+		{"tests", "unit", 1, 1, 1, 0, 0, 1},
+		{IntegrationPersona, "group", 1, 1, 1, 0, 0, 0},
+	}
+	sev := map[string]string{"correctness": "major", "general": "major", "tests": "minor", IntegrationPersona: "blocker"}
+	got := rep.Review.ByPersona
+	if len(got) != len(want) {
+		t.Fatalf("ByPersona = %+v, want %d rows", got, len(want))
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Persona != w.persona || g.Level != w.level || g.Reviews != w.reviews || g.Findings != w.findings ||
+			g.BySeverity[sev[w.persona]] != w.sev || g.Fixed != w.fixed || g.Disputed != w.disputed || g.Dismissed != w.dismiss {
+			t.Errorf("ByPersona[%d] = %+v, want %+v", i, g, w)
+		}
+	}
+	wantLevels := []StatsLevel{
+		{Level: "unit", Rounds: 3, NotPass: 2, Findings: 3, Blocking: 2},
+		{Level: "group", Rounds: 1, NotPass: 1, Findings: 1, Blocking: 1},
+		{Level: "release", Rounds: 1, NotPass: 1, Findings: 1, Blocking: 1},
+	}
+	if len(rep.Review.ByLevel) != len(wantLevels) {
+		t.Fatalf("ByLevel = %+v, want %+v", rep.Review.ByLevel, wantLevels)
+	}
+	for i, w := range wantLevels {
+		if rep.Review.ByLevel[i] != w {
+			t.Errorf("ByLevel[%d] = %+v, want %+v", i, rep.Review.ByLevel[i], w)
+		}
+	}
+	b, err := json.Marshal(rep)
+	if err != nil || !strings.Contains(string(b), `"by_persona":[{"persona":"correctness","level":"unit"`) || !strings.Contains(string(b), `"by_level":[`) {
+		t.Errorf("stats JSON lacks the per-persona rows: %s (err %v)", b, err)
+	}
+	if empty := reviewStats(nil); empty.ByPersona != nil || empty.ByLevel != nil {
+		t.Errorf("empty log per-persona = %+v %+v, want none", empty.ByPersona, empty.ByLevel)
 	}
 }
 

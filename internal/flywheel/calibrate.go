@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -122,29 +123,51 @@ func sampleGroups(groups, n int, seed int64) []int {
 
 // CalibrateOptions configures one calibration run (issue #389).
 type CalibrateOptions struct {
-	Sample   int    // PR states to review; <= 0 means 10
-	Seed     int64  // the sample's seed
-	Worker   string // the reviewing worker (ReviewAgentOptions.Worker)
-	Session  string // the reviewer session; required
-	Window   int    // the matching window in lines; <= 0 means 15
-	Main     string // the ref the merge-base is taken against; default origin/main
+	Sample  int    // PR states to review; <= 0 means 10
+	Seed    int64  // the sample's seed
+	Worker  string // the reviewing worker (ReviewAgentOptions.Worker)
+	Session string // the reviewer session; required
+	Window  int    // the matching window in lines; <= 0 means 15
+	Main    string // the ref the merge-base is taken against; default origin/main
+	// Panel calibrates each of these personas (issue #420) over the same
+	// sampled groups instead of the single reviewer; a case counts as hit
+	// by the panel when any persona hit it. Empty: the single reviewer.
+	Panel    []string
 	Progress io.Writer
-	// Review runs the reviewer over one synthetic unit; default: ReviewAgent.
-	Review func(ledgerDir, workdir, task string) ([]ReviewFinding, error)
+	// Review runs the reviewer over one synthetic unit as dimension (a
+	// panel persona, or "" for the single reviewer); default: ReviewAgent.
+	Review func(ledgerDir, workdir, task, dimension string) ([]ReviewFinding, error)
+}
+
+// CalibrationPersona is one panel persona's calibration (issue #420): in a
+// group report, its result on that PR state (Skipped when its review
+// failed); in the run's report, its totals over the PR states it reviewed.
+type CalibrationPersona struct {
+	Persona string
+	Groups  int // PR states it reviewed
+	Cases   int
+	Hits    int
+	Misses  int
+	Extra   int
+	Recall  float64
+	Skipped string
 }
 
 // CalibrationGroupReport is one PR state's result; Skipped names why a
-// group was not reviewed.
+// group was not reviewed. With a panel, Hits and Missed are the union (a
+// case any persona hit), Found and Extra every persona's findings, and
+// Personas each persona's own result.
 type CalibrationGroupReport struct {
-	PR      int
-	Commit  string
-	Cases   int
-	Hits    int
-	Found   int
-	Recall  float64
-	Missed  []CalibrationCase
-	Extra   []ReviewFinding
-	Skipped string
+	PR       int
+	Commit   string
+	Cases    int
+	Hits     int
+	Found    int
+	Recall   float64
+	Missed   []CalibrationCase
+	Extra    []ReviewFinding
+	Skipped  string
+	Personas []CalibrationPersona
 }
 
 // CalibrationReport is a calibration run: per group and overall, over the
@@ -159,6 +182,8 @@ type CalibrationReport struct {
 	Hits      int
 	Extra     int
 	Recall    float64
+	Panel     []string             // the personas calibrated; empty for the single reviewer
+	Personas  []CalibrationPersona // each persona's totals, in Panel order
 }
 
 // Calibrate measures the review agent against the external reviewer's cases
@@ -180,11 +205,26 @@ func Calibrate(repo, cases string, o CalibrateOptions) (CalibrationReport, error
 	if o.Main == "" {
 		o.Main = "origin/main"
 	}
+	for _, d := range o.Panel {
+		if !personaKnown(d) {
+			return CalibrationReport{}, fmt.Errorf("calibrate --panel: no persona %q; known: %s", d, strings.Join(PanelPersonas(), ", "))
+		}
+	}
 	if o.Review == nil {
-		o.Review = func(ledgerDir, workdir, task string) ([]ReviewFinding, error) {
-			res, err := ReviewAgent(ledgerDir, task, ReviewAgentOptions{
-				Worker: o.Worker, Session: o.Session, Workdir: workdir, Round: 1, Progress: o.Progress,
-			})
+		// A panel persona is run as review.panel configures it (its worker,
+		// or adapter and model) unless --worker names one for every persona.
+		members := map[string]PanelMember{}
+		if cfg, _, err := LoadConfig(repo); err == nil {
+			for _, m := range cfg.ReviewPanel() {
+				members[m.Persona] = m
+			}
+		}
+		o.Review = func(ledgerDir, workdir, task, dimension string) ([]ReviewFinding, error) {
+			ro := ReviewAgentOptions{Worker: o.Worker, Dimension: dimension, Session: o.Session, Workdir: workdir, Round: 1, Progress: o.Progress}
+			if m := members[dimension]; dimension != "" && o.Worker == "" {
+				ro.Worker, ro.Adapter, ro.Model = m.Worker, m.Adapter, m.Model
+			}
+			res, err := ReviewAgent(ledgerDir, task, ro)
 			return res.Findings, err
 		}
 	}
@@ -193,7 +233,11 @@ func Calibrate(repo, cases string, o CalibrateOptions) (CalibrationReport, error
 		return CalibrationReport{}, err
 	}
 	groups := groupCalibrationCases(all)
-	rep := CalibrationReport{CasesFile: filepath.ToSlash(cases), Groups: len(groups), Seed: o.Seed, Window: o.Window}
+	rep := CalibrationReport{CasesFile: filepath.ToSlash(cases), Groups: len(groups), Seed: o.Seed, Window: o.Window, Panel: o.Panel}
+	totals := map[string]*CalibrationPersona{}
+	for _, d := range o.Panel {
+		totals[d] = &CalibrationPersona{Persona: d}
+	}
 	for _, i := range sampleGroups(len(groups), o.Sample, o.Seed) {
 		g := groups[i]
 		progress(o.Progress, fmt.Sprintf("calibrate: PR #%d at %.12s (%d case(s))", g.PR, g.Commit, len(g.Cases)))
@@ -204,11 +248,27 @@ func Calibrate(repo, cases string, o CalibrateOptions) (CalibrationReport, error
 			rep.Cases += gr.Cases
 			rep.Hits += gr.Hits
 			rep.Extra += len(gr.Extra)
+			for _, p := range gr.Personas {
+				if t := totals[p.Persona]; t != nil && p.Skipped == "" {
+					t.Groups++
+					t.Cases += p.Cases
+					t.Hits += p.Hits
+					t.Misses += p.Misses
+					t.Extra += p.Extra
+				}
+			}
 		}
 		rep.Reports = append(rep.Reports, gr)
 	}
 	if rep.Cases > 0 {
 		rep.Recall = float64(rep.Hits) / float64(rep.Cases)
+	}
+	for _, d := range o.Panel {
+		p := totals[d]
+		if p.Cases > 0 {
+			p.Recall = float64(p.Hits) / float64(p.Cases)
+		}
+		rep.Personas = append(rep.Personas, *p)
 	}
 	return rep, nil
 }
@@ -263,13 +323,45 @@ func calibrateGroup(repo string, g CalibrationGroup, o CalibrateOptions) Calibra
 		gr.Skipped = fmt.Sprintf("synthetic ledger: %v", err)
 		return gr
 	}
-	found, err := o.Review(ledger, wt, task)
-	if err != nil {
-		gr.Skipped = fmt.Sprintf("review failed: %v", err)
+	dims := o.Panel
+	if len(dims) == 0 {
+		dims = []string{""}
+	}
+	hitBy := make([]bool, len(g.Cases))
+	var failures []string
+	reviewed := 0
+	for _, d := range dims {
+		found, err := o.Review(ledger, wt, task, d)
+		if err != nil {
+			failures = append(failures, strings.TrimSpace(d+" review failed: "+err.Error()))
+			if d != "" {
+				gr.Personas = append(gr.Personas, CalibrationPersona{Persona: d, Skipped: err.Error()})
+			}
+			continue
+		}
+		reviewed++
+		hits, misses, extra := matchFindings(g.Cases, found, o.Window)
+		for i, c := range g.Cases {
+			hitBy[i] = hitBy[i] || slices.Contains(hits, c)
+		}
+		gr.Found += len(found)
+		gr.Extra = append(gr.Extra, extra...)
+		if d != "" {
+			gr.Personas = append(gr.Personas, CalibrationPersona{Persona: d, Groups: 1, Cases: len(g.Cases), Hits: len(hits),
+				Misses: len(misses), Extra: len(extra), Recall: float64(len(hits)) / float64(len(g.Cases))})
+		}
+	}
+	if reviewed == 0 {
+		gr.Skipped = strings.Join(failures, "; ")
 		return gr
 	}
-	hits, misses, extra := matchFindings(g.Cases, found, o.Window)
-	gr.Hits, gr.Found, gr.Missed, gr.Extra = len(hits), len(found), misses, extra
+	for i, c := range g.Cases {
+		if hitBy[i] {
+			gr.Hits++
+		} else {
+			gr.Missed = append(gr.Missed, c)
+		}
+	}
 	gr.Recall = float64(gr.Hits) / float64(gr.Cases)
 	return gr
 }
@@ -298,7 +390,20 @@ func (r CalibrationReport) Markdown() string {
 		fmt.Fprintf(&b, "| #%d | %.12s | %d | %d | %.2f | %d | %d | |\n", g.PR, g.Commit, g.Cases, g.Hits, g.Recall, g.Found, len(g.Extra))
 	}
 	fmt.Fprintf(&b, "\n**Total: %d/%d cases found, recall %.2f, %d extra finding(s).**\n", r.Hits, r.Cases, r.Recall, r.Extra)
-	b.WriteString("\nCost: each reviewed PR state is one reviewer run on the configured model (up to two when its first answer is refused).\n")
+	if len(r.Panel) > 0 {
+		// Per persona (issue #420): the same sampled PR states, each persona
+		// alone, then the panel, which hits a case when any persona does.
+		b.WriteString("\n## Per persona\n\n")
+		b.WriteString("| persona | PR states | cases | hits | misses | extra | recall |\n")
+		b.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
+		for _, p := range r.Personas {
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %.2f |\n", p.Persona, p.Groups, p.Cases, p.Hits, p.Misses, p.Extra, p.Recall)
+		}
+		fmt.Fprintf(&b, "| **panel (any persona)** | %d | %d | %d | %d | %d | %.2f |\n", reviewed, r.Cases, r.Hits, r.Cases-r.Hits, r.Extra, r.Recall)
+		fmt.Fprintf(&b, "\nCost: each reviewed PR state is one reviewer run per persona (%d), each up to two when its first answer is refused.\n", len(r.Panel))
+	} else {
+		b.WriteString("\nCost: each reviewed PR state is one reviewer run on the configured model (up to two when its first answer is refused).\n")
+	}
 	b.WriteString("\n## Missed claims\n\n")
 	missed := 0
 	for _, g := range r.Reports {

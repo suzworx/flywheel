@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -200,6 +201,10 @@ type StatsReview struct {
 	// the gates missed.
 	CaughtAfterGates int `json:"caught_after_gates"`
 	Dismissals       int `json:"dismissals"` // findings a lead dismissed
+	// ByPersona and ByLevel break the review down per reviewer persona and
+	// per review level (issue #420).
+	ByPersona []StatsPersona `json:"by_persona,omitempty"`
+	ByLevel   []StatsLevel   `json:"by_level,omitempty"`
 }
 
 // reviewStats folds the event log into StatsReview.
@@ -254,7 +259,151 @@ func reviewStats(events []Event) StatsReview {
 	}
 	rs.CleanUnits = len(clean)
 	rs.MedianRoundsToClean = median(clean)
+	rs.ByPersona, rs.ByLevel = personaStats(events)
 	return rs
+}
+
+// StatsPersona is one reviewer persona's numbers (issue #420): the panel
+// dimensions at level unit, the integration persona at level group, and the
+// general reviewer (persona general) for a review without a dimension.
+type StatsPersona struct {
+	Persona    string         `json:"persona"`
+	Level      string         `json:"level"`       // unit or group
+	Reviews    int            `json:"reviews"`     // review rounds it ran
+	Findings   int            `json:"findings"`    // findings it raised
+	BySeverity map[string]int `json:"by_severity"` // those findings per severity
+	Fixed      int            `json:"fixed"`       // findings the worker last answered fixed
+	Disputed   int            `json:"disputed"`    // findings the worker last disputed
+	Dismissed  int            `json:"dismissed"`   // findings a lead dismissed
+}
+
+// StatsLevel is one review level's numbers (issue #420): unit (the panel and
+// the general reviewer), group (integration reviews) and release (release
+// audits, whose findings are its failed checks).
+type StatsLevel struct {
+	Level    string `json:"level"`
+	Rounds   int    `json:"rounds"`   // reviews, group reviews or release audits
+	NotPass  int    `json:"not_pass"` // of those, the ones whose verdict was not pass
+	Findings int    `json:"findings"`
+	Blocking int    `json:"blocking"` // blocker or major; every failed release check
+}
+
+// findingPersona is the persona that raised a review_finding: integration, a
+// panel dimension (its id is <task>-r<n>-<dimension>-<i>), else general — a
+// general reviewer's finding may carry a dimension's name as its category.
+func findingPersona(e Event) string {
+	if e.Category == IntegrationPersona {
+		return e.Category
+	}
+	if personaKnown(e.Category) && strings.Contains(e.Finding, "-"+e.Category+"-") {
+		return e.Category
+	}
+	return "general"
+}
+
+// personaStats folds the event log into per-persona and per-level rows,
+// sorted by level (unit, group) then persona; levels with no round and no
+// finding are left out.
+func personaStats(events []Event) ([]StatsPersona, []StatsLevel) {
+	rows := map[string]*StatsPersona{}
+	row := func(persona string) *StatsPersona {
+		if rows[persona] == nil {
+			level := "unit"
+			if persona == IntegrationPersona {
+				level = "group"
+			}
+			rows[persona] = &StatsPersona{Persona: persona, Level: level, BySeverity: map[string]int{}}
+		}
+		return rows[persona]
+	}
+	levels := map[string]*StatsLevel{"unit": {Level: "unit"}, "group": {Level: "group"}, "release": {Level: "release"}}
+	raised := map[string]string{} // task \x00 finding id → persona
+	for _, e := range events {
+		switch {
+		case e.Kind == "review_finding":
+			p := row(findingPersona(e))
+			p.Findings++
+			p.BySeverity[e.Severity]++
+			raised[e.Task+"\x00"+e.Finding] = p.Persona
+			l := levels[p.Level]
+			l.Findings++
+			if blockingFinding(e) {
+				l.Blocking++
+			}
+		case agentReviewed(e):
+			dim := reviewDimension(e)
+			if dim == "" {
+				dim = "general"
+			}
+			row(dim).Reviews++
+			levels["unit"].Rounds++
+			if e.Verdict != "pass" {
+				levels["unit"].NotPass++
+			}
+		case e.Kind == "group_reviewed":
+			row(IntegrationPersona).Reviews++
+			levels["group"].Rounds++
+			if e.Verdict != "pass" {
+				levels["group"].NotPass++
+			}
+		case e.Kind == "release_audited":
+			l := levels["release"]
+			l.Rounds++
+			if e.Verdict != "pass" {
+				l.NotPass++
+			}
+			for _, c := range e.Checks {
+				if strings.HasSuffix(c, "=fail") {
+					l.Findings++
+					l.Blocking++
+				}
+			}
+		}
+	}
+	answer := map[string]string{} // task \x00 finding id → dismissed, fixed or disputed
+	workers := map[string]map[string]bool{}
+	for _, e := range events {
+		k := e.Task + "\x00" + e.Finding
+		if e.Kind != "finding_response" || raised[k] == "" || answer[k] == "dismissed" {
+			continue
+		}
+		if workers[e.Task] == nil {
+			workers[e.Task] = workerSessions(events, e.Task)
+		}
+		if leadDismissal(e, workers[e.Task]) {
+			answer[k] = "dismissed"
+		} else {
+			answer[k] = e.Verdict
+		}
+	}
+	for k, a := range answer {
+		p := rows[raised[k]]
+		switch a {
+		case "dismissed":
+			p.Dismissed++
+		case "fixed":
+			p.Fixed++
+		case "disputed":
+			p.Disputed++
+		}
+	}
+	var out []StatsPersona
+	for _, p := range rows {
+		out = append(out, *p)
+	}
+	slices.SortFunc(out, func(a, b StatsPersona) int {
+		if a.Level != b.Level {
+			return strings.Compare(b.Level, a.Level) // unit before group
+		}
+		return strings.Compare(a.Persona, b.Persona)
+	})
+	var lv []StatsLevel
+	for _, name := range []string{"unit", "group", "release"} {
+		if l := levels[name]; l.Rounds > 0 || l.Findings > 0 {
+			lv = append(lv, *l)
+		}
+	}
+	return out, lv
 }
 
 // mapValues lists m's values in no particular order.

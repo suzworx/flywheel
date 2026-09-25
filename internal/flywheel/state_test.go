@@ -417,6 +417,51 @@ func TestDeriveSkipsEmptyTaskEvents(t *testing.T) {
 	}
 }
 
+// TestDeriveSkipsGroupTask: a group:<id> task's records (issue #420) list no
+// status-less unit among Tasks; the group is in Groups with its members, its
+// latest verdict and its open blocking integration findings, and a later
+// round's second group_reviewed closes a finding it no longer re-reports.
+func TestDeriveSkipsGroupTask(t *testing.T) {
+	t.Parallel()
+	rc := 0
+	events := []Event{
+		{TS: "2026-09-13T00:00:00Z", Task: "A", Kind: "planned"},
+		{TS: "2026-09-13T00:00:00Z", Task: "B", Kind: "planned"},
+		{TS: "2026-09-13T00:00:01Z", Task: "group:g1", Kind: "validated", Gate: "g1", RC: &rc},
+		{TS: "2026-09-13T00:00:01Z", Task: "A", Kind: "review_finding", Category: IntegrationPersona, Severity: "blocker",
+			Reason: "group:g1", Finding: "group:g1-r1-1", Path: "a.go", Title: "clash"},
+		{TS: "2026-09-13T00:00:01Z", Task: "group:g1", Kind: "review_finding", Category: IntegrationPersona, Severity: "minor",
+			Reason: "group:g1", Finding: "group:g1-r1-2", Path: "x.go", Title: "nit"},
+		{TS: "2026-09-13T00:00:01Z", Task: "group:g1", Kind: "group_reviewed", Verdict: "correct",
+			Note: "members A,B; missing -; conflicts -; gates g1=0; 2 finding(s)"},
+	}
+	st := Derive(events)
+	if len(st.Tasks) != 2 {
+		t.Fatalf("Derive() tasks = %+v, want A and B only", st.Tasks)
+	}
+	if _, ok := findTask(st, "group:g1"); ok {
+		t.Error("group:g1 listed among Tasks")
+	}
+	if st.Counts[""] != 0 {
+		t.Errorf("counts = %v, want no status-less entry", st.Counts)
+	}
+	if len(st.Groups) != 1 {
+		t.Fatalf("Groups = %+v, want one", st.Groups)
+	}
+	g := st.Groups[0]
+	if g.ID != "g1" || g.Task != "group:g1" || strings.Join(g.Members, ",") != "A,B" || g.Verdict != "correct" || g.Rounds != 1 || g.Open != 1 {
+		t.Errorf("group = %+v, want g1 A,B correct 1 round 1 open (the minor never blocks)", g)
+	}
+	later := append(slices.Clone(events), Event{TS: "2026-09-13T00:00:02Z", Task: "group:g1", Kind: "group_reviewed",
+		Verdict: "pass", Note: "members A,B; missing -; conflicts -; gates g1=0; 0 finding(s)"})
+	if g := Derive(later).Groups[0]; g.Verdict != "pass" || g.Rounds != 2 || g.Open != 0 {
+		t.Errorf("after a clean round group = %+v, want pass, 2 rounds, 0 open", g)
+	}
+	if st := Derive(events[:2]); st.Groups != nil {
+		t.Errorf("no group records: Groups = %+v, want nil (omitted from state.json)", st.Groups)
+	}
+}
+
 func TestDeriveKeepsWorkerSessionAfterInspected(t *testing.T) {
 	t.Parallel()
 	// inspected events carry the inspector's session; they must never

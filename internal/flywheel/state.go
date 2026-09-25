@@ -20,7 +20,63 @@ type State struct {
 	Version   int            `json:"version"`
 	UpdatedAt string         `json:"updated_at"`
 	Tasks     []TaskState    `json:"tasks"`
+	Groups    []GroupState   `json:"groups,omitempty"`
 	Counts    map[string]int `json:"counts"`
+}
+
+// GroupState is one reviewed group (issue #420): its group:<id> task is no
+// unit, so Derive lists it here instead of among Tasks. Members come from the
+// latest group_reviewed note; Open counts the open blocking integration
+// findings the group raised, on its members or on the group task itself.
+type GroupState struct {
+	ID        string   `json:"id"`
+	Task      string   `json:"task"`
+	Members   []string `json:"members,omitempty"`
+	Verdict   string   `json:"verdict,omitempty"`
+	Rounds    int      `json:"rounds"`
+	Open      int      `json:"open"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+// deriveGroups summarises every group:<id> task of events, sorted by id.
+// events is in ledger order, as openIntegrationFindings reads it.
+func deriveGroups(events []Event) []GroupState {
+	byTask := map[string]*GroupState{}
+	var order []string
+	for _, e := range derivationOrder(events) {
+		if !strings.HasPrefix(e.Task, "group:") {
+			continue
+		}
+		g, ok := byTask[e.Task]
+		if !ok {
+			g = &GroupState{ID: strings.TrimPrefix(e.Task, "group:"), Task: e.Task}
+			byTask[e.Task] = g
+			order = append(order, e.Task)
+		}
+		if e.Kind == "group_reviewed" {
+			g.Rounds++
+			g.Verdict = e.Verdict
+			if rest, ok := strings.CutPrefix(e.Note, "members "); ok {
+				list, _, _ := strings.Cut(rest, ";")
+				g.Members = strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
+			}
+		}
+		g.UpdatedAt = e.TS
+	}
+	slices.Sort(order)
+	out := make([]GroupState, 0, len(order))
+	for _, t := range order {
+		g := byTask[t]
+		for _, task := range append([]string{g.Task}, g.Members...) {
+			for _, f := range openIntegrationFindings(events, task) {
+				if f.Reason == g.Task {
+					g.Open++
+				}
+			}
+		}
+		out = append(out, *g)
+	}
+	return out
 }
 
 // TaskState is the per-task derived state.
@@ -160,6 +216,9 @@ func Derive(events []Event) State {
 		if e.Task == "" {
 			continue // floor-level events (staffed) carry no task and no state
 		}
+		if strings.HasPrefix(e.Task, "group:") {
+			continue // a group's own records (issue #420): State.Groups, not a unit
+		}
 		ts, ok := tasks[e.Task]
 		if !ok {
 			ts = TaskState{ID: e.Task}
@@ -268,6 +327,9 @@ func Derive(events []Event) State {
 		counts[ts.Status] = counts[ts.Status] + 1
 	}
 	st.Counts = counts
+	if groups := deriveGroups(events); len(groups) > 0 {
+		st.Groups = groups
+	}
 	return st
 }
 

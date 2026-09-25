@@ -20,7 +20,7 @@ const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|re
 	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree]] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review --group <goal|tasks:a,b> --agent --session <session> [--base REF] [--worker NAME] [--dir DIR]\n" +
 	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]\n" +
-	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--out FILE] [--dir DIR]"
+	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--panel [dims]] [--out FILE] [--dir DIR]"
 
 func init() {
 	register("review", "re-run a task's gates in an isolated worktree, or run the review agent (--agent)", runReview)
@@ -261,6 +261,7 @@ type reviewCalibrateOptions struct {
 	window  int
 	main    string
 	out     string
+	panel   panelList
 }
 
 // reviewCalibrateFlags defines the calibrate flags once, so help and run
@@ -278,8 +279,39 @@ func reviewCalibrateFlags() (*flag.FlagSet, *reviewCalibrateOptions) {
 	fs.IntVar(&o.window, "window", 15, "a finding matches a case within this many lines")
 	fs.StringVar(&o.main, "main", "origin/main", "the ref each PR's merge-base is taken against")
 	fs.StringVar(&o.out, "out", "", "report file (default .flywheel/reviews/calibration-<UTC date>.md)")
+	fs.Var(&o.panel, "panel", "calibrate each panel persona and the panel as a whole: bare, the configured review.panel; --panel=a,b, those dimensions")
 	return fs, o
 }
+
+// panelList is `review calibrate --panel [dims]` (issue #420): bare, the
+// configured review.panel; with a value, those comma-separated dimensions.
+type panelList struct {
+	set  bool
+	dims []string
+}
+
+func (p *panelList) String() string {
+	if p == nil {
+		return ""
+	}
+	return strings.Join(p.dims, ",")
+}
+
+func (p *panelList) Set(v string) error {
+	p.set, p.dims = v != "false", nil
+	if v == "true" || v == "false" {
+		return nil
+	}
+	for _, d := range strings.Split(v, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			p.dims = append(p.dims, d)
+		}
+	}
+	return nil
+}
+
+// IsBoolFlag lets --panel stand alone.
+func (p *panelList) IsBoolFlag() bool { return true }
 
 // runReviewCalibrate implements `flywheel review calibrate` (issue #389): it
 // runs the review agent over a sample of past PR states and prints and
@@ -288,6 +320,11 @@ func reviewCalibrateFlags() (*flag.FlagSet, *reviewCalibrateOptions) {
 func runReviewCalibrate(args []string) {
 	fs, o := reviewCalibrateFlags()
 	pos, err := parseArgs(fs, args)
+	if err == nil && o.panel.set && len(o.panel.dims) == 0 && len(pos) == 1 {
+		// --panel a,b: the bare flag's dimensions as the next argument.
+		err = o.panel.Set(pos[0])
+		pos = nil
+	}
 	if err == nil && len(pos) > 0 {
 		err = fmt.Errorf("unexpected argument %q", pos[0])
 	}
@@ -299,9 +336,18 @@ func runReviewCalibrate(args []string) {
 		reviewUsage(os.Stderr)
 		os.Exit(2)
 	}
+	panel := o.panel.dims
+	if o.panel.set && len(panel) == 0 {
+		cfg, _, cerr := flywheel.LoadConfig(o.dir)
+		if cerr != nil {
+			fmt.Fprintf(os.Stderr, "flywheel review calibrate: %v\n", cerr)
+			os.Exit(1)
+		}
+		panel = cfg.PanelDimensions()
+	}
 	rep, err := flywheel.Calibrate(o.dir, o.cases, flywheel.CalibrateOptions{
 		Sample: o.sample, Seed: o.seed, Worker: o.worker, Session: o.session, Window: o.window, Main: o.main,
-		Progress: os.Stderr,
+		Panel: panel, Progress: os.Stderr,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel review calibrate: %v\n", err)

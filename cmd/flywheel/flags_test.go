@@ -276,6 +276,34 @@ func TestCalibrateRunFlags(t *testing.T) {
 	}
 }
 
+// TestCalibratePerPersonaFlags parses `review calibrate --panel [dims]` (issue
+// #420): unset by default, bare for the configured panel, with a value for
+// those dimensions; help and run share the one flag set.
+func TestCalibratePerPersonaFlags(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		args []string
+		set  bool
+		dims string
+		pos  int
+	}{
+		{nil, false, "", 0},
+		{[]string{"--panel"}, true, "", 0},
+		{[]string{"--panel=correctness, tests"}, true, "correctness,tests", 0},
+		{[]string{"--panel", "tests,docs"}, true, "", 1}, // the run takes the next argument as the dims
+		{[]string{"--panel=false"}, false, "", 0},
+	} {
+		fs, o := reviewCalibrateFlags()
+		pos, err := parseFlags(fs, tc.args)
+		if err != nil || o.panel.set != tc.set || o.panel.String() != tc.dims || len(pos) != tc.pos {
+			t.Errorf("%v: set %v dims %q pos %v (err %v), want %v %q %d", tc.args, o.panel.set, o.panel.String(), pos, err, tc.set, tc.dims, tc.pos)
+		}
+	}
+	if fs, _ := reviewCalibrateFlags(); fs.Lookup("panel") == nil || !strings.Contains(reviewUsageLine, "--panel [dims]") {
+		t.Error("review calibrate help lacks --panel")
+	}
+}
+
 // TestReviewLoopFlags parses the review loop's flags (issue #389): --fix with
 // its rounds, correcting worker and worktree, and a lead's --dismiss.
 func TestReviewLoopFlags(t *testing.T) {

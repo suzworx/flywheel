@@ -319,7 +319,23 @@ all.
   event of that dimension on the tree — `pass` or `correct` — else `missing`; a `correct` whose
   blocking findings are all dismissed counts as `pass`. The thread groups a panel round as one
   `## Round <n> — review panel` section with one line per member and its findings under a
-  `### <dimension>` heading, then `## Panel verdict matrix — tree <sha7>`.
+  `### <dimension>` heading, then `## Panel verdict matrix — tree <sha7>`. When `review.panel` is
+  configured, the floor shows each unit's matrix after its run state as `panel <cells>`, one cell per
+  dimension in panel order on the unit's measured tree (its latest `owns_checked` or `validated`
+  reading): `✓` pass, `✗` correct (an open blocking finding), `·` not reviewed on that tree. The
+  cells' room comes out of MODEL, then SESSION; when they cannot give it, the cells are dropped and
+  the task id is never cut. `--json` carries them as a unit's `panel`.
+- Numbers: `flywheel stats` breaks the review down per persona (`review.by_persona`: persona, level
+  `unit` or `group`, reviews, findings, `by_severity`, and how the findings were answered — `fixed`
+  or `disputed` by the worker's latest `finding_response`, `dismissed` by a lead) and per level
+  (`review.by_level`: `unit`, `group`, and `release` when a release audit ran — rounds, rounds not
+  pass, findings, blocking; a release audit's findings are its failed checks). A finding counts
+  for a panel persona only when its id is `<task>-r<n>-<dimension>-<i>`; others are `general`.
+  `flywheel review calibrate --panel [dims]` (bare: the configured `review.panel`) calibrates each
+  persona over the same sampled PR states (same seed) and reports, per persona, the PR states it
+  reviewed, hits, misses, extra findings and recall, then the panel, which hits a case when any
+  persona hit it; the report's `**Total: ...**` line is the panel's. A persona whose review fails
+  is skipped for that PR state alone.
 - Config: `review.panel` — the members, `[{"persona": ..., "worker"|"adapter"+"model": ...}]`;
   `config get/set review.panel` reads and writes a comma-separated persona list (a member keeps its
   reviewer). Unset, the panel is `correctness, tests, errors, contract, docs`; `security` and `cross-os`
@@ -366,7 +382,13 @@ all.
 - Config: `review.group_gates` (default none); `config get/set review.group_gates` reads and writes
   the commands separated by `;;` (set also splits on newlines; an empty value clears them).
 - Enforced: `flywheel land` refuses (rule `group`, below).
-- Known gap: the group task `group:<id>` appears as a task with no status in the derived state.
+- State: a group task is not a unit. `Derive` leaves `group:<id>` out of `tasks` (and `counts`) and
+  lists it under `groups` in `.flywheel/state.json`: `id`, `task`, `members` (from the latest
+  `group_reviewed` note), `verdict` (the latest), `rounds`, `open` (its open blocking integration
+  findings, on its members or on the group task) and `updated_at`; `groups` is omitted when there is
+  none. The floor (`flywheel factory`, text and `--json`) shows a `groups (<n>)` section, one row per
+  group — id, verdict, `open <n>`, members — and an andon entry `group:<id>` `group-open (<n>)` while
+  one is open.
 - Exit: 0 on `pass`, 1 on `correct` or an error, 6 on a refusal, 2 on usage.
 
 ### `blocked`
