@@ -162,34 +162,70 @@ func DismissFinding(dir, task, id, session, note string) error {
 // findingsContract ends every findings delta: the answer the framework parses.
 const findingsContract = "Fix each finding, change nothing unrelated, re-run every gate, and end your report with one line per finding: `FINDING <id>: fixed <evidence>` or `FINDING <id>: disputed <reason>`.\n"
 
+// FindingInOwns reports whether a finding on path is one the unit's worker
+// can fix (issue #458): a finding on no file, or a path inside owns that no
+// negated entry covers.
+func FindingInOwns(owns []string, path string) bool {
+	return path == "" || ownsContains(owns, path) && !ownsNegated(owns, path)
+}
+
+// blockingByOwns splits the task's open blocking findings, in ledger order,
+// by the owns of its effective brief (AttemptBrief): inside, the worker can
+// fix them; outside, they need an owner. The brief is read only when a
+// blocking finding is open.
+func blockingByOwns(dir string, events []Event, task string) (inside, outside []Event, err error) {
+	var blocking []Event
+	for _, f := range OpenFindings(events, task) {
+		if blockingFinding(f) {
+			blocking = append(blocking, f)
+		}
+	}
+	if len(blocking) == 0 {
+		return nil, nil, nil
+	}
+	header, _, err := AttemptBrief(dir, events, task)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range blocking {
+		if FindingInOwns(header.Owns, f.Path) {
+			inside = append(inside, f)
+		} else {
+			outside = append(outside, f)
+		}
+	}
+	return inside, outside, nil
+}
+
 // FindingsDelta writes .flywheel/briefs/<task>.review-<round>.txt (round is
 // the task's latest agent review round): the effective brief's owns, needs
-// and gate lines, then one block per open blocking finding and the answer
-// contract (issue #389). It returns the repo-relative path and the number of
-// findings in it; with none it writes no file and returns "", 0.
-func FindingsDelta(dir string, events []Event, task string) (string, int, error) {
+// and gate lines, then one block per open blocking finding inside owns
+// (FindingInOwns) and the answer contract (issue #389). It returns the
+// repo-relative path, the number of findings in it and the open blocking
+// findings outside owns, which the worker cannot fix and are never sent
+// (issue #458); with none inside it writes no file and returns "", 0.
+func FindingsDelta(dir string, events []Event, task string) (string, int, []Event, error) {
+	inside, outside, err := blockingByOwns(dir, events, task)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	if len(inside) == 0 {
+		return "", 0, outside, nil
+	}
 	var b strings.Builder
 	b.WriteString("# TASK: fix the review findings\n\n")
-	n := 0
-	for _, f := range OpenFindings(events, task) {
-		if !blockingFinding(f) {
-			continue
-		}
-		n++
+	for _, f := range inside {
 		fmt.Fprintf(&b, "FINDING %s [%s] %s:%d — %s\n", f.Finding, f.Severity, f.Path, f.LineNo, f.Title)
 		fmt.Fprintf(&b, "scenario: %s\n", f.Observed)
 		fmt.Fprintf(&b, "fix hint: %s\n\n", f.Ask)
-	}
-	if n == 0 {
-		return "", 0, nil
 	}
 	b.WriteString(findingsContract)
 	round := nextReviewRound(events, task) - 1
 	path, err := writeResumeDelta(dir, task, fmt.Sprintf("%s.review-%d.txt", task, round), b.String())
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
-	return path, n, nil
+	return path, len(inside), outside, nil
 }
 
 // findingLine is one answer line of a worker's report: `FINDING <id>: fixed
@@ -237,24 +273,28 @@ type ReviewLoopOptions struct {
 }
 
 // ReviewLoopResult is how the loop ended: Verdict pass when no blocking
-// finding is open, else open with Open listing them.
+// finding is open, needs-owner when every open one is outside owns, else open
+// with Open listing them.
 type ReviewLoopResult struct {
 	Reviews     int
 	Corrections int
 	Verdict     string
 	Open        []Event
+	NeedsOwner  []Event  // open blocking findings outside owns, as of the last review (issue #458)
 	Missing     []string // finding ids a correction left unanswered, every round
 }
 
 // ReviewLoop closes the review loop of a unit (issue #389), deterministically:
 // review; when no blocking finding is open (OpenFindings) the verdict is
 // pass; else write the FindingsDelta, run the correction on it, read the
-// attempt's report and record one finding_response per open blocking finding
+// attempt's report and record one finding_response per blocking finding sent
 // — the worker's answer under the worker's session, or for an unanswered id a
 // disputed response noted "missing: the worker gave no answer" — and review
-// again. The agents never decide a finding is closed: only a later review
-// round or a lead's dismissal does. After Rounds reviews the open blocking
-// findings are returned with verdict open.
+// again. A finding outside owns is never sent (issue #458): when only those
+// are open the loop stops with verdict needs-owner and no correction. The
+// agents never decide a finding is closed: only a later review round or a
+// lead's dismissal does. After Rounds reviews the open blocking findings are
+// returned with verdict open; NeedsOwner lists the outside ones either way.
 func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error) {
 	if o.Review == nil || o.Correct == nil {
 		return ReviewLoopResult{}, fmt.Errorf("review loop: the review and correction actions are required")
@@ -276,12 +316,17 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 		if events, err = ReadEvents(dir); err != nil {
 			return res, err
 		}
+		inside, outside, err := blockingByOwns(dir, events, task)
+		if err != nil {
+			return res, err
+		}
 		res.Open = nil
 		for _, f := range OpenFindings(events, task) {
 			if blockingFinding(f) {
 				res.Open = append(res.Open, f)
 			}
 		}
+		res.NeedsOwner = outside
 		if len(res.Open) == 0 {
 			res.Verdict = "pass"
 			progress(o.Progress, fmt.Sprintf("%s review loop: pass after %d review(s), %d correction(s)", task, res.Reviews, res.Corrections))
@@ -292,7 +337,12 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 			progress(o.Progress, fmt.Sprintf("%s review loop: %d blocking finding(s) still open after %d review(s)", task, len(res.Open), res.Reviews))
 			return res, nil
 		}
-		delta, n, err := FindingsDelta(dir, events, task)
+		if len(inside) == 0 {
+			res.Verdict = "needs-owner"
+			progress(o.Progress, fmt.Sprintf("%s review loop: %d blocking finding(s) outside owns need an owner (assign them to another unit, amend owns, or dismiss)", task, len(outside)))
+			return res, nil
+		}
+		delta, n, _, err := FindingsDelta(dir, events, task)
 		if err != nil {
 			return res, err
 		}
@@ -302,7 +352,7 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 			return res, err
 		}
 		res.Corrections++
-		if err := recordFindingResponses(dir, task, run, res.Open, &res); err != nil {
+		if err := recordFindingResponses(dir, task, run, inside, &res); err != nil {
 			return res, err
 		}
 		refreshReviewThread(dir, task, o.Progress)

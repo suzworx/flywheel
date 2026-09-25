@@ -275,7 +275,8 @@ all.
   correction, one per open blocking finding it sent — the worker's answer parsed from the
   attempt's report (`.flywheel/runs/<task>.<attempt>.report.md`), under the worker's session; or,
   for an id the report does not answer, `disputed` with note `missing: the worker gave no answer`,
-  so the next round re-reviews it anyway. And by the lead, `flywheel review <task> --dismiss <id>
+  so the next round re-reviews it anyway. Responses are recorded only for the findings sent: a
+  finding outside the unit's effective owns is never sent and never gets one (issue #458). And by the lead, `flywheel review <task> --dismiss <id>
   --session S --note WHY`: `disputed` with note `dismissed: WHY`; a worker session of the task is
   refused (T4, exit 6), and the id must be a finding the task's reviewer raised.
 - Carries: `task`, `attempt` (the correction), `session`, `finding` (the id it answers), `verdict`
