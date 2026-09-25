@@ -5489,3 +5489,80 @@ func TestTreeWrites(t *testing.T) {
 		t.Errorf("treeWrites() with 50 observed = %v, want nil", got)
 	}
 }
+
+// TestRunCommitAttemptDeltaOwns checks a correction whose delta header widens
+// owns to a new path (issue #477): the attempt commit on fw/<task> includes
+// it, and nothing is left uncommitted.
+func TestRunCommitAttemptDeltaOwns(t *testing.T) {
+	t.Parallel()
+	dir := worktreeRepo(t) // T1 owns a.go
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() r1 error = %v", err)
+	}
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "b.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delta := filepath.Join(dir, ".flywheel", "T1.delta.txt")
+	if err := os.WriteFile(delta, []byte("owns: b.go\nneeds: none\n\n# TASK: widen\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", DeltaPath: delta, Worktree: true}); err != nil {
+		t.Fatalf("Run() correction error = %v", err)
+	}
+	fin := lastFinished(t, dir, "T1")
+	if !isCorrection(fin.Attempt) || fin.Reason != "stop" || !CommitOK(fin.Commit) {
+		t.Fatalf("finished attempt=%q reason=%q commit=%q, want a correction stop with a commit", fin.Attempt, fin.Reason, fin.Commit)
+	}
+	if len(fin.Uncommitted) != 0 || strings.Contains(fin.Note, "left uncommitted") {
+		t.Errorf("finished uncommitted=%v note=%q, want nothing left out", fin.Uncommitted, fin.Note)
+	}
+	if files := strings.TrimSpace(git(t, wt, []string{"show", "--name-only", "--format=", fin.Commit})); files != "b.go" {
+		t.Errorf("committed files = %q, want b.go", files)
+	}
+}
+
+// TestRunRecordsUncommitted checks a changed path outside every owns (issue
+// #477) is recorded on the finished event as uncommitted and warned about.
+func TestRunRecordsUncommitted(t *testing.T) {
+	t.Parallel()
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n", "notes.txt": "not owned\n"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	fin := lastFinished(t, dir, "T1")
+	if !reflect.DeepEqual(fin.Uncommitted, []string{"notes.txt"}) {
+		t.Errorf("finished uncommitted = %v, want [notes.txt]", fin.Uncommitted)
+	}
+	want := "warning: T1 r1: attempt commit left 1 changed path(s) uncommitted (outside owns): notes.txt"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("progress = %q, want line %q", buf.String(), want)
+	}
+}
+
+// TestEventUncommittedOnlyOnFinished checks the events validation refuses
+// uncommitted on any kind but finished (issue #477).
+func TestEventUncommittedOnlyOnFinished(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	err := AppendEvent(dir, Event{Task: "T1", Kind: "dispatched", Attempt: "r1", Uncommitted: []string{"x.go"}})
+	if err == nil || !strings.Contains(err.Error(), "cannot carry uncommitted") {
+		t.Errorf("AppendEvent() dispatched with uncommitted error = %v, want a refusal", err)
+	}
+}

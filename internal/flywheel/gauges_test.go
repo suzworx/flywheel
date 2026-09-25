@@ -3099,3 +3099,46 @@ func TestQuietGateInconclusive(t *testing.T) {
 		t.Errorf("quiet.lock still present after the timeout (stat err %v)", err)
 	}
 }
+
+// TestValidateOwnsUncommitted checks validate's owns check (issue #477): while
+// a path the attempt commit left uncommitted is still changed in the task
+// worktree the check fails, naming it once under its reason, and it passes
+// once the path is gone.
+func TestValidateOwnsUncommitted(t *testing.T) {
+	t.Parallel()
+	dir := worktreeRepo(t) // T1 owns a.go
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"commit", "-am", "gate"})
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"a.go": "package a\n", "notes.txt": "not owned\n"} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	want := []string{"left uncommitted by the attempt commit: notes.txt"}
+	if res.OwnsOK || !slices.Equal(res.Outside, want) {
+		t.Errorf("owns ok=%v outside=%q, want a failure naming only %q", res.OwnsOK, res.Outside, want)
+	}
+	if err := os.Remove(filepath.Join(wt, "notes.txt")); err != nil {
+		t.Fatal(err)
+	}
+	res, err = ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() after removal error = %v", err)
+	}
+	if !res.OwnsOK || len(res.Outside) != 0 {
+		t.Errorf("owns ok=%v outside=%q after removal, want a pass", res.OwnsOK, res.Outside)
+	}
+}
