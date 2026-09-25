@@ -1131,6 +1131,31 @@ func loadConfigText(t *testing.T, body string) error {
 	return err
 }
 
+// TestConfigLintSection checks the lint section's keys are known (issue #462)
+// and a near miss is hinted to them.
+func TestConfigLintSection(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":1,"workers":[{"name":"w","adapter":"sim","model":"m"}],"lint":{"full_suite":"make test","importers":false}}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", configFileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if c.Lint == nil || c.Lint.FullSuite != "make test" || c.Lint.Importers == nil || *c.Lint.Importers {
+		t.Errorf("Lint = %+v, want full_suite \"make test\" and importers false", c.Lint)
+	}
+	err = loadConfigText(t, `{"version":1,"workers":[{"name":"w","adapter":"sim"}],"lint":{"fullsuite":"x"}}`)
+	if err == nil || !strings.Contains(err.Error(), `did you mean "full_suite"?`) {
+		t.Errorf("LoadConfig(fullsuite) = %v, want a full_suite hint", err)
+	}
+}
+
 // TestConfigUnknownKeyHint checks an unknown key names the nearest key Config
 // accepts anywhere in its tree, or keeps today's message when none is near
 // (issue #463).

@@ -65,6 +65,17 @@ type Config struct {
 	Staffing   *StaffingConfig   `json:"staffing,omitempty"`
 	Review     *ReviewConfig     `json:"review,omitempty"`
 	Worktree   *WorktreeConfig   `json:"worktree,omitempty"`
+	Lint       *LintConfig       `json:"lint,omitempty"`
+}
+
+// LintConfig tunes flywheel lint's warnings (issue #462).
+type LintConfig struct {
+	// FullSuite is the regular expression a gate must match to count as the
+	// full test suite; "" means the default for the directory's toolchain.
+	FullSuite string `json:"full_suite,omitempty"`
+	// Importers turns the Go importer-coverage warning off when false; nil
+	// means on wherever go.mod exists.
+	Importers *bool `json:"importers,omitempty"`
 }
 
 // WorktreeConfig configures `flywheel run --worktree` (issue #430): a setup
