@@ -157,6 +157,21 @@ all.
   `<task> <attempt> never ran gate(s) <ids>` progress line; no signal is recorded (the lead
   re-measures every gate). `flywheel validate` prints `<task> note: the worker never ran gate(s)
   <ids> itself; its report's claims about them are unmeasured` after the gate lines (issue #365).
+- Workers never write git (issue #423). The guarantee is two layers that do not depend on PATH:
+  **denied at dispatch** — the claude adapter's default `--disallowedTools` denies `git` commit,
+  push, stash, reset, checkout, rebase, merge, add, rm, mv, restore, update-index, apply, tag,
+  branch (so `git branch --show-current` too; use `git rev-parse --abbrev-ref HEAD`), switch,
+  cherry-pick, revert, am, worktree, clean, notes, replace, update-ref and gc — and **detected after
+  each attempt** — on every exit path, before flywheel's own attempt commit (so its index refresh is
+  never charged to the worker), flywheel compares the worktree's HEAD, branch, stash, index (`git
+  diff --cached --name-only`) and tags with the state captured at dispatch, and `note` names what
+  changed: `HEAD: <old> -> <new>`, `stash`, `index: staged <paths>`, `index: unstaged <paths>`,
+  `tags: +<name>/-<name>`. An index or tag change is a `git-write` signal whatever the guard logged;
+  a HEAD or stash move is one only when the git guard logged a worker write (issue #361; otherwise
+  another process moved it and the note says so). Paths the worker staged are unstaged by flywheel
+  (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
+  <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
+  `git` first on PATH never reaches it.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

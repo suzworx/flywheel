@@ -608,6 +608,27 @@ func TestWorkerToolDefaults(t *testing.T) {
 	}
 }
 
+// TestDefaultDisallowedIndexWrites checks the default deny list covers every
+// index, ref and history write (#423) and leaves read-only git allowed.
+func TestDefaultDisallowedIndexWrites(t *testing.T) {
+	has := map[string]bool{}
+	for _, d := range defaultDisallowedTools {
+		has[d] = true
+	}
+	for _, sub := range []string{"commit", "push", "stash", "reset", "checkout", "rebase", "merge",
+		"add", "rm", "mv", "restore", "update-index", "apply", "tag", "branch", "switch",
+		"cherry-pick", "revert", "am", "worktree", "clean", "notes", "replace", "update-ref", "gc"} {
+		if !has["Bash(git "+sub+":*)"] {
+			t.Errorf("defaultDisallowedTools lacks Bash(git %s:*)", sub)
+		}
+	}
+	for _, sub := range []string{"status", "diff", "log"} {
+		if has["Bash(git "+sub+":*)"] {
+			t.Errorf("defaultDisallowedTools denies read-only git %s", sub)
+		}
+	}
+}
+
 // TestConfigBaselineValidate checks baseline validation: a valid baseline
 // passes, empty model fails, negative prices fail (issue #59).
 func TestConfigBaselineValidate(t *testing.T) {

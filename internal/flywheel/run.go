@@ -550,8 +550,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	baseline := computeBaseline(wt)
 	base := headCommit(wt)
 
-	// Snapshot the worktree's git history state before the worker runs (issue #314).
-	histBefore, histOK := gitHistoryState(wt)
+	// Snapshot the worktree's git history, index and tags before the worker
+	// runs (issue #314, #423).
+	histBefore, histOK := readGitState(wt)
 
 	// Worktree snapshot (issue #87): when dir sits inside a git repo that has
 	// other worktrees, record each one's changed paths and shas so validate
@@ -1648,19 +1649,31 @@ func flagGitWrite(dir, task, attempt, session, runRel, note string, w io.Writer)
 	if err := recordSignal(dir, task, attempt, session, "git-write", runRel); err != nil {
 		return err
 	}
-	progress(w, task+" "+attempt+" git-write: "+note+"; workers never commit, stash, reset, checkout or push")
+	progress(w, task+" "+attempt+" git-write: "+note+"; workers never stage, commit, stash, reset, checkout, tag or push")
 	return nil
 }
 
-// gitWriteCheck compares wt's git history with the dispatch state and decides
+// gitWriteCheck compares wt's git state with the dispatch state and decides
 // the git-write signal from the writes the git guard in guardBin logged
-// (#361): a moved HEAD alone is not the worker's doing. The log is removed
-// once read. note goes on the finished event whether or not signal is set.
-func gitWriteCheck(wt, before string, captured bool, guardBin string) (signal bool, note string) {
-	changed, note := gitWriteNote(wt, before, captured)
+// (#361): a moved HEAD alone is not the worker's doing, but a changed index
+// or tag set is, whatever the guard logged (#423). Paths the worker staged
+// are unstaged by flywheel (content kept) and named on the note. The log is
+// removed once read. note goes on the finished event whether or not signal is
+// set. Every exit path runs this before flywheel's own attempt commit (#391),
+// so flywheel's index refresh is never read as a worker write.
+func gitWriteCheck(wt string, before gitState, captured bool, guardBin string) (signal bool, note string) {
+	ch := gitWriteNote(wt, before, captured)
 	refused, _ := readGitGuardLog(guardBin)
 	_ = os.Remove(gitGuardLogPath(guardBin))
-	return gitWriteVerdict(changed, note, refused)
+	signal, note = gitWriteVerdict(ch, refused)
+	if len(ch.staged) > 0 {
+		if err := restoreIndex(wt, ch.staged); err != nil {
+			note = joinNote(note, clipNote("index restore failed: "+err.Error()))
+		} else {
+			note = joinNote(note, "index restored: "+listClip(ch.staged))
+		}
+	}
+	return signal, note
 }
 
 func recordSignal(dir, task, attempt, session, condition, runRel string) error {
