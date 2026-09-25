@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/suzworx/flywheel/compare/v0.21.0...v0.21.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* a reordered ledger is named as a reorder, and an explained chain break can be acknowledged ([#438](https://github.com/suzworx/flywheel/issues/438)) ([5fbd9ca](https://github.com/suzworx/flywheel/commit/5fbd9ca8474f09d5fd76b988defff24d478a39db)), closes [#436](https://github.com/suzworx/flywheel/issues/436)
+
 ## [0.21.0](https://github.com/suzworx/flywheel/compare/v0.20.0...v0.21.0) (2026-09-25)
 
 
