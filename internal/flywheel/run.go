@@ -458,17 +458,36 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read prompt %s: %w", promptSrc, err)
 	}
+	// A correction's delta is snapshotted per attempt at dispatch (issue
+	// #452): promptB is written atomically to
+	// .flywheel/briefs/<task>.<attempt>.delta.txt and that path is recorded
+	// on dispatched.Brief, so T1 reads back the exact bytes this attempt sent
+	// however the operator's file is later edited or reused for the next
+	// correction. The operator's file is left untouched. A failed snapshot
+	// fails the dispatch: it is the record T1 relies on. The sha256 recorded
+	// on dispatched is unchanged: it hashes promptB.
+	snapshot := ""
+	if o.Resume || o.DeltaPath != "" {
+		briefsDir := filepath.Join(dir, ".flywheel", "briefs")
+		name := o.Task + "." + attempt + ".delta.txt"
+		if err := atomicWrite(briefsDir, name, o.Task+"."+attempt+".delta-*.txt", promptB); err != nil {
+			return Result{}, fmt.Errorf("snapshot delta %s: %w", name, err)
+		}
+		if snapshot, err = filepath.Abs(filepath.Join(briefsDir, name)); err != nil {
+			return Result{}, err
+		}
+	}
 	// A prompt outside the worktree (a brief attached from another checkout)
 	// is copied in byte-for-byte and attached from its in-worktree copy, so
 	// no path in the dispatch points outside the worktree (issue #87). The
 	// sha256 recorded on dispatched is unchanged: it hashes promptB, the same
 	// bytes either way. A prompt already inside the workdir is attached as
-	// is, with no copy made.
-	if isOutsideWorktree(dir, promptSrc) {
+	// is, with no copy made. An outside correction is attached from its
+	// per-attempt snapshot, never a shared <task>.delta.txt.
+	if snapshot != "" && isOutsideWorktree(dir, promptSrc) {
+		promptSrc = snapshot
+	} else if isOutsideWorktree(dir, promptSrc) {
 		name := o.Task + ".txt"
-		if o.Resume || o.DeltaPath != "" {
-			name = o.Task + ".delta.txt"
-		}
 		briefsDir := filepath.Join(dir, ".flywheel", "briefs")
 		if err := os.MkdirAll(briefsDir, 0o755); err != nil {
 			return Result{}, fmt.Errorf("create %s: %w", briefsDir, err)
@@ -480,6 +499,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		promptSrc = dest
 	}
 	promptBriefField := promptBrief(dir, promptSrc)
+	if snapshot != "" {
+		promptBriefField = promptBrief(dir, snapshot)
+	}
 	prompt := string(promptB)
 
 	// The dispatched event carries the parsed header of the prompt it
@@ -1182,6 +1204,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	} else if steps == 0 {
 		reason = "start-failed"
 		note = firstStderrLine(filepath.Join(runsDir, o.Task+"."+attempt+".err"))
+	}
+	// A worker that ran steps but exited with no terminal result line was
+	// killed or crashed: an empty reason is none of the known outcomes, so it
+	// is an error, and the checkpoint below keeps its written files.
+	if reason == "" {
+		reason = "error"
+		note = joinNote(note, fmt.Sprintf("worker exited rc=%d with no result line (killed or crashed)", rc))
 	}
 	// A clean stop that leaves a background shell it started uncollected
 	// ended its session while the job ran, and the job died with it: the run

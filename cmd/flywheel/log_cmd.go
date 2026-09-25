@@ -192,7 +192,7 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 		var rest []flywheel.Event
 		for _, e := range events {
 			if e.Kind == "amended" {
-				if err = flywheel.AppendAmendedEvent(dir, e); err != nil {
+				if err = appendAmended(dir, e); err != nil {
 					break
 				}
 			} else {
@@ -205,7 +205,7 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 	} else {
 		for _, e := range events {
 			if e.Kind == "amended" {
-				err = flywheel.AppendAmendedEvent(dir, e)
+				err = appendAmended(dir, e)
 			} else {
 				err = flywheel.AppendEvent(dir, e)
 			}
@@ -215,6 +215,38 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 		}
 	}
 	finishLog(dir, err, noState)
+}
+
+// appendAmended appends one amended event: an acknowledgement (it names an
+// attempt) through appendAcknowledgement, any other through
+// flywheel.AppendAmendedEvent's inert-amendment check.
+func appendAmended(dir string, e flywheel.Event) error {
+	if e.Attempt != "" {
+		return appendAcknowledgement(dir, e)
+	}
+	return flywheel.AppendAmendedEvent(dir, e)
+}
+
+// appendAcknowledgement appends an amended event that acknowledges
+// correction e.Attempt's delta is not retained (issue #452). It amends no
+// brief, so it carries none; the attempt must already have a dispatched
+// event for the task (Validate, per event, checks the c* attempt and the
+// note). rule T1 then passes that correction's mismatched or unreadable
+// delta, naming the note, and nothing else.
+func appendAcknowledgement(dir string, e flywheel.Event) error {
+	if e.Brief != "" || e.Header != nil {
+		return fmt.Errorf("amended event acknowledging %s must not carry a brief or header", e.Attempt)
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return err
+	}
+	for _, d := range events {
+		if d.Task == e.Task && d.Kind == "dispatched" && d.Attempt == e.Attempt {
+			return flywheel.AppendEvent(dir, e)
+		}
+	}
+	return fmt.Errorf("task %q has no dispatched %s to acknowledge", e.Task, e.Attempt)
 }
 
 // batchHasLearning reports whether any event in the batch is a learning or
@@ -344,6 +376,14 @@ func runLog(args []string) {
 			}
 			os.Exit(1)
 		}
+	}
+	if o.kind == "amended" && o.attempt != "" {
+		if o.brief != "" {
+			logFlagError(fs, args, "--kind amended --attempt acknowledges a lost delta and takes no --brief", logWithout("brief"), "")
+		}
+		finishLog(o.dir, appendAcknowledgement(o.dir, flywheel.Event{Task: o.task, Kind: "amended", Attempt: o.attempt,
+			Note: o.note, Session: o.session, Model: o.model}), o.noState)
+		return
 	}
 	if o.kind == "amended" {
 		finishLog(o.dir, flywheel.RecordAmendedBy(o.dir, o.task, o.brief, o.note, flywheel.PlanMeta{Session: o.session, Model: o.model}), o.noState)

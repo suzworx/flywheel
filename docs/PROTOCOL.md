@@ -47,7 +47,10 @@ all.
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter`, `model`, `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
-  correction attempt: the delta file's path), `header` (the parsed brief header of the exact
+  correction attempt: `.flywheel/briefs/<task>.<attempt>.delta.txt`, the per-attempt snapshot of
+  the delta taken atomically at dispatch; the operator's `--delta` file is left untouched and may be
+  edited or reused for the next correction without breaking this one's T1, issue #452; a failed
+  snapshot fails the dispatch), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
   later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332), `increment` (N when
@@ -565,6 +568,15 @@ all.
   allowed.
   The refusal and the append run under `.flywheel/dispatch.lock`, the same lock file `flywheel
   run` holds across its own read-check-append, so an amendment and a dispatch serialise.
+- Acknowledging a lost delta: `flywheel log --task <id> --kind amended --attempt c<n> --note <why>`
+  (no `--brief`) records that correction `c<n>`'s delta is not retained — for ledgers written
+  before the per-attempt snapshot, where a later correction overwrote a shared delta file (issue
+  #452). `Validate` requires a correction attempt (`c*`) and a non-empty `note`; `flywheel log`
+  (the flag path and `--json` alike) also requires a `dispatched` event for that attempt and
+  refuses a `brief` or `header`. It amends no brief: it never excuses a fresh attempt's mismatch.
+  T1 passes that one correction's mismatched or unreadable delta only when the acknowledgement was
+  recorded after its dispatch, with reason `acknowledged: delta for c<n> not retained (<note>)`;
+  it never waives a correction silently, and never one with no acknowledgement.
 
 Because `planned`, `amended` and `dispatched` events carry the parsed `header`, the log is
 self-contained: a pass is measured against the header recorded in it, so a brief edited on disk
@@ -787,8 +799,11 @@ gates (exit 5) without touching the log's legality.
 - **T1 — dispatch matches its brief.** A fresh (`r*`) `dispatched` event's `sha256` must match the
   brief named by the task's latest `planned` event, unless an `amended` event for the task landed
   in between — then the mismatch is explained, not flagged. A correction (`c*`) `dispatched` event
-  hashes its own delta file instead (the path in its own `brief` field); no `amended` event ever
-  excuses a tampered or missing delta. `verify` reports this per-task as rule `T1`.
+  hashes its own delta file instead (the path in its own `brief` field, the per-attempt snapshot);
+  no brief amendment ever excuses a tampered or missing delta. The one exception is explicit: an
+  `amended` event naming that `c*` attempt with a note, recorded after its dispatch, acknowledges
+  a delta lost before the snapshot existed, and T1 passes it with the reason `acknowledged: delta
+  for c<n> not retained (<note>)`. `verify` reports this per-task as rule `T1`.
 - **T3 — a pass needs current readings, not old ones.** `inspected pass` (or a live `--verdict
   pass` inspection) needs, for the *same git tree hash* the unit actually built: a passing
   `validated` event from the supervisor for **every** gate the current attempt's prompt declares,

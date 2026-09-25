@@ -208,7 +208,7 @@ func passWorkdir(dir, task string, events []Event, i int, tree string) string {
 // correction's hash check.
 func ruleT1(dir, task string, events []Event) []VerifyItem {
 	planned := plannedBriefOnly(events, task)
-	var items []VerifyItem
+	var items, acks []VerifyItem
 	if planned != "" {
 		briefPath := planned
 		if !filepath.IsAbs(briefPath) {
@@ -253,6 +253,11 @@ func ruleT1(dir, task string, events []Event) []VerifyItem {
 		}
 		b, err := os.ReadFile(delta)
 		if err != nil {
+			if note, ok := deltaAcknowledged(events, task, e); ok {
+				acks = append(acks, VerifyItem{Task: task, Rule: "T1", Pass: true,
+					Reason: fmt.Sprintf("acknowledged: delta for %s not retained (%s)", e.Attempt, note)})
+				continue
+			}
 			items = append(items, VerifyItem{Task: task, Rule: "T1", Pass: false,
 				Reason: fmt.Sprintf("read delta %s: %v", e.Brief, err)})
 			continue
@@ -261,14 +266,43 @@ func ruleT1(dir, task string, events []Event) []VerifyItem {
 		curHex := hex.EncodeToString(cur[:])
 		normHex := contentSHA(b)
 		if e.SHA256 != curHex && e.SHA256 != normHex {
+			if note, ok := deltaAcknowledged(events, task, e); ok {
+				acks = append(acks, VerifyItem{Task: task, Rule: "T1", Pass: true,
+					Reason: fmt.Sprintf("acknowledged: delta for %s not retained (%s)", e.Attempt, note)})
+				continue
+			}
 			items = append(items, VerifyItem{Task: task, Rule: "T1", Pass: false,
 				Reason: fmt.Sprintf("dispatched %s sha256 %s does not match delta %s", e.Attempt, short(e.SHA256), short(curHex))})
 		}
 	}
 	if len(items) == 0 {
+		if len(acks) > 0 {
+			return acks
+		}
 		return []VerifyItem{{Task: task, Rule: "T1", Pass: true, Reason: "every dispatched event matches its brief"}}
 	}
-	return items
+	return append(items, acks...)
+}
+
+// deltaAcknowledged reports whether correction d's lost delta was
+// acknowledged (issue #452): an amended event for task naming d's attempt,
+// carrying a note, recorded after d's dispatch. It returns the latest such
+// note. A correction with no acknowledgement is never waived.
+func deltaAcknowledged(events []Event, task string, d Event) (string, bool) {
+	t0, err := time.Parse(time.RFC3339Nano, d.TS)
+	if err != nil {
+		return "", false
+	}
+	note, ok := "", false
+	for _, e := range events {
+		if e.Task != task || e.Kind != "amended" || e.Attempt != d.Attempt || e.Note == "" {
+			continue
+		}
+		if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil && t.After(t0) {
+			note, ok = e.Note, true
+		}
+	}
+	return note, ok
 }
 
 // plannedBriefOnly returns task's latest `planned` event's brief path,
@@ -292,13 +326,15 @@ func isCorrection(attempt string) bool {
 }
 
 // amendedBetween reports whether an amended event for task occurred after ts.
+// An acknowledgement of a lost correction delta (an amended event naming an
+// attempt, issue #452) amends no brief and is not counted.
 func amendedBetween(events []Event, task, ts string) bool {
 	t0, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		return false
 	}
 	for _, e := range events {
-		if e.Task != task || e.Kind != "amended" {
+		if e.Task != task || e.Kind != "amended" || e.Attempt != "" {
 			continue
 		}
 		if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil && t.After(t0) {

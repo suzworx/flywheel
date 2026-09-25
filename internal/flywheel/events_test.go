@@ -1316,3 +1316,19 @@ func TestValidateReleaseAudited(t *testing.T) {
 		t.Error("Validate() accepted a note carrying a version")
 	}
 }
+
+// TestAcknowledgeRequiresNote checks an amended event naming an attempt (the
+// acknowledgement that a correction's delta is not retained, issue #452)
+// must name a correction attempt and carry a note.
+func TestAcknowledgeRequiresNote(t *testing.T) {
+	t.Parallel()
+	if err := Validate(Event{Task: "T1", Kind: "amended", Attempt: "c1"}); err == nil || !strings.Contains(err.Error(), "note") {
+		t.Errorf("Validate(acknowledgement without a note) = %v, want an error naming the note", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "amended", Attempt: "r1", Note: "lost"}); err == nil || !strings.Contains(err.Error(), "correction") {
+		t.Errorf("Validate(acknowledgement of r1) = %v, want an error naming a correction attempt", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "amended", Attempt: "c2", Note: "overwritten before #452"}); err != nil {
+		t.Errorf("Validate(acknowledgement of c2 with a note) = %v, want nil", err)
+	}
+}

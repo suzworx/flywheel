@@ -463,7 +463,12 @@ OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \
 ```
 
 Each correction resume writes a new attempt file (`c1`, `c2`, ...) with `>` — never `>>` — so
-per-attempt steps, tokens and finish reasons stay separate (§2). Large tasks are delivered the same
+per-attempt steps, tokens and finish reasons stay separate (§2). Give each correction its own
+delta; `flywheel run <id> --delta <file>` also snapshots it to `.flywheel/briefs/<id>.c<n>.delta.txt`
+at dispatch and records that path, so T1 still holds if the file is reused. For a ledger written
+before the snapshot existed, where a later delta overwrote an earlier one, acknowledge the loss with
+`flywheel log --task <id> --kind amended --attempt c<n> --note "<why>"` — T1 then passes that
+correction with the note as its reason; nothing is waived without it. Large tasks are delivered the same
 way, as **increments** — one delta per increment, each ending with its checks, a short report and
 STOP — and the next increment resumes the same session with the next delta.
 
