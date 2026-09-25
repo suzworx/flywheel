@@ -37,6 +37,9 @@ type logOptions struct {
 	goal    string
 	noState bool
 	shard   bool
+	// reanchor and force drive flywheel log --reanchor (issue #436).
+	reanchor bool
+	force    bool
 }
 
 // logFlags defines log's flags once, so help and run share them.
@@ -60,6 +63,8 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	fs.StringVar(&o.goal, "goal", "", "goal id a planned event links to")
 	fs.BoolVar(&o.noState, "no-state", false, "skip state derivation after appending")
 	fs.BoolVar(&o.shard, "shard", false, "switch this repository's event log to per-task shards under .flywheel/events/ (one-way)")
+	fs.BoolVar(&o.reanchor, "reanchor", false, "acknowledge the log chain's first unacknowledged break with an appended reanchored event (requires --note)")
+	fs.BoolVar(&o.force, "force", false, "with --reanchor: acknowledge a break that classifies as removed (a possible real edit or deletion)")
 	return fs, o
 }
 
@@ -289,6 +294,13 @@ func runLog(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.reanchor {
+		runLogReanchor(fs, args, o)
+		return
+	}
+	if o.force {
+		logFlagError(fs, args, "--force applies to --reanchor only", logWithout("force"), "")
+	}
 	if o.shard {
 		if err := logShardConflicts(o); err != nil {
 			logFlagError(fs, args, err.Error(), func(n string) bool { return n == "dir" || n == "shard" }, "")
@@ -372,6 +384,32 @@ func runLog(args []string) {
 		e.RC = p
 	}
 	appendEvents(o.dir, []flywheel.Event{e}, o.noState)
+}
+
+// runLogReanchor implements flywheel log --reanchor (issue #436): it
+// acknowledges the log chain's first unacknowledged break with an appended
+// reanchored event and prints what it acknowledged. --kind, --task, --json and
+// --shard are usage errors, --note is required (exit 2); a refusal exits 6.
+func runLogReanchor(fs *flag.FlagSet, args []string, o *logOptions) {
+	keep := func(n string) bool {
+		return n == "reanchor" || n == "note" || n == "force" || n == "session" || n == "dir" || n == "no-state"
+	}
+	for _, c := range []struct{ name, val string }{{"--kind", o.kind}, {"--task", o.task}, {"--json", o.jsonIn}} {
+		if c.val != "" {
+			logFlagError(fs, args, c.name+" cannot be used with --reanchor", keep, "")
+		}
+	}
+	if o.shard {
+		logFlagError(fs, args, "--shard cannot be used with --reanchor", keep, "")
+	}
+	if strings.TrimSpace(o.note) == "" {
+		logFlagError(fs, args, "--reanchor requires --note <why>", logWithout("note"), `--note "<why>"`)
+	}
+	ack, err := flywheel.Reanchor(o.dir, o.note, o.session, o.force)
+	if err == nil {
+		fmt.Printf("acknowledged %s line %d (%s): %s\n", ack.File, ack.Line, ack.Reason, ack.Note)
+	}
+	finishLog(o.dir, err, o.noState)
 }
 
 // logFlagError reports an error about one missing or invalid flag and exits 2:

@@ -92,7 +92,7 @@ func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
 	if b, err := os.ReadFile(eventsPath); err != nil || string(b) != string(eventsBefore) {
 		t.Errorf("events.jsonl changed: got %q, err %v, want %q", b, err, eventsBefore)
 	}
-	if b, err := os.ReadFile(gitattributesPath); err != nil || string(b) != "* text eol=lf\n" {
+	if b, err := os.ReadFile(gitattributesPath); err != nil || string(b) != gitattributesDefault {
 		t.Errorf(".gitattributes = %q, err %v, want it recreated with the default", b, err)
 	}
 }
@@ -531,8 +531,37 @@ func TestInitWritesGitattributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitattributes: %v", err)
 	}
-	if string(b) != "* text eol=lf\n" {
-		t.Errorf(".gitattributes = %q, want '* text eol=lf'", b)
+	if string(b) != gitattributesDefault {
+		t.Errorf(".gitattributes = %q, want %q", b, gitattributesDefault)
+	}
+}
+
+// TestInitGitattributesUnion checks init's .gitattributes marks the event log,
+// legacy and sharded, merge=union (issue #436), and that an existing file is
+// not rewritten to add it.
+func TestInitGitattributesUnion(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	path := filepath.Join(dir, ".flywheel", ".gitattributes")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read .gitattributes: %v", err)
+	}
+	for _, want := range []string{"* text eol=lf\n", "\nevents.jsonl merge=union\n", "\nevents/*.jsonl merge=union\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf(".gitattributes = %q, want it to carry %q", b, want)
+		}
+	}
+	if err := os.WriteFile(path, []byte("* text eol=lf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Init(dir, true); err != nil {
+		t.Fatalf("Init() --force error = %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "* text eol=lf\n" {
+		t.Errorf("an existing .gitattributes was rewritten: %q", b)
 	}
 }
 

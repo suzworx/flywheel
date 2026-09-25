@@ -950,7 +950,34 @@ matches none, indicating a line was edited or removed. When that dangling `prev`
 LATER line in the same file, the break reason is `reordered: line N chains to line M, which comes
 after it (a git merge or an edit reordered the log; no record is missing)`. A git merge or conflict
 resolution of a committed ledger does this. It is still a break, but no record is missing (issue
-#422); otherwise the reason is `prev matches no earlier line`. An `INCONCLUSIVE` item is `pass:false` with
+#422); otherwise the reason is `prev matches no earlier line`. Either layout prints
+`<file> line N: <reason> (prev <12 hex>)`.
+
+**Acknowledged breaks (issue #436).** The ledger is append-only, so an explained break is never
+repaired by an edit: `flywheel log --reanchor --note "<why>" [--force] [--session S] [--dir DIR]`
+appends a `reanchored` event (floor level, no task) through the normal append path, so the
+acknowledgement is itself chained. It carries `file` (the log file as the chain check names it:
+`events.jsonl` or `events/<task>.jsonl`), `line_no` (the 1-based break line, display only),
+`break_prev` (the dangling `prev`, full hex), `sha256` (the break line's hash — the identity of the
+acknowledged line), `reason` (`reordered` when the break reason starts `reordered:`, else `removed`)
+and `note` (why, required). The command refuses (exit 6) when the chain is intact, when the break is
+not a dangling `prev` (a missing seal, a line with no `prev`, a wrong shard genesis), and when the
+break classifies as `removed` without `--force`: a `removed` break may be a real edit or deletion,
+and `--force` records the decision that it is explained. `--reanchor` does not combine with
+`--kind`, `--task` or `--json`, and `--note` is required (exit 2). The chain check (all layouts) first
+reads the log's `reanchored` events; a break is acknowledged when one has the same `file`, the same
+`break_prev`, a `sha256` equal to the break line's hash, and a `reason` equal to the classification
+computed now — a `reordered` acknowledgement never covers a line that now classifies as `removed`.
+An acknowledged break does not stop the scan; each later break needs its own acknowledgement.
+`--json` lists them under `acknowledged` (`file`, `line`, `reason`, `session`, `note`), and a passing
+`--log` and `flywheel recover`'s integrity line append `; acknowledged break at <file> line N
+(<reason>), by <session>: <note>` for each.
+
+**Preventing reorders.** A repository that commits `.flywheel/` should merge the event log with
+git's union driver, which keeps each side's appended lines in order, so every `prev` still resolves
+to an earlier line. `flywheel init` writes `.flywheel/.gitattributes` with `events.jsonl merge=union`
+and `events/*.jsonl merge=union`; it never rewrites an existing file, so an older repository adds
+those two lines to `.flywheel/.gitattributes` by hand and commits it. An `INCONCLUSIVE` item is `pass:false` with
 `inconclusive:true`: the pass's tree could not be resolved in any repository this verifier can
 see, so T3 can neither confirm the readings nor assert a breach. Naming a task explicitly still
 runs every rule for it even if the log has never heard of it — a missing planned brief, for

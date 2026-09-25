@@ -252,7 +252,9 @@ func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (s
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", gitignorePath, err)
 	}
-	createdGitattributes, err = createIfMissing(gitattributesPath, []byte("* text eol=lf\n"))
+	// A union merge keeps each side's appended lines in order, so every prev
+	// of a committed ledger still resolves to an earlier line (issue #436).
+	createdGitattributes, err = createIfMissing(gitattributesPath, []byte(gitattributesDefault))
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", gitattributesPath, err)
@@ -312,6 +314,11 @@ func publishMarkdown(path string, b []byte, force bool) (added bool, err error) 
 	}
 	return createIfMissing(path, b)
 }
+
+// gitattributesDefault is the .flywheel/.gitattributes init writes: LF line
+// endings, and a union merge for the event log (issue #436) so a merge of two
+// branches that both appended keeps each side's lines in order.
+const gitattributesDefault = "* text eol=lf\nevents.jsonl merge=union\nevents/*.jsonl merge=union\n"
 
 // createIfMissing writes b to path only when path does not exist, using
 // O_EXCL so a racing creator wins and the file is never overwritten or

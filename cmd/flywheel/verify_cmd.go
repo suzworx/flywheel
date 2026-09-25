@@ -104,11 +104,15 @@ func runVerify(args []string) {
 			} else {
 				reason = fmt.Sprintf("%d of %d records chained since line %d, no break", chain.Chained, chain.Lines, chain.FirstChained)
 			}
+			// An acknowledged break (issue #436) is named on every pass.
+			reason += chain.AckText()
 		} else {
-			if chain.Files > 0 && chain.BreakReason != "" {
+			// The checker's classification names the break in either layout
+			// (issue #436): a reorder is not an edit.
+			if chain.BreakReason != "" {
 				breakPrevStr := ""
 				if chain.BreakPrev != "" {
-					breakPrevStr = fmt.Sprintf(" (%s)", chain.BreakPrev[:min(12, len(chain.BreakPrev))])
+					breakPrevStr = fmt.Sprintf(" (prev %s)", chain.BreakPrev[:min(12, len(chain.BreakPrev))])
 				}
 				reason = fmt.Sprintf("%s line %d: %s%s", chain.File, chain.BreakLine, chain.BreakReason, breakPrevStr)
 			} else {
