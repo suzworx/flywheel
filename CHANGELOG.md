@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.1](https://github.com/suzworx/flywheel/compare/v0.23.0...v0.23.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* a single-model factory can staff an auditor, unknown config keys name the nearest key, and wrote sees every write ([#467](https://github.com/suzworx/flywheel/issues/467)) ([a412d34](https://github.com/suzworx/flywheel/commit/a412d343bf6a6214d1553f923af62835c3b8dac1)), closes [#463](https://github.com/suzworx/flywheel/issues/463)
+* audit --release tells a stale clone from a missing tag ([#465](https://github.com/suzworx/flywheel/issues/465)) ([480378a](https://github.com/suzworx/flywheel/commit/480378ab15749e6887eca1ba79dd58cc30ee69fa)), closes [#451](https://github.com/suzworx/flywheel/issues/451)
+* flywheel upgrade refuses while a run's lease is live ([#468](https://github.com/suzworx/flywheel/issues/468)) ([2f5aef8](https://github.com/suzworx/flywheel/commit/2f5aef819dbd77aae7803cf84d9fe29c8686a7cc)), closes [#461](https://github.com/suzworx/flywheel/issues/461)
+
 ## [0.23.0](https://github.com/suzworx/flywheel/compare/v0.22.0...v0.23.0) (2026-09-25)
 
 
