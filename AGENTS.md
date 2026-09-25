@@ -17,7 +17,7 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
   the factory view and rendering, brief headers, init.
 - internal/flywheel/testdata — fixtures; testdata/**/.flywheel/ is re-included in .gitignore.
 - scripts/demo.sh + scripts/termshot.mjs — README screenshots.
-- skills/, docs/, .github/workflows — ci.yml (test on Linux/macOS/Windows + lint), release.yml
+- skills/, docs/, .github/workflows — ci.yml (test on Linux/macOS/Windows, the scale suite, one quick-checks job), release.yml
   (release-please and binaries).
 
 ## Checks (the same ones CI runs)
