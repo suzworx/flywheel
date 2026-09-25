@@ -19,7 +19,10 @@ type BriefHeader struct {
 	// a directory) that the gates need but an isolated --workdir will not
 	// have: a database, a stack, git-ignored env files (issue #136).
 	NeedsState []string // comma-separated, accumulated across repeated lines
-	Gates      []string // one shell command per line, order kept
+	// NeedsStateLink is the subset of NeedsState annotated "(link)": paths
+	// run --worktree links from the repo into the task's worktree (issue #430).
+	NeedsStateLink []string `json:",omitempty"`
+	Gates          []string // one shell command per line, order kept
 	// LiveGates are `live-gate:` lines, one shell command per line, order
 	// kept: gates that run only in the lead's verification pass
 	// (`flywheel validate <task> --live`), never on a worker's own mocked
@@ -101,9 +104,19 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.NeedsDeclared = true
 			h.Needs = append(h.Needs, NeedTargets(val)...)
 		case "needs-state":
+			// An entry annotated "(link)" is also linked from the repo into a
+			// run --worktree tree (issue #430); NeedsState keeps the plain path.
 			for _, entry := range strings.Split(val, ",") {
-				if e := strings.TrimSpace(entry); e != "" {
+				e := strings.TrimSpace(entry)
+				linked := false
+				if p, ok := strings.CutSuffix(e, "(link)"); ok {
+					e, linked = strings.TrimSpace(p), true
+				}
+				if e != "" {
 					h.NeedsState = append(h.NeedsState, e)
+					if linked {
+						h.NeedsStateLink = append(h.NeedsStateLink, e)
+					}
 				}
 			}
 		case "gate":

@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -608,6 +609,46 @@ func TestWorkerToolDefaults(t *testing.T) {
 	}
 }
 
+// TestWorkerMCPOptIn checks the worker's mcp key (issue #425): unset and a
+// valid {"mcpServers": {...}} object pass and compact to a JSON string; a
+// non-object, a missing mcpServers or a non-object mcpServers fail Validate.
+func TestWorkerMCPOptIn(t *testing.T) {
+	valid := map[string]string{
+		"unset": "",
+		"empty": `{"mcpServers": {}}`,
+		"one":   "{\n  \"mcpServers\": {\"fs\": {\"command\": \"mcp-fs\", \"args\": [\"/tmp\"]}}\n}",
+	}
+	for name, raw := range valid {
+		w := Worker{Name: "w", Adapter: "claude", Model: "m", MCP: json.RawMessage(raw)}
+		if err := (Config{Version: 1, Workers: []Worker{w}}).Validate(); err != nil {
+			t.Errorf("%s: Validate() = %v, want nil", name, err)
+		}
+	}
+	if got := (Worker{}).mcpConfig(); got != "" {
+		t.Errorf("unset mcpConfig() = %q, want empty", got)
+	}
+	w := Worker{MCP: json.RawMessage(valid["one"])}
+	if got, want := w.mcpConfig(), `{"mcpServers":{"fs":{"command":"mcp-fs","args":["/tmp"]}}}`; got != want {
+		t.Errorf("mcpConfig() = %q, want compact %q", got, want)
+	}
+	invalid := map[string]string{
+		"array":          `[1]`,
+		"string":         `"x"`,
+		"no mcpServers":  `{"servers": {}}`,
+		"list servers":   `{"mcpServers": []}`,
+		"null servers":   `{"mcpServers": null}`,
+		"not json":       `{mcpServers`,
+		"top-level null": `null`,
+	}
+	for name, raw := range invalid {
+		w := Worker{Name: "w", Adapter: "claude", Model: "m", MCP: json.RawMessage(raw)}
+		err := (Config{Version: 1, Workers: []Worker{w}}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "workers[0]: mcp") {
+			t.Errorf("%s: Validate() = %v, want a workers[0]: mcp error", name, err)
+		}
+	}
+}
+
 // TestDefaultDisallowedIndexWrites checks the default deny list covers every
 // index, ref and history write (#423) and leaves read-only git allowed.
 func TestDefaultDisallowedIndexWrites(t *testing.T) {
@@ -931,6 +972,42 @@ func TestPanelConfig(t *testing.T) {
 		c.Review = &ReviewConfig{Panel: tc.panel}
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Validate(%+v) = %v, want error containing %q", tc.panel, err, tc.want)
+		}
+	}
+}
+
+// TestSetupConfig checks worktree.setup and worktree.setup_timeout (issue
+// #430): defaults, Set/Get round-trip, and validation of the timeout.
+func TestSetupConfig(t *testing.T) {
+	var c Config
+	if got, _ := c.Get("worktree.setup"); got != "" {
+		t.Errorf("Get(worktree.setup) = %q, want empty by default", got)
+	}
+	if got, _ := c.Get("worktree.setup_timeout"); got != "10m" {
+		t.Errorf("Get(worktree.setup_timeout) = %q, want 10m by default", got)
+	}
+	if d, err := c.SetupTimeoutDuration(); err != nil || d != 10*time.Minute {
+		t.Errorf("SetupTimeoutDuration() = %v, %v, want 10m", d, err)
+	}
+	if err := c.Set("worktree.setup", "npm ci"); err != nil {
+		t.Fatalf("Set(worktree.setup) error = %v", err)
+	}
+	if err := c.Set("worktree.setup_timeout", "90s"); err != nil {
+		t.Fatalf("Set(worktree.setup_timeout) error = %v", err)
+	}
+	if got, _ := c.Get("worktree.setup"); got != "npm ci" {
+		t.Errorf("Get(worktree.setup) = %q, want npm ci", got)
+	}
+	if d, err := c.SetupTimeoutDuration(); err != nil || d != 90*time.Second {
+		t.Errorf("SetupTimeoutDuration() = %v, %v, want 90s", d, err)
+	}
+	if !slices.Contains(c.settableKeys(), "worktree.setup") || !slices.Contains(c.validKeys(), "worktree.setup_timeout") {
+		t.Error("worktree keys missing from settableKeys/validKeys")
+	}
+	for _, bad := range []string{"soon", "-1m", "0s"} {
+		c.Worktree.SetupTimeout = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "worktree.setup_timeout") {
+			t.Errorf("Validate(setup_timeout %q) = %v, want a worktree.setup_timeout error", bad, err)
 		}
 	}
 }

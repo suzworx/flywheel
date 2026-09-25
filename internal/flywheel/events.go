@@ -75,6 +75,9 @@ type Event struct {
 	// calls during the attempt, sorted, at most 50 entries; empty when the
 	// attempt made no edits (issue #163).
 	Wrote []string `json:"wrote,omitempty"`
+	// Linked is a worktree_setup event's needs-state "(link)" paths linked
+	// from the repo into the task's worktree (issue #430).
+	Linked []string `json:"linked,omitempty"`
 	// Commands are the shell commands a worker ran, in order, at most 100,
 	// each clipped to 300 characters (issue #365).
 	Commands []string `json:"commands,omitempty"`
@@ -203,6 +206,10 @@ var kinds = map[string]bool{
 	// Verdict pass or correct, Tree the integration tree, Note the members,
 	// conflicts and group gate results.
 	"group_reviewed": true,
+	// worktree_setup records `flywheel run --worktree` preparing the task's
+	// worktree before dispatch (issue #430): Linked, RC, DurationMS and Note
+	// (the setup output tail).
+	"worktree_setup": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -354,7 +361,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup", e.Kind)
 	}
 	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
 		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")

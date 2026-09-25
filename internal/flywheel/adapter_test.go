@@ -880,6 +880,52 @@ func TestClaudeCommandToolPolicy(t *testing.T) {
 	}
 }
 
+// TestClaudeStrictMCP checks every claude dispatch passes --strict-mcp-config
+// with an explicit empty --mcp-config by default, and a worker's MCP JSON when
+// its config sets one (issue #425), fresh and resumed alike.
+func TestClaudeStrictMCP(t *testing.T) {
+	a, _ := AdapterFor("claude")
+	briefPath := filepath.Join(t.TempDir(), "brief.txt")
+	hasFlag := func(args []string, flag string) bool {
+		for _, s := range args {
+			if s == flag {
+				return true
+			}
+		}
+		return false
+	}
+	for _, resume := range []bool{false, true} {
+		base := RunRequest{Task: "T1", Attempt: "r1", Model: "m1", PromptFile: briefPath, Resume: resume, Session: "ses_1",
+			AllowedTools: (Worker{}).allowedTools(), DisallowedTools: (Worker{}).disallowedTools()}
+		_, args := a.Command(base)
+		if !hasFlag(args, "--strict-mcp-config") {
+			t.Errorf("resume=%v: args lack --strict-mcp-config: %v", resume, args)
+		}
+		if got := flagValues(args, "--mcp-config"); !reflect.DeepEqual(got, []string{`{"mcpServers":{}}`}) {
+			t.Errorf("resume=%v: default --mcp-config = %v, want the empty set", resume, got)
+		}
+		if got := flagValues(args, "--disallowedTools"); !reflect.DeepEqual(got, defaultDisallowedTools) {
+			t.Errorf("resume=%v: --disallowedTools = %v, the MCP flags must not join the list", resume, got)
+		}
+
+		w := Worker{MCP: json.RawMessage(`{"mcpServers": {"fs": {"command": "mcp-fs"}}}`)}
+		base.MCPConfig = w.mcpConfig()
+		_, args = a.Command(base)
+		if !hasFlag(args, "--strict-mcp-config") {
+			t.Errorf("resume=%v: opted-in args lack --strict-mcp-config: %v", resume, args)
+		}
+		if got := flagValues(args, "--mcp-config"); !reflect.DeepEqual(got, []string{`{"mcpServers":{"fs":{"command":"mcp-fs"}}}`}) {
+			t.Errorf("resume=%v: opted-in --mcp-config = %v, want the worker's JSON", resume, got)
+		}
+	}
+
+	// The review agent sets no MCPConfig: it inherits the empty set.
+	_, args := a.Command(RunRequest{Task: "T1", Attempt: "r1", Model: "m1", PromptFile: briefPath, NoWorkerRules: true})
+	if !hasFlag(args, "--strict-mcp-config") || !reflect.DeepEqual(flagValues(args, "--mcp-config"), []string{emptyMCPConfig}) {
+		t.Errorf("non-worker dispatch args = %v, want --strict-mcp-config and the empty --mcp-config", args)
+	}
+}
+
 // TestOpenCodeCommandUnchangedByToolPolicy checks the opencode adapter's argv
 // ignores the tool lists entirely: the same RunRequest that gives a claude
 // dispatch its --allowedTools/--disallowedTools leaves the opencode dispatch
