@@ -74,6 +74,9 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	var tree string
 	note := o.Note
 	if o.Verdict == "pass" {
+		if r := openBlockingRefusal(events, task); r != nil {
+			return r
+		}
 		res := requireReadings(o.Dir, work, task, events, commitTree)
 		if res.err != nil {
 			return res.err
@@ -110,6 +113,29 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	}
 	_, _ = WriteState(o.Dir)
 	return nil
+}
+
+// openBlockingIDs lists the ids of the task's open blocking review findings
+// (issue #389), in ledger order.
+func openBlockingIDs(events []Event, task string) []string {
+	var ids []string
+	for _, f := range OpenFindings(events, task) {
+		if blockingFinding(f) {
+			ids = append(ids, f.Finding)
+		}
+	}
+	return ids
+}
+
+// openBlockingRefusal refuses a pass (rule review) while the task has an open
+// blocking review finding; a task never reviewed has none.
+func openBlockingRefusal(events []Event, task string) *RuleRefusal {
+	ids := openBlockingIDs(events, task)
+	if len(ids) == 0 {
+		return nil
+	}
+	return &RuleRefusal{Rule: "review", Fix: fmt.Sprintf("open blocking review findings: %s; fix them (flywheel review %s --agent --fix) or dismiss one (flywheel review %s --dismiss <id> --session <you> --note \"<why>\")",
+		strings.Join(ids, ", "), task, task)}
 }
 
 // wd returns the working tree to hash, using recordedWorkdir when workdir is empty,

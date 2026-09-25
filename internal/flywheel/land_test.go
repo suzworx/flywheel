@@ -660,3 +660,28 @@ func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
 		t.Fatal("LandTask() still waiting 10s after the feedback lock was released")
 	}
 }
+
+// TestLandRefusesStacked checks rule stacked (issue #414): a passed unit whose
+// base landed as a squash is refused with the rebase fix; once rebased it
+// lands.
+func TestLandRefusesStacked(t *testing.T) {
+	dir, base, squash := stackedRepo(t)
+	if err := AppendEvent(dir, Event{Task: "B", Kind: "inspected", Verdict: "pass", Session: "lead-1"}); err != nil {
+		t.Fatal(err)
+	}
+	err := LandTask(dir, "B", squash, "", false, "")
+	var rr *RuleRefusal
+	if !errors.As(err, &rr) || rr.Rule != "stacked" {
+		t.Fatalf("LandTask() error = %v, want rule stacked", err)
+	}
+	want := "base " + base[:7] + " (unit A) was squash-merged as " + squash[:7] + "; run: flywheel rebase B"
+	if rr.Fix != want {
+		t.Errorf("fix = %q, want %q", rr.Fix, want)
+	}
+	if _, _, err := RebaseUnit(dir, "B", ""); err != nil {
+		t.Fatalf("RebaseUnit() error = %v", err)
+	}
+	if err := LandTask(dir, "B", squash, "", false, ""); err != nil {
+		t.Fatalf("LandTask() after rebase error = %v", err)
+	}
+}

@@ -82,6 +82,71 @@ func TestStatsFixture(t *testing.T) {
 
 // TestStatsEmptyLog checks an empty log gives zeroes for every field, with no
 // division by zero.
+// TestStatsReview checks the review block (issue #389): rounds, findings by
+// severity and category, the median rounds to clean over units whose latest
+// agent review is pass, the findings raised after every gate passed, and the
+// dismissals.
+func TestStatsReview(t *testing.T) {
+	dir := t.TempDir()
+	round := func(task string, n int, fs ...ReviewFinding) []Event {
+		evs, _, _ := reviewEvents(task, "r1", n, "rev-1", "m", "claude", "", fs)
+		return evs
+	}
+	rc0, rc1 := 0, 1
+	start := func(task string, gate2 *int) []Event {
+		return []Event{
+			{Task: task, Kind: "planned", Brief: "b.txt"},
+			{Task: task, Kind: "dispatched", Attempt: "r1"},
+			{Task: task, Kind: "started", Attempt: "r1", Session: "w-" + task},
+			{Task: task, Kind: "validated", Attempt: "r1", Gate: "1", Tree: "t", RC: &rc0, Command: "go vet ./..."},
+			{Task: task, Kind: "validated", Attempt: "r1", Gate: "2", Tree: "t", RC: gate2, Command: "go test ./..."},
+		}
+	}
+	majorC := ReviewFinding{Severity: "major", Category: "correctness", File: "c.go", Claim: "Leaks a handle", Scenario: "early return"}
+	var events []Event
+	// T1: gates green, two findings, then a clean round: 2 rounds to clean.
+	events = append(events, start("T1", &rc0)...)
+	events = append(events, round("T1", 1, blockerA, minorB)...)
+	events = append(events, round("T1", 2)...)
+	// T2: a gate red, one finding a lead dismisses, then clean: 2 rounds.
+	events = append(events, start("T2", &rc1)...)
+	events = append(events, round("T2", 1, majorC)...)
+	events = append(events, Event{Task: "T2", Kind: "finding_response", Session: "lead-1", Finding: "T2-r1-1", Verdict: "disputed", Note: "dismissed: by design"})
+	events = append(events, round("T2", 2)...)
+	// T3: clean at once. T4: still open, not clean.
+	events = append(events, start("T3", &rc0)...)
+	events = append(events, round("T3", 1)...)
+	events = append(events, start("T4", &rc0)...)
+	events = append(events, round("T4", 1, majorC)...)
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Stats(dir)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	rv := rep.Review
+	if rv.Reviews != 6 || rv.Findings != 4 || rv.Dismissals != 1 {
+		t.Errorf("reviews %d findings %d dismissals %d, want 6, 4, 1", rv.Reviews, rv.Findings, rv.Dismissals)
+	}
+	if rv.BySeverity["blocker"] != 1 || rv.BySeverity["major"] != 2 || rv.BySeverity["minor"] != 1 {
+		t.Errorf("by severity = %v", rv.BySeverity)
+	}
+	if rv.ByCategory["correctness"] != 2 || rv.ByCategory["uncategorized"] != 2 {
+		t.Errorf("by category = %v", rv.ByCategory)
+	}
+	if rv.CleanUnits != 3 || rv.MedianRoundsToClean != 2 {
+		t.Errorf("clean units %d median %v, want 3 and 2", rv.CleanUnits, rv.MedianRoundsToClean)
+	}
+	// T1's two and T4's one were raised with every gate green; T2's with a red gate.
+	if rv.CaughtAfterGates != 3 {
+		t.Errorf("caught after gates = %d, want 3", rv.CaughtAfterGates)
+	}
+	if empty := reviewStats(nil); empty.Reviews != 0 || empty.MedianRoundsToClean != 0 {
+		t.Errorf("empty log review = %+v", empty)
+	}
+}
+
 func TestStatsEmptyLog(t *testing.T) {
 	rep, err := Stats(t.TempDir())
 	if err != nil {
