@@ -661,6 +661,45 @@ func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
 	}
 }
 
+// TestLandRefusesOpenGroupFinding checks rule group (issue #420): an open
+// blocking integration finding on the task, or on its goal's group, refuses
+// the landing; a later group round closes the task's, a lead's dismissal the
+// group's, and then it lands. A unit's own blocker is not rule group's.
+func TestLandRefusesOpenGroupFinding(t *testing.T) {
+	dir := t.TempDir()
+	gt := GroupTask("g1")
+	blocker := ReviewFinding{Severity: "blocker", File: "a.go", Line: 3, Claim: "two appends", Scenario: "s"}
+	appendEvs := func(evs ...Event) {
+		t.Helper()
+		if err := AppendEvents(dir, evs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendEvs(Event{Task: "T1", Kind: "planned", Brief: "b.txt", GoalID: "g1"},
+		Event{Task: "T1", Kind: "inspected", Verdict: "pass", Session: "lead-1"},
+		Event{Task: "T1", Kind: "review_finding", Session: "rev", Severity: "blocker", Category: "correctness", Title: "own", Path: "a.go", Finding: "T1-r1-1"},
+		groupFindingEvent("T1", gt, 1, 1, "rev", "", "", blocker),
+		Event{Task: gt, Kind: "group_reviewed", Verdict: "correct", Session: "rev"})
+	refused := func(wantID string) {
+		t.Helper()
+		err := LandTask(dir, "T1", "abc1234", "", false, "")
+		var rr *RuleRefusal
+		if !errors.As(err, &rr) || rr.Rule != "group" || !bytes.Contains([]byte(rr.Fix), []byte(wantID)) || bytes.Contains([]byte(rr.Fix), []byte("T1-r1-1")) {
+			t.Fatalf("LandTask() error = %v, want rule group naming %s only", err, wantID)
+		}
+	}
+	refused(gt + "-r1-1")
+
+	appendEvs(groupFindingEvent(gt, gt, 2, 1, "rev", "", "", ReviewFinding{Severity: "major", File: "README.md", Claim: "docs disagree", Scenario: "s"}),
+		Event{Task: gt, Kind: "group_reviewed", Verdict: "correct", Session: "rev"})
+	refused(gt + "-r2-1")
+
+	appendEvs(Event{Task: gt, Kind: "finding_response", Finding: gt + "-r2-1", Verdict: "disputed", Session: "lead-1", Note: "dismissed: intended"})
+	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
+		t.Fatalf("LandTask() after the group round and the dismissal: %v", err)
+	}
+}
+
 // TestLandRefusesStacked checks rule stacked (issue #414): a passed unit whose
 // base landed as a squash is refused with the rebase fix; once rebased it
 // lands.

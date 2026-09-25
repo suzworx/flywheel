@@ -94,6 +94,22 @@ type ReviewConfig struct {
 	// Required makes a complete panel a condition of every inspected pass,
 	// not only of a task the panel has already reviewed. Default false.
 	Required bool `json:"required,omitempty"`
+	// GroupGates are shell commands run in a group's integration tree by
+	// flywheel review --group (issue #420); each is recorded as a validated
+	// event of the group, gate g<n>. Default none.
+	GroupGates []string `json:"group_gates,omitempty"`
+}
+
+// groupGatesSep separates review.group_gates on config get and set; set also
+// splits on newlines.
+const groupGatesSep = ";;"
+
+// ReviewGroupGates is review.group_gates.
+func (c Config) ReviewGroupGates() []string {
+	if c.Review == nil {
+		return nil
+	}
+	return c.Review.GroupGates
 }
 
 // PanelMember is one reviewer on the panel: its persona (the dimension) and
@@ -859,6 +875,8 @@ func (c Config) Get(key string) (string, error) {
 		return strings.Join(c.PanelDimensions(), ","), nil
 	case "review.required":
 		return strconv.FormatBool(c.ReviewRequired()), nil
+	case "review.group_gates":
+		return strings.Join(c.ReviewGroupGates(), groupGatesSep), nil
 	case "worktree.setup":
 		return c.SetupCommand(), nil
 	case "worktree.setup_timeout":
@@ -917,7 +935,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
+		"log.shards", "max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"worktree.setup", "worktree.setup_timeout",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -942,7 +960,8 @@ func (c Config) validKeys() []string {
 // max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
-// (a comma-separated persona list) and review.required (true or false).
+// (a comma-separated persona list), review.required (true or false) and
+// review.group_gates (commands separated by ";;" or newlines).
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
@@ -1080,6 +1099,21 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Review.Required = b
 		return nil
+	case "review.group_gates":
+		// Commands separated by ";;" or newlines; an empty value clears them.
+		var gates []string
+		for _, line := range strings.Split(value, "\n") {
+			for _, g := range strings.Split(line, groupGatesSep) {
+				if g = strings.TrimSpace(g); g != "" {
+					gates = append(gates, g)
+				}
+			}
+		}
+		if c.Review == nil {
+			c.Review = &ReviewConfig{}
+		}
+		c.Review.GroupGates = gates
+		return nil
 	case "worktree.setup", "worktree.setup_timeout":
 		if c.Worktree == nil {
 			c.Worktree = &WorktreeConfig{}
@@ -1131,7 +1165,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
+		"max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"worktree.setup", "worktree.setup_timeout",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",

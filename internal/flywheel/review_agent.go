@@ -208,6 +208,32 @@ func reviewWorker(cfg Config, name string) (Worker, error) {
 	return w, nil
 }
 
+// resolveReviewer is who runs a review agent and on which adapter: the given
+// adapter and model (a panel member's), else reviewWorker with model, when
+// set, overriding the resolved worker's.
+func resolveReviewer(cfg Config, worker, adapter, model string) (Worker, Adapter, error) {
+	var w Worker
+	if adapter != "" {
+		w = Worker{Name: "reviewer", Adapter: adapter, Model: model}
+		if w.Adapter == "sim" || !adapterKnown(w.Adapter, false) {
+			return Worker{}, nil, fmt.Errorf("adapter %q cannot run a review agent; use claude, opencode or codex", w.Adapter)
+		}
+	} else {
+		var err error
+		if w, err = reviewWorker(cfg, worker); err != nil {
+			return Worker{}, nil, err
+		}
+		if model != "" {
+			w.Model = model
+		}
+	}
+	adap, err := AdapterFor(w.Adapter)
+	if err != nil {
+		return Worker{}, nil, err
+	}
+	return w, adap, nil
+}
+
 // nextReviewRound is one more than the review-agent rounds already recorded
 // for task: the reviewed events that name an adapter (a verdict passed in by
 // hand names none). One panel round (issue #420) records one reviewed event
@@ -439,18 +465,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 			return ReviewAgentResult{}, err
 		}
 	}
-	var worker Worker
-	if o.Adapter != "" {
-		worker = Worker{Name: "reviewer", Adapter: o.Adapter, Model: o.Model}
-		if worker.Adapter == "sim" || !adapterKnown(worker.Adapter, false) {
-			return ReviewAgentResult{}, fmt.Errorf("adapter %q cannot run a review agent; use claude, opencode or codex", worker.Adapter)
-		}
-	} else if worker, err = reviewWorker(cfg, o.Worker); err != nil {
-		return ReviewAgentResult{}, err
-	} else if o.Model != "" {
-		worker.Model = o.Model
-	}
-	adap, err := AdapterFor(worker.Adapter)
+	worker, adap, err := resolveReviewer(cfg, o.Worker, o.Adapter, o.Model)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}

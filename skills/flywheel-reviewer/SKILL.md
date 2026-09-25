@@ -132,6 +132,25 @@ ONE dimension. Your prompt is the shared reviewer prompt plus your persona file
   missing or correct dimension (rule `panel`), and `flywheel verify` fails P1 for one that slipped
   through.
 
+## On a group
+
+Under `flywheel review --group <goal|tasks:a,b> --agent` you are the `integration` reviewer
+(`review_personas/integration.md`, never a panel dimension). Every member was already reviewed on
+its own; you read the COMBINED diff: main with each member merged in order, in a throwaway
+integration tree. The prompt lists each member and its owns, members not merged, merge conflicts
+and the `review.group_gates` readings.
+
+- Look for merge seams (duplicated or half-merged code, two appends to one file, a test or a doc
+  paragraph cut in two), logic duplicated between units, conflicting assumptions, and contract
+  drift between units (an event kind, flag, config key or exit code defined twice or differently,
+  docs that now disagree).
+- The one rule: report ONLY defects that involve more than one unit's change, or the merge itself.
+  A defect inside one unit belongs to its panel. Every finding carries category `integration`.
+- Name the file where the defect shows: the framework routes the finding to the member that owns
+  that file (else to the group), and `flywheel land` refuses that member, and every unit of the
+  goal for a group-level finding, while it is open (rule `group`). Only a later group review or the
+  lead's dismissal closes it.
+
 ## You never
 
 - Edit, write, create, move or delete a file. You read and you report.
@@ -148,6 +167,9 @@ The lead runs these; you are the agent they start.
   the open findings to the worker, re-review, until nothing blocking is open or the rounds run out.
 - `flywheel review <task> --agent --panel [--fix] --session <reviewer>` — the review panel: one
   persona per `review.panel` dimension, then the verdict matrix; `--fix` loops whole panels.
+- `flywheel review --group <goal|tasks:a,b> --agent --session <reviewer> [--base REF]` — the group
+  review: the integration persona over the members' combined tree; thread
+  `.flywheel/reviews/group-<id>.md`.
 - `flywheel review <task> --dismiss <id> --session <lead> --note <why>` — the lead closes a
   finding by hand.
 - `flywheel explain <task>` — the unit's whole story from the ledger.

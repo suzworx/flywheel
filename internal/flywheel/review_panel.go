@@ -18,7 +18,9 @@ var reviewPersonas embed.FS
 // security and cross-os are opt-in.
 var DefaultPanel = []string{"correctness", "tests", "errors", "contract", "docs"}
 
-// PanelPersonas lists every embedded persona (review dimension), sorted.
+// PanelPersonas lists every embedded panel persona (review dimension),
+// sorted. The integration persona is embedded too but reviews a group, never
+// a unit (ReviewGroup), so it is not a panel dimension.
 func PanelPersonas() []string {
 	entries, err := reviewPersonas.ReadDir("review_personas")
 	if err != nil {
@@ -26,7 +28,7 @@ func PanelPersonas() []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if name, ok := strings.CutSuffix(e.Name(), ".md"); ok && !e.IsDir() {
+		if name, ok := strings.CutSuffix(e.Name(), ".md"); ok && !e.IsDir() && name != IntegrationPersona {
 			out = append(out, name)
 		}
 	}
