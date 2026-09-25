@@ -45,10 +45,12 @@ A brief is a plain-text file with these parts:
    (and any `git checkout`), `git restore`, `git reset`, `git clean`, `git switch`, `git commit`,
    `git rebase`, `git merge`, `git cherry-pick`, `git pull`, `git push`. Other workers and the
    orchestrator have uncommitted work in the same tree; one stash destroys it. To find out whether
-   a failure is yours, use `git diff --name-only`, a scoped gate on your own files, or a throwaway
-   `git worktree add` outside the tree. Many of these are blocked outright by permission rules; do
+   a failure is yours, use `git diff --name-only` or a scoped gate on your own files. Many of these are blocked outright by permission rules; do
    not look for a way around a block, report it. Under `flywheel run`, `git` on your PATH is a
    guard: only read-only git commands run (status, diff, log, show, grep, …); anything else is refused with exit 1 — report instead of working around it.
+   Never run git write commands, `git add` included: they are denied at dispatch, flywheel detects
+   any that slip through (a `git-write` signal) and unstages what you staged, and flywheel stages
+   and commits your work itself.
 3. **Implement, don't plan.** You do not redesign the brief. If the brief is ambiguous, report the
    blocker. Do not silently pick a different scope.
 4. **Write in chunks.** At most one write per response and at most 120 lines per write; batch
