@@ -1,13 +1,17 @@
 package flywheel
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 // GitGuardEnv names the environment variable that holds the guard directory
@@ -382,14 +386,14 @@ func installGitGuard(dir, task, attempt string) (bin string, env []string, err e
 	}
 
 	gitPath := filepath.Join(binDir, "git")
-	if err := linkOrCopy(exePath, gitPath); err != nil {
+	if err := linkGuardBinary(exePath, gitPath, guardLinkTries, guardLinkWait, time.Sleep); err != nil {
 		os.RemoveAll(binDir)
 		return "", nil, err
 	}
 
 	if runtime.GOOS == "windows" {
 		gitExePath := filepath.Join(binDir, "git.exe")
-		if err := linkOrCopy(exePath, gitExePath); err != nil {
+		if err := linkGuardBinary(exePath, gitExePath, guardLinkTries, guardLinkWait, time.Sleep); err != nil {
 			os.RemoveAll(binDir)
 			return "", nil, err
 		}
@@ -435,6 +439,33 @@ func linkOrCopy(src, dst string) error {
 	}
 	// A copy (unlike a hard link) does not carry the executable bit.
 	return os.Chmod(dst, 0o755)
+}
+
+// guardLinkTries and guardLinkWait bound how long installGitGuard waits for
+// a flywheel executable that is missing mid-rename (a `flywheel upgrade`
+// swapping the binary, issue #461).
+const (
+	guardLinkTries = 5
+	guardLinkWait  = 200 * time.Millisecond
+)
+
+// linkGuardBinary links or copies src to dst, retrying up to tries times,
+// wait apart (via sleep), while src does not exist; any other failure, or a
+// src still missing after the last try, is returned naming src.
+func linkGuardBinary(src, dst string, tries int, wait time.Duration, sleep func(time.Duration)) error {
+	var err error
+	for i := 0; i < tries; i++ {
+		if i > 0 {
+			sleep(wait)
+		}
+		if err = linkOrCopy(src, dst); err == nil {
+			return nil
+		}
+		if _, serr := os.Stat(src); !errors.Is(serr, fs.ErrNotExist) {
+			break
+		}
+	}
+	return fmt.Errorf("guard binary %s: %w", src, err)
 }
 
 // objectOnly lists subcommands that only add objects to the object store —

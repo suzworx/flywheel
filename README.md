@@ -287,8 +287,9 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
    as `flywheel-<version>-windows-amd64.exe.zip` — plus `checksums.txt`, and verify the SHA-256
    before putting it on PATH (the archive holds a single binary named after the release, which
    you rename to `flywheel` on PATH). Once installed, `flywheel upgrade --check` tells you whether a
-   newer release exists and `flywheel upgrade` installs it, checksum-verified. Or build from
-   source:
+   newer release exists and `flywheel upgrade` installs it, checksum-verified. It refuses (exit 6)
+   while a run's lease is live in `--dir` (default `.`), since swapping the binary can crash that
+   run; wait for it (`flywheel wait`) or pass `--force`. Or build from source:
 
    ```bash
    git clone https://github.com/suzworx/flywheel.git && cd flywheel
@@ -386,7 +387,7 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
 | `flywheel init --ci` | available ([#56](https://github.com/suzworx/flywheel/issues/56)) | Writes `.github/workflows/flywheel-audit.yml` at the repository root: a job that installs the matching flywheel release and runs `flywheel verify --all --log` on every pull request (violations fail it; an inconclusive check only warns). Make `flywheel-audit` a required status check in the branch ruleset; the event log must be committed. Never overwrites an existing file. |
 | `flywheel context [--json] [--learnings N] [--role R] [--dir DIR]` | available ([#58](https://github.com/suzworx/flywheel/issues/58)) | A compact pack of the factory's state for a joining agent: active goals, in-flight, blocked and ready tasks, what still needs a verdict or triage, and recent learnings. `--role` (lead, planner, foreman, inspector, steward, auditor) keeps only that role's open work. Read-only. |
 | `flywheel feedback` | available (add/list/dismiss/regen/export/submit) | Turn signals into learnings: lists the untriaged signals (a signal is triaged once a later learning on its task names it with `--signals`; a recurrence after that learning is untriaged again); `add`, list, `dismiss`, and a generated `learnings.md`; `regen` rebuilds `learnings.md` from the event log without appending; `export [--out PATH]` writes a sanitised Markdown report of undismissed learnings; `submit [--yes]` sends it upstream as a gh issue — consent-first, with an offline outbox when gh fails. |
-| `flywheel upgrade` | available ([#201](https://github.com/suzworx/flywheel/issues/201)) | Self-update to a release with checksum verification: `--check` prints current and latest and whether an upgrade is available; otherwise download, verify the SHA-256 and install atomically. |
+| `flywheel upgrade` | available ([#201](https://github.com/suzworx/flywheel/issues/201)) | Self-update to a release with checksum verification: `--check` prints current and latest and whether an upgrade is available; otherwise download, verify the SHA-256 and install atomically. Refuses (exit 6) while a run's lease is live in `--dir` (default `.`); `--force` overrides with a warning. |
 
 ## Skills
 
