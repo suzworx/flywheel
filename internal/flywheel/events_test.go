@@ -1239,3 +1239,38 @@ func TestWorktreeSetupEvent(t *testing.T) {
 		t.Errorf("round trip = %+v", evs)
 	}
 }
+
+// TestValidateReleaseAudited checks the release_audited rules (issue #420): a
+// floor-level event with a session, a version, a verdict of pass, fail or
+// inconclusive and at least one check; no other kind carries version or checks.
+func TestValidateReleaseAudited(t *testing.T) {
+	ok := Event{Kind: "release_audited", Session: "aud", Version: "v0.2.0", Verdict: "pass", Checks: []string{"tag=pass"}}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("Validate(valid release_audited) = %v", err)
+	}
+	for _, v := range []string{"fail", "inconclusive"} {
+		e := ok
+		e.Verdict = v
+		if err := Validate(e); err != nil {
+			t.Errorf("Validate(verdict %s) = %v", v, err)
+		}
+	}
+	bad := map[string]func(e *Event){
+		"task":        func(e *Event) { e.Task = "T1" },
+		"no session":  func(e *Event) { e.Session = "" },
+		"no version":  func(e *Event) { e.Version = "" },
+		"no checks":   func(e *Event) { e.Checks = nil },
+		"no verdict":  func(e *Event) { e.Verdict = "" },
+		"bad verdict": func(e *Event) { e.Verdict = "conforms" },
+	}
+	for name, mut := range bad {
+		e := ok
+		mut(&e)
+		if err := Validate(e); err == nil {
+			t.Errorf("Validate(%s) accepted", name)
+		}
+	}
+	if err := Validate(Event{Task: "T1", Kind: "note", Note: "n", Version: "v1"}); err == nil {
+		t.Error("Validate() accepted a note carrying a version")
+	}
+}
