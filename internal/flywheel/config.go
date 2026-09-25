@@ -98,11 +98,22 @@ func (w Worker) stallTimeoutDuration() time.Duration {
 var defaultAllowedTools = []string{"Bash"}
 
 // defaultDisallowedTools implements the worker permission policy at the
-// dispatch's permission layer: workers never commit, stash, reset, checkout,
-// rebase or merge, whatever the brief says.
+// dispatch's permission layer: workers never write the index, a ref or the
+// history — no commit, stash, reset, checkout, rebase or merge, and no add,
+// rm, restore, tag, branch or other index/ref write — whatever the brief says.
+// This deny list is the guarantee: the PATH git guard may never be reached
+// (a shell snapshot can put the real git first, #423), and flywheel detects
+// any write that slips through after each attempt. Denying `git branch` also
+// denies `git branch --show-current`; workers use `git rev-parse
+// --abbrev-ref HEAD`. Read-only git (status, diff, log, show) stays allowed.
 var defaultDisallowedTools = []string{
 	"Bash(git commit:*)", "Bash(git push:*)", "Bash(git stash:*)",
 	"Bash(git reset:*)", "Bash(git checkout:*)", "Bash(git rebase:*)", "Bash(git merge:*)",
+	"Bash(git add:*)", "Bash(git rm:*)", "Bash(git mv:*)", "Bash(git restore:*)",
+	"Bash(git update-index:*)", "Bash(git apply:*)", "Bash(git tag:*)", "Bash(git branch:*)",
+	"Bash(git switch:*)", "Bash(git cherry-pick:*)", "Bash(git revert:*)", "Bash(git am:*)",
+	"Bash(git worktree:*)", "Bash(git clean:*)", "Bash(git notes:*)", "Bash(git replace:*)",
+	"Bash(git update-ref:*)", "Bash(git gc:*)",
 }
 
 // allowedTools returns the worker's allowed tool patterns, or the default

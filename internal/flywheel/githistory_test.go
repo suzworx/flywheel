@@ -282,19 +282,64 @@ func TestGitWriteUnreadableFinalStateCounts(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 	gitRepoWithCommit(t, dir)
-	before, ok := gitHistoryState(dir)
+	before, ok := readGitState(dir)
 	if !ok {
-		t.Fatal("gitHistoryState of a fresh repo: not ok")
+		t.Fatal("readGitState of a fresh repo: not ok")
 	}
 	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	changed, note := gitWriteNote(dir, before, true)
-	if !changed || !strings.Contains(note, "(unreadable)") {
-		t.Errorf("gitWriteNote = %v %q, want a change to (unreadable)", changed, note)
+	ch := gitWriteNote(dir, before, true)
+	if !ch.changed || ch.worker || !strings.Contains(ch.note, "(unreadable)") {
+		t.Errorf("gitWriteNote = %+v, want a non-worker change to (unreadable)", ch)
 	}
-	if changed, _ := gitWriteNote(dir, before, false); changed {
+	if ch := gitWriteNote(dir, before, false); ch.changed {
 		t.Error("gitWriteNote with nothing captured reported a change")
+	}
+}
+
+// TestGitStateDetectsIndexWrite checks a staged file and a new tag are each
+// named as what changed and charged to the worker (#423).
+func TestGitStateDetectsIndexWrite(t *testing.T) {
+	dir := t.TempDir()
+	gitRepoWithCommit(t, dir)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	before, ok := readGitState(dir)
+	if !ok {
+		t.Fatal("readGitState: not ok")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a b.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "a b.txt")
+	ch := gitWriteNote(dir, before, true)
+	if !ch.changed || !ch.worker || !strings.Contains(ch.note, "index: staged a b.txt") || strings.Contains(ch.note, "HEAD:") {
+		t.Errorf("after git add: %+v, want a worker change naming index: staged a b.txt", ch)
+	}
+	if len(ch.staged) != 1 || ch.staged[0] != "a b.txt" {
+		t.Errorf("staged = %q, want [a b.txt]", ch.staged)
+	}
+	if signal, _ := gitWriteVerdict(ch, nil); !signal {
+		t.Error("index write without a guard record raised no signal")
+	}
+
+	before, _ = readGitState(dir)
+	run("tag", "v9")
+	ch = gitWriteNote(dir, before, true)
+	if !ch.changed || !ch.worker || !strings.Contains(ch.note, "tags: +v9") || strings.Contains(ch.note, "index:") {
+		t.Errorf("after git tag: %+v, want a worker change naming tags: +v9", ch)
+	}
+	before, _ = readGitState(dir)
+	run("tag", "-d", "v9")
+	if ch = gitWriteNote(dir, before, true); !strings.Contains(ch.note, "tags: -v9") {
+		t.Errorf("after git tag -d: %q, want tags: -v9", ch.note)
 	}
 }
 
@@ -314,14 +359,15 @@ func guardLogWrite(dir, attempt, line string) {
 // TestGitWriteEvidence checks the three verdicts: no change, a change with a
 // write the guard recorded, and a change with none (#361).
 func TestGitWriteEvidence(t *testing.T) {
-	if signal, note := gitWriteVerdict(false, "", []string{"commit"}); signal || note != "" {
+	if signal, note := gitWriteVerdict(gitChange{}, []string{"commit"}); signal || note != "" {
 		t.Errorf("unchanged: %v %q, want false \"\"", signal, note)
 	}
-	signal, note := gitWriteVerdict(true, "moved", []string{"commit", "stash"})
+	moved := gitChange{changed: true, note: "moved"}
+	signal, note := gitWriteVerdict(moved, []string{"commit", "stash"})
 	if !signal || note != "moved; the worker tried: commit, stash" {
 		t.Errorf("changed with refused writes: %v %q", signal, note)
 	}
-	signal, note = gitWriteVerdict(true, "moved", nil)
+	signal, note = gitWriteVerdict(moved, nil)
 	if signal || !strings.HasPrefix(note, "moved; no worker git write was recorded by the guard") {
 		t.Errorf("changed without evidence: %v %q", signal, note)
 	}
