@@ -5,6 +5,12 @@ on:
     types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
+  # The full 1,000-task scale suite runs nightly and on main; PRs run a smaller
+  # smoke (issue #440).
+  schedule:
+    - cron: '17 9 * * *'
+  # release.yml dispatches this workflow on the release-please branch, because
+  # a pull_request run on a PR the bot opened never starts (issue #440).
   workflow_dispatch:
 
 permissions:
@@ -17,6 +23,7 @@ concurrency:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -26,33 +33,42 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
 
   scale:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: 1,000-task simulated wave
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
+      # PRs run 200 tasks; main, the nightly schedule and dispatches run 1,000.
+      - name: simulated wave
         run: go test -count=1 -run 'TestScaleWave' -timeout 30m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: "1000"
-      - name: 1,000-task simulated loop (next, run, validate, inspect, land, watch)
-        run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 60m -v ./internal/flywheel/
+          FLYWHEEL_SCALE: ${{ github.event_name == 'pull_request' && '200' || '1000' }}
+      - name: simulated loop (next, run, validate, inspect, land, watch)
+        run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 50m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: "1000"
+          FLYWHEEL_SCALE: ${{ github.event_name == 'pull_request' && '200' || '1000' }}
 
   install-check:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
       - name: go install and run the installed binary
         run: |
           set -euo pipefail
@@ -62,11 +78,14 @@ jobs:
 
   lint:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
       - name: gofmt check
         run: |
           unformatted="$(gofmt -l .)"
@@ -90,6 +109,7 @@ jobs:
 
   pr-title:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - name: Check PR title

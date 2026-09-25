@@ -268,5 +268,11 @@ func TestScaleFactoryLoop(t *testing.T) {
 	}
 
 	// Log summary
-	t.Logf("scale loop: %d tasks, %d events, %d rounds, %s", n, totalEvents, roundCount, time.Since(start).Round(time.Millisecond))
+	// The per-event cost is the number to watch across releases (issue #440).
+	elapsed := time.Since(start)
+	perEvent := time.Duration(0)
+	if totalEvents > 0 {
+		perEvent = elapsed / time.Duration(totalEvents)
+	}
+	t.Logf("scale loop: %d tasks, %d events, %d rounds, %s, %s per event", n, totalEvents, roundCount, elapsed.Round(time.Millisecond), perEvent.Round(time.Microsecond))
 }
