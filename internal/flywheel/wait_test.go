@@ -45,6 +45,7 @@ func (c *fakeClock) sleep(d time.Duration) {
 // finish appended between ticks is seen, a timeout is a *WaitTimeout, and an
 // unclean reason gives clean=false.
 func TestWaitFor(t *testing.T) {
+	t.Parallel()
 	disp := func(task, a string) Event { return Event{Task: task, Kind: "dispatched", Attempt: a} }
 	fin := func(task, a, r string) Event { return Event{Task: task, Kind: "finished", Attempt: a, Reason: r} }
 

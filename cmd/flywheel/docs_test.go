@@ -10,6 +10,7 @@ import (
 // flywheel-operator skill's command table as "flywheel <name>", so the
 // documented CLI never drifts from the implemented one.
 func TestDocsCommandTable(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("../../skills/flywheel-operator/SKILL.md")
 	if err != nil {
 		t.Errorf("read skills/flywheel-operator/SKILL.md: %v", err)
@@ -28,6 +29,7 @@ func TestDocsCommandTable(t *testing.T) {
 // protocol doc that falls out of sync) fails the build instead of drifting
 // silently.
 func TestDocsProtocolCitations(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("../../docs/PROTOCOL.md")
 	if err != nil {
 		t.Fatalf("read docs/PROTOCOL.md: %v", err)

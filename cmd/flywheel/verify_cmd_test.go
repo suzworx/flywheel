@@ -38,6 +38,7 @@ func runVerifyProcess(t *testing.T, args ...string) (string, int) {
 // and 3 were swapped names the reorder, not an edit (issue #436), and that an
 // acknowledged break passes and is named.
 func TestVerifyLogReorderedText(t *testing.T) {
+	t.Parallel()
 	if v, ok := os.LookupEnv(runVerifyHelperEnv); ok {
 		runVerify(strings.Split(v, "\x1f"))
 		os.Exit(0)

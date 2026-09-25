@@ -44,6 +44,7 @@ func costRow(t *testing.T, rows []CostRow, id string) CostRow {
 // TestCostSumsFixture checks the fixture sums per task, per model and in
 // total, with ids sorted.
 func TestCostSumsFixture(t *testing.T) {
+	t.Parallel()
 	rep, err := Cost(costFixture(t))
 	if err != nil {
 		t.Fatalf("Cost() error = %v", err)
@@ -90,6 +91,7 @@ func TestCostSumsFixture(t *testing.T) {
 // TestCostUnknownModel checks a finished task without a dispatched event
 // lands under the model "unknown".
 func TestCostUnknownModel(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, e := range []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -120,6 +122,7 @@ func TestCostUnknownModel(t *testing.T) {
 
 // TestCostEmptyLog checks an empty log prints zeros, not an error.
 func TestCostEmptyLog(t *testing.T) {
+	t.Parallel()
 	rep, err := Cost(t.TempDir())
 	if err != nil {
 		t.Fatalf("Cost() error = %v", err)
@@ -135,6 +138,7 @@ func TestCostEmptyLog(t *testing.T) {
 // TestCostJSONKeys checks --json output carries the tasks, models and total
 // keys and the model entries appear.
 func TestCostJSONKeys(t *testing.T) {
+	t.Parallel()
 	rep, err := Cost(costFixture(t))
 	if err != nil {
 		t.Fatalf("Cost() error = %v", err)
@@ -153,6 +157,7 @@ func TestCostJSONKeys(t *testing.T) {
 
 // TestCostUnreadableLog checks Cost fails when the log cannot be read.
 func TestCostUnreadableLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {

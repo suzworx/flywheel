@@ -26,6 +26,7 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 // unowned change stays uncommitted and is reported; bookkeeping is neither
 // committed nor reported; a directory that is not a task worktree is untouched.
 func TestUnitCommit(t *testing.T) {
+	t.Parallel()
 	dir := newRepo(t)
 	wt := filepath.Join(dir, ".flywheel", "worktrees", "T")
 	gitOut(t, dir, "worktree", "add", "-q", wt, "-b", "fw/T")

@@ -38,6 +38,7 @@ func landedEvents(t *testing.T, dir, task string) []Event {
 }
 
 func TestLandTaskSuccess(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
@@ -68,6 +69,7 @@ func TestLandTaskSuccess(t *testing.T) {
 // TestLandedTree records the tree of the landed commit, resolved from the
 // commit itself rather than the working directory.
 func TestLandedTree(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	commit := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -93,6 +95,7 @@ func TestLandedTree(t *testing.T) {
 // flywheel.md) alongside a product file must land with the same normalised
 // tree treeHash measures, so "what shipped" equals "what was measured".
 func TestLandedTreeMatchesInspected(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
@@ -132,6 +135,7 @@ func TestLandedTreeMatchesInspected(t *testing.T) {
 // TestLandTaskUnresolvableTree lands a commit that is not in any repository
 // here; the landed event still succeeds and records an empty tree.
 func TestLandTaskUnresolvableTree(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
@@ -150,6 +154,7 @@ func TestLandTaskUnresolvableTree(t *testing.T) {
 }
 
 func TestLandTaskRefusedWithoutPass(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -168,6 +173,7 @@ func TestLandTaskRefusedWithoutPass(t *testing.T) {
 }
 
 func TestLandTaskBadCommit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	for _, commit := range []string{"", "abc12", "zzzzzzz", "abcdef1234567890abcdef1234567890abcdef12345678901"} {
@@ -181,6 +187,7 @@ func TestLandTaskBadCommit(t *testing.T) {
 }
 
 func TestLandTaskSameCommitNoOp(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
@@ -196,6 +203,7 @@ func TestLandTaskSameCommitNoOp(t *testing.T) {
 }
 
 func TestLandTaskDifferentCommitRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "", false, ""); err != nil {
@@ -217,6 +225,7 @@ func TestLandTaskDifferentCommitRefused(t *testing.T) {
 // TestLandTaskOrdinaryRecordsNoLeadFlag checks an ordinary landing's event
 // carries no lead_implemented field and its note is unchanged.
 func TestLandTaskOrdinaryRecordsNoLeadFlag(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "merged", false, ""); err != nil {
@@ -244,6 +253,7 @@ func TestLandTaskOrdinaryRecordsNoLeadFlag(t *testing.T) {
 // TestLandTaskLeadImplemented checks a --by-lead landing records the flag and
 // the reason, prefixed in the note.
 func TestLandTaskLeadImplemented(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "", true, "40-line script fix, faster than a worker round-trip"); err != nil {
@@ -272,6 +282,7 @@ func TestLandTaskLeadImplemented(t *testing.T) {
 // TestLandTaskLeadImplementedComposesNote checks an operator note stays first
 // and the reason is appended after "; ".
 func TestLandTaskLeadImplementedComposesNote(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := LandTask(dir, "T1", "abc1234", "merged", true, "script fix"); err != nil {
@@ -290,6 +301,7 @@ func TestLandTaskLeadImplementedComposesNote(t *testing.T) {
 // TestLandTaskExceptionLandsUnpassedTask checks a planned-only task can land
 // on an exception, recording both excepted and landed events.
 func TestLandTaskExceptionLandsUnpassedTask(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -334,6 +346,7 @@ func TestLandTaskExceptionLandsUnpassedTask(t *testing.T) {
 // TestLandTaskExceptionRefusedForWorkerSession checks an exception from a
 // worker session is refused with rule T4.
 func TestLandTaskExceptionRefusedForWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -357,6 +370,7 @@ func TestLandTaskExceptionRefusedForWorkerSession(t *testing.T) {
 // TestLandTaskExceptionRefusedWhenPassed checks an exception is refused when
 // the task is already passed.
 func TestLandTaskExceptionRefusedWhenPassed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1", "")
@@ -375,6 +389,7 @@ func TestLandTaskExceptionRefusedWhenPassed(t *testing.T) {
 // TestLandTaskExceptionRefusedForUnknownTask checks an exception is refused
 // for a task with no events.
 func TestLandTaskExceptionRefusedForUnknownTask(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "ran go test by hand", "lead-1", "")
 	if !IsRuleRefusal(err) {
@@ -392,6 +407,7 @@ func TestLandTaskExceptionRefusedForUnknownTask(t *testing.T) {
 // TestValidateExceptedRequiresNoteAndSession checks Validate rejects excepted
 // events without a note or session.
 func TestValidateExceptedRequiresNoteAndSession(t *testing.T) {
+	t.Parallel()
 	err := Validate(Event{Task: "T1", Kind: "excepted", Note: "", Session: "lead-1"})
 	if err == nil {
 		t.Error("Validate() accepted excepted event without note")
@@ -413,6 +429,7 @@ func TestValidateExceptedRequiresNoteAndSession(t *testing.T) {
 // TestAppendEventsExceptionBatchInvalidAppendsNone checks a batch is validated
 // whole before anything is written: one invalid event appends none.
 func TestAppendEventsExceptionBatchInvalidAppendsNone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	err := AppendEvents(dir, []Event{
 		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
@@ -433,6 +450,7 @@ func TestAppendEventsExceptionBatchInvalidAppendsNone(t *testing.T) {
 // TestAppendEventsExceptionBatchSharesInstant checks a valid batch lands whole,
 // in order, and events without a timestamp share one instant.
 func TestAppendEventsExceptionBatchSharesInstant(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvents(dir, []Event{
 		{Task: "T1", Kind: "excepted", Commit: "abc1234", Session: "lead-1", Note: "ran go test by hand"},
@@ -456,6 +474,7 @@ func TestAppendEventsExceptionBatchSharesInstant(t *testing.T) {
 // passed task under different commits: the dispatch lock serialises the
 // read-check-append, so exactly one lands and the other is refused by T5.
 func TestLandTaskConcurrentDifferentCommitsLandOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	commits := []string{"abc1234", "def5678"}
@@ -494,6 +513,7 @@ func TestLandTaskConcurrentDifferentCommitsLandOnce(t *testing.T) {
 // TestLandTaskUntriagedSignalRefused checks a passed task with an untriaged
 // signal is refused with rule T9 unless --allow-untriaged is provided.
 func TestLandTaskUntriagedSignalRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
@@ -519,6 +539,7 @@ func TestLandTaskUntriagedSignalRefused(t *testing.T) {
 // overridden with --allow-untriaged, recording both allow_untriaged and landed
 // events.
 func TestLandTaskUntriagedAllowedRecordsReason(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
@@ -560,6 +581,7 @@ func TestLandTaskUntriagedAllowedRecordsReason(t *testing.T) {
 // TestLandTaskUntriagedTriagedSignalLands checks a task with a signal that is
 // triaged by a later learning event lands without requiring --allow-untriaged.
 func TestLandTaskUntriagedTriagedSignalLands(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
@@ -579,6 +601,7 @@ func TestLandTaskUntriagedTriagedSignalLands(t *testing.T) {
 // TestLandTaskUntriagedOtherTaskSignalIgnored checks landing task T1 succeeds
 // even when task T2 has an untriaged signal.
 func TestLandTaskUntriagedOtherTaskSignalIgnored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T2", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
@@ -595,6 +618,7 @@ func TestLandTaskUntriagedOtherTaskSignalIgnored(t *testing.T) {
 // TestLandTaskUntriagedAllowWithNothingRefused checks --allow-untriaged is
 // refused when the task has no untriaged signals.
 func TestLandTaskUntriagedAllowWithNothingRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	err := LandTaskWithException(dir, "T1", "abc1234", "", false, "", "", "", "nothing")
@@ -614,6 +638,7 @@ func TestLandTaskUntriagedAllowWithNothingRefused(t *testing.T) {
 // with the same commit twice is still a silent no-op, even when the first
 // landing used --allow-untriaged.
 func TestLandTaskUntriagedSameCommitStillNoOp(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:30Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
@@ -636,6 +661,7 @@ func TestLandTaskUntriagedSameCommitStillNoOp(t *testing.T) {
 // learning can never change the signals between land's read and its append
 // (#287 review).
 func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendPassed(t, dir, "T1")
 	release, err := acquireFeedbackLock(dir)
@@ -666,6 +692,7 @@ func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
 // the landing; a later group round closes the task's, a lead's dismissal the
 // group's, and then it lands. A unit's own blocker is not rule group's.
 func TestLandRefusesOpenGroupFinding(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gt := GroupTask("g1")
 	blocker := ReviewFinding{Severity: "blocker", File: "a.go", Line: 3, Claim: "two appends", Scenario: "s"}
@@ -704,6 +731,7 @@ func TestLandRefusesOpenGroupFinding(t *testing.T) {
 // base landed as a squash is refused with the rebase fix; once rebased it
 // lands.
 func TestLandRefusesStacked(t *testing.T) {
+	t.Parallel()
 	dir, base, squash := stackedRepo(t)
 	if err := AppendEvent(dir, Event{Task: "B", Kind: "inspected", Verdict: "pass", Session: "lead-1"}); err != nil {
 		t.Fatal(err)

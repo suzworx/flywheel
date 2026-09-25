@@ -87,6 +87,7 @@ func (s *upgradeServer) count() int {
 }
 
 func TestLatestVersion(t *testing.T) {
+	t.Parallel()
 	srv := newUpgradeServer(t, "v1.2.3", "linux", "amd64", []byte("payload"))
 	defer srv.Close()
 	got, err := LatestVersion(srv.opts)
@@ -99,6 +100,7 @@ func TestLatestVersion(t *testing.T) {
 }
 
 func TestCheckUpgrade(t *testing.T) {
+	t.Parallel()
 	srv := newUpgradeServer(t, "v1.2.3", "linux", "amd64", []byte("payload"))
 	defer srv.Close()
 
@@ -128,6 +130,7 @@ func TestCheckUpgrade(t *testing.T) {
 }
 
 func TestUpgradeInstalls(t *testing.T) {
+	t.Parallel()
 	payload := []byte("#!/bin/sh\necho new binary\n")
 	srv := newUpgradeServer(t, "v2.0.0", "linux", "amd64", payload)
 	defer srv.Close()
@@ -158,6 +161,7 @@ func TestUpgradeInstalls(t *testing.T) {
 }
 
 func TestUpgradeChecksumMismatch(t *testing.T) {
+	t.Parallel()
 	payload := []byte("binary")
 	asset := assetName("v2.0.0", "linux", "amd64")
 	bad := strings.Repeat("0", 64) + "  " + asset + "\n"
@@ -188,6 +192,7 @@ func TestUpgradeChecksumMismatch(t *testing.T) {
 }
 
 func TestUpgradeAssetMissingFromChecksums(t *testing.T) {
+	t.Parallel()
 	payload := []byte("binary")
 	srv := newUpgradeServer(t, "v2.0.0", "linux", "amd64", payload, "# no checksums here\n")
 	defer srv.Close()
@@ -213,6 +218,7 @@ func TestUpgradeAssetMissingFromChecksums(t *testing.T) {
 }
 
 func TestUpgradeUnsupportedPlatform(t *testing.T) {
+	t.Parallel()
 	srv := newUpgradeServer(t, "v2.0.0", "linux", "amd64", []byte("binary"))
 	defer srv.Close()
 	dest := filepath.Join(t.TempDir(), "flywheel")
@@ -237,6 +243,7 @@ func TestUpgradeUnsupportedPlatform(t *testing.T) {
 }
 
 func TestUpgradeIgnoresStaleOld(t *testing.T) {
+	t.Parallel()
 	payload := []byte("new binary")
 	srv := newUpgradeServer(t, "v2.0.0", "linux", "amd64", payload)
 	defer srv.Close()

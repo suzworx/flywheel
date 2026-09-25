@@ -6,6 +6,7 @@ import (
 )
 
 func TestReconcileOverlapSameOwnsOneDispatch(t *testing.T) {
+	t.Parallel()
 	// T1, T2 both own a.go → DISPATCH T1, WAIT T2 with Reason "owns a.go overlaps T1".
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := now.Format(time.RFC3339Nano)
@@ -41,6 +42,7 @@ func TestReconcileOverlapSameOwnsOneDispatch(t *testing.T) {
 }
 
 func TestReconcileOverlapWithRunningTask(t *testing.T) {
+	t.Parallel()
 	// T1 dispatched (owns a.go, status dispatched), T2 planned owns a.go → T2 WAIT "owns a.go overlaps T1".
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := now.Format(time.RFC3339Nano)
@@ -74,6 +76,7 @@ func TestReconcileOverlapWithRunningTask(t *testing.T) {
 }
 
 func TestReconcileOverlapDirPrefix(t *testing.T) {
+	t.Parallel()
 	// T1 owns "internal/", T2 owns "internal/x.go" → T2 WAIT.
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := now.Format(time.RFC3339Nano)
@@ -106,6 +109,7 @@ func TestReconcileOverlapDirPrefix(t *testing.T) {
 }
 
 func TestReconcileOverlapExclusive(t *testing.T) {
+	t.Parallel()
 	// T1 and T2 own different files but both exclusive "db" → T2 WAIT "exclusive db overlaps T1".
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := now.Format(time.RFC3339Nano)
@@ -140,6 +144,7 @@ func TestReconcileOverlapExclusive(t *testing.T) {
 }
 
 func TestReconcileOverlapDisjointBothDispatch(t *testing.T) {
+	t.Parallel()
 	// T1 owns a.go, T2 owns b.go → both DISPATCH.
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := now.Format(time.RFC3339Nano)
@@ -175,6 +180,7 @@ func TestReconcileOverlapDisjointBothDispatch(t *testing.T) {
 }
 
 func TestReconcileOverlapCapacityCountsChosenOnly(t *testing.T) {
+	t.Parallel()
 	// MaxParallel 1; T1 and T2 own a.go, T3 owns c.go
 	// → DISPATCH T1 only, WAIT T2 (overlap); T3 is cut by capacity (not in the output), as today.
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
@@ -235,6 +241,7 @@ func actionFor(acts []Action, task string) Action {
 // delta owns only b.go still holds its base brief's a.go, as AttemptBrief
 // resolves it for run's collision check (#326 review).
 func TestReconcileOverlapCorrectionKeepsBaseOwns(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
 	events := []Event{
@@ -251,6 +258,7 @@ func TestReconcileOverlapCorrectionKeepsBaseOwns(t *testing.T) {
 // TestReconcileOverlapHeadlessDispatchKeepsPlannedOwns checks that a legacy
 // dispatched event without a header does not erase the planned owns.
 func TestReconcileOverlapHeadlessDispatchKeepsPlannedOwns(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
 	events := []Event{
@@ -268,6 +276,7 @@ func TestReconcileOverlapHeadlessDispatchKeepsPlannedOwns(t *testing.T) {
 // does not make an overlapping task WAIT: neither runs this tick, and both
 // keep the hold (#326 review).
 func TestReconcileOverlapHoldMakesNoFalseWait(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := func(m int) string { return now.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
 	events := []Event{

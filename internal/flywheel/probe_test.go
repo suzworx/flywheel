@@ -8,6 +8,7 @@ import (
 
 // TestProbeOkClosesBreaker tests that a probed ok event closes the breaker.
 func TestProbeOkClosesBreaker(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	nowMinus3m := now.Add(-3 * time.Minute)
 	nowMinus2m := now.Add(-2 * time.Minute)
@@ -43,6 +44,7 @@ func TestProbeOkClosesBreaker(t *testing.T) {
 
 // TestProbeBeforeErrorsIgnored tests that a probed ok before errors is ignored.
 func TestProbeBeforeErrorsIgnored(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	nowMinus5m := now.Add(-5 * time.Minute)
 	nowMinus3m := now.Add(-3 * time.Minute)
@@ -78,6 +80,7 @@ func TestProbeBeforeErrorsIgnored(t *testing.T) {
 
 // TestProbeNotOkIgnored tests that a probed event with Reason != "ok" is ignored.
 func TestProbeNotOkIgnored(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	nowMinus3m := now.Add(-3 * time.Minute)
 	nowMinus2m := now.Add(-2 * time.Minute)
@@ -113,6 +116,7 @@ func TestProbeNotOkIgnored(t *testing.T) {
 
 // TestProbeOtherModelIgnored tests that a probed event for another model is ignored.
 func TestProbeOtherModelIgnored(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	nowMinus3m := now.Add(-3 * time.Minute)
 	nowMinus2m := now.Add(-2 * time.Minute)
@@ -148,6 +152,7 @@ func TestProbeOtherModelIgnored(t *testing.T) {
 
 // TestProbeValidate tests Validate for probed events.
 func TestProbeValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		event   Event
@@ -187,6 +192,7 @@ func TestProbeValidate(t *testing.T) {
 
 // TestProbeRecordProbes tests RecordProbes appends probed events.
 func TestProbeRecordProbes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -234,6 +240,7 @@ func TestProbeRecordProbes(t *testing.T) {
 
 // TestProbeSummaryShowsTokensAndRate tests FactorySummary displays tokens and rate.
 func TestProbeSummaryShowsTokensAndRate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -272,6 +279,7 @@ func TestProbeSummaryShowsTokensAndRate(t *testing.T) {
 // Errors 3, one error after the probe does not reopen the breaker on the
 // strength of the three before it (#334 review).
 func TestProbeResetsErrorCount(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := func(m int) string { return base.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
 	events := []Event{
@@ -290,6 +298,7 @@ func TestProbeResetsErrorCount(t *testing.T) {
 // TestProbeRecordUsesProbeTime checks that a probed event carries the time
 // its probe finished, not the time the batch was appended (#334 review).
 func TestProbeRecordUsesProbeTime(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatal(err)

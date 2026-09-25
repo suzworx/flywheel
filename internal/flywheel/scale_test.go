@@ -13,6 +13,7 @@ import (
 // TestScaleWave drives N simulated tasks through Run concurrently in one ledger
 // (issue #48): N is 50, or FLYWHEEL_SCALE when set (CI runs 1000).
 func TestScaleWave(t *testing.T) {
+	t.Parallel()
 	// Determine N from environment or defaults
 	n := 50
 	if testing.Short() && os.Getenv("FLYWHEEL_SCALE") == "" {

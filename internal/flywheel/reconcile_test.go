@@ -387,6 +387,7 @@ func runRecCase(t *testing.T, c recCase) {
 // dispatch, stable ordering, stale late results, quiet tasks and the
 // never-below-zero clamp.
 func TestReconcileTable(t *testing.T) {
+	t.Parallel()
 	for _, c := range recCases() {
 		runRecCase(t, c)
 	}
@@ -406,6 +407,7 @@ func recCaseByName(t *testing.T, name string) recCase {
 // TestReconcileIdempotent reconciles the same inputs twice: identical output,
 // so a repeated tick never invents work and two operators agree.
 func TestReconcileIdempotent(t *testing.T) {
+	t.Parallel()
 	c := recCaseByName(t, "ordering")
 	now, err := time.Parse(time.RFC3339, c.now)
 	if err != nil {
@@ -422,6 +424,7 @@ func TestReconcileIdempotent(t *testing.T) {
 
 // TestReconcilePerHostCapsCapacity checks that per_host caps the dispatch capacity.
 func TestReconcilePerHostCapsCapacity(t *testing.T) {
+	t.Parallel()
 	c := recCaseByName(t, "per-host-caps-capacity")
 	now, err := time.Parse(time.RFC3339, c.now)
 	if err != nil {
@@ -437,6 +440,7 @@ func TestReconcilePerHostCapsCapacity(t *testing.T) {
 
 // TestPolicyFromConfig pins the max_parallel mapping: 0 means 1, and checks PerHost is copied.
 func TestPolicyFromConfig(t *testing.T) {
+	t.Parallel()
 	if p := PolicyFromConfig(Config{Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m", MaxParallel: 0}}}); p.MaxParallel != 1 {
 		t.Errorf("max_parallel 0 = %d, want 1", p.MaxParallel)
@@ -455,6 +459,7 @@ func TestPolicyFromConfig(t *testing.T) {
 // model a rate limit paused until its reset, and dispatches after it (issue
 // #383).
 func TestNextHoldsPausedModel(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 10, 0, 0, time.UTC)
 	reset := now.Add(20 * time.Minute)
 	limitTime := now.Add(-1 * time.Minute).Format(time.RFC3339Nano)
@@ -490,6 +495,7 @@ func TestNextHoldsPausedModel(t *testing.T) {
 // file its dispatch, is older than LostAfter (idle). A live lease and a fresh
 // run file never mark lost.
 func TestMarkLostIdle(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	events := []Event{
 		{TS: "2026-09-10T00:00:00Z", Task: "a", Kind: "planned", Brief: "a.md"},
@@ -543,6 +549,7 @@ func TestMarkLostIdle(t *testing.T) {
 // TestClaimOverlapNegated: claimOverlap compares each side's whole owns list,
 // honouring "!" negations (#388 follow-up).
 func TestClaimOverlapNegated(t *testing.T) {
+	t.Parallel()
 	wake := claims{owns: []string{"apps/inc/wake.h"}}
 	negated := claims{owns: []string{"apps/inc/**", "!apps/inc/wake.h"}}
 	plain := claims{owns: []string{"apps/inc/**"}}

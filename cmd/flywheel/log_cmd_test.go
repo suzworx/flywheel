@@ -39,6 +39,7 @@ func gitInitRepo(t *testing.T, dir string) {
 // must never wait on a feedback command, so the lock file never appears
 // (issue #260).
 func TestAppendEventsPlannedTakesNoFeedbackLock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
 	if _, err := os.Stat(filepath.Join(dir, ".flywheel", "feedback.lock")); !os.IsNotExist(err) {
@@ -58,6 +59,7 @@ func TestAppendEventsPlannedTakesNoFeedbackLock(t *testing.T) {
 // artifact is rebuilt from the log, and the lock is released again (no lock
 // file remains).
 func TestAppendEventsLearningRebuildsArtifact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
@@ -78,6 +80,7 @@ func TestAppendEventsLearningRebuildsArtifact(t *testing.T) {
 // learning event imports the whole batch — plain and learning events together
 // — as one transaction, not one locked mutation per event.
 func TestAppendEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -100,6 +103,7 @@ func TestAppendEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
 // appending it raw (issue #272): a benign amendment lands, and the amended
 // event is present in the log afterwards.
 func TestAppendEventsAmendedRoutesThroughCheck(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	base := flywheel.BriefHeader{Owns: []string{"a.go"}, Gates: []string{"go build ./..."}}
 	appendEvents(dir, []flywheel.Event{
@@ -122,6 +126,7 @@ func TestAppendEventsAmendedRoutesThroughCheck(t *testing.T) {
 // lands as the feedback transaction, so neither the refusal nor the
 // learnings.md rebuild is skipped (issue #272, #260).
 func TestAppendEventsAmendedInFeedbackBatchLandsBoth(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	base := flywheel.BriefHeader{Owns: []string{"a.go"}, Gates: []string{"go build ./..."}}
 	appendEvents(dir, []flywheel.Event{
@@ -155,6 +160,7 @@ func TestAppendEventsAmendedInFeedbackBatchLandsBoth(t *testing.T) {
 // TestBatchHasLearning checks the routing predicate: only batches carrying a
 // learning or dismissed event are routed through the feedback transaction.
 func TestBatchHasLearning(t *testing.T) {
+	t.Parallel()
 	plain := []flywheel.Event{{Kind: "planned"}, {Kind: "finished"}}
 	if batchHasLearning(plain) {
 		t.Error("batchHasLearning() = true for a batch with no learning or dismissed event")
@@ -172,6 +178,7 @@ func TestBatchHasLearning(t *testing.T) {
 // TestLogShardSealsAndMarksConfig checks that runLogShard seals the legacy log
 // and marks the config with log.shards = true.
 func TestLogShardSealsAndMarksConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -196,6 +203,7 @@ func TestLogShardSealsAndMarksConfig(t *testing.T) {
 // TestLogShardIdempotent checks that a second call to runLogShard prints
 // "already uses the sharded log" and does not fail.
 func TestLogShardIdempotent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -216,6 +224,7 @@ func TestLogShardIdempotent(t *testing.T) {
 // TestLogShardFlagConflictsAreUsage checks that logShardConflicts validates
 // flags properly and returns errors for conflicts.
 func TestLogShardFlagConflictsAreUsage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		opts *logOptions
@@ -239,6 +248,7 @@ func TestLogShardFlagConflictsAreUsage(t *testing.T) {
 // TestLogShardWarnsOnPinnedAuditWorkflow checks that runLogShard warns when
 // the audit workflow pins a flywheel version.
 func TestLogShardWarnsOnPinnedAuditWorkflow(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
 	workflowDir := filepath.Join(dir, ".github", "workflows")
@@ -262,6 +272,7 @@ func TestLogShardWarnsOnPinnedAuditWorkflow(t *testing.T) {
 // TestInitShardCreatesShardedRepo checks that init --shard creates a sharded
 // repository with ShardedLayout = true.
 func TestInitShardCreatesShardedRepo(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gitInitRepo(t, dir)
 	o := &initOptions{dir: dir, shard: true}
@@ -307,6 +318,7 @@ func runLogProcess(t *testing.T, args ...string) (string, int) {
 // TestLogMissingFlagErrors checks a missing flag prints the error and the
 // fixed command, not the whole usage, and exits 2 (issue #392).
 func TestLogMissingFlagErrors(t *testing.T) {
+	t.Parallel()
 	if v, ok := os.LookupEnv(runLogHelperEnv); ok {
 		runLog(strings.Split(v, "\x1f"))
 		os.Exit(0)
@@ -349,6 +361,7 @@ func TestLogMissingFlagErrors(t *testing.T) {
 // required and --kind/--task/--json do not combine with it (exit 2); an
 // intact chain and an unforced removed break are refusals (exit 6).
 func TestLogReanchorFlags(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, tt := range []struct {
 		args []string
@@ -393,6 +406,7 @@ var shardTestClock = time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 // happens when the config cannot be read: the fence must never be missing
 // from a migrated repository (#351 review).
 func TestLogShardKeepsLayoutWhenConfigFails(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
 	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte("{not json"), 0o644); err != nil {
@@ -409,6 +423,7 @@ func TestLogShardKeepsLayoutWhenConfigFails(t *testing.T) {
 // TestLogShardAddsLocksToExistingGitignore checks that a migrated repository
 // ignores the transient shard locks (#351 review).
 func TestLogShardAddsLocksToExistingGitignore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendEvents(dir, []flywheel.Event{{Task: "t1", Kind: "planned", Brief: "b.txt"}}, true)
 	ignore := filepath.Join(dir, ".flywheel", ".gitignore")
@@ -436,6 +451,7 @@ func TestLogShardAddsLocksToExistingGitignore(t *testing.T) {
 // the workflow at the repository root, not under a nested factory (#351
 // review).
 func TestLogShardWarnsForNestedFactory(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	gitInitRepo(t, root)
 	workflows := filepath.Join(root, ".github", "workflows")
@@ -462,6 +478,7 @@ func TestLogShardWarnsForNestedFactory(t *testing.T) {
 // TestNoteEventLogged checks flywheel log --kind note records a journal line
 // through the generic append path, with or without a task (issue #409).
 func TestNoteEventLogged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if stderr, code := runLogProcess(t, "--kind", "note", "--note", "action: dispatched t1", "--no-state", "--dir", dir); code != 0 {
 		t.Fatalf("task-less note: exit %d; stderr:\n%s", code, stderr)

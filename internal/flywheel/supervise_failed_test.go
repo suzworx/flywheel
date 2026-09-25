@@ -9,6 +9,7 @@ import (
 // TestSuperviseFailedRemeasuredAfterOwnedFix checks that supervise re-measures
 // a failed unit after an owned file is fixed.
 func TestSuperviseFailedRemeasuredAfterOwnedFix(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"grep -q 'package a' a.go"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -48,6 +49,7 @@ func TestSuperviseFailedRemeasuredAfterOwnedFix(t *testing.T) {
 // TestSuperviseFailedUnchangedNotRemeasured checks that supervise does not
 // re-measure a failed unit when its owned files haven't changed.
 func TestSuperviseFailedUnchangedNotRemeasured(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"grep -q 'package a' a.go"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -77,6 +79,7 @@ func TestSuperviseFailedUnchangedNotRemeasured(t *testing.T) {
 // TestSuperviseFailedEditOutsideOwnsNotRemeasured checks that supervise does
 // not re-measure a failed unit when only files outside its owns changed.
 func TestSuperviseFailedEditOutsideOwnsNotRemeasured(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"grep -q 'package a' a.go"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)

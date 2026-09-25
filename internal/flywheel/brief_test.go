@@ -19,6 +19,7 @@ func writeBrief(t *testing.T, content string) string {
 }
 
 func TestParseBriefHeaderOwnsContinuationAndAnnotations(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: internal/a.go (new), internal/b.go,\n"+
 		"      internal/c/ (new fixtures),\n"+
 		"      README.md (the CLI table only)\n"+
@@ -45,6 +46,7 @@ func TestParseBriefHeaderOwnsContinuationAndAnnotations(t *testing.T) {
 }
 
 func TestParseBriefHeaderIndentedLineAfterNonOwnsKey(t *testing.T) {
+	t.Parallel()
 	// "go test ./..." is indented under a gate line; it must not become an
 	// owns entry, and the gate keeps its value as written.
 	path := writeBrief(t, "owns: a.go\ngate: go build ./... &&\n"+
@@ -74,6 +76,7 @@ func TestParseBriefHeaderIndentedLineAfterNonOwnsKey(t *testing.T) {
 }
 
 func TestParseBriefHeaderGatesInOrder(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\ngate: go vet ./...\n"+
 		"gate: go test ./...\n\n# TASK: gates\nreview: after the header, must be ignored\n")
 	h, err := ParseBriefHeader(path)
@@ -95,6 +98,7 @@ func TestParseBriefHeaderGatesInOrder(t *testing.T) {
 }
 
 func TestParseBriefHeaderLiveGatesInOrder(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\nlive-gate: go run ./cmd/real\n"+
 		"gate: go test ./...\nlive-gate: go run ./cmd/real2\n\n# TASK: live\n")
 	h, err := ParseBriefHeader(path)
@@ -122,6 +126,7 @@ func TestParseBriefHeaderLiveGatesInOrder(t *testing.T) {
 }
 
 func TestParseBriefHeaderLiveGatesAbsentIsEmpty(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
 	if err != nil {
@@ -133,6 +138,7 @@ func TestParseBriefHeaderLiveGatesAbsentIsEmpty(t *testing.T) {
 }
 
 func TestParseBriefHeaderExclusiveAndReview(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nexclusive: .pio/\nreview: lead\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
 	if err != nil {
@@ -147,6 +153,7 @@ func TestParseBriefHeaderExclusiveAndReview(t *testing.T) {
 }
 
 func TestParseBriefHeaderNeedsState(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\nneeds-state: .env, data/db.sqlite\n"+
 		"needs-state: sub/\ngate: go build ./...\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
@@ -178,6 +185,7 @@ func TestParseBriefHeaderNeedsState(t *testing.T) {
 }
 
 func TestParseBriefHeaderNeedsStateAbsentIsEmpty(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: go build ./...\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
 	if err != nil {
@@ -191,6 +199,7 @@ func TestParseBriefHeaderNeedsStateAbsentIsEmpty(t *testing.T) {
 // TestParseBriefHeaderNeedsStateLink checks the "(link)" annotation (issue
 // #430): NeedsState keeps every plain path, NeedsStateLink the linked ones.
 func TestParseBriefHeaderNeedsStateLink(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: none\n"+
 		"needs-state: node_modules/ (link), .env, apps/web/node_modules/(link)\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
@@ -208,6 +217,7 @@ func TestParseBriefHeaderNeedsStateLink(t *testing.T) {
 }
 
 func TestParseBriefHeaderMissingHeader(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "# TASK: no header keys here\n\n## Context\nbody\n")
 	h, err := ParseBriefHeader(path)
 	if err != nil {
@@ -223,6 +233,7 @@ func TestParseBriefHeaderMissingHeader(t *testing.T) {
 }
 
 func TestParseBriefHeaderSHA256(t *testing.T) {
+	t.Parallel()
 	content := "owns: a.go\nneeds: none\ngate: go build ./...\n\n# TASK: x\n"
 	path := writeBrief(t, content)
 	h, err := ParseBriefHeader(path)
@@ -236,6 +247,7 @@ func TestParseBriefHeaderSHA256(t *testing.T) {
 }
 
 func TestParseBriefHeaderMissingFile(t *testing.T) {
+	t.Parallel()
 	if _, err := ParseBriefHeader(filepath.Join(t.TempDir(), "nope.txt")); err == nil {
 		t.Error("ParseBriefHeader() accepted a missing file")
 	}
@@ -248,6 +260,7 @@ func TestParseBriefHeaderMissingFile(t *testing.T) {
 // the prompt it sent) records a header and a hash describing the same content
 // (issue #259 correction).
 func TestParseBriefHeaderBytesMatchesFileParse(t *testing.T) {
+	t.Parallel()
 	content := "owns: a.go, shared.go (new)\nneeds: none\ngate: go build ./...\ngate: go test ./...\n\n# TASK: w259\n"
 	path := writeBrief(t, content)
 	fromFile, err := ParseBriefHeader(path)
@@ -267,6 +280,7 @@ func TestParseBriefHeaderBytesMatchesFileParse(t *testing.T) {
 // their commands in Gates/LiveGates and record their 1-based indices as quiet
 // (issue #411); an unknown marker is still an ordinary gate.
 func TestParseQuietGate(t *testing.T) {
+	t.Parallel()
 	h, err := ParseBriefHeaderBytes([]byte("owns: a.go\n" +
 		"gate: go build ./...\n" +
 		"gate[quiet]: ./hil-timing\n" +

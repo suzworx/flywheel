@@ -18,6 +18,7 @@ func writeLogBrief(t *testing.T, dir, name, content string) string {
 }
 
 func TestRecordPlannedRecordsOwnsNeeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt",
 		"owns: internal/a.go (new), internal/b.go,\n"+
@@ -60,6 +61,7 @@ func TestRecordPlannedRecordsOwnsNeeds(t *testing.T) {
 }
 
 func TestPlannerIdentity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nneeds: none\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -84,6 +86,7 @@ func TestPlannerIdentity(t *testing.T) {
 }
 
 func TestRecordPlannedMissingBriefErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := RecordPlanned(dir, "t", filepath.Join(dir, "nope.txt")); err == nil {
 		t.Fatal("RecordPlanned() error = nil, want error for missing brief")
@@ -91,6 +94,7 @@ func TestRecordPlannedMissingBriefErrors(t *testing.T) {
 }
 
 func TestRecordAmendedSnapshotsAndRecordsNote(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nneeds: none\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -149,6 +153,7 @@ func TestRecordAmendedSnapshotsAndRecordsNote(t *testing.T) {
 }
 
 func TestRecordAmendedResolvesBriefFromLatestEvent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nneeds: none\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -167,6 +172,7 @@ func TestRecordAmendedResolvesBriefFromLatestEvent(t *testing.T) {
 }
 
 func TestRecordAmendedMissingBriefFileErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := RecordAmended(dir, "t", filepath.Join(dir, "nope.txt"), "why"); err == nil {
 		t.Fatal("RecordAmended() error = nil, want error for missing brief file")
@@ -174,6 +180,7 @@ func TestRecordAmendedMissingBriefFileErrors(t *testing.T) {
 }
 
 func TestRecordAmendedWithoutRecordedBriefErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := RecordAmended(dir, "t", "", "why"); err == nil {
 		t.Fatal("RecordAmended() error = nil, want error when no brief path is recorded")
@@ -200,6 +207,7 @@ func dispatchBrief(t *testing.T, dir, task, path string) {
 // refusal names the correction-delta alternative, appends nothing, and
 // carries the RuleRefusal shape the CLI maps to exit 6 (issue #272).
 func TestRecordAmendedRefusesInertGateChangeAfterDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -234,6 +242,7 @@ func TestRecordAmendedRefusesInertGateChangeAfterDispatch(t *testing.T) {
 // brief that has not been dispatched yet is amended to declare new gates
 // exactly as before.
 func TestRecordAmendedUndispatchedStillRecordsNewGates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -261,6 +270,7 @@ func TestRecordAmendedUndispatchedStillRecordsNewGates(t *testing.T) {
 // gates are unchanged — only owns: is widened — so the amendment is read from
 // the base brief and is not inert.
 func TestRecordAmendedDispatchedWithoutGateChangeSucceeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -292,6 +302,7 @@ func TestRecordAmendedDispatchedWithoutGateChangeSucceeds(t *testing.T) {
 // gates, so amending the base gates DOES change what validation would run
 // for that attempt and must be allowed (issue #272 correction).
 func TestRecordAmendedInheritedGatesChangeSucceeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -334,6 +345,7 @@ func TestRecordAmendedInheritedGatesChangeSucceeds(t *testing.T) {
 // takes effect on a correction attempt and is allowed, and AttemptBrief
 // returns the amended live gate while the delta's own gates still override.
 func TestRecordAmendedEffectiveGatesLiveChangeSucceeds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -372,6 +384,7 @@ func TestRecordAmendedEffectiveGatesLiveChangeSucceeds(t *testing.T) {
 // header, so a live-gate-only amendment is inert there and refused, exactly
 // as an ordinary gate change is.
 func TestRecordAmendedLiveGatesInertAfterDispatchRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\nlive-gate: go run ./cmd/real\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -396,6 +409,7 @@ func TestRecordAmendedLiveGatesInertAfterDispatchRefused(t *testing.T) {
 // JSON-ingested amended event that would be inert is refused through the
 // same check as --kind amended, before anything is written (issue #272).
 func TestAppendAmendedEventRefusesInert(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -423,6 +437,7 @@ func TestAppendAmendedEventRefusesInert(t *testing.T) {
 // JSON-ingested amendment that does not try to change the gates (owns
 // widened) lands exactly as the flag path would.
 func TestAppendAmendedEventBenignAppends(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -450,6 +465,7 @@ func TestAppendAmendedEventBenignAppends(t *testing.T) {
 
 // TestRecordPlannedByIdentity records the planner's identity and goal link.
 func TestRecordPlannedByIdentity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
 	if err := RecordPlannedBy(dir, "t", brief, PlanMeta{Session: "lead-1", Model: "m", GoalID: "G1", Note: "n"}); err != nil {
@@ -473,6 +489,7 @@ func TestRecordPlannedByIdentity(t *testing.T) {
 
 // TestRecordPlannedIdentityEmptyByDefault verifies RecordPlanned leaves Session, Model, GoalID, Note empty.
 func TestRecordPlannedIdentityEmptyByDefault(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -493,6 +510,7 @@ func TestRecordPlannedIdentityEmptyByDefault(t *testing.T) {
 
 // TestRecordAmendedByIdentity records the planner's identity on an amended event.
 func TestRecordAmendedByIdentity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.txt\nneeds: none\n\n# TASK: t\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -518,6 +536,7 @@ func TestRecordAmendedByIdentity(t *testing.T) {
 // amendment widens owns after dispatch, the amendment takes effect on
 // AttemptBrief (issue #281).
 func TestRecordAmendedWidenOwnsAfterDispatchTakesEffect(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -551,6 +570,7 @@ func TestRecordAmendedWidenOwnsAfterDispatchTakesEffect(t *testing.T) {
 // amendment that would narrow owns after dispatch is refused with a
 // RuleRefusal (issue #281).
 func TestRecordAmendedRefusesInertOwnsNarrowingAfterDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go, b.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -585,6 +605,7 @@ func TestRecordAmendedRefusesInertOwnsNarrowingAfterDispatch(t *testing.T) {
 // directory to one file is seen as a narrowing: the union would keep src/, so
 // the replacement cannot take effect and is refused (issue #281 review).
 func TestRecordAmendedRefusesPatternNarrowingAfterDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: src/\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -602,6 +623,7 @@ func TestRecordAmendedRefusesPatternNarrowingAfterDispatch(t *testing.T) {
 // exclusive resource after dispatch is refused like an owns narrowing: the
 // union keeps it held (issue #281 review).
 func TestRecordAmendedRefusesExclusiveRemovalAfterDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\nexclusive: db\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -620,6 +642,7 @@ func TestRecordAmendedRefusesExclusiveRemovalAfterDispatch(t *testing.T) {
 // header is stored with the header parsed from its brief, so its widened owns
 // take effect on the dispatched attempt (issue #281 review).
 func TestAppendAmendedEventHeaderlessWidensOwns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
 	if err := RecordPlanned(dir, "t", brief); err != nil {
@@ -652,6 +675,7 @@ func TestAppendAmendedEventHeaderlessWidensOwns(t *testing.T) {
 // the dispatched header; before any dispatch, or when only prose changes,
 // there is nothing to warn about.
 func TestPlanDriftWarning(t *testing.T) {
+	t.Parallel()
 	t.Run("no dispatch", func(t *testing.T) {
 		dir := t.TempDir()
 		brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\nv1\n")
@@ -696,6 +720,7 @@ func TestPlanDriftWarning(t *testing.T) {
 // covering a path the attempt covered is a narrowing (issue #388), while
 // dropping a negation widens.
 func TestCoversNegatedNarrowing(t *testing.T) {
+	t.Parallel()
 	have := []string{"apps/inc/**"}
 	if covers([]string{"apps/inc/**", "!apps/inc/wake.h"}, have) {
 		t.Errorf("covers with a new negation = true, want false (a narrowing)")

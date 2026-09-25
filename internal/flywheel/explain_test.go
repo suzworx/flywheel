@@ -8,6 +8,7 @@ import (
 )
 
 func TestExplainUnknownTask(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "test"},
 	}
@@ -21,6 +22,7 @@ func TestExplainUnknownTask(t *testing.T) {
 }
 
 func TestExplainSummaryFields(t *testing.T) {
+	t.Parallel()
 	header := &BriefHeader{
 		Gates:  []string{"gate1", "gate2"},
 		SHA256: "abcdef1234567890",
@@ -86,6 +88,7 @@ func TestExplainSummaryFields(t *testing.T) {
 }
 
 func TestExplainIgnoresOtherTasks(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "task 1"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T2", Kind: "planned", Brief: "task 2"},
@@ -109,6 +112,7 @@ func TestExplainIgnoresOtherTasks(t *testing.T) {
 }
 
 func TestExplainLineFormats(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		e    Event
@@ -189,6 +193,7 @@ func TestExplainLineFormats(t *testing.T) {
 }
 
 func TestExplainRenderMarkdown(t *testing.T) {
+	t.Parallel()
 	x := Explanation{
 		Task:         "T1",
 		Status:       "landed",
@@ -231,6 +236,7 @@ func TestExplainRenderMarkdown(t *testing.T) {
 }
 
 func TestExplainJSON(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "test"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -268,6 +274,7 @@ func intPtr(i int) *int {
 // Derive replays, not file position: an amendment appended to the file first
 // but stamped later is the current brief.
 func TestExplainUsesDerivationOrder(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T12:00:00Z", Task: "T1", Kind: "amended", Brief: "late.txt", Note: "later"},
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "first.txt"},
@@ -288,6 +295,7 @@ func TestExplainUsesDerivationOrder(t *testing.T) {
 // TestExplainSmallCostVisible checks a sub-cent cost is not rounded away: the
 // line and the total show four decimals, like flywheel cost.
 func TestExplainSmallCostVisible(t *testing.T) {
+	t.Parallel()
 	rc := 0
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},

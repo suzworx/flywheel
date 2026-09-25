@@ -11,6 +11,7 @@ import (
 )
 
 func TestAppendEventsChainsPrev(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e1 := Event{Task: "T1", Kind: "planned"}
 	if err := AppendEvent(dir, e1); err != nil {
@@ -36,6 +37,7 @@ func TestAppendEventsChainsPrev(t *testing.T) {
 }
 
 func TestAppendEventsBatchChains(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e1 := Event{Task: "T1", Kind: "planned"}
 	if err := AppendEvent(dir, e1); err != nil {
@@ -62,6 +64,7 @@ func TestAppendEventsBatchChains(t *testing.T) {
 }
 
 func TestAppendEventsOverwritesSuppliedPrevChain(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e1 := Event{Task: "T1", Kind: "planned", Prev: "forged"}
 	if err := AppendEvent(dir, e1); err != nil {
@@ -77,6 +80,7 @@ func TestAppendEventsOverwritesSuppliedPrevChain(t *testing.T) {
 }
 
 func TestVerifyLogChainIntact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for i := 1; i <= 3; i++ {
 		e := Event{Task: "T" + string(rune('0'+i)), Kind: "planned"}
@@ -121,6 +125,7 @@ func TestVerifyLogChainIntact(t *testing.T) {
 }
 
 func TestVerifyLogChainEditedLineBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for i := 1; i <= 3; i++ {
 		e := Event{Task: "T" + string(rune('0'+i)), Kind: "planned"}
@@ -151,6 +156,7 @@ func TestVerifyLogChainEditedLineBreaks(t *testing.T) {
 }
 
 func TestVerifyLogChainDeletedLineBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for i := 1; i <= 3; i++ {
 		e := Event{Task: "T" + string(rune('0'+i)), Kind: "planned"}
@@ -186,6 +192,7 @@ func TestVerifyLogChainDeletedLineBreaks(t *testing.T) {
 // a committed ledger) is still a break but is named a reorder, in the legacy
 // log and in a shard: the dangling prev is a LATER line's hash (issue #422).
 func TestVerifyLogChainReorderedBreak(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for i := 1; i <= 4; i++ {
 		if err := AppendEvent(dir, Event{Task: fmt.Sprintf("T%d", i), Kind: "planned"}); err != nil {
@@ -228,6 +235,7 @@ func TestVerifyLogChainReorderedBreak(t *testing.T) {
 }
 
 func TestVerifyLogChainInterleavedOK(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
@@ -252,6 +260,7 @@ func TestVerifyLogChainInterleavedOK(t *testing.T) {
 }
 
 func TestVerifyLogChainLegacyLinesSkipped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
@@ -283,6 +292,7 @@ func TestVerifyLogChainLegacyLinesSkipped(t *testing.T) {
 }
 
 func TestLastLineHashSkipsUnterminatedTail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
@@ -358,6 +368,7 @@ func joinLines(lines []string) string {
 // last line longer than one 64 KiB chunk, with and without an unterminated
 // tail after it, and a file whose only complete line is that long line.
 func TestLastLineHashAcrossChunksChain(t *testing.T) {
+	t.Parallel()
 	big := strings.Repeat("x", 150000)
 	for name, content := range map[string]string{
 		"after a short line":      "a\n" + big + "\n",
@@ -383,6 +394,7 @@ func TestLastLineHashAcrossChunksChain(t *testing.T) {
 // TestLastLineHashSkipsBlankAndUnterminatedChain checks a blank last line and
 // an unterminated-only file never become a predecessor (#299 review).
 func TestLastLineHashSkipsBlankAndUnterminatedChain(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"trailing blank line":       "a\n\n",
 		"only an unterminated tail": "partial",
@@ -415,6 +427,7 @@ func TestLastLineHashSkipsBlankAndUnterminatedChain(t *testing.T) {
 // record but the last is the predecessor of the next — so removing any of
 // them would be detected (#299 review).
 func TestAppendEventsConcurrentChain(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)

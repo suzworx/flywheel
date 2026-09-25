@@ -10,6 +10,7 @@ import (
 )
 
 func TestClaimTaskFreshClaim(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	c, tookOver, err := ClaimTask(dir, "T1", "leadA", "starting", 30*time.Minute, false, now)
@@ -33,6 +34,7 @@ func TestClaimTaskFreshClaim(t *testing.T) {
 }
 
 func TestClaimTaskRenewedBySameSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", 30*time.Minute, false, now); err != nil {
@@ -53,6 +55,7 @@ func TestClaimTaskRenewedBySameSession(t *testing.T) {
 }
 
 func TestClaimTaskRefusedForDifferentSessionWhileLive(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", 30*time.Minute, false, now); err != nil {
@@ -73,6 +76,7 @@ func TestClaimTaskRefusedForDifferentSessionWhileLive(t *testing.T) {
 }
 
 func TestClaimTaskTakenOutrightAfterExpiry(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", time.Millisecond, false, now); err != nil {
@@ -91,6 +95,7 @@ func TestClaimTaskTakenOutrightAfterExpiry(t *testing.T) {
 }
 
 func TestClaimTaskForceTakeoverWhileLive(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", 30*time.Minute, false, now); err != nil {
@@ -109,6 +114,7 @@ func TestClaimTaskForceTakeoverWhileLive(t *testing.T) {
 }
 
 func TestReleaseTaskByHolder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", 30*time.Minute, false, now); err != nil {
@@ -124,6 +130,7 @@ func TestReleaseTaskByHolder(t *testing.T) {
 }
 
 func TestReleaseTaskRefusedForDifferentSessionWhileLive(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	if _, _, err := ClaimTask(dir, "T1", "leadA", "", 30*time.Minute, false, now); err != nil {
@@ -140,6 +147,7 @@ func TestReleaseTaskRefusedForDifferentSessionWhileLive(t *testing.T) {
 }
 
 func TestReleaseTaskNoClaimIsNoOp(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	found, err := ReleaseTask(dir, "T1", "leadA", false, time.Now())
 	if found || err != nil {
@@ -148,6 +156,7 @@ func TestReleaseTaskNoClaimIsNoOp(t *testing.T) {
 }
 
 func TestReadClaimsMixedLiveAndExpired(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	live := Claim{Task: "T1", Session: "leadA", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}
@@ -174,6 +183,7 @@ func TestReadClaimsMixedLiveAndExpired(t *testing.T) {
 }
 
 func TestReadClaimsSkipsMalformedFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	good := Claim{Task: "T1", Session: "leadA", ExpiresAt: "2026-09-16T12:00:00Z"}
 	if err := WriteClaim(dir, good); err != nil {

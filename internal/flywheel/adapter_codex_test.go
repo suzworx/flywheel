@@ -8,6 +8,7 @@ import (
 )
 
 func TestCodexParseCleanFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	obs := parseAll(a, fixtureLines("codex-clean.jsonl", t))
 	if len(obs) != 6 {
@@ -59,6 +60,7 @@ func TestCodexParseCleanFixture(t *testing.T) {
 }
 
 func TestCodexParseErrorFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	obs := parseAll(a, fixtureLines("codex-error.jsonl", t))
 	if len(obs) != 3 {
@@ -76,6 +78,7 @@ func TestCodexParseErrorFixture(t *testing.T) {
 }
 
 func TestCodexParseIgnoresNoise(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	cases := []string{
 		"not json",
@@ -91,6 +94,7 @@ func TestCodexParseIgnoresNoise(t *testing.T) {
 }
 
 func TestCodexParseFileChangeAdd(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	line := []byte(`{"type":"item.completed","item":{"id":"i","type":"file_change","changes":[{"path":"new.go","kind":"add"}]}}`)
 	obs, ok := a.Parse(line)
@@ -100,6 +104,7 @@ func TestCodexParseFileChangeAdd(t *testing.T) {
 }
 
 func TestCodexCommandFresh(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	dir := t.TempDir()
 	briefPath := filepath.Join(dir, "brief.txt")
@@ -151,6 +156,7 @@ func TestCodexCommandFresh(t *testing.T) {
 }
 
 func TestCodexCommandResume(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	dir := t.TempDir()
 	deltaPath := filepath.Join(dir, "delta.txt")
@@ -187,6 +193,7 @@ func TestCodexCommandResume(t *testing.T) {
 }
 
 func TestCodexCommandNoVariantNoPrompt(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("codex")
 	bin, args := a.Command(RunRequest{
 		Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "gpt-5-codex",
@@ -210,6 +217,7 @@ func TestCodexCommandNoVariantNoPrompt(t *testing.T) {
 }
 
 func TestCodexAdapterFor(t *testing.T) {
+	t.Parallel()
 	a, err := AdapterFor("codex")
 	if err != nil || a.Name() != "codex" {
 		t.Errorf("AdapterFor(codex) = %v, %v, want codex adapter nil error", a, err)

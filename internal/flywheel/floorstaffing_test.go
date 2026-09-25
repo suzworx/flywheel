@@ -11,6 +11,7 @@ import (
 )
 
 func TestFloorStaffingLeadLineUnchanged(t *testing.T) {
+	t.Parallel()
 	// No staffing config: Lead string matches today's behavior
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Kind: "staffed", Session: "lead-1", Persona: "lead", Model: "m1"},
@@ -34,6 +35,7 @@ func TestFloorStaffingLeadLineUnchanged(t *testing.T) {
 }
 
 func TestFloorStaffingRolesFromConfigAndFloor(t *testing.T) {
+	t.Parallel()
 	// Config names all three roles, only lead is staffed
 	cfg := Config{Staffing: &StaffingConfig{
 		Lead:      &RoleConfig{Adapter: "claude", Model: "claude-opus-5", Session: "lead-fw"},
@@ -59,6 +61,7 @@ func TestFloorStaffingRolesFromConfigAndFloor(t *testing.T) {
 }
 
 func TestFloorStaffingMismatchFlagged(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Staffing: &StaffingConfig{
 		Lead: &RoleConfig{Adapter: "claude", Model: "claude-opus-5", Session: "lead-fw"},
 	}}
@@ -91,6 +94,7 @@ func TestFloorStaffingMismatchFlagged(t *testing.T) {
 }
 
 func TestFloorStaffingAndonOnMismatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "", "", false); err != nil {
 		t.Fatalf("InitSeeded: %v", err)
@@ -133,6 +137,7 @@ func TestFloorStaffingAndonOnMismatch(t *testing.T) {
 }
 
 func TestFloorStaffingRenderShowsRoles(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Staffing: &StaffingConfig{
 		Lead:      &RoleConfig{Adapter: "claude", Model: "claude-opus-5", Session: "lead-fw"},
 		Inspector: &RoleConfig{Adapter: "claude", Model: "claude-haiku", Session: "insp-fw"},
@@ -155,6 +160,7 @@ func TestFloorStaffingRenderShowsRoles(t *testing.T) {
 }
 
 func TestFloorStaffingGoldenUnchanged(t *testing.T) {
+	t.Parallel()
 	// The fixture floor has no staffing config, so this unit must leave the
 	// floor byte-identical (#355 review: the first version of this test
 	// compared a hand-built floor with itself).
@@ -170,6 +176,7 @@ func TestFloorStaffingGoldenUnchanged(t *testing.T) {
 }
 
 func TestFloorStaffingJSONRoles(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Staffing: &StaffingConfig{
 		Lead: &RoleConfig{Adapter: "claude", Model: "claude-opus-5", Session: "lead-fw"},
 	}}
@@ -198,6 +205,7 @@ func TestFloorStaffingJSONRoles(t *testing.T) {
 }
 
 func TestFloorStaffingTUIWorkersView(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Workers:  []Worker{{Name: "w1", Adapter: "opencode", Model: "m1", MaxParallel: 2}},
 		Staffing: &StaffingConfig{Lead: &RoleConfig{Adapter: "claude", Model: "claude-opus-5", Session: "lead-fw"}},
@@ -231,6 +239,7 @@ func TestFloorStaffingTUIWorkersView(t *testing.T) {
 // registered but the config does not name renders in the workers view: it
 // has no configured fields to split (#355 review: that panicked).
 func TestFloorStaffingWorkersViewUnconfiguredRole(t *testing.T) {
+	t.Parallel()
 	d := TUIData{Floor: Floor{
 		Lines:    []FloorLine{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}},
 		Staffing: Staffing{Lead: "s1", Roles: []FloorRole{{Name: "lead", Session: "s1", Model: "m"}}},
@@ -253,6 +262,7 @@ func TestFloorStaffingWorkersViewUnconfiguredRole(t *testing.T) {
 // takes the configured adapter and model from the role's fields, not by
 // splitting its display line (#357 review).
 func TestFloorStaffingWorkersColumnsFromFields(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Staffing: &StaffingConfig{
 		Lead:      &RoleConfig{Session: "s2"},                                 // session only
 		Inspector: &RoleConfig{Model: "m2"},                                   // model only
@@ -277,6 +287,7 @@ func TestFloorStaffingWorkersColumnsFromFields(t *testing.T) {
 // in the andon view says so instead of asking Explain for a task that does
 // not exist (#357 review).
 func TestFloorStaffingAndonRowHasNoDrillDown(t *testing.T) {
+	t.Parallel()
 	d := TUIData{Floor: Floor{
 		Units: []Unit{{Task: "T1", Stage: "building", RunState: "running"}},
 		Andon: []Andon{{Task: "staffing/lead", State: "mismatch"}},

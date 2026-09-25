@@ -46,6 +46,7 @@ func parseAll(adap Adapter, lines []string) []Observation {
 }
 
 func TestAdapterFor(t *testing.T) {
+	t.Parallel()
 	a, err := AdapterFor("opencode")
 	if err != nil || a.Name() != "opencode" {
 		t.Errorf("AdapterFor(opencode) = %v, %v", a, err)
@@ -60,6 +61,7 @@ func TestAdapterFor(t *testing.T) {
 }
 
 func TestOpenCodeCommandFresh(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	bin, args := a.Command(RunRequest{
@@ -82,6 +84,7 @@ func TestOpenCodeCommandFresh(t *testing.T) {
 }
 
 func TestOpenCodeCommandResume(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	deltaPath := filepath.Join(t.TempDir(), "delta.txt")
 	bin, args := a.Command(RunRequest{
@@ -104,6 +107,7 @@ func TestOpenCodeCommandResume(t *testing.T) {
 }
 
 func TestOpenCodeCommandNeverPassesBriefText(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	brief := "owns: hello.txt (new)\n& echo pwned | more\n"
 	dir := t.TempDir()
@@ -143,6 +147,7 @@ func TestOpenCodeCommandNeverPassesBriefText(t *testing.T) {
 }
 
 func TestOpenCodeParseCleanFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	obs := parseAll(a, fixtureLines("clean.jsonl", t))
 	if len(obs) != 6 {
@@ -181,6 +186,7 @@ func TestOpenCodeParseCleanFixture(t *testing.T) {
 }
 
 func TestOpenCodeParseCappedFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	obs := parseAll(a, fixtureLines("capped.jsonl", t))
 	if len(obs) != 5 {
@@ -195,6 +201,7 @@ func TestOpenCodeParseCappedFixture(t *testing.T) {
 }
 
 func TestOpenCodeParseProviderErrorFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	obs := parseAll(a, fixtureLines("provider-error.jsonl", t))
 	if len(obs) != 4 {
@@ -206,6 +213,7 @@ func TestOpenCodeParseProviderErrorFixture(t *testing.T) {
 }
 
 func TestOpenCodeParseUnknownTypesReturnFalse(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	if _, ok := a.Parse([]byte(`{"type":"bogus","sessionID":"s"}`)); ok {
 		t.Error("Parse() accepted an unknown type")
@@ -216,6 +224,7 @@ func TestOpenCodeParseUnknownTypesReturnFalse(t *testing.T) {
 }
 
 func TestOpenCodeParseStepWithoutTokens(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	line := []byte(`{"type":"step_finish","sessionID":"s","part":{"type":"step_finish","reason":"stop"}}`)
 	obs, ok := a.Parse(line)
@@ -234,6 +243,7 @@ func TestOpenCodeParseStepWithoutTokens(t *testing.T) {
 // tool_use, which carries its target under part.state.input.path rather than
 // filePath, still decodes into Observation.Path (issue #72).
 func TestOpenCodeParseToolPathFallsBackToPathField(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	grepLine := []byte(`{"type":"tool_use","sessionID":"s","part":{"type":"tool_use","tool":"grep","state":{"input":{"path":"../outside/lib.go"}}}}`)
 	obs, ok := a.Parse(grepLine)
@@ -260,6 +270,7 @@ func TestOpenCodeParseToolPathFallsBackToPathField(t *testing.T) {
 // subtype is "success", its top-level is_error: true makes the step Reason
 // "error", per claudeReason.
 func TestClaudeParseRealFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	lines := fixtureLines("claude-real.jsonl", t)
 	if len(lines) != 5 {
@@ -289,6 +300,7 @@ func TestClaudeParseRealFixture(t *testing.T) {
 // Grep tool_use (path, no file_path), and a result with stop_reason
 // max_tokens.
 func TestClaudeParseToolUseFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	lines := fixtureLines("claude-tool.jsonl", t)
 	if len(lines) != 3 {
@@ -312,6 +324,7 @@ func TestClaudeParseToolUseFixture(t *testing.T) {
 // a background call keyed by its tool_use id; every tool_use carries its raw
 // input, where a later call names the shell it collects (issue #390).
 func TestClaudeBackgroundShell(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	for _, tc := range []struct {
 		line       string
@@ -340,6 +353,7 @@ func TestClaudeBackgroundShell(t *testing.T) {
 // tool_result observation that ends no turn; a result with no id is not
 // observed (issue #390).
 func TestClaudeBackgroundResultID(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	for _, tc := range []struct {
 		line    string
@@ -373,6 +387,7 @@ func TestClaudeBackgroundResultID(t *testing.T) {
 // message. That is a rate limit, not a clean stop and not a provider error:
 // the step Reason is "rate-limited" with the reset clause (issue #380).
 func TestClaudeParseLimitFixture(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	lines := fixtureLines("claude-limit.jsonl", t)
 	if len(lines) != 1 {
@@ -401,6 +416,7 @@ func TestClaudeParseLimitFixture(t *testing.T) {
 // field, checking that the result observation's step carries Tokens from that
 // session total (issue #286).
 func TestClaudeParseResultUsage(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","total_cost_usd":1.12,"session_id":"s1","usage":{"input_tokens":673,"cache_creation_input_tokens":95706,"cache_read_input_tokens":7912520,"output_tokens":28634,"output_tokens_details":{"thinking_tokens":5343}}}`)
 	obs, ok := a.Parse(line)
@@ -439,6 +455,7 @@ func TestClaudeParseResultUsage(t *testing.T) {
 // TestClaudeParseResultWithoutUsage parses a result line without a top-level
 // usage field, checking that Tokens is nil (issue #286).
 func TestClaudeParseResultWithoutUsage(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","total_cost_usd":1.12,"session_id":"s1"}`)
 	obs, ok := a.Parse(line)
@@ -460,6 +477,7 @@ func TestClaudeParseResultWithoutUsage(t *testing.T) {
 // permission_denials become Denials, and that a line without them yields nil
 // (issue #364).
 func TestClaudeParsePermissionDenials(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	line := []byte(`{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"s1","permission_denials":[{"tool_name":"Edit","tool_use_id":"t1","tool_input":{"file_path":"/w/a.go","old_string":"x"}},{"tool_name":"Bash","tool_input":{"command":"git commit"}}]}`)
 	obs, ok := a.Parse(line)
@@ -488,6 +506,7 @@ func TestClaudeParsePermissionDenials(t *testing.T) {
 // carrying stop_reason stop_sequence with no top-level is_error still reads
 // as a clean stop.
 func TestClaudeParseStopSequenceWithoutIsError(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	line := []byte(`{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":"ses_x","total_cost_usd":0.01}`)
 	obs, ok := a.Parse(line)
@@ -500,6 +519,7 @@ func TestClaudeParseStopSequenceWithoutIsError(t *testing.T) {
 // thinking_tokens, so Output and Reasoning are counted separately as they are
 // for every adapter (issue #59).
 func TestClaudeTokensOutputExcludesThinking(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	cases := []struct {
 		name          string
@@ -546,6 +566,7 @@ func TestClaudeTokensOutputExcludesThinking(t *testing.T) {
 }
 
 func TestClaudeCommandFresh(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	bin, args := a.Command(RunRequest{
@@ -584,6 +605,7 @@ func claudeStdin(t *testing.T, a Adapter, r RunRequest) string {
 // prompt text and no newline outside --append-system-prompt, and stdin yields
 // the message, a newline, then the prompt file, fresh and resumed alike.
 func TestClaudePromptOnStdin(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	promptPath := filepath.Join(t.TempDir(), "brief.txt")
 	body := "line one of the brief\nline two & | ^ %PATH%\n"
@@ -623,6 +645,7 @@ func TestClaudePromptOnStdin(t *testing.T) {
 }
 
 func TestClaudeCommandResume(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	deltaPath := filepath.Join(t.TempDir(), "delta.txt")
 	_, args := a.Command(RunRequest{
@@ -647,6 +670,7 @@ func TestClaudeCommandResume(t *testing.T) {
 }
 
 func TestClaudeCommandResumeWithoutSession(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	deltaPath := filepath.Join(t.TempDir(), "delta.txt")
 	_, args := a.Command(RunRequest{
@@ -667,6 +691,7 @@ func TestClaudeCommandResumeWithoutSession(t *testing.T) {
 // rules, PLAN check-in included, as --append-system-prompt on fresh and
 // resumed runs alike (issue #360).
 func TestClaudeCommandAppendsRules(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	promptPath := filepath.Join(t.TempDir(), "brief.txt")
 	for _, r := range []RunRequest{
@@ -693,6 +718,7 @@ func TestClaudeCommandAppendsRules(t *testing.T) {
 // then a tool_use keeps the text on the tool observation, where a model
 // writes its plan before its first tool call (issue #360).
 func TestClaudeAssistantTextWithTool(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	plan := "PLAN files-to-read: a\nPLAN files-to-change: b\nPLAN order: c\nPLAN checks: d"
 	planJSON, _ := json.Marshal(plan)
@@ -712,6 +738,7 @@ func TestClaudeAssistantTextWithTool(t *testing.T) {
 // loads only the user's settings, so a checkout's project or local settings
 // cannot widen where the worker may write (issue #359).
 func TestClaudeCommandSettingSources(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	for _, tc := range []struct {
@@ -729,6 +756,7 @@ func TestClaudeCommandSettingSources(t *testing.T) {
 }
 
 func TestSimAdapter(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("sim")
 	if a.Name() != "sim" {
 		t.Errorf("sim Name() = %q", a.Name())
@@ -747,6 +775,7 @@ func TestSimAdapter(t *testing.T) {
 // TestOpenCodeParseEndsTurn checks EndsTurn is set only on step_finish: that
 // is the line that completes a model turn in the opencode stream (issue #187).
 func TestOpenCodeParseEndsTurn(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	cases := []struct {
 		name     string
@@ -774,6 +803,7 @@ func TestOpenCodeParseEndsTurn(t *testing.T) {
 // TestClaudeParseEndsTurn checks EndsTurn is set on every assistant line and
 // on the terminal result line, and false on the system/init line (issue #187).
 func TestClaudeParseEndsTurn(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	cases := []struct {
 		name     string
@@ -844,6 +874,7 @@ func flagValues(args []string, flag string) []string {
 // lists produces exactly those instead; an empty list appends no flag
 // (issue #192).
 func TestClaudeCommandToolPolicy(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	base := RunRequest{Task: "T1", Attempt: "r1", Title: "T1-r1", Model: "m1", PromptFile: briefPath}
@@ -884,6 +915,7 @@ func TestClaudeCommandToolPolicy(t *testing.T) {
 // with an explicit empty --mcp-config by default, and a worker's MCP JSON when
 // its config sets one (issue #425), fresh and resumed alike.
 func TestClaudeStrictMCP(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	hasFlag := func(args []string, flag string) bool {
@@ -931,6 +963,7 @@ func TestClaudeStrictMCP(t *testing.T) {
 // dispatch its --allowedTools/--disallowedTools leaves the opencode dispatch
 // exactly as it was (issue #192).
 func TestOpenCodeCommandUnchangedByToolPolicy(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	bin, args := a.Command(RunRequest{
@@ -949,6 +982,7 @@ func TestOpenCodeCommandUnchangedByToolPolicy(t *testing.T) {
 // TestClaudeCommandIncrement checks that a dispatch with Increment > 0
 // leads the prompt with freshMessage plus the increment instruction (issue #83).
 func TestClaudeCommandIncrement(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	if err := os.WriteFile(briefPath, []byte("do the thing"), 0o644); err != nil {
@@ -967,6 +1001,7 @@ func TestClaudeCommandIncrement(t *testing.T) {
 // TestOpencodeCommandIncrement checks that a dispatch with Increment > 0
 // leads the prompt with freshMessage plus the increment instruction (issue #83).
 func TestOpencodeCommandIncrement(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("opencode")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	bin, args := a.Command(RunRequest{
@@ -990,6 +1025,7 @@ func TestOpencodeCommandIncrement(t *testing.T) {
 
 // TestFreshPromptNoIncrement checks that freshPrompt with no increment returns freshMessage.
 func TestFreshPromptNoIncrement(t *testing.T) {
+	t.Parallel()
 	result := freshPrompt(RunRequest{})
 	if result != freshMessage {
 		t.Errorf("freshPrompt(empty request) = %q, want %q", result, freshMessage)
@@ -999,6 +1035,7 @@ func TestFreshPromptNoIncrement(t *testing.T) {
 // TestParseCommands: a shell tool call yields its command on every adapter
 // (issue #365); a non-shell tool yields none.
 func TestParseCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		adapter, line, want string
 	}{
@@ -1025,6 +1062,7 @@ func TestParseCommands(t *testing.T) {
 // utilization, the exact reset, the status and the window; a malformed line
 // is false (issue #417).
 func TestClaudeRateLimitEvent(t *testing.T) {
+	t.Parallel()
 	lines := fixtureLines("claude-ratelimit-event.jsonl", t)
 	want := []struct {
 		util   float64

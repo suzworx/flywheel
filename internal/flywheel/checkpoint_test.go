@@ -13,6 +13,7 @@ import (
 // names the checkpoint, refs/flywheel/checkpoints/T1/r1 points at a commit of
 // the owned file only, and neither fw/T1 nor the worktree's index moved.
 func TestCheckpointUnclean(t *testing.T) {
+	t.Parallel()
 	dir := worktreeRepo(t) // T1 owns a.go
 	wt, err := TaskWorktree(dir, "T1")
 	if err != nil {
@@ -75,6 +76,7 @@ func TestCheckpointUnclean(t *testing.T) {
 // the checkpoint's paths unless forced, writes the checkpoint's content back
 // without staging it, and drop removes the ref (issue #422).
 func TestCheckpointRestore(t *testing.T) {
+	t.Parallel()
 	dir := worktreeRepo(t)
 	wt, err := TaskWorktree(dir, "T1")
 	if err != nil {

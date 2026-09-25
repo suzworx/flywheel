@@ -9,6 +9,7 @@ import (
 
 // TestInitCIWritesAtRepoRoot tests that InitCI writes the file at the repository root
 func TestInitCIWritesAtRepoRoot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initGitRepoAt(t, root)
 
@@ -52,6 +53,7 @@ func TestInitCIWritesAtRepoRoot(t *testing.T) {
 // TestInitCISubdirTargetsFactory tests that InitCI places the file at the repo root
 // even when called from a subdirectory
 func TestInitCISubdirTargetsFactory(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initGitRepoAt(t, root)
 
@@ -88,6 +90,7 @@ func TestInitCISubdirTargetsFactory(t *testing.T) {
 
 // TestInitCIPinsReleaseVersion tests that InitCI pins release versions correctly
 func TestInitCIPinsReleaseVersion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		version  string
 		expected string
@@ -123,6 +126,7 @@ func TestInitCIPinsReleaseVersion(t *testing.T) {
 
 // TestInitCINeverOverwrites tests that InitCI never overwrites an existing file
 func TestInitCINeverOverwrites(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initGitRepoAt(t, root)
 
@@ -161,6 +165,7 @@ func TestInitCINeverOverwrites(t *testing.T) {
 
 // TestInitCINotARepo tests that InitCI errors when not in a git repository
 func TestInitCINotARepo(t *testing.T) {
+	// not parallel: t.Setenv GIT_CEILING_DIRECTORIES
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 
@@ -173,6 +178,7 @@ func TestInitCINotARepo(t *testing.T) {
 // TestInitCIPathWithSpace checks that any directory name git accepts is
 // written safely: YAML-quoted in env, used as "$FLYWHEEL_DIR" (#315 review).
 func TestInitCIPathWithSpace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	initGitRepoAt(t, root)
 	sub := filepath.Join(root, "order api")

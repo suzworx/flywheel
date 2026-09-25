@@ -9,6 +9,7 @@ import (
 // fixture: lines come back in log order, a session's lines never leak into
 // another session's trace, and a session_command's note is visible.
 func TestTraceOrdersBySessionAcrossTasks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Kind: "session_start", Session: "ses_1"},
@@ -52,6 +53,7 @@ func TestTraceOrdersBySessionAcrossTasks(t *testing.T) {
 // TestTraceUnknownSessionIsEmpty checks a session with no matching events
 // yields an empty (not nil-error) result rather than failing.
 func TestTraceUnknownSessionIsEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Kind: "session_start", Session: "ses_1"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -68,6 +70,7 @@ func TestTraceUnknownSessionIsEmpty(t *testing.T) {
 // TestTraceShowsStaffedRole checks a staffed event's persona surfaces as its
 // role in the trace detail.
 func TestTraceShowsStaffedRole(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Kind: "staffed", Session: "ses_1", Persona: "lead"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -84,6 +87,7 @@ func TestTraceShowsStaffedRole(t *testing.T) {
 // TestTraceEmptyLogIsEmpty checks a directory with no event log at all
 // (ReadEvents' missing-file case) yields an empty result, not an error.
 func TestTraceEmptyLogIsEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lines, err := Trace(dir, "ses_1")
 	if err != nil {

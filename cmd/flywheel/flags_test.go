@@ -74,6 +74,7 @@ func optionDir(o any) string {
 // registry command whose flags function defines dir and asserts the command's
 // own bound options hold it; copy-before-Parse keeps the default forever.
 func TestDirFlagsReachEveryRegistryCommand(t *testing.T) {
+	t.Parallel()
 	for name, c := range commands {
 		if c.flags == nil {
 			continue
@@ -103,6 +104,7 @@ func TestDirFlagsReachEveryRegistryCommand(t *testing.T) {
 // violation, 8 when every failing check is inconclusive, and a violation
 // always outranks an inconclusive.
 func TestVerifyExitCodeDistinguishesInconclusive(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		items []flywheel.VerifyItem
@@ -130,6 +132,7 @@ func TestVerifyExitCodeDistinguishesInconclusive(t *testing.T) {
 // TestVerifyFlagsBindWorkdir checks verify's --workdir reaches the bound
 // options, exactly like the other commands' flags (issue #244).
 func TestVerifyFlagsBindWorkdir(t *testing.T) {
+	t.Parallel()
 	fs, o := verifyFlags()
 	if err := fs.Parse([]string{"--workdir", "X", "--all"}); err != nil {
 		t.Fatalf("verifyFlags: %v", err)
@@ -148,6 +151,7 @@ func TestVerifyFlagsBindWorkdir(t *testing.T) {
 // exempt a whole tree, and a pattern cannot be bound to one content hash —
 // a claim must name the files actually edited (issue #258).
 func TestClaimEditRefusesUnboundedPaths(t *testing.T) {
+	t.Parallel()
 	for _, p := range []string{"*", "a/*.go", "dir/", "a?b", "[ab]c"} {
 		got := claimPathError(p)
 		if got == "" {
@@ -171,6 +175,7 @@ func TestClaimEditRefusesUnboundedPaths(t *testing.T) {
 // TestInitFlagsBindEveryOption parses non-default values for every init flag
 // and asserts the bound options hold them.
 func TestInitFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
 	fs, o := initFlags()
 	if err := fs.Parse([]string{"--dir", "X", "--force"}); err != nil {
 		t.Fatalf("initFlags: %v", err)
@@ -184,6 +189,7 @@ func TestInitFlagsBindEveryOption(t *testing.T) {
 // TestLogFlagsBindEveryOption parses non-default values for every log flag
 // and asserts the bound options hold them.
 func TestLogFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
 	args := []string{
 		"--dir", "X", "--task", "T1", "--kind", "planned", "--brief", "b.txt",
 		"--session", "s", "--model", "m", "--attempt", "r1", "--rc", "0",
@@ -205,6 +211,7 @@ func TestLogFlagsBindEveryOption(t *testing.T) {
 // TestStateFlagsBindEveryOption parses non-default values for every state
 // flag and asserts the bound options hold them.
 func TestStateFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
 	fs, o := stateFlags()
 	if err := fs.Parse([]string{"--dir", "X", "--json"}); err != nil {
 		t.Fatalf("stateFlags: %v", err)
@@ -218,6 +225,7 @@ func TestStateFlagsBindEveryOption(t *testing.T) {
 // TestFactoryFlagsBindEveryOption parses non-default values for every factory
 // flag and asserts the bound options hold them.
 func TestFactoryFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
 	args := []string{"--dir", "X", "--once", "--json", "--interval", "5s",
 		"--width", "120", "--now", "2026-01-02T15:04:05Z"}
 	fs, o := factoryFlags()
@@ -234,6 +242,7 @@ func TestFactoryFlagsBindEveryOption(t *testing.T) {
 // TestReviewAgentFlags parses the review agent's flags (issue #389) and
 // asserts the bound options hold them.
 func TestReviewAgentFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := reviewFlags()
 	if err := fs.Parse([]string{"--agent", "--worker", "rev", "--round", "3", "--session", "s", "--workdir", "W", "--dir", "D"}); err != nil {
 		t.Fatalf("reviewFlags: %v", err)
@@ -249,6 +258,7 @@ func TestReviewAgentFlags(t *testing.T) {
 // TestCalibrateRunFlags parses `flywheel review calibrate`'s flags (issue
 // #389) and asserts the defaults and the bound options.
 func TestCalibrateRunFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := reviewCalibrateFlags()
 	if o.sample != 10 || o.window != 15 || o.main != "origin/main" || o.cases != "docs/calibration/external-review-bugs.json" {
 		t.Errorf("calibrate defaults = %#v", *o)
@@ -269,6 +279,7 @@ func TestCalibrateRunFlags(t *testing.T) {
 // TestReviewLoopFlags parses the review loop's flags (issue #389): --fix with
 // its rounds, correcting worker and worktree, and a lead's --dismiss.
 func TestReviewLoopFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := reviewFlags()
 	if o.rounds != 3 {
 		t.Errorf("default --rounds = %d, want 3", o.rounds)
@@ -296,6 +307,7 @@ func TestReviewLoopFlags(t *testing.T) {
 // TestReviewGroupFlags parses the group review's flags (issue #420): --group
 // with --agent, a base and a worker, and names them in the usage.
 func TestReviewGroupFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := reviewFlags()
 	if err := fs.Parse([]string{"--group", "tasks:A,B", "--agent", "--base", "origin/main", "--worker", "w", "--session", "rev"}); err != nil {
 		t.Fatalf("reviewFlags: %v", err)
@@ -311,6 +323,7 @@ func TestReviewGroupFlags(t *testing.T) {
 // TestReviewPanelFlags parses the review panel's flags (issue #420): --panel
 // with --agent, alone or with the loop's --fix and --rounds.
 func TestReviewPanelFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := reviewFlags()
 	if o.panel {
 		t.Error("--panel defaults to true")
@@ -331,6 +344,7 @@ func TestReviewPanelFlags(t *testing.T) {
 // identical after), and the exit is 0 for an intact ledger with nothing to
 // investigate.
 func TestRecoverJSON(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nneeds: none\ngate: true\n\n# TASK: t\n"), 0o644); err != nil {
 		t.Fatal(err)

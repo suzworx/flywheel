@@ -12,6 +12,7 @@ import (
 )
 
 func TestLoadConfigMissingFileReturnsDefault(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg, exists, err := LoadConfig(dir)
 	if err != nil {
@@ -26,6 +27,7 @@ func TestLoadConfigMissingFileReturnsDefault(t *testing.T) {
 }
 
 func TestWriteConfigRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -53,6 +55,7 @@ func TestWriteConfigRoundTrip(t *testing.T) {
 }
 
 func TestWriteConfigOverwritesExisting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := WriteConfig(dir, DefaultConfig()); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -77,6 +80,7 @@ func TestWriteConfigOverwritesExisting(t *testing.T) {
 }
 
 func TestConfigValidateCollectsProblems(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 2,
 		Workers: []Worker{
@@ -117,6 +121,7 @@ func TestConfigValidateCollectsProblems(t *testing.T) {
 // TestConfigValidateAcceptsClaudeAdapter checks "claude" joins the valid
 // adapter names (issue #49) alongside opencode and sim.
 func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "claude-sonnet-5"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() error = %v, want nil for adapter \"claude\"", err)
@@ -126,6 +131,7 @@ func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
 // TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
 // adapter names (issue #275) alongside opencode, sim, and claude.
 func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "codex", Model: "gpt-5-codex"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() error = %v, want nil for adapter \"codex\"", err)
@@ -135,6 +141,7 @@ func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {
 // TestConfigValidateRejectsUnknownAdapter checks an adapter outside
 // opencode/sim/claude/codex is still rejected.
 func TestConfigValidateRejectsUnknownAdapter(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "nope", Model: "m"}}}
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), `adapter "nope"`) {
@@ -143,6 +150,7 @@ func TestConfigValidateRejectsUnknownAdapter(t *testing.T) {
 }
 
 func TestLoadConfigRejectsUnknownField(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".flywheel", "config.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -162,6 +170,7 @@ func TestLoadConfigRejectsUnknownField(t *testing.T) {
 }
 
 func TestConfigGet(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{
@@ -206,6 +215,7 @@ func TestConfigGet(t *testing.T) {
 }
 
 func TestConfigGetUnknownKeyListsValidKeys(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	_, err := cfg.Get("bogus")
 	if err == nil {
@@ -226,6 +236,7 @@ func TestConfigGetUnknownKeyListsValidKeys(t *testing.T) {
 }
 
 func TestConfigWorkerLookup(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if w, ok := cfg.Worker("default"); !ok || w.Model != "openrouter/deepseek/deepseek-v4-flash-0731" {
 		t.Errorf("Worker(default) = %+v, %v, want the default worker", w, ok)
@@ -239,6 +250,7 @@ func TestConfigWorkerLookup(t *testing.T) {
 }
 
 func TestConfigSetWritesAndReadsBack(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -274,6 +286,7 @@ func TestConfigSetWritesAndReadsBack(t *testing.T) {
 }
 
 func TestConfigSetIntegerParseError(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if err := cfg.Set("max_parallel", "abc"); err == nil {
 		t.Fatal("Set(max_parallel, abc) = nil error, want a parse error")
@@ -290,6 +303,7 @@ func TestConfigSetIntegerParseError(t *testing.T) {
 // retries, and Validate refusing a negative count or a bad duration (issue
 // #380).
 func TestConfigRateLimitKeys(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	for key, want := range map[string]string{"limits.rate_limit_retries": "3", "limits.rate_limit_max_wait": "5h"} {
 		if v, err := cfg.Get(key); err != nil || v != want {
@@ -338,6 +352,7 @@ func TestConfigRateLimitKeys(t *testing.T) {
 }
 
 func TestConfigSetInvalidValueLeavesFileUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := WriteConfig(dir, DefaultConfig()); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -367,6 +382,7 @@ func TestConfigSetInvalidValueLeavesFileUnchanged(t *testing.T) {
 }
 
 func TestConfigSetUnknownKeyListsSettableKeys(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	err := cfg.Set("bogus", "x")
 	if err == nil {
@@ -390,6 +406,7 @@ func TestConfigSetUnknownKeyListsSettableKeys(t *testing.T) {
 }
 
 func TestConfigSetFallbacksUnsupported(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	for _, key := range []string{"fallbacks", "fallbacks.all"} {
 		err := cfg.Set(key, "m")
@@ -403,6 +420,7 @@ func TestConfigSetFallbacksUnsupported(t *testing.T) {
 }
 
 func TestConfigLeaseDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	renew, ttl := cfg.leaseTimings()
 	if renew != 15*time.Second || ttl != 45*time.Second {
@@ -414,6 +432,7 @@ func TestConfigLeaseDefaults(t *testing.T) {
 }
 
 func TestConfigLeaseTimingsFromBlock(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	cfg.Lease = &LeaseConfig{RenewInterval: "30s", TTL: "90s"}
 	renew, ttl := cfg.leaseTimings()
@@ -423,6 +442,7 @@ func TestConfigLeaseTimingsFromBlock(t *testing.T) {
 }
 
 func TestConfigLeaseValidation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		lc   LeaseConfig
@@ -451,6 +471,7 @@ func TestConfigLeaseValidation(t *testing.T) {
 }
 
 func TestConfigControllerDefaults(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	interval, ttl, intent := cfg.controllerTimings()
 	if interval != 10*time.Second || ttl != 30*time.Second || intent != 2*time.Minute {
@@ -462,6 +483,7 @@ func TestConfigControllerDefaults(t *testing.T) {
 }
 
 func TestConfigControllerTimingsFromBlock(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	cfg.Controller = &ControllerConfig{Interval: "20s", LockTTL: "60s", IntentTimeout: "5m"}
 	interval, ttl, intent := cfg.controllerTimings()
@@ -471,6 +493,7 @@ func TestConfigControllerTimingsFromBlock(t *testing.T) {
 }
 
 func TestConfigControllerValidation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		cc   ControllerConfig
@@ -503,6 +526,7 @@ func TestConfigControllerValidation(t *testing.T) {
 // TestWorkerStallTimeoutDefault checks an unset (zero) stall_timeout resolves
 // to the 600s default, and a set value resolves to itself (issue #85).
 func TestWorkerStallTimeoutDefault(t *testing.T) {
+	t.Parallel()
 	if got := (Worker{}).stallTimeoutDuration(); got != 600*time.Second {
 		t.Errorf("stallTimeoutDuration() = %s, want 600s for an unset stall_timeout", got)
 	}
@@ -514,6 +538,7 @@ func TestWorkerStallTimeoutDefault(t *testing.T) {
 // TestConfigValidateRejectsNegativeStallTimeout checks a negative
 // stall_timeout is reported by Validate (issue #85).
 func TestConfigValidateRejectsNegativeStallTimeout(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m", StallTimeout: -5}}}
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "stall_timeout -5 must be >= 0") {
@@ -526,6 +551,7 @@ func TestConfigValidateRejectsNegativeStallTimeout(t *testing.T) {
 // bare and workers.<name> forms, and a valid (non-negative) value passes
 // Validate (issue #85).
 func TestConfigStallTimeoutGetSetRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -555,6 +581,7 @@ func TestConfigStallTimeoutGetSetRoundTrip(t *testing.T) {
 }
 
 func TestConfigWithoutLeaseRoundTripsUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m"}}}
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -591,6 +618,7 @@ func TestConfigWithoutLeaseRoundTripsUnchanged(t *testing.T) {
 // allowed/disallowed defaults, and an explicitly set list replaces rather
 // than merges with them (issue #192).
 func TestWorkerToolDefaults(t *testing.T) {
+	t.Parallel()
 	if got := (Worker{}).allowedTools(); !reflect.DeepEqual(got, defaultAllowedTools) {
 		t.Errorf("allowedTools() = %v, want the default %v", got, defaultAllowedTools)
 	}
@@ -613,6 +641,7 @@ func TestWorkerToolDefaults(t *testing.T) {
 // valid {"mcpServers": {...}} object pass and compact to a JSON string; a
 // non-object, a missing mcpServers or a non-object mcpServers fail Validate.
 func TestWorkerMCPOptIn(t *testing.T) {
+	t.Parallel()
 	valid := map[string]string{
 		"unset": "",
 		"empty": `{"mcpServers": {}}`,
@@ -652,6 +681,7 @@ func TestWorkerMCPOptIn(t *testing.T) {
 // TestDefaultDisallowedIndexWrites checks the default deny list covers every
 // index, ref and history write (#423) and leaves read-only git allowed.
 func TestDefaultDisallowedIndexWrites(t *testing.T) {
+	t.Parallel()
 	has := map[string]bool{}
 	for _, d := range defaultDisallowedTools {
 		has[d] = true
@@ -673,6 +703,7 @@ func TestDefaultDisallowedIndexWrites(t *testing.T) {
 // TestConfigBaselineValidate checks baseline validation: a valid baseline
 // passes, empty model fails, negative prices fail (issue #59).
 func TestConfigBaselineValidate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		base    Baseline
@@ -702,6 +733,7 @@ func TestConfigBaselineValidate(t *testing.T) {
 // survive a WriteConfig/LoadConfig round trip under their JSON field names
 // (issue #192).
 func TestConfigToolListsJSONRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{
 		Name:            "claude",
@@ -736,6 +768,7 @@ func TestConfigToolListsJSONRoundTrip(t *testing.T) {
 
 // TestConfigBreakerValidate checks Breaker validation: valid configs pass, invalid ones fail.
 func TestConfigBreakerValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		cfg     Config
@@ -798,6 +831,7 @@ func TestConfigBreakerValidate(t *testing.T) {
 // TestLostAfterConfig covers limits.lost_after (issue #402): the 24h default,
 // Get/Set, and validation refusing an unparseable or non-positive duration.
 func TestLostAfterConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if v, err := cfg.Get("limits.lost_after"); err != nil || v != "24h" {
 		t.Errorf("default Get(limits.lost_after) = %q, %v; want 24h", v, err)
@@ -836,6 +870,7 @@ func TestLostAfterConfig(t *testing.T) {
 // Get/Set, the key lists, and validation refusing an unparseable or
 // non-positive duration.
 func TestQuietWaitConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if v, err := cfg.Get("limits.quiet_wait"); err != nil || v != "30m" {
 		t.Errorf("default Get(limits.quiet_wait) = %q, %v; want 30m", v, err)
@@ -880,6 +915,7 @@ func TestQuietWaitConfig(t *testing.T) {
 // Get/Set, a negative value disabling the pause (threshold 0), and Validate
 // refusing a value above 1 (issue #417).
 func TestRateLimitPauseAtConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if v, err := cfg.Get("limits.rate_limit_pause_at"); err != nil || v != "0.95" {
 		t.Errorf("default Get = %q, %v; want 0.95", v, err)
@@ -925,6 +961,7 @@ func TestRateLimitPauseAtConfig(t *testing.T) {
 // member's worker, the key lists, and validation refusing an unknown or
 // duplicate persona and an unknown worker.
 func TestPanelConfig(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	if v, err := cfg.Get("review.panel"); err != nil || v != "correctness,tests,errors,contract,docs" {
 		t.Errorf("default Get(review.panel) = %q, %v; want the default panel", v, err)
@@ -979,6 +1016,7 @@ func TestPanelConfig(t *testing.T) {
 // TestSetupConfig checks worktree.setup and worktree.setup_timeout (issue
 // #430): defaults, Set/Get round-trip, and validation of the timeout.
 func TestSetupConfig(t *testing.T) {
+	t.Parallel()
 	var c Config
 	if got, _ := c.Get("worktree.setup"); got != "" {
 		t.Errorf("Get(worktree.setup) = %q, want empty by default", got)

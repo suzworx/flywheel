@@ -11,6 +11,7 @@ import (
 // is embedded, the default panel is a subset, and each persona prompt is the
 // shared review prompt plus a file naming its dimension and its category.
 func TestPersonaPrompts(t *testing.T) {
+	t.Parallel()
 	want := []string{"contract", "correctness", "cross-os", "docs", "errors", "security", "tests"}
 	if got := PanelPersonas(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("PanelPersonas() = %v, want %v", got, want)
@@ -47,6 +48,7 @@ func TestPersonaPrompts(t *testing.T) {
 // every member of one panel run shares a round and writes its own prompt,
 // which holds its persona.
 func TestPanelDimensionEnforced(t *testing.T) {
+	// not parallel: reviewAgentRepo sets PATH to a fake claude
 	outside := "```json\n{\"findings\":[{\"severity\":\"major\",\"category\":\"docs\",\"file\":\"a.go\",\"line\":1,\"claim\":\"c\",\"scenario\":\"s\"}]}\n```"
 	dir := reviewAgentRepo(t, outside)
 	_, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: []PanelMember{{Persona: "tests"}}, Session: "rev-1"})
@@ -99,6 +101,7 @@ func TestPanelDimensionEnforced(t *testing.T) {
 // otherwise, and correct turning pass once its blocking findings are
 // dismissed; a clean review of one dimension never closes another's finding.
 func TestVerdictMatrix(t *testing.T) {
+	t.Parallel()
 	panel := []string{"correctness", "tests", "docs"}
 	blocker := ReviewFinding{Severity: "blocker", Category: "correctness", File: "a.go", Claim: "wrong", Scenario: "s"}
 	var evs []Event
@@ -143,6 +146,7 @@ func TestVerdictMatrix(t *testing.T) {
 // #420): one round for the whole panel, a line per member, the findings
 // grouped under their dimension, and the verdict matrix.
 func TestReviewThreadPanel(t *testing.T) {
+	t.Parallel()
 	blocker := ReviewFinding{Severity: "major", Category: "tests", File: "a.go", Claim: "no test fails", Scenario: "s"}
 	var evs []Event
 	evs = append(evs, panelEvents("tree1234567", "correctness")...)

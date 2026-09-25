@@ -30,6 +30,7 @@ func quietClock(polls *int) (func() time.Time, func(time.Duration)) {
 // budget while another process holds quiet.lock, then runs anyway noting it
 // ran during a quiet gate, and holds a shared marker until released (#411).
 func TestGateTurnWaitsForQuietGate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeQuietLock(t, dir, `{"task":"T9","gate":"2","pid":4242,"host":"another-host"}`)
 	polls := 0
@@ -55,6 +56,7 @@ func TestGateTurnWaitsForQuietGate(t *testing.T) {
 // this host neither blocks an ordinary gate nor a new quiet gate, which takes
 // it over; a dead process's gate marker never keeps the host busy (#411).
 func TestQuietLockStaleIgnored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	host, _ := os.Hostname()
 	writeQuietLock(t, dir, `{"task":"T9","gate":"2","pid":999999999,"host":"`+host+`"}`)

@@ -11,6 +11,7 @@ import (
 // TestOwnsBaseCommittedChangeCounts checks that a committed change counts when
 // base = HEAD.
 func TestOwnsBaseCommittedChangeCounts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	head := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -31,6 +32,7 @@ func TestOwnsBaseCommittedChangeCounts(t *testing.T) {
 // TestOwnsBaseUncommittedStillCounts checks that uncommitted changes count
 // when base = HEAD.
 func TestOwnsBaseUncommittedStillCounts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	head := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -49,6 +51,7 @@ func TestOwnsBaseUncommittedStillCounts(t *testing.T) {
 // TestOwnsBaseMergedBranchExcluded checks that files from a merged branch are
 // excluded when they arrived by merging, not by the unit's own commits.
 func TestOwnsBaseMergedBranchExcluded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	mainBranch := strings.TrimSpace(git(t, dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}))
@@ -81,6 +84,7 @@ func TestOwnsBaseMergedBranchExcluded(t *testing.T) {
 // TestOwnsBaseEmptyBaseFallsBack checks that with an empty base, only
 // uncommitted/untracked paths are listed (the old behavior).
 func TestOwnsBaseEmptyBaseFallsBack(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
@@ -100,6 +104,7 @@ func TestOwnsBaseEmptyBaseFallsBack(t *testing.T) {
 // TestOwnsBaseValidateFlagsCommittedStray checks that a stray committed change
 // is flagged by ValidateTask.
 func TestOwnsBaseValidateFlagsCommittedStray(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"true"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -147,6 +152,7 @@ func hasPath(ss []string, v string) bool {
 // TestOwnsBaseOtherTaskCommitExcluded checks that a commit whose
 // Flywheel-Task trailer names another unit does not count (#338 review).
 func TestOwnsBaseOtherTaskCommitExcluded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	base := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -176,6 +182,7 @@ func TestOwnsBaseOtherTaskCommitExcluded(t *testing.T) {
 // TestOwnsBaseMergeResolutionCounts checks that an edit made while resolving
 // a merge conflict counts, while the merged branch's own files do not.
 func TestOwnsBaseMergeResolutionCounts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	mainBranch := strings.TrimSpace(git(t, dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}))
@@ -220,6 +227,7 @@ func TestOwnsBaseMergeResolutionCounts(t *testing.T) {
 // TestOwnsBaseEvilMergeCounts checks that a file changed only by the merge
 // commit itself (in neither parent) counts.
 func TestOwnsBaseEvilMergeCounts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	mainBranch := strings.TrimSpace(git(t, dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}))
@@ -252,6 +260,7 @@ func TestOwnsBaseEvilMergeCounts(t *testing.T) {
 // TestOwnsBaseRenameSourceCounts checks that renaming a file reports both the
 // source and the destination, committed or not (#338 review).
 func TestOwnsBaseRenameSourceCounts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	base := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -277,6 +286,7 @@ func TestOwnsBaseRenameSourceCounts(t *testing.T) {
 // TestOwnsBaseUnusualNames checks that paths git would quote (spaces,
 // non-ASCII) come back as their real names.
 func TestOwnsBaseUnusualNames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	base := git(t, dir, []string{"rev-parse", "HEAD"})

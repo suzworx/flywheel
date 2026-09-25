@@ -26,6 +26,7 @@ func lockFile(dir string) string {
 // TestAcquireLockFresh acquires into an empty factory: generation 1, our pid
 // and an expiry one ttl ahead.
 func TestAcquireLockFresh(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := ctlNow(t, "2026-09-14T10:00:00Z")
 	l, err := AcquireLock(dir, now, 30*time.Second)
@@ -55,6 +56,7 @@ func TestAcquireLockFresh(t *testing.T) {
 // pid: AcquireLock refuses with a RuleRefusal naming the holder, its
 // generation and its expiry, and leaves the file untouched.
 func TestAcquireLockRefusesLiveForeignLock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := ctlNow(t, "2026-09-14T10:12:00Z")
 	body := `{"pid":999999,"host":"other","generation":3,"started_at":"2026-09-14T10:00:00Z","renewed_at":"2026-09-14T10:11:30Z","expires_at":"2026-09-14T10:30:00Z"}`
@@ -87,6 +89,7 @@ func TestAcquireLockRefusesLiveForeignLock(t *testing.T) {
 // (generation 2): AcquireLock takes it over with generation 3, our pid, and
 // the file is rewritten and read back confirmed.
 func TestAcquireLockTakeoverAfterExpiry(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := ctlNow(t, "2026-09-14T10:10:00Z")
 	body := `{"pid":999999,"host":"other","generation":2,"started_at":"2026-09-14T09:00:00Z","renewed_at":"2026-09-14T09:59:00Z","expires_at":"2026-09-14T10:00:00Z"}`
@@ -124,6 +127,7 @@ func TestAcquireLockTakeoverAfterExpiry(t *testing.T) {
 // expiry moved forward one ttl from the new instant; a lock whose generation
 // changed hands cannot be renewed.
 func TestRenewLockMovesExpiryForward(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := ctlNow(t, "2026-09-14T10:00:00Z")
 	l, err := AcquireLock(dir, now, 30*time.Second)
@@ -153,6 +157,7 @@ func TestRenewLockMovesExpiryForward(t *testing.T) {
 // not remove the file) and with the holder's identity (must remove it); a
 // second release of an already-gone lock is not an error.
 func TestReleaseLockOnlyByHolder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := ctlNow(t, "2026-09-14T10:00:00Z")
 	l, err := AcquireLock(dir, now, 30*time.Second)
@@ -206,6 +211,7 @@ func tickFixture(t *testing.T) string {
 // lost event with the lease-expired reason and the lease evidence as its
 // note; the derived status becomes lost and a second tick appends nothing.
 func TestTickAppendsLostOnce(t *testing.T) {
+	t.Parallel()
 	dir := tickFixture(t)
 	now := ctlNow(t, "2026-09-14T10:10:00Z")
 	res, err := Tick(dir, now)
@@ -261,6 +267,7 @@ func TestTickAppendsLostOnce(t *testing.T) {
 // was scrapped gets one blocked event naming the target; a second tick
 // appends nothing.
 func TestTickAppendsBlockedForRejectedNeed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "a", Kind: "planned", Brief: "b.txt"},
@@ -309,6 +316,7 @@ func TestTickAppendsBlockedForRejectedNeed(t *testing.T) {
 // TestTickNoLostForLiveLease: a live lease keeps the task dispatched; the
 // tick proposes nothing and appends nothing.
 func TestTickNoLostForLiveLease(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "m", Kind: "planned", Brief: "b.txt"},
@@ -345,6 +353,7 @@ func TestTickNoLostForLiveLease(t *testing.T) {
 // TestTickNoLostForFinishedTask: an expired lease on a finished task is not
 // lost; the tick appends nothing.
 func TestTickNoLostForFinishedTask(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "m", Kind: "planned", Brief: "b.txt"},

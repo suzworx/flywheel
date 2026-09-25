@@ -54,6 +54,7 @@ func stackedRepo(t *testing.T) (dir, base, squash string) {
 // landed as a squash is stacked, naming the squash and the base unit; a unit
 // based on main is not.
 func TestSquashedBase(t *testing.T) {
+	t.Parallel()
 	dir, base, squash := stackedRepo(t)
 	first := git(t, dir, []string{"rev-list", "--max-parents=0", "main"})
 	if err := AppendEvent(dir, Event{Task: "C", Kind: "dispatched", Attempt: "r1", Base: first}); err != nil {
@@ -79,6 +80,7 @@ func TestSquashedBase(t *testing.T) {
 // cleanly and records a rebased event that dispatchBase then honours; a
 // conflicting rebase is aborted, names the paths and leaves the branch as is.
 func TestRebaseUnit(t *testing.T) {
+	t.Parallel()
 	dir, base, squash := stackedRepo(t)
 	newBase, conflicts, err := RebaseUnit(dir, "B", "")
 	if err != nil || len(conflicts) != 0 || newBase != squash {

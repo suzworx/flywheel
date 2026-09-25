@@ -7,6 +7,7 @@ import (
 )
 
 func TestT7UnauditedLineRefused(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Adapter: "claude", Model: "m1"},
@@ -28,6 +29,7 @@ func TestT7UnauditedLineRefused(t *testing.T) {
 }
 
 func TestT7ConformingAuditClearsLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Adapter: "claude", Model: "m1"},
@@ -44,6 +46,7 @@ func TestT7ConformingAuditClearsLine(t *testing.T) {
 }
 
 func TestT7OpenNonconformanceStops(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Adapter: "claude", Model: "m1"},
@@ -73,6 +76,7 @@ func TestT7OpenNonconformanceStops(t *testing.T) {
 }
 
 func TestT7RetryAuditStaysOnItsLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Adapter: "claude", Model: "m1"},
@@ -94,6 +98,7 @@ func TestT7RetryAuditStaysOnItsLine(t *testing.T) {
 }
 
 func TestT7LandRefusedWhenEnabled(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -142,6 +147,7 @@ func TestT7LandRefusedWhenEnabled(t *testing.T) {
 }
 
 func TestT7ExceptionBypasses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -180,6 +186,7 @@ func containsSubstring(s, substr string) bool {
 // TestT7LaterConformingAuditReopensLine checks that a line stopped by a
 // nonconformance is reopened by a later conforming audit on that line.
 func TestT7LaterConformingAuditReopensLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
@@ -197,6 +204,7 @@ func TestT7LaterConformingAuditReopensLine(t *testing.T) {
 // passed unit T7 refuses, recorded as such, while an exception on a passed
 // unit nothing refuses is still rejected (#317 review).
 func TestT7ExceptionCoversPassedUnit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)

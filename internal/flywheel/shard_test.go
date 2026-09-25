@@ -10,6 +10,7 @@ import (
 )
 
 func TestShardedLayoutAbsentIsLegacy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// No events/ dir created
 	sharded, err := ShardedLayout(dir)
@@ -31,6 +32,7 @@ func TestShardedLayoutAbsentIsLegacy(t *testing.T) {
 }
 
 func TestShardedLayoutRegularFileErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dotDir, 0o755); err != nil {
@@ -53,6 +55,7 @@ func TestShardedLayoutRegularFileErrors(t *testing.T) {
 }
 
 func TestShardFileNameEscapes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected string
@@ -84,6 +87,7 @@ func TestShardFileNameEscapes(t *testing.T) {
 }
 
 func TestShardOfRouting(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		event    Event
@@ -113,6 +117,7 @@ func TestShardOfRouting(t *testing.T) {
 }
 
 func TestSessionShardNameHashesUnsafe(t *testing.T) {
+	t.Parallel()
 	// Safe name: taskOK and len <= 64
 	safe := "s1"
 	got := sessionShardName(safe)
@@ -136,6 +141,7 @@ func TestSessionShardNameHashesUnsafe(t *testing.T) {
 }
 
 func TestLogFilesOfOrderAndFilter(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -187,6 +193,7 @@ func TestLogFilesOfOrderAndFilter(t *testing.T) {
 }
 
 func TestMergeLogLegacyFirst(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -225,6 +232,7 @@ func TestMergeLogLegacyFirst(t *testing.T) {
 }
 
 func TestMergeLogByKeyThenName(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -265,6 +273,7 @@ func TestMergeLogByKeyThenName(t *testing.T) {
 }
 
 func TestMergeLogKeepsFileOrderWhenTSGoesBackwards(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -300,6 +309,7 @@ func TestMergeLogKeepsFileOrderWhenTSGoesBackwards(t *testing.T) {
 }
 
 func TestMergeLogUnparseableTSStaysInPlace(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -332,6 +342,7 @@ func TestMergeLogUnparseableTSStaysInPlace(t *testing.T) {
 }
 
 func TestMergeLogDeterministicUnderListingOrder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -371,6 +382,7 @@ func TestMergeLogDeterministicUnderListingOrder(t *testing.T) {
 }
 
 func TestReadEventsShardedSkipsUnterminatedTailPerFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -419,6 +431,7 @@ func TestReadEventsShardedSkipsUnterminatedTailPerFile(t *testing.T) {
 }
 
 func TestReadEventsShardedNamesFileOnMalformedLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -446,6 +459,7 @@ func TestReadEventsShardedNamesFileOnMalformedLine(t *testing.T) {
 }
 
 func TestReadEventsShardedPerTaskSubsequenceIsFileOrder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -482,6 +496,7 @@ func TestReadEventsShardedPerTaskSubsequenceIsFileOrder(t *testing.T) {
 }
 
 func TestLogReaderRefreshReadsOnlyAppended(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -530,6 +545,7 @@ func TestLogReaderRefreshReadsOnlyAppended(t *testing.T) {
 }
 
 func TestLogReaderResetsOnShrinkAndBoundaryMismatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dotDir := filepath.Join(dir, ".flywheel")
 	eventsDir := filepath.Join(dotDir, "events")
@@ -574,6 +590,7 @@ func TestLogReaderResetsOnShrinkAndBoundaryMismatch(t *testing.T) {
 }
 
 func TestDeriveSameOverLegacyAndSharded(t *testing.T) {
+	t.Parallel()
 	// Create legacy layout
 	legacyDir := t.TempDir()
 	legacyDotDir := filepath.Join(legacyDir, ".flywheel")
@@ -623,6 +640,7 @@ func TestDeriveSameOverLegacyAndSharded(t *testing.T) {
 }
 
 func TestObserveLogIsMaxPerDir(t *testing.T) {
+	t.Parallel()
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
 
@@ -655,6 +673,7 @@ func TestObserveLogIsMaxPerDir(t *testing.T) {
 // rewritten to the same size while it ends in an unterminated tail is read
 // again (#347 review: off lags the size then).
 func TestLogReaderDetectsSameSizeRewriteWithPartialTail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := filepath.Join(dir, ".flywheel", "events")
 	if err := os.MkdirAll(events, 0o755); err != nil {

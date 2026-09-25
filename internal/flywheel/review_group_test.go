@@ -10,6 +10,7 @@ import (
 // TestGroupMembers checks both group forms (issue #420): a goal id is every
 // task planned with it, in order; tasks:a,b lists tasks in the ledger.
 func TestGroupMembers(t *testing.T) {
+	t.Parallel()
 	evs := []Event{
 		{Task: "A", Kind: "planned", GoalID: "g1"},
 		{Task: "B", Kind: "planned", GoalID: "g2"},
@@ -39,6 +40,7 @@ func TestGroupMembers(t *testing.T) {
 // by default) and that each group gate runs in the tree and becomes a valid
 // validated event of the group, gate g<n>.
 func TestGroupGates(t *testing.T) {
+	t.Parallel()
 	var c Config
 	if v, err := c.Get("review.group_gates"); err != nil || v != "" {
 		t.Fatalf("default review.group_gates = %q, %v; want empty", v, err)
@@ -80,6 +82,7 @@ func TestGroupGates(t *testing.T) {
 // recording a review puts a blocker per conflicting path on the member whose
 // merge conflicted, closes with group_reviewed and writes the group thread.
 func TestRouteGroupFinding(t *testing.T) {
+	t.Parallel()
 	gt := GroupTask("g1")
 	members := []string{"A", "B"}
 	owns := map[string][]string{"A": {"internal/", "!internal/b.go"}, "B": {"internal/b.go", "docs/"}}
@@ -132,6 +135,7 @@ func TestRouteGroupFinding(t *testing.T) {
 // embedded and built like a panel persona, carries the one cross-unit rule,
 // is never a panel dimension, and its persona name is a valid event persona.
 func TestIntegrationPersona(t *testing.T) {
+	t.Parallel()
 	p, err := personaPrompt(IntegrationPersona)
 	if err != nil || !strings.HasPrefix(p, reviewPrompt) {
 		t.Fatalf("personaPrompt(integration) = %v", err)
@@ -184,6 +188,7 @@ func commitOn(t *testing.T, dir, branch, file, content string) string {
 // member order: different files merge cleanly, a second change to the same
 // line is a recorded conflict, and a member with no work is skipped.
 func TestIntegrationTree(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initRepo(t, dir)
 	git(t, dir, []string{"branch", "-M", "main"})

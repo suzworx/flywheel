@@ -8,6 +8,7 @@ import (
 
 // TestReconcileLimitsDispatchUnderBudget checks dispatch when budget is not spent.
 func TestReconcileLimitsDispatchUnderBudget(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 10, 0, 0, time.UTC)
 	events := []Event{
 		{TS: "2026-09-14T00:00:00Z", Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -27,6 +28,7 @@ func TestReconcileLimitsDispatchUnderBudget(t *testing.T) {
 
 // TestReconcileLimitsHoldOnSpentBudget checks that HOLD replaces DISPATCH when budget is spent.
 func TestReconcileLimitsHoldOnSpentBudget(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 10, 0, 0, time.UTC)
 	events := []Event{
 		{TS: "2026-09-14T00:00:00Z", Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -52,6 +54,7 @@ func TestReconcileLimitsHoldOnSpentBudget(t *testing.T) {
 
 // TestReconcileLimitsHoldOnOpenBreaker checks HOLD when the breaker is open.
 func TestReconcileLimitsHoldOnOpenBreaker(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 10, 0, 0, time.UTC)
 	errTime1 := now.Add(-2 * time.Minute).Format(time.RFC3339Nano)
 	errTime2 := now.Add(-1 * time.Minute).Format(time.RFC3339Nano)
@@ -90,6 +93,7 @@ func TestReconcileLimitsHoldOnOpenBreaker(t *testing.T) {
 
 // TestReconcileLimitsDispatchAfterCooldown checks dispatch after the breaker cooldown expires.
 func TestReconcileLimitsDispatchAfterCooldown(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 40, 0, 0, time.UTC)
 	errTime1 := now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
 	errTime2 := now.Add(-20 * time.Minute).Format(time.RFC3339Nano)
@@ -121,6 +125,7 @@ func TestReconcileLimitsDispatchAfterCooldown(t *testing.T) {
 // cooldown, with capacity for more, next recommends a single probe dispatch:
 // run admits only one while the breaker is half-open (#311 review).
 func TestReconcileLimitsHalfOpenRecommendsOneProbe(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 14, 0, 40, 0, 0, time.UTC)
 	e1 := now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
 	e2 := now.Add(-20 * time.Minute).Format(time.RFC3339Nano)
@@ -140,6 +145,7 @@ func TestReconcileLimitsHalfOpenRecommendsOneProbe(t *testing.T) {
 
 // TestReconcileLimitsPolicyFromConfig checks PolicyFromConfig fills Model, BudgetUSD, and Breaker.
 func TestReconcileLimitsPolicyFromConfig(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "opencode", Model: "m1", MaxParallel: 2}},

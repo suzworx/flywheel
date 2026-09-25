@@ -15,6 +15,7 @@ import (
 // TestWaitCmd checks flywheel wait's exit codes (issue #393): 0 every finish
 // clean, 4 any unclean, 8 timeout, 2 usage.
 func TestWaitCmd(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
 		t.Fatal(err)
@@ -52,6 +53,7 @@ func TestWaitCmd(t *testing.T) {
 // through the shell with FLYWHEEL_FINISHED set, and a failing command only
 // warns.
 func TestRunNotify(t *testing.T) {
+	t.Parallel()
 	fs, o := runFlags()
 	if err := fs.Parse([]string{"--notify", "echo hi"}); err != nil || o.notify != "echo hi" {
 		t.Fatalf("--notify parse: %v, notify=%q", err, o.notify)

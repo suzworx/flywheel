@@ -9,6 +9,7 @@ import (
 // TestContentSHANormalizesCRLF checks \r\n and \n content hash the same, and
 // that for LF content contentSHA is the raw sha256.
 func TestContentSHANormalizesCRLF(t *testing.T) {
+	t.Parallel()
 	lf := []byte("a\nb\n")
 	crlf := []byte("a\r\nb\r\n")
 	if contentSHA(lf) != contentSHA(crlf) {
@@ -23,6 +24,7 @@ func TestContentSHANormalizesCRLF(t *testing.T) {
 // TestContentSHAKeepsLoneCR checks a \r not followed by \n is kept, so
 // contentSHA("a\rb\n") differs from the raw hash of "a\rb" only by the LF.
 func TestContentSHAKeepsLoneCR(t *testing.T) {
+	t.Parallel()
 	lone := []byte("a\rb\n")
 	crlf := []byte("a\rb\r\n")
 	if contentSHA(lone) != contentSHA(crlf) {

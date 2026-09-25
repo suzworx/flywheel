@@ -47,6 +47,7 @@ func lostEvents(t *testing.T, dir string) []Event {
 // event for an attempt idle past limits.lost_after, reports the MARK_LOST,
 // and a second call appends nothing (issue #402).
 func TestNextMarksLost(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 	dir := lostFixture(t, at)
 	acts, err := NextActions(dir, at.Add(72*time.Hour))
@@ -78,6 +79,7 @@ func TestNextMarksLost(t *testing.T) {
 // file keeps an old dispatch alive, an idle one past lost_after marks it lost
 // with the run-file evidence, and a repeat call appends nothing.
 func TestMarkLostRunFile(t *testing.T) {
+	t.Parallel()
 	start := now().UTC().Add(-72 * time.Hour)
 	dir := lostFixture(t, start)
 	runFile := filepath.Join(dir, ".flywheel", "runs", "T1.r1.jsonl")

@@ -11,6 +11,7 @@ import (
 )
 
 func TestAppendReadRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e := Event{
 		TS:   "2026-09-12T00:00:00Z",
@@ -59,6 +60,7 @@ func TestAppendReadRoundTrip(t *testing.T) {
 // Attributed field round-trips through AppendEvent/ReadEvents and is written
 // to the log under the "attributed" key (issue #117).
 func TestAppendReadRoundTripAttributed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e := Event{
 		TS: "2026-09-12T00:00:00Z", Task: "A", Kind: "owns_checked",
@@ -87,6 +89,7 @@ func TestAppendReadRoundTripAttributed(t *testing.T) {
 }
 
 func TestAppendSetsTimestampWhenEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "", Task: "T1", Kind: "planned"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -104,6 +107,7 @@ func TestAppendSetsTimestampWhenEmpty(t *testing.T) {
 }
 
 func TestValidateRejectsBadTask(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1!", Kind: "planned"}); err == nil {
 		t.Error("Validate() accepted task id with '!'")
 	} else if !strings.Contains(err.Error(), "task") {
@@ -115,6 +119,7 @@ func TestValidateRejectsBadTask(t *testing.T) {
 }
 
 func TestValidateRejectsUnknownKind(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1", Kind: "frobnicated"}); err == nil {
 		t.Error("Validate() accepted unknown kind")
 	} else if !strings.Contains(err.Error(), "kind") {
@@ -123,6 +128,7 @@ func TestValidateRejectsUnknownKind(t *testing.T) {
 }
 
 func TestValidateStaffed(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Kind: "staffed", Session: "s1"}); err != nil {
 		t.Errorf("Validate() rejected staffed without task: %v", err)
 	}
@@ -137,6 +143,7 @@ func TestValidateStaffed(t *testing.T) {
 }
 
 func TestStaffedDefaultsPersonaToLead(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-13T00:00:00Z", Kind: "staffed", Session: "s1"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -161,6 +168,7 @@ func TestStaffedDefaultsPersonaToLead(t *testing.T) {
 // records the planner persona on planned and amended events, and that an
 // explicit persona wins.
 func TestPlannedAndAmendedDefaultPersonaToPlanner(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-17T00:00:00Z", Task: "T1", Kind: "planned"}); err != nil {
 		t.Fatalf("AppendEvent() planned error = %v", err)
@@ -190,6 +198,7 @@ func TestPlannedAndAmendedDefaultPersonaToPlanner(t *testing.T) {
 }
 
 func TestValidateRejectsBadAttempt(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1", Kind: "dispatched", Attempt: "x1"}); err == nil {
 		t.Error("Validate() accepted attempt x1")
 	}
@@ -202,6 +211,7 @@ func TestValidateRejectsBadAttempt(t *testing.T) {
 }
 
 func TestValidateRejectsReviewedWithoutVerdict(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1", Kind: "reviewed"}); err == nil {
 		t.Error("Validate() accepted reviewed event without verdict")
 	} else if !strings.Contains(err.Error(), "verdict") {
@@ -213,6 +223,7 @@ func TestValidateRejectsReviewedWithoutVerdict(t *testing.T) {
 }
 
 func TestAppendTornLastLineGetsNewlinePrefix(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -241,6 +252,7 @@ func TestAppendTornLastLineGetsNewlinePrefix(t *testing.T) {
 }
 
 func TestReadEventsConflictMarkerNamesLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -263,6 +275,7 @@ func TestReadEventsConflictMarkerNamesLine(t *testing.T) {
 }
 
 func TestParseStrictRejectsUnknownFieldLenientAccepts(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"ts":"2026-09-12T00:00:00Z","task":"T1","kind":"planned","bogus":1}`)
 
 	if _, err := ParseEvents(bytes.NewReader(line), true); err == nil {
@@ -284,6 +297,7 @@ func TestParseStrictRejectsUnknownFieldLenientAccepts(t *testing.T) {
 }
 
 func TestAppendConcurrent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	var wg sync.WaitGroup
 	errs := make([]error, 50)
@@ -322,6 +336,7 @@ func TestAppendConcurrent(t *testing.T) {
 }
 
 func TestNewKindsValidate(t *testing.T) {
+	t.Parallel()
 	for _, k := range []string{"worker_plan", "no-plan", "report", "lost"} {
 		if err := Validate(Event{Task: "T1", Kind: k}); err != nil {
 			t.Errorf("Validate() rejected kind %s: %v", k, err)
@@ -339,6 +354,7 @@ func TestNewKindsValidate(t *testing.T) {
 // attempt like the other run kinds and round-trips through the event log
 // (issue #65).
 func TestNoPlanKindRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "no-plan", Attempt: "r1"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -362,6 +378,7 @@ func TestNoPlanKindRoundTrips(t *testing.T) {
 // attempt and note like the other run kinds and round-trips through the
 // event log (issue #72).
 func TestOffCourseKindRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	note := "/outside/a.go, /outside/b.go, /outside/c.go, /outside/d.go, /outside/e.go"
 	if err := AppendEvent(dir, Event{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "off-course", Attempt: "r1", Note: note}); err != nil {
@@ -387,6 +404,7 @@ func TestOffCourseKindRoundTrips(t *testing.T) {
 // is rejected with a message naming it and the allowed set; and no other kind
 // may carry a Signal.
 func TestSignalKindValidate(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{"no-plan", "off-course", "no-writes", "capped", "provider-error", "stalled", "silent", "failed-dirty", "git-write", "permission-denied"} {
 		if err := Validate(Event{Task: "T1", Kind: "signal", Signal: s}); err != nil {
 			t.Errorf("Validate() rejected signal/%s: %v", s, err)
@@ -425,6 +443,7 @@ func TestSignalKindValidate(t *testing.T) {
 // TestSignalFieldRoundTrips checks a signal event round-trips with the
 // condition under the "signal" key, which is omitted when empty (issue #37).
 func TestSignalFieldRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{
 		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "signal", Signal: "capped",
@@ -467,6 +486,7 @@ func TestSignalFieldRoundTrips(t *testing.T) {
 }
 
 func TestEventNewFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	toks := new(Tokens)
 	*toks = Tokens{Input: 100, Output: 20, Reasoning: 5, CacheRead: 900, CacheWrite: 10}
@@ -532,6 +552,7 @@ func TestEventNewFieldsRoundTrip(t *testing.T) {
 }
 
 func TestValidateNewGaugeKinds(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1", Kind: "validated"}); err == nil {
 		t.Error("Validate() accepted validated without gate and tree")
 	} else if !strings.Contains(err.Error(), "gate and tree") {
@@ -563,6 +584,7 @@ func TestValidateNewGaugeKinds(t *testing.T) {
 // requires a session and a note, and the unknown-kind error message lists all
 // three (task stays optional on every one, like staffed).
 func TestSessionKindsValidate(t *testing.T) {
+	t.Parallel()
 	for _, k := range []string{"session_start", "session_end"} {
 		if err := Validate(Event{Kind: k}); err == nil {
 			t.Errorf("Validate() accepted %s without session", k)
@@ -598,6 +620,7 @@ func TestSessionKindsValidate(t *testing.T) {
 }
 
 func TestValidateGoalEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{Kind: "goal", Goal: &GoalSpec{ID: "g1", Title: "Ship", Status: "active"}}
 	if err := Validate(ok); err != nil {
 		t.Errorf("Validate() rejected a valid goal event: %v", err)
@@ -630,6 +653,7 @@ func TestValidateGoalEvent(t *testing.T) {
 }
 
 func TestValidateLearningEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "runs", Ask: "repeat"}
 	if err := Validate(ok); err != nil {
 		t.Errorf("Validate() rejected a valid learning event: %v", err)
@@ -662,6 +686,7 @@ func TestValidateLearningEvent(t *testing.T) {
 }
 
 func TestValidateExternalReading(t *testing.T) {
+	t.Parallel()
 	ok := Event{Task: "t1", Kind: "validated", Gate: "1", Tree: "t", Source: "external", Evidence: "https://ci/run/1", Session: "lead", Commit: "abc1234"}
 	if err := Validate(ok); err != nil {
 		t.Errorf("Validate() rejected a valid external reading: %v", err)
@@ -700,6 +725,7 @@ func TestValidateExternalReading(t *testing.T) {
 }
 
 func TestValidateDismissedEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{Task: "t1", Kind: "dismissed", ID: "L-01", Note: "fixed"}
 	if err := Validate(ok); err != nil {
 		t.Errorf("Validate() rejected a valid dismissed event: %v", err)
@@ -723,6 +749,7 @@ func TestValidateDismissedEvent(t *testing.T) {
 }
 
 func TestValidateRejectsGoalOnOtherKinds(t *testing.T) {
+	t.Parallel()
 	g := &GoalSpec{ID: "g1", Title: "Ship", Status: "active"}
 	for _, k := range []string{"planned", "staffed", "dispatched", "finished"} {
 		e := Event{Task: "T1", Kind: k, Goal: g}
@@ -739,6 +766,7 @@ func TestValidateRejectsGoalOnOtherKinds(t *testing.T) {
 }
 
 func TestGoalRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	spec := &GoalSpec{ID: "g1", Title: "Ship status", Acceptance: []string{"go test ./..."}, Required: []string{"t1"}, Status: "active"}
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T00:00:00Z", Kind: "goal", Goal: spec}); err != nil {
@@ -765,6 +793,7 @@ func TestGoalRoundTrip(t *testing.T) {
 // TestPeakReasoningRoundTrips checks the finished event's peak_reasoning
 // round-trips and is omitted from the log when zero (issue #84).
 func TestPeakReasoningRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{
 		TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1",
@@ -810,6 +839,7 @@ func TestPeakReasoningRoundTrips(t *testing.T) {
 // through the event log, sorted paths intact, and is omitted from the line
 // when empty (issue #163).
 func TestWroteFieldRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{
 		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r1",
@@ -855,6 +885,7 @@ func TestWroteFieldRoundTrips(t *testing.T) {
 // round-trips through the log under the "commit" key and is omitted when
 // empty, and that an event carrying it validates.
 func TestCommitFieldRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{
 		TS: "2026-09-17T00:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: "abc123", Commit: "abc1234",
@@ -897,6 +928,7 @@ func TestCommitFieldRoundTrips(t *testing.T) {
 }
 
 func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e := Event{
 		TS:         "2026-09-13T00:00:00Z",
@@ -949,6 +981,7 @@ func TestEventNewGaugeFieldsRoundTrip(t *testing.T) {
 // absolute, cleaned form without erroring, and a relative input always comes
 // out absolute.
 func TestAbsPathFallbackWhenMissing(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	missing := filepath.Join(base, "a") + string(filepath.Separator) + ".." + string(filepath.Separator) + "does-not-exist"
 	got := absPath(missing)
@@ -971,6 +1004,7 @@ func TestAbsPathFallbackWhenMissing(t *testing.T) {
 // (worktree path -> {path -> sha256}) round-trips through the event log and
 // is omitted when empty (issue #87).
 func TestWorktreesFieldRoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	e := Event{
 		TS: "2026-09-16T00:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1",
@@ -1023,6 +1057,7 @@ func TestWorktreesFieldRoundTrips(t *testing.T) {
 // TestReadEventsIgnoresUnterminatedTail checks a reader racing a concurrent
 // append sees the complete lines only, not an error (#297 review).
 func TestReadEventsIgnoresUnterminatedTail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -1047,6 +1082,7 @@ func TestReadEventsIgnoresUnterminatedTail(t *testing.T) {
 // TestValidateIncrement checks only a dispatched event may carry an
 // increment, and it must be positive (#295 review).
 func TestValidateIncrement(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Task: "T1", Kind: "dispatched", Attempt: "r1", Increment: 2}); err != nil {
 		t.Errorf("Validate(dispatched increment 2) = %v, want nil", err)
 	}
@@ -1062,6 +1098,7 @@ func TestValidateIncrement(t *testing.T) {
 // finding validates and round-trips through the log with its line, category
 // and id; each missing field and an unknown severity are refused.
 func TestReviewFindingEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{
 		Task: "T1", Kind: "review_finding", Session: "rev-1", Severity: "blocker",
 		Title: "drops the last line", Observed: "a file without a trailing newline loses its tail",
@@ -1115,6 +1152,7 @@ func TestReviewFindingEvent(t *testing.T) {
 // fixed or disputed answer naming a finding validates; a missing task,
 // finding or verdict, and any other verdict, are refused.
 func TestFindingResponseEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{Task: "T1", Kind: "finding_response", Attempt: "c1", Session: "w-1",
 		Finding: "T1-r1-1", Verdict: "fixed", Note: "added the flush; go test passes"}
 	for _, v := range []string{"fixed", "disputed"} {
@@ -1141,6 +1179,7 @@ func TestFindingResponseEvent(t *testing.T) {
 // TestNoteEvent: a note is a journal line (issue #409) — Task optional, Note
 // required — and a learning's scope is flywheel (default), or project, only.
 func TestNoteEvent(t *testing.T) {
+	t.Parallel()
 	if err := Validate(Event{Kind: "note", Note: "dispatched t1"}); err != nil {
 		t.Errorf("task-less note: %v", err)
 	}
@@ -1188,6 +1227,7 @@ func TestNoteEvent(t *testing.T) {
 // TestRebasedEvent checks the rebased kind (issue #414): it needs a task, the
 // new base and a note; an attempt is optional; it round-trips.
 func TestRebasedEvent(t *testing.T) {
+	t.Parallel()
 	ok := Event{Task: "B", Kind: "rebased", Base: "abc1234", Note: "was def5678, onto main"}
 	if err := Validate(ok); err != nil {
 		t.Fatalf("Validate(rebased) = %v", err)
@@ -1222,6 +1262,7 @@ func TestRebasedEvent(t *testing.T) {
 // TestWorktreeSetupEvent checks the worktree_setup kind (issue #430) is valid
 // and round-trips its linked paths, rc, duration and note.
 func TestWorktreeSetupEvent(t *testing.T) {
+	t.Parallel()
 	rc := 0
 	ev := Event{Task: "B", Kind: "worktree_setup", Attempt: "r1", Linked: []string{"node_modules/"}, RC: &rc, DurationMS: 42, Note: "done"}
 	if err := Validate(ev); err != nil {
@@ -1244,6 +1285,7 @@ func TestWorktreeSetupEvent(t *testing.T) {
 // floor-level event with a session, a version, a verdict of pass, fail or
 // inconclusive and at least one check; no other kind carries version or checks.
 func TestValidateReleaseAudited(t *testing.T) {
+	t.Parallel()
 	ok := Event{Kind: "release_audited", Session: "aud", Version: "v0.2.0", Verdict: "pass", Checks: []string{"tag=pass"}}
 	if err := Validate(ok); err != nil {
 		t.Fatalf("Validate(valid release_audited) = %v", err)

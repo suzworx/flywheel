@@ -11,6 +11,7 @@ import (
 // TestSkillNameVersionLine checks the frontmatter version-line parser: a
 // missing version key, a malformed (non X.Y.Z) version, and a valid one.
 func TestSkillNameVersionLine(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		lines   []string
@@ -42,6 +43,7 @@ func TestSkillNameVersionLine(t *testing.T) {
 // from the value, along with the space before it, so the bare version
 // remains for semver matching.
 func TestParseFrontmatterLineStripsComment(t *testing.T) {
+	t.Parallel()
 	key, value, ok := parseFrontmatterLine("  version: 0.3.0 # x-release-please-version")
 	if !ok || key != "version" || value != "0.3.0" {
 		t.Errorf("parseFrontmatterLine(annotated) = (%q, %q, %v), want (%q, %q, true)", key, value, ok, "version", "0.3.0")
@@ -51,6 +53,7 @@ func TestParseFrontmatterLineStripsComment(t *testing.T) {
 // TestSkillNameVersionBeyondTenLines checks the scan stops at the 10th line,
 // so a version past it is never found.
 func TestSkillNameVersionBeyondTenLines(t *testing.T) {
+	t.Parallel()
 	lines := []string{"---", "name: demo", "1", "2", "3", "4", "5", "6", "7", "8", "  version: 0.3.0"}
 	if _, _, ok := skillNameVersion(lines); ok {
 		t.Errorf("skillNameVersion found a version past the first 10 lines")
@@ -61,6 +64,7 @@ func TestSkillNameVersionBeyondTenLines(t *testing.T) {
 // version is older, but an equal or newer one is not, and an unparsable
 // version on either side is never older.
 func TestOlderVersion(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		sv, bv string
 		want   bool
@@ -83,6 +87,7 @@ func TestOlderVersion(t *testing.T) {
 // TestWarnStaleSkillsDevBuildSkip checks that a dev build ("dev" does not
 // match X.Y.Z) prints no warnings at all, even with stale skills present.
 func TestWarnStaleSkillsDevBuildSkip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeSkill(t, dir, "demo", "0.1.0")
 	var buf bytes.Buffer
@@ -96,6 +101,7 @@ func TestWarnStaleSkillsDevBuildSkip(t *testing.T) {
 // stale skill, stays silent for an up-to-date and a newer one, and the
 // warning line matches the exact format.
 func TestWarnStaleSkillsReportsOnlyOlder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeSkill(t, dir, "demo", "0.3.0")
 	writeSkill(t, dir, "ok", "0.4.0")

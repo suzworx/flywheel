@@ -7,6 +7,7 @@ import (
 )
 
 func TestAuditWaveSelectsEveryCandidate(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
 		{Task: "T2", Kind: "inspected", Verdict: "pass"},
@@ -25,6 +26,7 @@ func TestAuditWaveSelectsEveryCandidate(t *testing.T) {
 }
 
 func TestAuditWaveEmpty(t *testing.T) {
+	t.Parallel()
 	events := []Event{}
 	sel := SelectWave(events)
 	if sel.Tasks == nil {
@@ -42,6 +44,7 @@ func TestAuditWaveEmpty(t *testing.T) {
 // selected is refused, not audited twice, when the audit requires a candidate
 // (#323 review).
 func TestAuditWaveStaleCandidateSkipped(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)

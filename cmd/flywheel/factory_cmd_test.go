@@ -11,6 +11,7 @@ import (
 )
 
 func TestClockForEmptyReturnsAdvancingClock(t *testing.T) {
+	t.Parallel()
 	clock, err := clockFor("")
 	if err != nil {
 		t.Fatalf("clockFor(\"\"): unexpected error: %v", err)
@@ -24,6 +25,7 @@ func TestClockForEmptyReturnsAdvancingClock(t *testing.T) {
 }
 
 func TestClockForRFC3339ReturnsFixedInstant(t *testing.T) {
+	t.Parallel()
 	want := time.Date(2026, 9, 13, 9, 0, 0, 0, time.UTC)
 	clock, err := clockFor("2026-09-13T09:00:00Z")
 	if err != nil {
@@ -38,6 +40,7 @@ func TestClockForRFC3339ReturnsFixedInstant(t *testing.T) {
 }
 
 func TestClockForRejectsBadFlag(t *testing.T) {
+	t.Parallel()
 	if _, err := clockFor("nope"); err == nil {
 		t.Fatal("clockFor(\"nope\"): expected an error, got nil")
 	}
@@ -48,6 +51,7 @@ func TestClockForRejectsBadFlag(t *testing.T) {
 // loop that would hang an automated caller (#336 review: the interactive
 // wiring briefly sent this case to the redraw loop).
 func TestFactoryPipedRendersOnce(t *testing.T) {
+	// not parallel: swaps os.Stdout
 	dir := t.TempDir()
 	if _, err := flywheel.Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)

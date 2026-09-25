@@ -6,6 +6,7 @@ import (
 )
 
 func TestPlanText(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		text  string

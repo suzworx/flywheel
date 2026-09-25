@@ -11,6 +11,7 @@ import (
 // TestLinesValidate checks that Config.Validate catches line errors: duplicate
 // names, unknown workers, empty names.
 func TestLinesValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		cfg     Config
@@ -97,6 +98,7 @@ func TestLinesValidate(t *testing.T) {
 // TestLinesExplicitHeaderWins checks that a header's explicit line: wins over
 // matching by owns:.
 func TestLinesExplicitHeaderWins(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{
@@ -129,6 +131,7 @@ func TestLinesExplicitHeaderWins(t *testing.T) {
 // TestLinesMatchByOwns checks that LineFor finds a line by owns: matching when
 // no line: is specified.
 func TestLinesMatchByOwns(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{
@@ -159,6 +162,7 @@ func TestLinesMatchByOwns(t *testing.T) {
 // TestLinesMixedOwnsNoLine checks that a header with owns from multiple
 // lines returns no line.
 func TestLinesMixedOwnsNoLine(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{
@@ -189,6 +193,7 @@ func TestLinesMixedOwnsNoLine(t *testing.T) {
 // TestLinesUnknownLineErrors checks that a header naming an unknown line:
 // returns an error.
 func TestLinesUnknownLineErrors(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{
@@ -219,6 +224,7 @@ func TestLinesUnknownLineErrors(t *testing.T) {
 
 // TestLinesParseHeader checks that ParseBriefHeader parses line: headers.
 func TestLinesParseHeader(t *testing.T) {
+	t.Parallel()
 	briefContent := `owns: docs/
 line: docs
 gate: some command
@@ -242,6 +248,7 @@ Some content here.
 // TestLinesRunUsesLineWorker checks that Run uses the line's worker when
 // --worker is not specified.
 func TestLinesRunUsesLineWorker(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -312,6 +319,7 @@ Do the thing.
 // TestLinesRunUnknownLineRefused checks that Run refuses a brief with an
 // unknown line: header.
 func TestLinesRunUnknownLineRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -411,6 +419,7 @@ func dispatchedT1(t *testing.T, dir string) Event {
 // TestLinesRunStaffsFromLineByOwns checks that a unit matched to a line by its
 // owns runs on the line's worker (its model is the one dispatched).
 func TestLinesRunStaffsFromLineByOwns(t *testing.T) {
+	t.Parallel()
 	dir, _, docsModel := linesRunDir(t)
 	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
 		t.Fatal(err)
@@ -423,6 +432,7 @@ func TestLinesRunStaffsFromLineByOwns(t *testing.T) {
 // TestLinesExplicitWorkerKeepsLine checks that --worker wins over the line's
 // worker, and the dispatch still records the unit's line.
 func TestLinesExplicitWorkerKeepsLine(t *testing.T) {
+	t.Parallel()
 	dir, defaultModel, _ := linesRunDir(t)
 	if _, err := Run(dir, RunOptions{Task: "T1", Worker: "default"}); err != nil {
 		t.Fatal(err)
@@ -435,6 +445,7 @@ func TestLinesExplicitWorkerKeepsLine(t *testing.T) {
 // TestLinesUnknownLineWithoutConfiguredLines checks that a brief naming a line
 // is refused when the config has no lines at all (#340 review).
 func TestLinesUnknownLineWithoutConfiguredLines(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nline: docs\n\n# TASK: t\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -453,6 +464,7 @@ func TestLinesUnknownLineWithoutConfiguredLines(t *testing.T) {
 // brief as it is now, not the header recorded when it was planned (#340
 // review): planned on no line, edited to line: docs before the run.
 func TestLinesEditedBriefUsesCurrentLine(t *testing.T) {
+	t.Parallel()
 	dir, _, docsModel := linesRunDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: other/x.md\nline: docs\n\n# TASK: t\n"), 0o644); err != nil {
 		t.Fatal(err)

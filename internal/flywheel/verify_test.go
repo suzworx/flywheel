@@ -63,6 +63,7 @@ func buildCleanChain(t *testing.T) string {
 }
 
 func TestVerifyCleanChainPasses(t *testing.T) {
+	t.Parallel()
 	dir := buildCleanChain(t)
 	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, Tasks: []string{"T1"}})
 	if err != nil {
@@ -78,6 +79,7 @@ func TestVerifyCleanChainPasses(t *testing.T) {
 }
 
 func TestVerifyT1TamperedBrief(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -92,6 +94,7 @@ func TestVerifyT1TamperedBrief(t *testing.T) {
 }
 
 func TestVerifyT3InspectedPassWithoutReadings(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -107,6 +110,7 @@ func TestVerifyT3InspectedPassWithoutReadings(t *testing.T) {
 }
 
 func TestVerifyT4InspectedFromWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -126,6 +130,7 @@ func TestVerifyT4InspectedFromWorkerSession(t *testing.T) {
 // open fails; one recorded after the finding was dismissed passes, and so does
 // a clean chain never reviewed.
 func TestVerifyOpenFindings(t *testing.T) {
+	t.Parallel()
 	if fails := verifyAll(t, buildCleanChain(t), "T1"); fails["R1"] {
 		t.Error("R1 failed a chain never reviewed")
 	}
@@ -154,6 +159,7 @@ func TestVerifyOpenFindings(t *testing.T) {
 }
 
 func TestVerifyT5LandedWithoutInspectedPass(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -168,6 +174,7 @@ func TestVerifyT5LandedWithoutInspectedPass(t *testing.T) {
 }
 
 func TestVerifyT8BadPersona(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -186,6 +193,7 @@ func TestVerifyT8BadPersona(t *testing.T) {
 // later correction attempt's finished event. Each inspection uses the latest
 // finished event before it.
 func TestVerifyT3FirstPassSurvivesLaterAttempt(t *testing.T) {
+	t.Parallel()
 	dir := buildCleanChain(t)
 	rc := 0
 	if err := AppendEvent(dir, Event{TS: "2099-01-01T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "c1", Session: "w2", RC: &rc}); err != nil {
@@ -198,6 +206,7 @@ func TestVerifyT3FirstPassSurvivesLaterAttempt(t *testing.T) {
 }
 
 func TestVerifyAllEmptyLogPasses(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	res, err := VerifyTasks(dir, VerifyOptions{Dir: dir, All: true})
 	if err != nil {
@@ -212,6 +221,7 @@ func TestVerifyAllEmptyLogPasses(t *testing.T) {
 }
 
 func TestVerifyNamedMissingTaskStillRunsRules(t *testing.T) {
+	t.Parallel()
 	// An explicitly named task that does not exist must not get the passing
 	// --all empty result: the rules still run, and a task with no planned
 	// brief fails T3 as it did before.
@@ -247,6 +257,7 @@ func deltaPath(t *testing.T, dir, text string) string {
 // TestVerifyT1FreshAndCorrectionPass checks ruleT1 accepts a fresh attempt
 // matching the planned brief and a correction matching its recorded delta.
 func TestVerifyT1FreshAndCorrectionPass(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -267,6 +278,7 @@ func TestVerifyT1FreshAndCorrectionPass(t *testing.T) {
 // TestVerifyT1CorrectionTamperedDelta checks a correction whose delta file
 // changed after dispatch fails T1 naming the delta.
 func TestVerifyT1CorrectionTamperedDelta(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -284,6 +296,7 @@ func TestVerifyT1CorrectionTamperedDelta(t *testing.T) {
 // TestVerifyT1CorrectionMissingDeltaPath checks a correction dispatched
 // without a recorded delta path fails T1.
 func TestVerifyT1CorrectionMissingDeltaPath(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -309,6 +322,7 @@ func TestVerifyT1CorrectionMissingDeltaPath(t *testing.T) {
 // TestVerifyT1CorrectionMissingDeltaFile checks a correction whose delta path
 // names a file that does not exist fails T1 naming the delta.
 func TestVerifyT1CorrectionMissingDeltaFile(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -334,6 +348,7 @@ func TestVerifyT1CorrectionMissingDeltaFile(t *testing.T) {
 // TestVerifyT1AmendmentWaivesFreshTamper locks in today's amendment semantics:
 // an amended event after a fresh dispatch explains a brief change.
 func TestVerifyT1AmendmentWaivesFreshTamper(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -354,6 +369,7 @@ func TestVerifyT1AmendmentWaivesFreshTamper(t *testing.T) {
 // that a CRLF re-checkout rewrote still passes T1, because the recorded hash
 // is contentSHA and verify compares through contentSHA.
 func TestVerifyT1CRLFBriefPasses(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -380,6 +396,7 @@ func TestVerifyT1CRLFBriefPasses(t *testing.T) {
 // raw sha256 of CRLF-checked-out content, still verify against the same
 // working copy.
 func TestVerifyT1LegacyRawCRLFHashPasses(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -406,6 +423,7 @@ func TestVerifyT1LegacyRawCRLFHashPasses(t *testing.T) {
 // TestVerifyT1RealContentChangeFails checks a genuine content change still
 // fails T1, even when dispatched through contentSHA.
 func TestVerifyT1RealContentChangeFails(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -430,6 +448,7 @@ func TestVerifyT1RealContentChangeFails(t *testing.T) {
 // TestVerifyT1AmendmentDoesNotWaiveCorrectionTamper checks an amendment never
 // hides a tampered correction delta.
 func TestVerifyT1AmendmentDoesNotWaiveCorrectionTamper(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -452,6 +471,7 @@ func TestVerifyT1AmendmentDoesNotWaiveCorrectionTamper(t *testing.T) {
 // diff entirely outside owns, reports T3 passing. verify re-checks the diff
 // itself, never trusting the note.
 func TestVerifyT3PassRelaxedOutsideOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -488,6 +508,7 @@ func TestVerifyT3PassRelaxedOutsideOwns(t *testing.T) {
 // issue #218 relaxation on the audit side: a relaxed pass whose diff touches an
 // owned file must report T3 failing with today's reason string.
 func TestVerifyT3PassRefusedWhenOwnedFileChanged(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -539,6 +560,7 @@ func TestVerifyT3PassRefusedWhenOwnedFileChanged(t *testing.T) {
 // TestVerifyT3PassOnOwnTree checks that a pass with readings on its own tree
 // still passes exactly as before the issue #218 relaxation.
 func TestVerifyT3PassOnOwnTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -571,6 +593,7 @@ func TestVerifyT3PassOnOwnTree(t *testing.T) {
 // readings for all three gates, is judged against the 3-gate header exactly
 // as today.
 func TestVerifyT3HistoricalGateSetAfterCorrection(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -638,6 +661,7 @@ func TestVerifyT3HistoricalGateSetAfterCorrection(t *testing.T) {
 // even after a correction delta, against the gate set in force when it was
 // granted.
 func TestVerifyT3HistoricalPassWithoutReadingsStillFails(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -683,6 +707,7 @@ func TestVerifyT3HistoricalPassWithoutReadingsStillFails(t *testing.T) {
 // is unchanged: with no corrections, a pass missing a reading for one of the
 // brief's gates still fails T3 naming that gate.
 func TestVerifyT3CurrentPassMissingGateStillFails(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -723,6 +748,7 @@ func TestVerifyT3CurrentPassMissingGateStillFails(t *testing.T) {
 // TestVerifyT3PassSplitAcrossTrees checks that readings split across two
 // different trees do not qualify on the audit side either.
 func TestVerifyT3PassSplitAcrossTrees(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -771,6 +797,7 @@ func TestVerifyT3PassSplitAcrossTrees(t *testing.T) {
 // at index i is judged by events[:i+1]; the later c1 with the same timestamp
 // never enters its prefix, so its third gate does not apply.
 func TestVerifyT3SameTimestampCorrectionAfterPass(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -816,6 +843,7 @@ func TestVerifyT3SameTimestampCorrectionAfterPass(t *testing.T) {
 // same TS does apply to it. Without this, the guard above could be satisfied
 // by ignoring corrections altogether.
 func TestVerifyT3SameTimestampCorrectionBeforePassApplies(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -866,6 +894,7 @@ func TestVerifyT3SameTimestampCorrectionBeforePassApplies(t *testing.T) {
 // T3 passing. allReadings is pure event matching and needs no git, so an
 // unresolvable tree must never short-circuit a genuine pass.
 func TestVerifyExternalWorkdirPassUnresolvableTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -912,6 +941,7 @@ func TestVerifyExternalWorkdirPassUnresolvableTree(t *testing.T) {
 // established as a violation — T3 reports inconclusive (Pass false,
 // Inconclusive true, the exit-7 path), never a violation (exit 6).
 func TestVerifyExternalWorkdirMissingGateInconclusive(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -968,6 +998,7 @@ func TestVerifyExternalWorkdirMissingGateInconclusive(t *testing.T) {
 // never swallowed real failures: a genuine violation with a resolvable tree
 // still fails (Pass false, Inconclusive false — the exit-6 path).
 func TestVerifyExternalWorkdirViolationStillFails(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1017,6 +1048,7 @@ func TestVerifyExternalWorkdirViolationStillFails(t *testing.T) {
 // verifies normally — a missing gate there is an established violation, not
 // inconclusive.
 func TestVerifyExternalWorkdirResolvedByFlag(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1068,6 +1100,7 @@ func TestVerifyExternalWorkdirResolvedByFlag(t *testing.T) {
 // events (validated, owns_checked, inspected) resolves the tree when it still
 // exists, and the pass verifies normally.
 func TestVerifyExternalWorkdirResolvedFromRecordedWorkdir(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1119,6 +1152,7 @@ func TestVerifyExternalWorkdirResolvedFromRecordedWorkdir(t *testing.T) {
 // missing gate 2. The later fresh dispatch must not drag the earlier pass
 // up to its own gate set.
 func TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1206,6 +1240,7 @@ func TestVerifyT3HistoricalPassIgnoresLaterFreshDispatch(t *testing.T) {
 // reported a violation (exit 6), never inconclusive (exit 8) — a verifier that
 // under-reports a violation is worse than one that cannot run.
 func TestVerifyT3EmptyTreeIsViolation(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1240,6 +1275,7 @@ func TestVerifyT3EmptyTreeIsViolation(t *testing.T) {
 // the wrong object database and degrade an established violation into
 // inconclusive.
 func TestVerifyPerPassWorkdirResolvesEachPass(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1309,6 +1345,7 @@ func TestVerifyPerPassWorkdirResolvesEachPass(t *testing.T) {
 // or nothing. The ledger read from another directory still resolves the
 // recorded repository.
 func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
+	// not parallel: os.Chdir
 	base := t.TempDir()
 	dir := filepath.Join(base, "ledger")
 	ext := filepath.Join(base, "external")
@@ -1416,6 +1453,7 @@ func TestVerifyRelativeWorkdirRecordedAbsoluteAndResolves(t *testing.T) {
 // workdir field. Before absPath resolved EvalSymlinks, an alias read as a
 // different path and leaked into the ledger as a fake external workdir.
 func TestVerifyAliasWorkdirRecordsNoWorkdir(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1471,6 +1509,7 @@ func dirAlias(t *testing.T, dir string) string {
 // an error naming the path, never an inconclusive verdict. A verifier that
 // cannot read the object database must not report "could not establish".
 func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1511,6 +1550,7 @@ func TestVerifyInvalidWorkdirIsErrorNotInconclusive(t *testing.T) {
 // TestVerifyT5LandedOnException checks a landed event preceded by an excepted
 // event from a lead session passes T5 with the exception noted.
 func TestVerifyT5LandedOnException(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -1545,6 +1585,7 @@ func TestVerifyT5LandedOnException(t *testing.T) {
 // TestVerifyT4ExceptionFromWorkerSession checks an excepted event whose
 // session wrote the task's finished event fails T4.
 func TestVerifyT4ExceptionFromWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -1573,6 +1614,7 @@ func TestVerifyT4ExceptionFromWorkerSession(t *testing.T) {
 // TestVerifyT5ExceptionForOtherCommitFails checks an exception covers only the
 // commit it names: a landing of a different commit fails T5.
 func TestVerifyT5ExceptionForOtherCommitFails(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
 		t.Fatalf("append planned: %v", err)
@@ -1602,6 +1644,7 @@ func TestVerifyT5ExceptionForOtherCommitFails(t *testing.T) {
 // evidence on the T3 line (issue #367), and fails an external reading that
 // lacks its evidence or its commit.
 func TestVerifyAttested(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"exit 0"}, "a.go")
 	if _, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1"); err != nil {
 		t.Fatalf("Attest() error = %v", err)
@@ -1660,6 +1703,7 @@ func TestVerifyAttested(t *testing.T) {
 // panel-reviewed passes unless review.required; and a panel review after the
 // pass never fails it retroactively.
 func TestVerifyPanel(t *testing.T) {
+	t.Parallel()
 	if fails := verifyAll(t, buildCleanChain(t), "T1"); fails["P1"] {
 		t.Error("P1 failed a chain never panel-reviewed")
 	}

@@ -17,6 +17,7 @@ import (
 // the log is read back as flywheel watch reads it. N is 8, or FLYWHEEL_SCALE
 // when set (CI runs 1000); 5 under -short when FLYWHEEL_SCALE is unset.
 func TestScaleFactoryLoop(t *testing.T) {
+	t.Parallel()
 	// Determine N from environment or defaults
 	n := 8
 	if testing.Short() && os.Getenv("FLYWHEEL_SCALE") == "" {

@@ -5,6 +5,7 @@ import "testing"
 // TestAttestFlagsInterleaved checks parseArgs plus attestFlags give the same
 // task and flag values in the task-first, task-last and interleaved forms.
 func TestAttestFlagsInterleaved(t *testing.T) {
+	t.Parallel()
 	forms := [][]string{
 		{"T1", "--dir", "X", "--commit", "abc1234", "--evidence", "E", "--session", "S"},
 		{"--dir", "X", "--commit", "abc1234", "--evidence", "E", "--session", "S", "T1"},
@@ -30,6 +31,7 @@ func TestAttestFlagsInterleaved(t *testing.T) {
 // TestInspectCommitFlagBinds checks inspect's --commit reaches the bound
 // options (issue #367).
 func TestInspectCommitFlagBinds(t *testing.T) {
+	t.Parallel()
 	fs, o := inspectFlags()
 	if err := fs.Parse([]string{"--commit", "abc1234"}); err != nil {
 		t.Fatalf("inspectFlags: %v", err)

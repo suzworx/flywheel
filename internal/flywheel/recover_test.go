@@ -28,6 +28,7 @@ func recoverLedger(t *testing.T, dir string, evs ...Event) {
 // TestRecoverNextActions checks nextAction per status on one synthetic
 // ledger each (issue #422).
 func TestRecoverNextActions(t *testing.T) {
+	t.Parallel()
 	rc0 := new(int)
 	planned := Event{Task: "T", Kind: "planned", Brief: "brief.txt"}
 	disp := Event{Task: "T", Kind: "dispatched", Attempt: "r1", Model: "m"}
@@ -84,6 +85,7 @@ func TestRecoverNextActions(t *testing.T) {
 // #422): the dead attempt is marked lost and one recovered event names it,
 // while land and resume-session are listed, never run.
 func TestRecoverApplySafeOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	past := recoverNow.Add(-time.Hour).Format(time.RFC3339)
 	recoverLedger(t, dir,
@@ -136,6 +138,7 @@ func TestRecoverApplySafeOnly(t *testing.T) {
 // the attempt's commit, a file no attempt wrote is unexplained (investigate,
 // not OK), and a run file cut mid-line is torn.
 func TestRecoverReport(t *testing.T) {
+	t.Parallel()
 	dir := newRepo(t)
 	wt := filepath.Join(dir, ".flywheel", "worktrees", "T")
 	gitOut(t, dir, "worktree", "add", "-q", wt, "-b", "fw/T")
@@ -175,6 +178,7 @@ func TestRecoverReport(t *testing.T) {
 // TestRecoverHeadAncestry checks a lead commit on top of the attempt's commit
 // is consistent, and a HEAD that does not contain it is investigate.
 func TestRecoverHeadAncestry(t *testing.T) {
+	t.Parallel()
 	dir := newRepo(t)
 	wt := filepath.Join(dir, ".flywheel", "worktrees", "T")
 	gitOut(t, dir, "worktree", "add", "-q", wt, "-b", "fw/T")
@@ -207,6 +211,7 @@ func TestRecoverHeadAncestry(t *testing.T) {
 // (integrity still passes, Text summarises landed units) while one on a unit
 // not landed fails integrity.
 func TestRecoverHistorySplit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	recoverLedger(t, dir, Event{Task: "L", Kind: "planned", Brief: "gone.txt"},
 		Event{Task: "L", Kind: "dispatched", Attempt: "r1"},
@@ -239,6 +244,7 @@ func TestRecoverHistorySplit(t *testing.T) {
 // reported, its Next kept, and --apply never re-validates it, while a fresh
 // unit with the same action is re-validated.
 func TestRecoverDormant(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"}) // T1 planned, brief.txt owns a.go
 	if err != nil {
 		t.Fatal(err)

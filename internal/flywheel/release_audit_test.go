@@ -119,6 +119,7 @@ func auditRelease(t *testing.T, cl func(releaseCommits) string, mut func(*Releas
 }
 
 func TestReleaseAuditAllPass(t *testing.T) {
+	t.Parallel()
 	dir, res := auditRelease(t, defaultChangelog, nil)
 	if res.Verdict != "pass" || res.Tag != "v0.2.0" || res.Prev != "v0.1.0" {
 		t.Fatalf("result = %+v", res)
@@ -140,6 +141,7 @@ func TestReleaseAuditAllPass(t *testing.T) {
 }
 
 func TestReleaseAuditRefusesWithoutSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := AuditRelease(dir, ReleaseAuditOptions{Version: "0.2.0", MinRecall: -1}); !IsRuleRefusal(err) {
 		t.Errorf("AuditRelease() without session = %v, want a rule refusal", err)
@@ -150,6 +152,7 @@ func TestReleaseAuditRefusesWithoutSession(t *testing.T) {
 }
 
 func TestReleaseAuditChangelogMissingFeat(t *testing.T) {
+	t.Parallel()
 	_, res := auditRelease(t, func(c releaseCommits) string {
 		var keep []string
 		for _, l := range strings.Split(defaultChangelog(c), "\n") {
@@ -168,6 +171,7 @@ func TestReleaseAuditChangelogMissingFeat(t *testing.T) {
 }
 
 func TestReleaseAuditChangelogCitesOutsideRange(t *testing.T) {
+	t.Parallel()
 	_, res := auditRelease(t, func(c releaseCommits) string {
 		cl := defaultChangelog(c)
 		return strings.Replace(cl, "### Bug Fixes\n", fmt.Sprintf("### Bug Fixes\n\n* old ([%.7s](https://github.com/suzworx/flywheel/commit/%s))\n", c.init, c.init), 1)
@@ -178,6 +182,7 @@ func TestReleaseAuditChangelogCitesOutsideRange(t *testing.T) {
 }
 
 func TestReleaseAuditChangelogWrongCompareBase(t *testing.T) {
+	t.Parallel()
 	_, res := auditRelease(t, func(c releaseCommits) string {
 		return strings.Replace(defaultChangelog(c), "compare/v0.1.0...v0.2.0", "compare/v0.0.9...v0.2.0", 1)
 	}, nil)
@@ -187,6 +192,7 @@ func TestReleaseAuditChangelogWrongCompareBase(t *testing.T) {
 }
 
 func TestReleaseAuditMissingTag(t *testing.T) {
+	t.Parallel()
 	_, res := auditRelease(t, defaultChangelog, func(o *ReleaseAuditOptions) { o.Version = "v0.3.0"; o.Run = cannedRun("0.3.0") })
 	if c := releaseCheck(t, res, "tag"); c.Status != "fail" {
 		t.Errorf("tag = %+v, want fail", c)
@@ -202,6 +208,7 @@ func TestReleaseAuditMissingTag(t *testing.T) {
 }
 
 func TestReleaseAuditBinary(t *testing.T) {
+	t.Parallel()
 	dir := releaseRepo(t, defaultChangelog, releaseDocs)
 	asset := assetName("v0.2.0", "linux", "amd64")
 	bad := newUpgradeServer(t, "v0.2.0", "linux", "amd64", []byte("bin"), strings.Repeat("00", 32)+"  "+asset+"\n")
@@ -239,6 +246,7 @@ func TestReleaseAuditBinary(t *testing.T) {
 }
 
 func TestReleaseAuditNotesSpans(t *testing.T) {
+	t.Parallel()
 	notes := filepath.Join(t.TempDir(), "notes.md")
 	body := "Use `flywheel audit --release 0.2.0`, `flywheel frob --x` and `flywheel audit --bogus`.\n"
 	if err := os.WriteFile(notes, []byte(body), 0o644); err != nil {
@@ -253,6 +261,7 @@ func TestReleaseAuditNotesSpans(t *testing.T) {
 }
 
 func TestReleaseAuditDocsMissingCommand(t *testing.T) {
+	t.Parallel()
 	dir := releaseRepo(t, defaultChangelog, "Only flywheel audit here.\n")
 	srv := newUpgradeServer(t, "v0.2.0", "linux", "amd64", []byte("bin"))
 	defer srv.Close()
@@ -267,6 +276,7 @@ func TestReleaseAuditDocsMissingCommand(t *testing.T) {
 }
 
 func TestReleaseAuditCalibration(t *testing.T) {
+	t.Parallel()
 	report := filepath.Join(t.TempDir(), "cal.md")
 	if err := os.WriteFile(report, []byte("# Calibration\n\n**Total: 3/4 cases found, recall 0.75, 1 extra finding(s).**\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -316,6 +326,7 @@ Run 'flywheel help <command>' for its flags.
 `
 
 func TestReleaseAuditHelpNested(t *testing.T) {
+	t.Parallel()
 	for _, nl := range []string{"\n", "\r\n"} {
 		got := binaryCommands(strings.ReplaceAll(realHelpShape, "\n", nl))
 		want := []string{"attest", "checkpoint", "config", "feedback", "recover", "version", "wait"}
@@ -326,6 +337,7 @@ func TestReleaseAuditHelpNested(t *testing.T) {
 }
 
 func TestReleaseAuditSkipsNonCommandSpans(t *testing.T) {
+	t.Parallel()
 	notes := filepath.Join(t.TempDir(), "notes.md")
 	body := "Get `flywheel v0.2.0`, see `flywheel ` and `flywheel <subcommand>`, or `flywheel --help`.\n"
 	if err := os.WriteFile(notes, []byte(body), 0o644); err != nil {
@@ -341,6 +353,7 @@ func TestReleaseAuditSkipsNonCommandSpans(t *testing.T) {
 }
 
 func TestReleaseAuditHelpCommandFails(t *testing.T) {
+	t.Parallel()
 	_, res := auditRelease(t, defaultChangelog, func(o *ReleaseAuditOptions) {
 		canned := o.Run
 		o.Run = func(bin string, args ...string) ([]byte, error) {

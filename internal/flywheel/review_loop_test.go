@@ -29,6 +29,7 @@ func openIDs(events []Event) string {
 
 // TestOpenFindings checks when a finding opens and closes (issue #389).
 func TestOpenFindings(t *testing.T) {
+	t.Parallel()
 	worker := Event{Task: "T1", Kind: "started", Attempt: "r1", Session: "w-1"}
 	r1 := append([]Event{worker}, roundEvents(1, blockerA, minorB)...)
 	if got := openIDs(r1); got != "T1-r1-1,T1-r1-2" {
@@ -84,6 +85,7 @@ func loopRepo(t *testing.T) string {
 // TestFindingsDelta checks the delta: header, blocking findings only, the
 // answer contract; no blocking finding writes nothing.
 func TestFindingsDelta(t *testing.T) {
+	t.Parallel()
 	dir := loopRepo(t)
 	if err := AppendEvents(dir, roundEvents(1, minorB)); err != nil {
 		t.Fatal(err)
@@ -119,6 +121,7 @@ func TestFindingsDelta(t *testing.T) {
 
 // TestParseFindingResponses checks the answer lines of a worker's report.
 func TestParseFindingResponses(t *testing.T) {
+	t.Parallel()
 	report := "Done.\r\n- FINDING T1-r1-1: Fixed added the flush; go test exit=0\r\n" +
 		"* `FINDING T1-r1-2: DISPUTED the claim misreads the loop`\n" +
 		"FINDING T1-r9-9: fixed not asked\nFINDING T1-r1-3 fixed no colon\n"
@@ -177,6 +180,7 @@ func responses(t *testing.T, dir string) []Event {
 // worker that never answers gets missing responses; exhausted rounds return
 // the open findings.
 func TestReviewLoop(t *testing.T) {
+	t.Parallel()
 	dir := loopRepo(t)
 	review, correct, deltas := loopFakes(t, dir, map[int][]ReviewFinding{1: {blockerA, minorB}}, "FINDING T1-r1-1: fixed flushed; go test exit=0\n")
 	res, err := ReviewLoop(dir, "T1", ReviewLoopOptions{Review: review, Correct: correct})
@@ -213,6 +217,7 @@ func TestReviewLoop(t *testing.T) {
 // refused T4, an unknown id and an empty note are refused, and the lead's
 // dismissal closes the finding.
 func TestReviewLoopDismiss(t *testing.T) {
+	t.Parallel()
 	dir := loopRepo(t)
 	if err := AppendEvents(dir, roundEvents(1, blockerA)); err != nil {
 		t.Fatal(err)

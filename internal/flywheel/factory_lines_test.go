@@ -9,6 +9,7 @@ import (
 )
 
 func TestFloorLinesLineFor(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Kind: "dispatched", Task: "T1", Attempt: "r1", Line: "cli"},
 		{Kind: "dispatched", Task: "T1", Attempt: "r2", Line: "docs"},
@@ -25,6 +26,7 @@ func TestFloorLinesLineFor(t *testing.T) {
 }
 
 func TestFloorLinesBuildCounts(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Lines: []Line{
 			{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
@@ -54,6 +56,7 @@ func TestFloorLinesBuildCounts(t *testing.T) {
 }
 
 func TestFloorLinesNoConfigNil(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Lines: []Line{}}
 	units := []Unit{{Task: "A", Line: "cli", Stage: "building"}}
 	pls := buildProductLines(cfg, units)
@@ -63,6 +66,7 @@ func TestFloorLinesNoConfigNil(t *testing.T) {
 }
 
 func TestFloorLinesRenderSection(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Lines: []Line{
 			{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
@@ -102,6 +106,7 @@ func TestFloorLinesRenderSection(t *testing.T) {
 }
 
 func TestFloorLinesRenderLineColumn(t *testing.T) {
+	t.Parallel()
 	units := []Unit{
 		{Task: "A", Line: "cli", Stage: "building"},
 		{Task: "B", Line: "", Stage: "landed"},
@@ -142,6 +147,7 @@ func TestFloorLinesRenderLineColumn(t *testing.T) {
 }
 
 func TestFloorLinesJSON(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Lines: []Line{
 			{Name: "cli", Worker: "w1"},
@@ -221,6 +227,7 @@ func TestFloorLinesJSON(t *testing.T) {
 // never push a line past the render width: the column's cells come out of
 // MODEL, TASK and SESSION, and a long owns list is cut.
 func TestFloorLinesFitWidth(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("x", 60)
 	fl := Floor{
 		Refreshed:    time.Date(2026, 9, 19, 1, 0, 0, 0, time.UTC),
