@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.0](https://github.com/suzworx/flywheel/compare/v0.20.0...v0.21.0) (2026-09-25)
+
+
+### Features
+
+* flywheel recover and checkpoints resume the factory from any state ([#437](https://github.com/suzworx/flywheel/issues/437)) ([908eae9](https://github.com/suzworx/flywheel/commit/908eae9e908c01117c6fe07eee7244ec0794685a)), closes [#422](https://github.com/suzworx/flywheel/issues/422)
+* group integration review validates units together and routes cross-unit defects back ([#435](https://github.com/suzworx/flywheel/issues/435)) ([6715577](https://github.com/suzworx/flywheel/commit/6715577d17fb012ba45c3bf61d3e495828647a47))
+* run --worktree gets a setup hook and linked dependencies ([#432](https://github.com/suzworx/flywheel/issues/432)) ([990afc7](https://github.com/suzworx/flywheel/commit/990afc7904d67b70ecf746fee058f070fa36b7ce)), closes [#430](https://github.com/suzworx/flywheel/issues/430)
+
+
+### Bug Fixes
+
+* claude workers load no MCP servers unless their config lists them ([#434](https://github.com/suzworx/flywheel/issues/434)) ([8ff4c69](https://github.com/suzworx/flywheel/commit/8ff4c690e50c9206ffbeb4bbdd0888aba8306642)), closes [#425](https://github.com/suzworx/flywheel/issues/425)
+
 ## [0.20.0](https://github.com/suzworx/flywheel/compare/v0.19.0...v0.20.0) (2026-09-25)
 
 
