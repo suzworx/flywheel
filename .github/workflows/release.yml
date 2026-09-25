@@ -22,6 +22,7 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 10
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -32,8 +33,36 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  # A pull_request run on the release PR never starts, because the bot opened it,
+  # so the release PR had no checks (issue #440). A workflow_dispatch started with
+  # GITHUB_TOKEN is allowed: run ci.yml on the release branch, and its checks
+  # land on the PR's head commit.
+  release-pr-ci:
+    runs-on: ubicloud-standard-2
+    needs: release-please
+    if: needs.release-please.outputs.release_created != 'true'
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Dispatch CI on the open release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branch=$(gh pr list -R "$REPO" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // ""')
+          if [ -z "$branch" ]; then
+            echo "no open release PR"
+            exit 0
+          fi
+          gh workflow run ci.yml -R "$REPO" --ref "$branch"
+          echo "dispatched ci.yml on $branch"
+
   binaries:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 30
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     steps:
@@ -44,6 +73,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: go.mod
 
       - name: Gate
         run: |
