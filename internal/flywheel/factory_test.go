@@ -1098,3 +1098,34 @@ func TestNoWritesUntouchedWithPlan(t *testing.T) {
 		t.Errorf("andon wrongly holds stated: %v", fl.Andon)
 	}
 }
+
+// TestStackedRunState checks a finished unit in its task worktree whose base
+// landed as a squash shows run state stacked and reaches the andon; once
+// rebased it does not (issue #414).
+func TestStackedRunState(t *testing.T) {
+	dir, _, _ := stackedRepo(t)
+	if err := AppendEvent(dir, Event{Task: "B", Kind: "finished", Attempt: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, time.Now())
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, ok := unitBy(fl.Units, "B"); !ok || u.RunState != "stacked" {
+		t.Fatalf("unit B = %+v (found %v), want run state stacked", u, ok)
+	}
+	if !andonHas(fl.Andon, "B") {
+		t.Errorf("andon missing B: %v", fl.Andon)
+	}
+	if _, _, err := RebaseUnit(dir, "B", ""); err != nil {
+		t.Fatalf("RebaseUnit() error = %v", err)
+	}
+	w = NewWatcher()
+	if fl, err = w.Refresh(dir, time.Now()); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, _ := unitBy(fl.Units, "B"); u.RunState == "stacked" {
+		t.Errorf("unit B still stacked after the rebase")
+	}
+}
