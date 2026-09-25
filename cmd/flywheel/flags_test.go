@@ -52,6 +52,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"wait":       func() (*flag.FlagSet, any) { fs, o := waitFlags(); return fs, o },
 	"context":    func() (*flag.FlagSet, any) { fs, o := contextFlags(); return fs, o },
 	"upgrade":    func() (*flag.FlagSet, any) { fs, o := upgradeFlags(); return fs, o },
+	"rebase":     func() (*flag.FlagSet, any) { fs, o := rebaseFlags(); return fs, o },
 }
 
 // optionDir reads the dir an options struct bound; "" when it has no dir.

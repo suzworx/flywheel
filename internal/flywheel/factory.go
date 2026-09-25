@@ -77,13 +77,14 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int       // seconds since the unit's last event
-	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, abandoned-job, failed, failed-dirty, done
+	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, abandoned-job, failed, failed-dirty, stacked, done
 	Peak     int       // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string    // the product line from the latest dispatched event (issue #69); "" when none
 	Station  string    // where the unit stands on its line (issue #69 follow-up)
 	ResetAt  time.Time // a rate-limited attempt's parsed reset (issue #383); zero when none
 	Workdir  string    // the latest dispatched event's workdir (issue #394); "" in the main checkout
 	Base     string    // that event's base commit, first 7 characters; "" when none
+	Open     int       // open blocking review findings (issue #389); 0 when none or never reviewed
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -611,6 +612,14 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
 			u.Line = lineFor(w.events, t.ID, t.Attempt)
 			u.Workdir, u.Base = worktreeFor(w.events, t.ID, t.Attempt)
+			// stacked (issue #414): a done, unlanded unit in its own task
+			// worktree whose base landed as a squash. Computed only there,
+			// since it costs a few git reads, and never over a live state.
+			if done && t.Status != "landed" && u.Workdir != "" && inTaskWorktree(dir, u.Workdir, t.ID) {
+				if _, _, _, ok := SquashedBase(dir, w.events, t.ID); ok {
+					u.RunState = "stacked"
+				}
+			}
 		}
 		if u.Line == "" {
 			// A unit planned but never dispatched still belongs to the line
@@ -618,6 +627,13 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Line = LineOf(cfg, dir, w.events, t.ID)
 		}
 		u.Station = StationFor(t, w.events)
+		// An agent review is inspection work (issue #389): a unit whose latest
+		// event is one stands at inspect — not back at measure after a pass, nor
+		// at build after a correct verdict until a correction is dispatched.
+		if (u.Station == "measure" || u.Station == "build") && latestIsAgentReview(w.events, t.ID) {
+			u.Station = "inspect"
+		}
+		u.Open = len(openBlockingIDs(w.events, t.ID))
 		if !finished && liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
@@ -727,15 +743,18 @@ func ageOfTime(t, now time.Time) int {
 }
 
 // buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
-// provider-error, rate-limited, abandoned-job, failed or failed-dirty, newest
-// first, and adds
+// provider-error, rate-limited, abandoned-job, failed, failed-dirty or stacked,
+// newest first, and adds
 // andon entries for mismatching roles and the paused entries (pausedAndon).
 func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
-		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty":
+		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty", "stacked":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
+		}
+		if u.Open > 0 {
+			out = append(out, Andon{Task: u.Task, State: fmt.Sprintf("review-open (%d)", u.Open), Age: u.LastAge})
 		}
 	}
 	for _, r := range roles {
@@ -751,6 +770,17 @@ func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 		return strings.Compare(a.Task, b.Task)
 	})
 	return out
+}
+
+// latestIsAgentReview reports whether the task's latest event is a reviewed
+// event written by the review agent (issue #389).
+func latestIsAgentReview(events []Event, task string) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Task == task {
+			return agentReviewed(events[i])
+		}
+	}
+	return false
 }
 
 // pausedAndon is one andon entry per model a rate limit pauses at now (issue

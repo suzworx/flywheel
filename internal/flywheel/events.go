@@ -196,6 +196,9 @@ var kinds = map[string]bool{
 	// lead's dismissal (disputed, Note "dismissed: ...").
 	"finding_response": true,
 	"note":             true,
+	// rebased records `flywheel rebase` moving a unit onto a new base (issue
+	// #414): Base is the new base, Note "was <old>, onto <ref>".
+	"rebased": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -346,7 +349,10 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased", e.Kind)
+	}
+	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
+		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")
 	}
 	if e.Kind == "note" {
 		if e.Task != "" && !taskOK(e.Task) {

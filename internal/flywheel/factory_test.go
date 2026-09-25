@@ -955,6 +955,69 @@ func TestCappedWithFilesIsFailedDirty(t *testing.T) {
 // TestStopFinishIsDoneAndFinished checks a normal clean finish (reason stop)
 // still classifies done, stays off the andon, and keeps the finished stage
 // (issue #131 must not regress the common case).
+// TestFloorOpenFindings checks the floor after an agent review (issue #389):
+// the unit stands at inspect, its open blocking findings raise a review-open
+// andon with their count, and a dismissal clears it.
+func TestFloorOpenFindings(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "started", Attempt: "r1", Session: "w-1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop", Wrote: []string{"a.go"}},
+	}
+	major := blockerA
+	major.Severity, major.File, major.Claim = "major", "c.go", "Leaks a handle"
+	events = append(events, roundEvents(1, blockerA, major, minorB)...)
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	run := filepath.Join(dir, ".flywheel", "runs", "T1.r1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(run), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(run, []byte(`{"type":"step_finish","sessionID":"w-1","part":{"type":"step_finish","reason":"stop"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T00:01:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w1, w2 := NewWatcher(), NewWatcher()
+	fl, err := w1.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "T1")
+	if !ok {
+		t.Fatal("unit T1 missing")
+	}
+	if u.Station != "inspect" || u.Open != 2 {
+		t.Errorf("unit station %q open %d, want inspect and 2", u.Station, u.Open)
+	}
+	found := false
+	for _, a := range fl.Andon {
+		found = found || a.Task == "T1" && a.State == "review-open (2)"
+	}
+	if !found {
+		t.Errorf("andon lacks T1 review-open (2): %+v", fl.Andon)
+	}
+	if err := AppendEvents(dir, []Event{
+		{Task: "T1", Kind: "finding_response", Session: "lead-1", Finding: "T1-r1-1", Verdict: "disputed", Note: "dismissed: by design"},
+		{Task: "T1", Kind: "finding_response", Session: "lead-1", Finding: "T1-r1-2", Verdict: "disputed", Note: "dismissed: by design"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fl, err = w2.Refresh(dir, now); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	for _, a := range fl.Andon {
+		if a.Task == "T1" && strings.HasPrefix(a.State, "review-open") {
+			t.Errorf("review-open andon after the dismissals: %+v", a)
+		}
+	}
+}
+
 func TestStopFinishIsDoneAndFinished(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{
@@ -1096,5 +1159,36 @@ func TestNoWritesUntouchedWithPlan(t *testing.T) {
 	}
 	if andonHas(fl.Andon, "stated") {
 		t.Errorf("andon wrongly holds stated: %v", fl.Andon)
+	}
+}
+
+// TestStackedRunState checks a finished unit in its task worktree whose base
+// landed as a squash shows run state stacked and reaches the andon; once
+// rebased it does not (issue #414).
+func TestStackedRunState(t *testing.T) {
+	dir, _, _ := stackedRepo(t)
+	if err := AppendEvent(dir, Event{Task: "B", Kind: "finished", Attempt: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, time.Now())
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, ok := unitBy(fl.Units, "B"); !ok || u.RunState != "stacked" {
+		t.Fatalf("unit B = %+v (found %v), want run state stacked", u, ok)
+	}
+	if !andonHas(fl.Andon, "B") {
+		t.Errorf("andon missing B: %v", fl.Andon)
+	}
+	if _, _, err := RebaseUnit(dir, "B", ""); err != nil {
+		t.Fatalf("RebaseUnit() error = %v", err)
+	}
+	w = NewWatcher()
+	if fl, err = w.Refresh(dir, time.Now()); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, _ := unitBy(fl.Units, "B"); u.RunState == "stacked" {
+		t.Errorf("unit B still stacked after the rebase")
 	}
 }

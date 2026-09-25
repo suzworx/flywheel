@@ -277,7 +277,7 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
    ```bash
    npx skills add suzworx/flywheel --skill flywheel
    npx skills add suzworx/flywheel --skill flywheel-worker
-   # ... flywheel-planner, flywheel-foreman, flywheel-inspector,
+   # ... flywheel-planner, flywheel-foreman, flywheel-inspector, flywheel-reviewer,
    #     flywheel-auditor, flywheel-steward, flywheel-operator
    ```
 
@@ -326,10 +326,11 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
 | `flywheel next` | available | Print the reconciler's next actions read-only: lost attempts, inspection requests, blocks, waits and dispatches — or HOLD instead of a dispatch while `limits.budget` is spent or the default model's `limits.breaker` is open, or a rate limit pauses the model until its reset (a task whose owns overlap, or whose exclusive resource matches, one in flight or one already chosen waits instead). |
 | `flywheel watch [--once] [--last N] [--interval D] [--dir DIR]` | available ([#58](https://github.com/suzworx/flywheel/issues/58)) | A readable live stream: the last N events as one human line each, then every new event as it is appended (`--once` prints and exits). Read-only. |
 | `flywheel wait <task>... [--timeout D] [--interval D] [--dir DIR]` | available ([#393](https://github.com/suzworx/flywheel/issues/393)) | Blocks until every named task finishes its current (or first) attempt, printing `<task> <attempt> finished reason=<r>` as each lands. Exit 0 all clean, 4 any unclean, 8 timeout, 2 usage. Read-only. |
+| `flywheel rebase <task> [--onto REF] [--dir DIR]` | available ([#414](https://github.com/suzworx/flywheel/issues/414)) | A unit branched from another unit's `fw/<T>` whose base then landed as a squash shows `stacked` on the andon, and `flywheel land` refuses it (rule `stacked`); this rebases `fw/<task>` in its task worktree onto main and records the new base. Exit 0 rebased, 1 conflicts (aborted, paths listed) or error, 2 usage. |
 | `flywheel validate` | available | Machine gauges: run a task's gate: lines on the exact tree and check owns (exit 0/5). |
 | `flywheel lint` | available | Check a brief for problems: owns, gate, goal, report contract, owns paths (exit 0/1). |
 | `flywheel supervise [--once] [--interval D] [--json] [--dir DIR]` | available ([#55](https://github.com/suzworx/flywheel/issues/55)) | Machine gauges without anyone asking: every unit whose worker finished and whose current attempt has not been measured since is validated (gates and owns, recorded as supervisor readings), and re-measures a failed or passed unit whose owned files changed since its reading. `--once` runs one pass (exit 5 if any unit's gauges fail); `--interval D` repeats. Never inspects or lands. |
-| `flywheel verify` | available | Check the event log against the transition rules T1, T3, T4, T5, T8 (exit 0/6). `--log` also checks the event log's hash chain. |
+| `flywheel verify` | available | Check the event log against the transition rules T1, T3, T4, T5, T8 and R1 (no inspected pass while a blocking review finding was open) (exit 0/6). `--log` also checks the event log's hash chain. |
 | `flywheel inspect` | available | Inspection verdict, refused unless the gauges' readings cover the tree as it is now, or with `--commit <sha>` that commit's tree (T3/T4/T8; exit 6). |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | available ([#367](https://github.com/suzworx/flywheel/issues/367)) | Record gate readings a named external run (CI on the PR) measured on a merged commit, marked `source: external` with the evidence; then `inspect --commit` and `land`, instead of `land --exception`. Refused (exit 6) for a worker's session, an undispatched task, or a commit that changed a path outside owns; `verify` names the evidence. |
 | `flywheel review <task> --verdict pass\|correct\|reject --session <session> [--model M]` | available ([#24](https://github.com/suzworx/flywheel/issues/24)) | Re-run a task's gates and owns check on an isolated copy of the tree, so another in-flight worker's half-written files can't skew the reading; refused (exit 6) for a bad verdict, a worker's session, a changed path outside owns, or a failing gate. The reviewer's session and model are recorded on the reviewed event. |
@@ -364,6 +365,7 @@ Each role ships as a skill folder any agent can load:
 - [`flywheel-foreman`](skills/flywheel-foreman/SKILL.md) — run a line of workers; retry by policy.
 - [`flywheel-worker`](skills/flywheel-worker/SKILL.md) — execute one brief, run its gates, report evidence.
 - [`flywheel-inspector`](skills/flywheel-inspector/SKILL.md) — QC verdicts: pass, rework, scrap, escalate.
+- [`flywheel-reviewer`](skills/flywheel-reviewer/SKILL.md) — independent diff review: findings with a failure scenario, never a pass.
 - [`flywheel-auditor`](skills/flywheel-auditor/SKILL.md) — independent audit of first articles and samples.
 - [`flywheel-steward`](skills/flywheel-steward/SKILL.md) — turn signals and nonconformances into learnings.
 - [`flywheel-operator`](skills/flywheel-operator/SKILL.md) — install, configure, assign personas.
@@ -405,6 +407,18 @@ Three epics drive the factory:
   a recovery never race. PR runs and branches named `main` in forks never open an incident.
   (Watching a consumer project's local learnings file, outside this repository, still requires a
   person or a persistent session.)
+
+## Review threads
+
+A unit's review is read in `.flywheel/reviews/<task>.md`, a local markdown file flywheel
+regenerates from the event log after every agent review round, every worker answer and every
+dismissal ([#389](https://github.com/suzworx/flywheel/issues/389)): one section per round with
+each finding, its current status (open, closed, re-reported or dismissed) and the worker's
+`fixed`/`disputed` answers, then the open blocking findings. It is a generated view, never edited
+by hand and never posted to GitHub; the ledger is the record. While a blocking finding is open,
+`flywheel inspect --verdict pass` is refused (rule `review`), `flywheel verify` fails R1 for a
+pass recorded anyway, the floor's andon shows `review-open (<count>)`, and `flywheel stats`
+reports the review numbers.
 
 ## Learnings
 
