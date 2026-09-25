@@ -49,6 +49,7 @@ func statsFixture(t *testing.T) string {
 // TestStatsFixture asserts every field of StatsReport against the fixture's
 // hand-computed numbers.
 func TestStatsFixture(t *testing.T) {
+	t.Parallel()
 	rep, err := Stats(statsFixture(t))
 	if err != nil {
 		t.Fatalf("Stats() error = %v", err)
@@ -87,6 +88,7 @@ func TestStatsFixture(t *testing.T) {
 // agent review is pass, the findings raised after every gate passed, and the
 // dismissals.
 func TestStatsReview(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	round := func(task string, n int, fs ...ReviewFinding) []Event {
 		evs, _, _ := reviewEvents(task, "r1", n, "rev-1", "m", "claude", "", fs)
@@ -148,6 +150,7 @@ func TestStatsReview(t *testing.T) {
 }
 
 func TestStatsEmptyLog(t *testing.T) {
+	t.Parallel()
 	rep, err := Stats(t.TempDir())
 	if err != nil {
 		t.Fatalf("Stats() error = %v", err)
@@ -178,6 +181,7 @@ func TestStatsEmptyLog(t *testing.T) {
 // TestStatsLeadImplemented checks Stats counts only landed tasks whose landing
 // carried the lead-implemented flag, and that the other figures are unaffected.
 func TestStatsLeadImplemented(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-01-01T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
@@ -211,6 +215,7 @@ func TestStatsLeadImplemented(t *testing.T) {
 
 // TestStatsUnreadableLog checks Stats fails when the log cannot be read.
 func TestStatsUnreadableLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel")
 	if err := os.MkdirAll(dot, 0o755); err != nil {
@@ -227,6 +232,7 @@ func TestStatsUnreadableLog(t *testing.T) {
 // TestStatsBaselineRatio checks Stats calculates the baseline cost and ratio
 // when config carries a baseline (issue #59).
 func TestStatsBaselineRatio(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{
 		Version: 1,
@@ -279,6 +285,7 @@ func TestStatsBaselineRatio(t *testing.T) {
 // TestStatsBaselineAbsent checks Stats sets Tokens and Spend even without a
 // baseline in config, and Baseline is nil (issue #59).
 func TestStatsBaselineAbsent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -314,6 +321,7 @@ func TestStatsBaselineAbsent(t *testing.T) {
 // TestStatsBaselineInvalidConfigErrors checks a config that fails validation
 // is reported, not treated as having no baseline (#292 review).
 func TestStatsBaselineInvalidConfigErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

@@ -36,6 +36,7 @@ func testEventsWithTaskCache(task string, n int) []Event {
 // TestReadEventsCacheSeesRawAppend tests that the cache sees an append
 // made directly to a file (simulating another process).
 func TestReadEventsCacheSeesRawAppend(t *testing.T) {
+	// not parallel: resets the package-level log cache
 	clearLogCache()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
@@ -74,6 +75,7 @@ func TestReadEventsCacheSeesRawAppend(t *testing.T) {
 // TestReadEventsCacheDetectsReplacedShard tests that the cache detects
 // when a shard is replaced wholesale (same size, different mtime).
 func TestReadEventsCacheDetectsReplacedShard(t *testing.T) {
+	// not parallel: resets the package-level log cache
 	clearLogCache()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
@@ -117,6 +119,7 @@ func TestReadEventsCacheDetectsReplacedShard(t *testing.T) {
 // TestReadEventsCacheReturnsFreshSlice tests that each call returns a fresh
 // slice, not aliased to the cached one.
 func TestReadEventsCacheReturnsFreshSlice(t *testing.T) {
+	// not parallel: resets the package-level log cache
 	clearLogCache()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
@@ -151,6 +154,7 @@ func TestReadEventsCacheReturnsFreshSlice(t *testing.T) {
 
 // TestReadEventsCacheBounded tests that the cache is bounded to logCacheSize.
 func TestReadEventsCacheBounded(t *testing.T) {
+	// not parallel: resets the package-level log cache
 	clearLogCache()
 
 	dirs := make([]string, 6)

@@ -9,6 +9,7 @@ import (
 
 // TestWatchHumanLineFormats checks that HumanLine formats events correctly.
 func TestWatchHumanLineFormats(t *testing.T) {
+	t.Parallel()
 	e := Event{
 		TS:      "2026-09-18T10:00:00Z",
 		Task:    "T1",
@@ -35,6 +36,7 @@ func TestWatchHumanLineFormats(t *testing.T) {
 
 // TestWatchTailEventsReadsFromOffset checks that TailEvents reads complete lines from offset.
 func TestWatchTailEventsReadsFromOffset(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	e1 := Event{Task: "T1", Kind: "planned", Brief: "b1.txt"}
@@ -77,6 +79,7 @@ func TestWatchTailEventsReadsFromOffset(t *testing.T) {
 
 // TestWatchTailEventsLeavesPartialTail checks that TailEvents leaves unterminated lines.
 func TestWatchTailEventsLeavesPartialTail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	e1 := Event{Task: "T1", Kind: "planned", Brief: "b1.txt"}
@@ -124,6 +127,7 @@ func TestWatchTailEventsLeavesPartialTail(t *testing.T) {
 
 // TestWatchTailEventsMissingLog checks that TailEvents handles missing log.
 func TestWatchTailEventsMissingLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	events, off, err := TailEvents(dir, 0)
@@ -161,6 +165,7 @@ func contains(s, substr string) bool {
 // TestWatchHumanLineKeepsOneLine checks a note with line breaks never splits
 // an event across lines (#305 review).
 func TestWatchHumanLineKeepsOneLine(t *testing.T) {
+	t.Parallel()
 	e := Event{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "landed", Commit: "abc1234", Note: "merged\nmanually\r\nby hand"}
 	if got := HumanLine(e); strings.ContainsAny(got, "\n\r") {
 		t.Errorf("HumanLine() = %q, want a single line", got)

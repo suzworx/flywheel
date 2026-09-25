@@ -9,6 +9,7 @@ import (
 )
 
 func TestStationOfEveryStatus(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status string
 		reason string
@@ -36,6 +37,7 @@ func TestStationOfEveryStatus(t *testing.T) {
 }
 
 func TestStationForSplitsMeasureAndInspect(t *testing.T) {
+	t.Parallel()
 	// A finished unit without complete readings → "measure"
 	ts1 := TaskState{ID: "task1", Status: "finished", Attempt: "r1"}
 	events1 := []Event{
@@ -58,6 +60,7 @@ func TestStationForSplitsMeasureAndInspect(t *testing.T) {
 }
 
 func TestInWIPExcludesQueueAndTerminals(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		station string
 		want    bool
@@ -79,6 +82,7 @@ func TestInWIPExcludesQueueAndTerminals(t *testing.T) {
 }
 
 func TestLineOfPrefersDispatchedThenBrief(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Lines: []Line{
 		{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
 		{Name: "docs", Worker: "w1", Owns: []string{"docs/"}},
@@ -112,6 +116,7 @@ func TestLineOfPrefersDispatchedThenBrief(t *testing.T) {
 }
 
 func TestBuildProductLinesCountsStations(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Lines: []Line{{Name: "cli", Worker: "w1"}, {Name: "docs", Worker: "w1"}}}
 	units := []Unit{
 		{Task: "t1", Line: "cli", Station: "build"},
@@ -152,6 +157,7 @@ func TestBuildProductLinesCountsStations(t *testing.T) {
 }
 
 func TestBuildProductLinesCarriesLimit(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Lines: []Line{{Name: "cli", Worker: "w1", WIP: 3}}}
 	units := []Unit{{Task: "t1", Line: "cli", Station: "build"}}
 
@@ -166,6 +172,7 @@ func TestBuildProductLinesCarriesLimit(t *testing.T) {
 }
 
 func TestFloorTextUnchangedByStations(t *testing.T) {
+	t.Parallel()
 	fl := fixtureFloor(t)
 	var buf bytes.Buffer
 	RenderText(&buf, fl, 100, false)
@@ -180,6 +187,7 @@ func TestFloorTextUnchangedByStations(t *testing.T) {
 }
 
 func TestConfigLineWIPGetAndValidate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".flywheel", "config.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
@@ -222,6 +230,7 @@ func TestConfigLineWIPGetAndValidate(t *testing.T) {
 // attempt Derive settles on rather than slice order, and resolves a planned
 // unit from the header the ledger records rather than a file (#358 review).
 func TestLineOfUsesCurrentAttemptAndLedgerHeader(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Lines: []Line{
 		{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
 		{Name: "docs", Worker: "w1", Owns: []string{"docs/"}},
@@ -250,6 +259,7 @@ func TestLineOfUsesCurrentAttemptAndLedgerHeader(t *testing.T) {
 // TestConfigLineWIPListedInGuidance checks that an unknown key's error names
 // the line keys Get accepts (#358 review).
 func TestConfigLineWIPListedInGuidance(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Lines: []Line{{Name: "cli", Worker: "default"}},
 		Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}}
 	_, err := cfg.Get("lines.cli.wipp")

@@ -10,6 +10,7 @@ import (
 // TestAuditReleaseCmdUsageErrors checks `flywheel audit --release`'s usage
 // errors (issue #420) exit 2 and record nothing.
 func TestAuditReleaseCmdUsageErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cases := []struct {
 		name string
@@ -45,6 +46,7 @@ func TestAuditReleaseCmdUsageErrors(t *testing.T) {
 // TestAuditReleaseCmdFlags checks the release flags bind, --notes repeats,
 // --min-recall defaults to -1 and `flywheel help audit` names every flag.
 func TestAuditReleaseCmdFlags(t *testing.T) {
+	t.Parallel()
 	fs, o := auditFlags()
 	if o.minRecall != -1 {
 		t.Errorf("--min-recall default = %v, want -1", o.minRecall)

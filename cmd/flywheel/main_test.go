@@ -14,6 +14,7 @@ import (
 // worktree is resolved to the main checkout's ledger, and that a FlagSet
 // without a dir flag is left untouched (issue #395).
 func TestParseArgsResolvesTaskWorktreeDir(t *testing.T) {
+	t.Parallel()
 	repo := t.TempDir()
 	gitInitRepo(t, repo)
 	run := func(args ...string) {
@@ -60,6 +61,7 @@ type parseArgsOptions struct {
 // flags may appear before, between or after positionals, --flag=value works,
 // and a literal -- ends flag parsing so the rest is positional.
 func TestParseArgsInterleavesFlagsAndPositionals(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		args   []string
 		pos    []string
@@ -108,6 +110,7 @@ func TestParseArgsInterleavesFlagsAndPositionals(t *testing.T) {
 // "flywheel <name>" usage, and the help must name every flag its FlagSet
 // defines.
 func TestHelpTextAllCommands(t *testing.T) {
+	t.Parallel()
 	for name := range commands {
 		c := commands[name]
 		if c.usage == "" {
@@ -134,6 +137,7 @@ func TestHelpTextAllCommands(t *testing.T) {
 // each verdict set with its event kind, so a lead knows inspected and
 // reviewed take different verdicts.
 func TestLogHelpNamesBothVerdictSets(t *testing.T) {
+	t.Parallel()
 	h := helpText("log")
 	for _, want := range []string{
 		"inspected verdict (pass, rework, scrap, or escalate)",
@@ -149,6 +153,7 @@ func TestLogHelpNamesBothVerdictSets(t *testing.T) {
 // positional argument each subcommand takes, not just the bare subcommand
 // names (issue #127).
 func TestGoalHelpShowsSubcommandArguments(t *testing.T) {
+	t.Parallel()
 	h := helpText("goal")
 	for _, want := range []string{"goal add <title>", "goal show <id>"} {
 		if !strings.Contains(h, want) {
@@ -160,6 +165,7 @@ func TestGoalHelpShowsSubcommandArguments(t *testing.T) {
 // TestBareAction checks the bare `flywheel` decision: open the factory view
 // when ./.flywheel exists, print the global help otherwise.
 func TestBareAction(t *testing.T) {
+	t.Parallel()
 	if got := bareAction(true); got != "factory" {
 		t.Errorf("bareAction(true) = %q, want %q", got, "factory")
 	}
@@ -171,6 +177,7 @@ func TestBareAction(t *testing.T) {
 // TestHasHelpFlag checks the help detector finds -h/--help/-help and stops at
 // a literal "--".
 func TestHasHelpFlag(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		args []string
 		want bool
@@ -194,6 +201,7 @@ func TestHasHelpFlag(t *testing.T) {
 
 // TestGlobalHelpEndsWithHint checks the global usage points at help for flags.
 func TestGlobalHelpEndsWithHint(t *testing.T) {
+	t.Parallel()
 	g := globalHelp()
 	if !strings.HasSuffix(strings.TrimRight(g, "\n"), "Run 'flywheel help <command>' for its flags.") {
 		t.Errorf("globalHelp does not end with the help hint:\n%s", g)
@@ -203,6 +211,7 @@ func TestGlobalHelpEndsWithHint(t *testing.T) {
 // TestRunFlagsInterleaved checks parseArgs plus runFlags give the same task
 // and flag values whether the task comes first, last or between the flags.
 func TestRunFlagsInterleaved(t *testing.T) {
+	t.Parallel()
 	forms := []struct{ args []string }{
 		{[]string{"T1", "--dir", "X", "--resume"}},
 		{[]string{"--dir", "X", "--resume", "T1"}},
@@ -231,6 +240,7 @@ func TestRunFlagsInterleaved(t *testing.T) {
 // same task and flag values in the task-first, task-last and interleaved
 // forms.
 func TestValidateFlagsInterleaved(t *testing.T) {
+	t.Parallel()
 	forms := []struct{ args []string }{
 		{[]string{"T1", "--dir", "X", "--workdir", "W"}},
 		{[]string{"--dir", "X", "--workdir", "W", "T1"}},
@@ -259,6 +269,7 @@ func TestValidateFlagsInterleaved(t *testing.T) {
 // same task and flag values in the task-first, task-last and interleaved
 // forms.
 func TestInspectFlagsInterleaved(t *testing.T) {
+	t.Parallel()
 	forms := []struct{ args []string }{
 		{[]string{"T1", "--dir", "X", "--verdict", "pass", "--session", "S"}},
 		{[]string{"--dir", "X", "--verdict", "pass", "--session", "S", "T1"}},
@@ -289,6 +300,7 @@ func TestInspectFlagsInterleaved(t *testing.T) {
 // TestVerifyFlagsInterleaved checks parseArgs plus verifyFlags give the same
 // task and flag values in the task-first, task-last and interleaved forms.
 func TestVerifyFlagsInterleaved(t *testing.T) {
+	t.Parallel()
 	forms := []struct{ args []string }{
 		{[]string{"T1", "--dir", "X", "--json"}},
 		{[]string{"--dir", "X", "--json", "T1"}},

@@ -10,6 +10,7 @@ import (
 )
 
 func TestStaffingStaffWarnsOnDifferentSession(t *testing.T) {
+	// not parallel: swaps os.Stderr
 	dir := t.TempDir()
 
 	cfg := flywheel.Config{

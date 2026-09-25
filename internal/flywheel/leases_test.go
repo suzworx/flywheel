@@ -9,6 +9,7 @@ import (
 )
 
 func TestWriteLeaseReadRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	want := Lease{
 		Task: "T1", Attempt: "r1", PID: 4242, Host: "host-a",
@@ -36,6 +37,7 @@ func TestWriteLeaseReadRoundTrip(t *testing.T) {
 }
 
 func TestReadLeasesSortOrder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	leases := []Lease{
 		{Task: "T2", Attempt: "r1"},
@@ -64,6 +66,7 @@ func TestReadLeasesSortOrder(t *testing.T) {
 }
 
 func TestReadLeasesSkipsMalformedFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	good := Lease{Task: "T1", Attempt: "r1", ExpiresAt: "2026-09-12T00:00:45Z"}
 	if err := WriteLease(dir, good); err != nil {
@@ -86,6 +89,7 @@ func TestReadLeasesSkipsMalformedFile(t *testing.T) {
 }
 
 func TestLeaseLiveBoundary(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
 	l := Lease{ExpiresAt: now.Format(time.RFC3339)}
 	if !LeaseLive(l, now.Add(-time.Second)) {
@@ -103,6 +107,7 @@ func TestLeaseLiveBoundary(t *testing.T) {
 }
 
 func TestRemoveLeaseMissingFileNotError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := RemoveLease(dir, "T1", "r99"); err != nil {
 		t.Errorf("RemoveLease() on a missing lease: error = %v, want nil", err)

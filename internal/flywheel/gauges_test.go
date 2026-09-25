@@ -132,6 +132,7 @@ func initTaskLive(t *testing.T, gates, liveGates []string) (string, error) {
 // still reports the count and a mocked pass stays a legitimate OK() on its
 // own (issue #152).
 func TestValidateLiveGateNotRunWithoutFlag(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskLive() error = %v", err)
@@ -169,6 +170,7 @@ func TestValidateLiveGateNotRunWithoutFlag(t *testing.T) {
 // live gate runs through the same path as an ordinary gate: a validated
 // event with Gate "live1" and its own evidence log (issue #152).
 func TestValidateLiveGateRunsAndRecords(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskLive() error = %v", err)
@@ -220,6 +222,7 @@ func TestValidateLiveGateRunsAndRecords(t *testing.T) {
 // TestValidateLiveGateFailureFailsGatesOK checks a failing live gate sets
 // GatesOK false exactly as an ordinary gate does (issue #152).
 func TestValidateLiveGateFailureFailsGatesOK(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 1"})
 	if err != nil {
 		t.Fatalf("initTaskLive() error = %v", err)
@@ -234,6 +237,7 @@ func TestValidateLiveGateFailureFailsGatesOK(t *testing.T) {
 }
 
 func TestValidatePassingGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -285,6 +289,7 @@ func TestValidatePassingGates(t *testing.T) {
 // records that commit on every validated event and on owns_checked, and the
 // recorded value equals the workdir's HEAD (issue #196).
 func TestValidateRecordsHeadCommit(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -357,6 +362,7 @@ func shimGitOnlyRevParseFails(t *testing.T) string {
 // succeeds: OK() is unaffected, because the commit is additional evidence,
 // never a precondition (issue #196).
 func TestValidateHeadCommitUnresolvable(t *testing.T) {
+	// not parallel: shimGitOnlyRevParseFails sets PATH
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -407,6 +413,7 @@ const commitGate = "git -c user.name=test -c user.email=test@example.com commit 
 // validated event at the pre-commit HEAD and gate 2's at the new one. HEAD is
 // resolved immediately before each reading, never hoisted to the pass start.
 func TestValidateCommitPerReadingTracksMovingHead(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{commitGate, "exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -456,6 +463,7 @@ func TestValidateCommitPerReadingTracksMovingHead(t *testing.T) {
 // never the pass's starting HEAD: the last gate commits, so the owns check
 // resolves a different commit than gate 1 did (issue #240).
 func TestValidateOwnsCheckedCommitTracksCurrentHead(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", commitGate})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -506,6 +514,7 @@ func TestValidateOwnsCheckedCommitTracksCurrentHead(t *testing.T) {
 // fails, and headCommit's contract on a literal non-repo directory is pinned
 // directly.
 func TestValidateCommitEmptyInNonRepoWorkdir(t *testing.T) {
+	// not parallel: shimGitOnlyRevParseFails sets PATH
 	if got := headCommit(t.TempDir()); got != "" {
 		t.Errorf("headCommit(non-repo dir) = %q, want empty", got)
 	}
@@ -550,6 +559,7 @@ func TestValidateCommitEmptyInNonRepoWorkdir(t *testing.T) {
 }
 
 func TestValidateFailingGate(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 1"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -611,6 +621,7 @@ func dispatchedWithBaseline(t *testing.T, dir string) {
 // TestValidateBaselineDirtyBeforeDispatch checks a file already dirty when
 // dispatched is not reported outside owns and is recorded in baselined.
 func TestValidateBaselineDirtyBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -648,6 +659,7 @@ func TestValidateBaselineDirtyBeforeDispatch(t *testing.T) {
 // TestValidateBaselineChangedAfterDispatch checks a baselined file the unit
 // modified after dispatch is judged normally: reported outside.
 func TestValidateBaselineChangedAfterDispatch(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -674,6 +686,7 @@ func TestValidateBaselineChangedAfterDispatch(t *testing.T) {
 // TestValidateCleanBaselineChangesNothing checks a baseline over a clean tree
 // changes nothing: no outside paths and nothing recorded in baselined.
 func TestValidateCleanBaselineChangesNothing(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -702,6 +715,7 @@ func TestValidateCleanBaselineChangesNothing(t *testing.T) {
 // dispatched after the first attempt's edits, so its baseline must never
 // widen the excuse set.
 func TestValidateBaselineIgnoresCorrectionBaseline(t *testing.T) {
+	t.Parallel()
 	t.Run("empty first baseline stays empty", func(t *testing.T) {
 		dir, err := initTask(t, []string{"exit 0"})
 		if err != nil {
@@ -809,6 +823,7 @@ func siblingInFlightTask(t *testing.T, otherTask, ownsPath string) string {
 // another worktree recorded at dispatch lands in Outside, formatted as
 // "<worktree path>: <path>", and fails OK() (issue #87).
 func TestValidateOtherWorktreeChangeIsOutside(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -841,6 +856,7 @@ func TestValidateOtherWorktreeChangeIsOutside(t *testing.T) {
 // TestValidateUnchangedOtherWorktreePasses checks a worktree recorded at
 // dispatch with no drift since is not reported outside.
 func TestValidateUnchangedOtherWorktreePasses(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -862,6 +878,7 @@ func TestValidateUnchangedOtherWorktreePasses(t *testing.T) {
 // Outside is empty (issue #186): flywheel.md there is the factory view's own
 // bookkeeping, not that worktree's unit's work.
 func TestValidateOtherWorktreeFlywheelMDIsExcused(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -888,6 +905,7 @@ func TestValidateOtherWorktreeFlywheelMDIsExcused(t *testing.T) {
 // when the other worktree changes both its flywheel.md board and a real
 // source file, only the real file appears in Outside (issue #186).
 func TestValidateOtherWorktreeFlywheelMDAndRealFileOnlyRealFails(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -918,6 +936,7 @@ func TestValidateOtherWorktreeFlywheelMDAndRealFileOnlyRealFails(t *testing.T) {
 // other worktree's .flywheel/ is skipped the same way flywheel.md is (issue
 // #186).
 func TestValidateOtherWorktreeDotFlywheelIsExcused(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -948,6 +967,7 @@ func TestValidateOtherWorktreeDotFlywheelIsExcused(t *testing.T) {
 // Attributed as "<worktree>: <path> -> <task>" and is not outside: the path
 // is the sibling's own record of what it is building (issue #200).
 func TestValidateOtherWorktreeInFlightTaskAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -979,6 +999,7 @@ func TestValidateOtherWorktreeInFlightTaskAttributed(t *testing.T) {
 // outside: a passed unit owns its worktree's edits made after inspection
 // (issue #278).
 func TestValidateOtherWorktreePassedTaskAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1014,6 +1035,7 @@ func TestValidateOtherWorktreePassedTaskAttributed(t *testing.T) {
 // that was planned but never dispatched attributes nothing: it never ran, so a
 // change to a path its brief declares stays outside (issue #278 review).
 func TestValidateOtherWorktreePlannedOnlyTaskNotAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1061,6 +1083,7 @@ func TestValidateOtherWorktreePlannedOnlyTaskNotAttributed(t *testing.T) {
 // is outside again, and a sibling outside .flywheel/worktrees/ keeps the
 // worktree's own-ledger rule.
 func TestValidateTaskWorktreeSibling(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		landed       bool
@@ -1126,6 +1149,7 @@ func TestValidateTaskWorktreeSibling(t *testing.T) {
 // <task>" and is not outside: a needs-correction unit owns its worktree's
 // edits made after review (issue #278).
 func TestValidateOtherWorktreeNeedsCorrectionTaskAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1161,6 +1185,7 @@ func TestValidateOtherWorktreeNeedsCorrectionTaskAttributed(t *testing.T) {
 // worktree changing a path that NO in-flight task there owns is still
 // Outside and fails: attribution must never swallow a real violation.
 func TestValidateOtherWorktreeNoInFlightOwnerStillOutside(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1190,6 +1215,7 @@ func TestValidateOtherWorktreeNoInFlightOwnerStillOutside(t *testing.T) {
 // event log is missing or unreadable never attributes and never errors: an
 // unreadable sibling log must not block a validation (issue #200).
 func TestValidateOtherWorktreeUnreadableLogStillOutside(t *testing.T) {
+	t.Parallel()
 	t.Run("no .flywheel", func(t *testing.T) {
 		dir, err := initTask(t, []string{"exit 0"})
 		if err != nil {
@@ -1257,6 +1283,7 @@ func TestValidateOtherWorktreeUnreadableLogStillOutside(t *testing.T) {
 // path stays outside and fails, exactly like the same task landing in the
 // main tree (issue #200).
 func TestValidateOtherWorktreeLandedTaskNotAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1286,6 +1313,7 @@ func TestValidateOtherWorktreeLandedTaskNotAttributed(t *testing.T) {
 }
 
 func TestValidateOutOfOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1320,6 +1348,7 @@ func TestValidateOutOfOwns(t *testing.T) {
 }
 
 func TestValidateNoGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1332,6 +1361,7 @@ func TestValidateNoGates(t *testing.T) {
 }
 
 func TestValidateTreeHashMatchesWriteTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1364,6 +1394,7 @@ func TestValidateTreeHashMatchesWriteTree(t *testing.T) {
 }
 
 func TestValidateEvidenceLogWritten(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1383,6 +1414,7 @@ func TestValidateEvidenceLogWritten(t *testing.T) {
 // recorded on the ExitError pointer target: a gate `exit 3` must record rc=3
 // and still let ValidateTask return without error.
 func TestValidateGateExitThree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 3"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1406,6 +1438,7 @@ func TestValidateGateExitThree(t *testing.T) {
 // and owns check run in the task's tree (Dir): an out-of-owns file committed
 // under the repo must be reported.
 func TestValidateWorkdirEmptyOutOfOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1425,6 +1458,7 @@ func TestValidateWorkdirEmptyOutOfOwns(t *testing.T) {
 // TestTreeHashMatchesWriteTreeIndex checks the throwaway temp index: treeHash
 // must equal git write-tree and must not touch the real .git/index.
 func TestTreeHashMatchesWriteTreeIndex(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1475,6 +1509,7 @@ func gitAuto(t *testing.T, wd string, args []string) string {
 // by CRLF" warning, printed to stderr when core.autocrlf=true touches an LF
 // file inside owns, is never parsed as an outside path.
 func TestValidateAutocrlfWarningNotOutside(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -1516,6 +1551,7 @@ func TestValidateAutocrlfWarningNotOutside(t *testing.T) {
 // correction's own delta: b.go, owned only by the delta, stays inside owns,
 // and the delta's gate: line runs instead of the brief's.
 func TestValidateCorrectionDeltaOwnsAndGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 1"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1560,6 +1596,7 @@ func wantHostBlockNote(file string) string {
 // <path>:", on both the GateOut and the validated event, which keeps its
 // Reason host-blocked.
 func TestValidatePersistentHostBlockRecordsNote(t *testing.T) {
+	t.Parallel()
 	gate := "printf 'fork/exec /tmp/go-build/b1/flywheel.test.exe: An Application Control policy has blocked this file\\n'; exit 1"
 	dir, err := initTask(t, []string{gate})
 	if err != nil {
@@ -1601,6 +1638,7 @@ func TestValidatePersistentHostBlockRecordsNote(t *testing.T) {
 // carries the host-block message without a "fork/exec <path>:" prefix parses
 // to an empty file, not an error.
 func TestValidatePersistentHostBlockFileEmptyWhenUnparsed(t *testing.T) {
+	t.Parallel()
 	gate := "printf 'An Application Control policy has blocked this file\\n'; exit 1"
 	dir, err := initTask(t, []string{gate})
 	if err != nil {
@@ -1623,6 +1661,7 @@ func TestValidatePersistentHostBlockFileEmptyWhenUnparsed(t *testing.T) {
 // first run but passing on the rerun keeps today's recording: no note, no
 // Reason host-blocked, and the passing rc.
 func TestValidateHostBlockedRerunPassRecordsPass(t *testing.T) {
+	t.Parallel()
 	marker := filepath.ToSlash(filepath.Join(t.TempDir(), "ran"))
 	gate := fmt.Sprintf(`if [ -f "%s" ]; then exit 0; else touch "%s"; printf 'fork/exec /x: An Application Control policy has blocked this file\n'; exit 1; fi`, marker, marker)
 	dir, err := initTask(t, []string{gate})
@@ -1658,6 +1697,7 @@ func TestValidateHostBlockedRerunPassRecordsPass(t *testing.T) {
 // note, on both the GateOut and the validated event, and still fails GatesOK
 // (issue #162).
 func TestValidateInconclusiveGate(t *testing.T) {
+	t.Parallel()
 	gate := `printf 'FAIL b.txt:3: broken\n'; exit 1`
 	dir, err := initTask(t, []string{gate})
 	if err != nil {
@@ -1706,6 +1746,7 @@ func TestValidateInconclusiveGate(t *testing.T) {
 // directly through inconclusiveNote, and end to end through ValidateTask
 // with a second dispatched task whose brief owns the blocking path.
 func TestInconclusiveNoteNamesOwner(t *testing.T) {
+	t.Parallel()
 	owner := func(p string) string {
 		if p == "a.ts" {
 			return "T3"
@@ -1759,6 +1800,7 @@ func TestInconclusiveNoteNamesOwner(t *testing.T) {
 // inside owns keeps the failure ordinary, even when an outside changed path
 // is also named.
 func TestValidateInconclusiveGateOwnsPathIsOrdinary(t *testing.T) {
+	t.Parallel()
 	gate := `printf 'FAIL a.go:1: broken, also b.txt changed\n'; exit 1`
 	dir, err := initTask(t, []string{gate})
 	if err != nil {
@@ -1783,6 +1825,7 @@ func TestValidateInconclusiveGateOwnsPathIsOrdinary(t *testing.T) {
 // existing path outside owns that is NOT changed against HEAD is an ordinary
 // failure, not inconclusive.
 func TestValidateOutsidePathUnchangedIsOrdinary(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{`printf 'see other.txt\n'; exit 1`})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1807,6 +1850,7 @@ func TestValidateOutsidePathUnchangedIsOrdinary(t *testing.T) {
 // TestValidateHostBlockedGateNotInconclusive checks a host-blocked gate keeps
 // its own handling and is never also marked inconclusive.
 func TestValidateHostBlockedGateNotInconclusive(t *testing.T) {
+	t.Parallel()
 	gate := "printf 'fork/exec /tmp/go-build/b1/flywheel.test.exe: An Application Control policy has blocked this file\\n'; exit 1"
 	dir, err := initTask(t, []string{gate})
 	if err != nil {
@@ -1827,6 +1871,7 @@ func TestValidateHostBlockedGateNotInconclusive(t *testing.T) {
 // TestValidatePassingGateNotInconclusive checks a passing gate is untouched
 // by the inconclusive scan.
 func TestValidatePassingGateNotInconclusive(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1861,6 +1906,7 @@ func otherTaskPlanned(t *testing.T, dir, otherTask, ownsPath string) {
 // owns, owned by another task's brief while that task is dispatched (in
 // flight), is attributed rather than outside, and the owns check passes.
 func TestValidateAttributedToInFlightOwner(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1906,6 +1952,7 @@ func TestValidateAttributedToInFlightOwner(t *testing.T) {
 // TestValidateNotAttributedWhenOwnerLanded checks the same path with its
 // owner task landed (no longer in flight) is still outside and fails.
 func TestValidateNotAttributedWhenOwnerLanded(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1938,6 +1985,7 @@ func TestValidateNotAttributedWhenOwnerLanded(t *testing.T) {
 // TestValidateNoOwnerStaysOutside checks a stray path no task's brief owns is
 // still outside and fails, and never appears in Attributed.
 func TestValidateNoOwnerStaysOutside(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -1963,6 +2011,7 @@ func TestValidateNoOwnerStaysOutside(t *testing.T) {
 // TestValidateOwnPathNeverAttributed checks a changed path inside the
 // validated task's own owns never appears in Outside or Attributed.
 func TestValidateOwnPathNeverAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2014,6 +2063,7 @@ func initTaskNeedsState(t *testing.T, gates []string, needsState string) (string
 // shaped output (Refused set, OK() false) before any gate runs, and names
 // the path (issue #136).
 func TestValidateNeedsStateMissingRefusesBeforeGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "data/db.sqlite")
 	if err != nil {
 		t.Fatalf("initTaskNeedsState() error = %v", err)
@@ -2039,6 +2089,7 @@ func TestValidateNeedsStateMissingRefusesBeforeGates(t *testing.T) {
 // satisfies needs-state: the file is copied into the workdir and the gates
 // then run (issue #136).
 func TestValidateNeedsStateCarriedFileRunsGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskNeedsState(t, []string{"test -f data/db.sqlite"}, "data/db.sqlite")
 	if err != nil {
 		t.Fatalf("initTaskNeedsState() error = %v", err)
@@ -2072,6 +2123,7 @@ func TestValidateNeedsStateCarriedFileRunsGates(t *testing.T) {
 // TestValidateNeedsStateCarriedDirectoryRunsGates checks carrying a declared
 // directory copies it recursively (issue #136).
 func TestValidateNeedsStateCarriedDirectoryRunsGates(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskNeedsState(t, []string{"test -f sub/nested/carried.txt"}, "sub/")
 	if err != nil {
 		t.Fatalf("initTaskNeedsState() error = %v", err)
@@ -2105,6 +2157,7 @@ func TestValidateNeedsStateCarriedDirectoryRunsGates(t *testing.T) {
 // TestValidateCarryMissingUnderDirErrors checks a --carry path that does not
 // exist under dir is an error naming it (issue #136).
 func TestValidateCarryMissingUnderDirErrors(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "ghost.txt")
 	if err != nil {
 		t.Fatalf("initTaskNeedsState() error = %v", err)
@@ -2124,6 +2177,7 @@ func TestValidateCarryMissingUnderDirErrors(t *testing.T) {
 // tree is the repo, so needs-state: is satisfied by definition and nothing
 // is copied (issue #136).
 func TestValidateNeedsStateNoWorkdirIsNoOp(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskNeedsState(t, []string{"exit 0"}, "never/there.txt")
 	if err != nil {
 		t.Fatalf("initTaskNeedsState() error = %v", err)
@@ -2144,6 +2198,7 @@ func TestValidateNeedsStateNoWorkdirIsNoOp(t *testing.T) {
 // by the baseline, not counted as attributed, even when another in-flight
 // task's brief would also own it.
 func TestValidateBaselinedPathNotAttributed(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2200,6 +2255,7 @@ func initTaskOwns(t *testing.T, owns []string, gates []string) (string, error) {
 // GaugeResult.Files and on the owns_checked event, with the JSON field names
 // "path", "lines" and "headings" in the ledger (issue #130).
 func TestValidateFilesRecordsMarkdownShape(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskOwns(t, []string{"a.go", "doc.md"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskOwns() error = %v", err)
@@ -2248,6 +2304,7 @@ func TestValidateFilesRecordsMarkdownShape(t *testing.T) {
 // records its line count with zero headings, and that headings is omitted from
 // the event JSON when zero (issue #130).
 func TestValidateFilesNonMarkdownZeroHeadings(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskOwns(t, []string{"a.go", "notes.txt"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskOwns() error = %v", err)
@@ -2278,6 +2335,7 @@ func TestValidateFilesNonMarkdownZeroHeadings(t *testing.T) {
 // TestValidateFilesSkipsOutsideOwns checks a changed file outside owns is not
 // measured: it fails the owns check but never appears in Files (issue #130).
 func TestValidateFilesSkipsOutsideOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2302,6 +2360,7 @@ func TestValidateFilesSkipsOutsideOwns(t *testing.T) {
 // real ATX heading (first non-space characters are one to six '#' followed by
 // a space); a mid-line '#' never counts. No fenced-code tracking (issue #130).
 func TestValidateFilesATXHeadingRule(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskOwns(t, []string{"a.go", "code.md"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskOwns() error = %v", err)
@@ -2327,6 +2386,7 @@ func TestValidateFilesATXHeadingRule(t *testing.T) {
 // longer be read (deleted) is skipped, not measured as zero lines (issue
 // #130).
 func TestValidateFilesSkipsUnreadable(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskOwns(t, []string{"a.go", "gone.txt"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskOwns() error = %v", err)
@@ -2353,6 +2413,7 @@ func TestValidateFilesSkipsUnreadable(t *testing.T) {
 // claiming it, then validate: the path is reported under attributed as
 // "lead <session>", outside is empty, and the reading is clean.
 func TestValidateLeadEditClaimsLeadEdit(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2397,6 +2458,7 @@ func TestValidateLeadEditClaimsLeadEdit(t *testing.T) {
 // lead_edit is still reported outside and fails the reading: the relaxation
 // must not move the existing behaviour (issue #228).
 func TestValidateLeadEditWithoutClaimStillOutside(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2424,6 +2486,7 @@ func TestValidateLeadEditWithoutClaimStillOutside(t *testing.T) {
 // by a worker session of the task being validated never excuses the path: it
 // stays outside, so a worker cannot excuse its own stray (issue #228).
 func TestValidateLeadEditWorkerSessionDoesNotExcuse(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2457,6 +2520,7 @@ func TestValidateLeadEditWorkerSessionDoesNotExcuse(t *testing.T) {
 // is after the reading never excuses the path: a claim must not retroactively
 // bless a stray an earlier validation already reported (issue #228).
 func TestValidateLeadEditAfterReadingDoesNotExcuse(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2488,6 +2552,7 @@ func TestValidateLeadEditAfterReadingDoesNotExcuse(t *testing.T) {
 // a/b.go never excuses a different changed path a/c.go: the matching rule is
 // ownsContains, not a prefix or directory claim (issue #228).
 func TestValidateLeadEditWrongPathDoesNotExcuse(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2523,6 +2588,7 @@ func TestValidateLeadEditWrongPathDoesNotExcuse(t *testing.T) {
 // the path then changes again, and a second reading reports it outside — the
 // lead declared one edit, never a permanent exemption for the path.
 func TestValidateLeadEditClaimStopsWhenContentChanged(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2570,6 +2636,7 @@ func TestValidateLeadEditClaimStopsWhenContentChanged(t *testing.T) {
 // file" is an edit like any other, bound to the state it declared (issue
 // #258).
 func TestValidateLeadEditDeletionMarkerExcusesAbsentPath(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2620,6 +2687,7 @@ func TestValidateLeadEditDeletionMarkerExcusesAbsentPath(t *testing.T) {
 // while the gates ran — after ValidateTask's initial read — still covers the
 // path for this reading (issue #258).
 func TestValidateLeadEditAppendedDuringPassIsHonored(t *testing.T) {
+	t.Parallel()
 	content := "lead's mid-wave edit\n"
 	sum := sha256.Sum256([]byte(content))
 	claim := fmt.Sprintf(`{"kind":"lead_edit","session":"lead-1","ts":"2026-09-12T01:30:00Z","owns":["b.txt"],"baseline":{"b.txt":"%s"}}`, hex.EncodeToString(sum[:]))
@@ -2652,6 +2720,7 @@ func TestValidateLeadEditAppendedDuringPassIsHonored(t *testing.T) {
 // is unchanged — while a pass measured in an external workdir records it on
 // every validated event and on owns_checked.
 func TestValidateRecordsWorkdirOnlyWhenExternal(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -2718,6 +2787,7 @@ func TestValidateRecordsWorkdirOnlyWhenExternal(t *testing.T) {
 // (issue #363): an explicitly owned one fails the owns check, one merely under
 // an owned directory is a warning, and nothing ignored reports nothing.
 func TestValidateIgnoredOwned(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T, owns string) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -2821,6 +2891,7 @@ func TestValidateIgnoredOwned(t *testing.T) {
 // matches the claim, and never excuses the same relative path in the unit's
 // own tree (issue #362).
 func TestValidateSiblingClaim(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (dir, wt string) {
 		t.Helper()
 		dir, err := initTask(t, []string{"exit 0"})
@@ -2896,6 +2967,7 @@ func TestValidateSiblingClaim(t *testing.T) {
 // what it covers from the positive entries, in the literal, "dir/" and
 // pattern forms, and that a negation alone owns nothing.
 func TestOwnsNegated(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		owns []string
@@ -2965,6 +3037,7 @@ func initQuietTask(t *testing.T, onPoll func(dir string, n int)) string {
 // a live lease on this host — the validating task's own lease is ignored —
 // and runs once that lease goes, after two polls (issue #411).
 func TestQuietGateWaitsForIdle(t *testing.T) {
+	// not parallel: initQuietTask swaps the package-level now and quietSleep
 	polls := 0
 	dir := initQuietTask(t, func(dir string, n int) {
 		polls = n
@@ -2993,6 +3066,7 @@ func TestQuietGateWaitsForIdle(t *testing.T) {
 // within limits.quiet_wait is recorded inconclusive with a "host busy" note,
 // on the GateOut and the validated event, and never runs (issue #411).
 func TestQuietGateInconclusive(t *testing.T) {
+	// not parallel: initQuietTask swaps the package-level now and quietSleep
 	dir := initQuietTask(t, func(string, int) {})
 	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
 	if err != nil {

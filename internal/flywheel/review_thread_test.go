@@ -12,6 +12,7 @@ import (
 // and the open blocking findings; and that a hand-written file is never
 // overwritten.
 func TestReviewThreadRender(t *testing.T) {
+	t.Parallel()
 	majorC := ReviewFinding{Severity: "major", Category: "correctness", File: "c.go", Line: 7, Claim: "Leaks a handle", Scenario: "early return", Fix: "defer close"}
 	events := []Event{{Task: "T1", Kind: "started", Attempt: "r1", Session: "w-1"}}
 	events = append(events, roundEvents(1, blockerA, minorB, majorC)...)

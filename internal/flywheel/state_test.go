@@ -41,6 +41,7 @@ func findTask(st State, id string) (TaskState, bool) {
 }
 
 func TestDeriveStatusMapping(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "T-plan", Kind: "planned"},
 		{TS: "2026-09-12T00:00:00Z", Task: "T-disp", Kind: "dispatched", Attempt: "r1"},
@@ -121,6 +122,7 @@ func TestDeriveStatusMapping(t *testing.T) {
 }
 
 func TestDeriveOrderIndependent(t *testing.T) {
+	t.Parallel()
 	a := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "A", Kind: "planned"},
 		{TS: "2026-09-12T00:00:00Z", Task: "B", Kind: "started"},
@@ -138,6 +140,7 @@ func TestDeriveOrderIndependent(t *testing.T) {
 }
 
 func TestDeriveOrderingSameSecond(t *testing.T) {
+	t.Parallel()
 	// dispatched, started and finished for T1 share one second-precision TS;
 	// appended in reverse order they must still derive finished.
 	events := []Event{
@@ -159,6 +162,7 @@ func TestDeriveOrderingSameSecond(t *testing.T) {
 }
 
 func TestDeriveOrderingWithWorkerPlanAndReport(t *testing.T) {
+	t.Parallel()
 	// dispatched, started, worker_plan, report and finished share one
 	// second-precision TS; appended in reverse they must still derive
 	// finished, and worker_plan/report must not change status.
@@ -186,6 +190,7 @@ func TestDeriveOrderingWithWorkerPlanAndReport(t *testing.T) {
 }
 
 func TestDeriveOrderingNanoVsSecond(t *testing.T) {
+	t.Parallel()
 	// A nanosecond-precision TS in the same second sorts after the
 	// second-precision one even though '.' sorts before 'Z' as text.
 	a := []Event{
@@ -214,6 +219,7 @@ func TestDeriveOrderingNanoVsSecond(t *testing.T) {
 }
 
 func TestWriteStateReplacesOnlyMarkedBlock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	md := "before\n<!-- flywheel:status:start -->\nOLD TABLE\n<!-- flywheel:status:end -->\nafter\n"
@@ -270,6 +276,7 @@ func TestWriteStateReplacesOnlyMarkedBlock(t *testing.T) {
 }
 
 func TestWriteStateAppendsBlockWhenMarkersMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	md := "custom content\nsecond line\n"
@@ -300,6 +307,7 @@ func TestWriteStateAppendsBlockWhenMarkersMissing(t *testing.T) {
 }
 
 func TestWriteStateCreatesMarkdownWhenMissing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "landed"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -323,6 +331,7 @@ func TestWriteStateCreatesMarkdownWhenMissing(t *testing.T) {
 }
 
 func TestDeriveInspectedStatusMapping(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Task: "T-pass", Kind: "inspected", Verdict: "pass"},
 		{TS: "2026-09-13T00:00:00Z", Task: "T-rework", Kind: "inspected", Verdict: "rework"},
@@ -348,6 +357,7 @@ func TestDeriveInspectedStatusMapping(t *testing.T) {
 }
 
 func TestDeriveValidatedOwnsCheckedKeepStatus(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Task: "T1", Kind: "finished"},
 		{TS: "2026-09-13T00:00:01Z", Task: "T1", Kind: "validated", Gate: "1", Tree: "abc123"},
@@ -364,6 +374,7 @@ func TestDeriveValidatedOwnsCheckedKeepStatus(t *testing.T) {
 }
 
 func TestDeriveOrderingGaugeKinds(t *testing.T) {
+	t.Parallel()
 	// finished, validated, owns_checked and inspected share one second-precision
 	// TS; appended in reverse order they must still derive passed.
 	events := []Event{
@@ -386,6 +397,7 @@ func TestDeriveOrderingGaugeKinds(t *testing.T) {
 }
 
 func TestDeriveSkipsEmptyTaskEvents(t *testing.T) {
+	t.Parallel()
 	// A staffed event carries no task; Derive must not create an "" task row
 	// and the staffed fields must not leak into any task's state.
 	events := []Event{
@@ -406,6 +418,7 @@ func TestDeriveSkipsEmptyTaskEvents(t *testing.T) {
 }
 
 func TestDeriveKeepsWorkerSessionAfterInspected(t *testing.T) {
+	t.Parallel()
 	// inspected events carry the inspector's session; they must never
 	// overwrite the task's worker session, so a later resume keeps the
 	// worker's conversation.
@@ -426,6 +439,7 @@ func TestDeriveKeepsWorkerSessionAfterInspected(t *testing.T) {
 }
 
 func TestDeriveStaleLateFinished(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
 		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2"},
@@ -448,6 +462,7 @@ func TestDeriveStaleLateFinished(t *testing.T) {
 }
 
 func TestDeriveStaleValidatedIgnored(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
 		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2"},
@@ -470,6 +485,7 @@ func TestDeriveStaleValidatedIgnored(t *testing.T) {
 }
 
 func TestDeriveStaleLegacyNoAttempt(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -499,6 +515,7 @@ func TestDeriveStaleLegacyNoAttempt(t *testing.T) {
 }
 
 func TestDeriveStaleLegacyEmptyDispatch(t *testing.T) {
+	t.Parallel()
 	// A legacy log dispatched by hand carries no attempt: the task gets
 	// status dispatched and counts the attempt, but no current attempt is
 	// set, so a later attempt-bearing finished applies as today.
@@ -528,6 +545,7 @@ func TestDeriveStaleLegacyEmptyDispatch(t *testing.T) {
 }
 
 func TestDeriveLostStatusAndStaleRule(t *testing.T) {
+	t.Parallel()
 	// A lost event for the task's current attempt sets status lost and is
 	// counted; one for any other attempt is stale, changes nothing and is
 	// recorded in Stale.
@@ -575,6 +593,7 @@ func TestDeriveLostStatusAndStaleRule(t *testing.T) {
 }
 
 func TestDeriveReplayDeterminism(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
 		{TS: "2026-09-14T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2"},
@@ -603,6 +622,7 @@ func TestDeriveReplayDeterminism(t *testing.T) {
 // reviewer with an adapter) never makes a unit passed; its correct still
 // counts, and a hand-recorded pass still passes (issue #389).
 func TestAgentReviewNeverPasses(t *testing.T) {
+	t.Parallel()
 	fin := Event{TS: "2026-09-24T00:00:00Z", Task: "T1", Kind: "finished"}
 	agent := func(verdict string) Event {
 		return Event{TS: "2026-09-24T00:00:01Z", Task: "T1", Kind: "reviewed", Verdict: verdict, Persona: "reviewer", Adapter: "claude"}

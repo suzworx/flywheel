@@ -14,6 +14,7 @@ import (
 // bare object, a fenced block with prose around it (the last block wins),
 // severity normalisation, an empty list, and malformed answers.
 func TestParseReviewFindings(t *testing.T) {
+	t.Parallel()
 	bare := `{"findings":[{"severity":"major","category":"correctness","file":"a.go","line":3,"claim":"c","scenario":"s","fix":"f"}]}`
 	got, err := parseReviewFindings(bare)
 	if err != nil || len(got) != 1 || got[0].Severity != "major" || got[0].Line != 3 || got[0].File != "a.go" {
@@ -129,6 +130,7 @@ func reviewKinds(t *testing.T, dir string) (findings []Event, reviewed []Event) 
 // correct; a clean answer records pass in the next round; a worker session
 // is refused; a garbage answer records nothing; the dispatch is read-only.
 func TestReviewAgent(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH
 	answer := "I read the diff.\n```json\n{\"findings\":[" +
 		`{"severity":"blocker","category":"correctness","file":"a.go","line":3,"claim":"Changed drops data","scenario":"any call loses the input","fix":"return it"},` +
 		`{"severity":"minor","category":"docs","file":"a.go","line":1,"claim":"no doc comment","scenario":"godoc shows nothing","fix":"add one"}` +
@@ -190,6 +192,7 @@ func TestReviewAgent(t *testing.T) {
 // refused and the reviewer runs once more; the valid second answer is
 // recorded once, from the second transcript (issue #389).
 func TestReviewAgentRefusedAnswer(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH; sets the package-level commandHook
 	bad := "```json\n{\"findings\":[{\"severity\":\"major\",\"file\":\"nope.go\",\"line\":1,\"claim\":\"c\",\"scenario\":\"s\"}]}\n```"
 	good := "```json\n{\"findings\":[{\"severity\":\"major\",\"file\":\"a.go\",\"line\":3,\"claim\":\"real\",\"scenario\":\"s\"}]}\n```"
 	dir := reviewAgentRepo(t, good)
@@ -233,6 +236,7 @@ func TestReviewAgentRefusedAnswer(t *testing.T) {
 
 // TestValidateFindings checks the findings contract (issue #389).
 func TestValidateFindings(t *testing.T) {
+	t.Parallel()
 	wd := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(wd, "d"), 0o755); err != nil {
 		t.Fatal(err)
@@ -277,6 +281,7 @@ func TestValidateFindings(t *testing.T) {
 // TestReviewAgentLargePrompt: a review prompt over 40 KB, past Windows' ~32K
 // command-line cap, reaches the fake reviewer intact on stdin (issue #427).
 func TestReviewAgentLargePrompt(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH and the fake claude stdin env
 	dir := reviewAgentRepo(t, "Nothing wrong.\n```json\n{\"findings\": []}\n```")
 	big := "package x\n\nfunc Changed() {}\n" + strings.Repeat("// a long diff line with & | ^ %PATH% in it\n", 1200)
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(big), 0o644); err != nil {
@@ -307,6 +312,7 @@ func TestReviewAgentLargePrompt(t *testing.T) {
 // TestReviewerNoWorkerRules: the reviewer's claude args carry no worker
 // rules; a normal worker request still does (issue #389).
 func TestReviewerNoWorkerRules(t *testing.T) {
+	t.Parallel()
 	_, args := claudeAdapter{}.Command(reviewRunRequest("T1", 1, "missing.md", "m"))
 	if strings.Contains(strings.Join(args, " "), "--append-system-prompt") {
 		t.Errorf("reviewer args carry --append-system-prompt: %q", args)

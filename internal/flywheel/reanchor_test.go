@@ -49,6 +49,7 @@ func mustChain(t *testing.T, dir string) LogChain {
 // an acknowledgement; the chain is then OK with one Acknowledged entry, and
 // stays OK after a further append.
 func TestReanchorReordered(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lines := reanchorLog(t, dir, "one", "two", "three")
 	if _, err := Reanchor(dir, "why", "S1", false); !IsRuleRefusal(err) || !strings.Contains(err.Error(), "intact") {
@@ -80,6 +81,7 @@ func TestReanchorReordered(t *testing.T) {
 // TestReanchorRemoved: a removed line needs --force and is then acknowledged
 // as removed.
 func TestReanchorRemoved(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lines := reanchorLog(t, dir, "one", "two", "three")
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
@@ -102,6 +104,7 @@ func TestReanchorRemoved(t *testing.T) {
 // TestReanchorDoesNotCoverAnotherBreak: an acknowledgement covers its own
 // break only; an edit elsewhere still breaks the chain.
 func TestReanchorDoesNotCoverAnotherBreak(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lines := reanchorLog(t, dir, "one", "two", "three", "four", "five")
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
@@ -121,6 +124,7 @@ func TestReanchorDoesNotCoverAnotherBreak(t *testing.T) {
 // TestReanchorReorderedAckDoesNotCoverRemoved: a reordered acknowledgement
 // does not cover the same line once it classifies as removed.
 func TestReanchorReorderedAckDoesNotCoverRemoved(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	lines := reanchorLog(t, dir, "one", "two", "three")
 	path := filepath.Join(dir, ".flywheel", "events.jsonl")
@@ -140,6 +144,7 @@ func TestReanchorReorderedAckDoesNotCoverRemoved(t *testing.T) {
 // TestReanchorValidate: a reanchored event must carry note, file, line,
 // break_prev, sha256 and a reason of reordered or removed, and no task.
 func TestReanchorValidate(t *testing.T) {
+	t.Parallel()
 	good := Event{Kind: "reanchored", Note: "why", File: "events.jsonl", LineNo: 2, BreakPrev: "ab", SHA256: "cd", Reason: "reordered"}
 	if err := Validate(good); err != nil {
 		t.Fatalf("Validate(good) = %v", err)
@@ -166,6 +171,7 @@ func TestReanchorValidate(t *testing.T) {
 
 // TestReanchorSharded: an acknowledged break in a shard file is honoured.
 func TestReanchorSharded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)

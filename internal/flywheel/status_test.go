@@ -67,6 +67,7 @@ func statusFixture(t *testing.T) string {
 }
 
 func TestStatusFixture(t *testing.T) {
+	t.Parallel()
 	dir := statusFixture(t)
 	now := statusNow(t)
 	rep, err := Status(dir, now)
@@ -132,6 +133,7 @@ func TestStatusFixture(t *testing.T) {
 // current attempt ended capped (reason length) and omits a task that finished
 // cleanly (reason stop) (issue #131).
 func TestStatusAttentionListsCappedNotClean(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T00:00:00Z", Task: "t-capped", Kind: "planned", Brief: "b.txt"},
@@ -162,6 +164,7 @@ func TestStatusAttentionListsCappedNotClean(t *testing.T) {
 // TestStatusCountsLost: a lost event derives status lost and flywheel status
 // counts it in its task counts.
 func TestStatusCountsLost(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-14T00:00:00Z", Task: "t-lost", Kind: "planned", Brief: "b.txt"},
@@ -183,6 +186,7 @@ func TestStatusCountsLost(t *testing.T) {
 }
 
 func TestStatusJSONRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := statusFixture(t)
 	rep, err := Status(dir, statusNow(t))
 	if err != nil {
@@ -212,6 +216,7 @@ func TestStatusJSONRoundTrip(t *testing.T) {
 }
 
 func TestStatusEmptyFactory(t *testing.T) {
+	t.Parallel()
 	rep, err := Status(t.TempDir(), statusNow(t))
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
@@ -243,6 +248,7 @@ func TestStatusEmptyFactory(t *testing.T) {
 // text output renders an 845-second age as "14m ago" (HumanAge), while --json
 // keeps age in whole seconds.
 func TestStatusAgeUnits(t *testing.T) {
+	t.Parallel()
 	rep := StatusReport{
 		LastEventAt:    &LastEvent{TS: "2026-09-14T10:00:00Z", Age: 845},
 		LastProgressAt: &LastEvent{TS: "2026-09-14T10:01:00Z", Age: 845},
@@ -317,6 +323,7 @@ func leaseStatusFixture(t *testing.T) string {
 // (expired, not lost) and none for a task with no lease file (neither); and a
 // malformed lease file (skipped and reported). All at the injected now.
 func TestStatusLeases(t *testing.T) {
+	t.Parallel()
 	dir := leaseStatusFixture(t)
 	now := statusNow(t)
 	rep, err := Status(dir, now)

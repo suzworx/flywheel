@@ -12,6 +12,7 @@ import (
 )
 
 func TestEnableShardsSealsLegacy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -105,6 +106,7 @@ func TestEnableShardsSealsLegacy(t *testing.T) {
 }
 
 func TestEnableShardsEmptyLegacy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -140,6 +142,7 @@ func TestEnableShardsEmptyLegacy(t *testing.T) {
 }
 
 func TestEnableShardsSealTimeAfterLegacy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	legacyTime := fixedTime.Add(1 * time.Hour)
@@ -190,6 +193,7 @@ func TestEnableShardsSealTimeAfterLegacy(t *testing.T) {
 }
 
 func TestEnableShardsResealsAfterLegacyGrowth(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -250,6 +254,7 @@ func TestEnableShardsResealsAfterLegacyGrowth(t *testing.T) {
 }
 
 func TestLegacyAppendDivertsAfterSeal(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -309,6 +314,7 @@ func TestLegacyAppendDivertsAfterSeal(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedIntact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -353,6 +359,7 @@ func TestVerifyLogChainShardedIntact(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedShardEditedLineBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -413,6 +420,7 @@ func TestVerifyLogChainShardedShardEditedLineBreaks(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedLineWithoutPrevBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -459,6 +467,7 @@ func TestVerifyLogChainShardedLineWithoutPrevBreaks(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedWrongGenesisBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -495,6 +504,7 @@ func TestVerifyLogChainShardedWrongGenesisBreaks(t *testing.T) {
 // FIRST line may carry the genesis hash: a later one would let every line
 // before it be deleted undetected (#349 review).
 func TestVerifyLogChainShardedLaterGenesisBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -537,6 +547,7 @@ func TestVerifyLogChainShardedLaterGenesisBreaks(t *testing.T) {
 // append-only growth: an edited or truncated legacy log keeps its break
 // instead of being sealed again (#349 review).
 func TestEnableShardsRefusesToBlessAnEdit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -571,6 +582,7 @@ func TestEnableShardsRefusesToBlessAnEdit(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedLegacyTruncatedBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	fixedTime := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 
@@ -616,6 +628,7 @@ func TestVerifyLogChainShardedLegacyTruncatedBreaks(t *testing.T) {
 }
 
 func TestVerifyLogChainShardedWithoutSealBreaks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	_, err := Init(dir, false)
@@ -647,6 +660,7 @@ func TestVerifyLogChainShardedWithoutSealBreaks(t *testing.T) {
 }
 
 func TestVerifyLogChainLegacyUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	_, err := Init(dir, false)
@@ -699,6 +713,7 @@ func TestVerifyLogChainLegacyUnchanged(t *testing.T) {
 // without a seal is repaired rather than refused: log --shard is the only
 // command that writes a seal, and verification requires one.
 func TestEnableShardsSealsHandMadeLayout(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -725,6 +740,7 @@ func TestEnableShardsSealsHandMadeLayout(t *testing.T) {
 // TestEnableShardsSealTimeUsesLatestLegacyTS checks that the seal sorts
 // after EVERY legacy event, not only the last line's.
 func TestEnableShardsSealTimeUsesLatestLegacyTS(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)

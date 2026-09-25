@@ -5,6 +5,7 @@ import (
 )
 
 func TestAuditRequiresSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -20,6 +21,7 @@ func TestAuditRequiresSession(t *testing.T) {
 }
 
 func TestAuditRefusesWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -35,6 +37,7 @@ func TestAuditRefusesWorkerSession(t *testing.T) {
 }
 
 func TestAuditRefusesInspectorSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -53,6 +56,7 @@ func TestAuditRefusesInspectorSession(t *testing.T) {
 }
 
 func TestAuditConformsRecordsEvent(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -93,6 +97,7 @@ func TestAuditConformsRecordsEvent(t *testing.T) {
 }
 
 func TestAuditFailingGateIsNonconformance(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 1"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -123,6 +128,7 @@ func TestAuditFailingGateIsNonconformance(t *testing.T) {
 // TestAuditDoesNotOverwriteVerdict checks an audited event leaves the unit's
 // derived QC verdict alone (#301 review).
 func TestAuditDoesNotOverwriteVerdict(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "insp", Persona: "inspector"},
@@ -136,6 +142,7 @@ func TestAuditDoesNotOverwriteVerdict(t *testing.T) {
 }
 
 func TestAuditValidateRejectsBadVerdict(t *testing.T) {
+	t.Parallel()
 	err := Validate(Event{Task: "T1", Kind: "audited", Session: "a", Verdict: "maybe"})
 	if err == nil {
 		t.Fatal("Validate() accepted bad verdict")

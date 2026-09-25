@@ -11,6 +11,7 @@ import (
 // TestWorktreeCreatesBranchAndDir tests that TaskWorktree creates the worktree
 // directory and branch on first call.
 func TestWorktreeCreatesBranchAndDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -51,6 +52,7 @@ func TestWorktreeCreatesBranchAndDir(t *testing.T) {
 // TestWorktreeReused tests that a second call to TaskWorktree returns the
 // same path without error.
 func TestWorktreeReused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -78,6 +80,7 @@ func TestWorktreeReused(t *testing.T) {
 // TestWorktreeRunRecordsWorkdir tests that Run records the worktree as Workdir
 // on the dispatched event when --worktree is set.
 func TestWorktreeRunRecordsWorkdir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -137,6 +140,7 @@ func TestWorktreeRunRecordsWorkdir(t *testing.T) {
 // TestWorktreeValidateDefaultsToRecorded tests that ValidateTask uses the
 // recorded worktree when Workdir is not specified.
 func TestWorktreeValidateDefaultsToRecorded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -196,6 +200,7 @@ func TestWorktreeValidateDefaultsToRecorded(t *testing.T) {
 
 // TestWorktreeGitignored tests that .flywheel/.gitignore contains "worktrees/".
 func TestWorktreeGitignored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -243,6 +248,7 @@ func worktreeRepo(t *testing.T) string {
 // touched no git history records no git-write signal: the before and after
 // snapshots both read the task's worktree (#333 review).
 func TestWorktreeCleanRunNoFalseGitWrite(t *testing.T) {
+	t.Parallel()
 	dir := worktreeRepo(t)
 	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -269,6 +275,7 @@ func TestWorktreeCleanRunNoFalseGitWrite(t *testing.T) {
 // to the main checkout's ledger, while the root itself and a plain directory
 // at a worktree path map to themselves (#395).
 func TestLedgerRoot(t *testing.T) {
+	t.Parallel()
 	repo := t.TempDir()
 	initRepo(t, repo)
 	wt := filepath.Join(repo, ".flywheel", "worktrees", "T1")
@@ -302,6 +309,7 @@ func TestLedgerRoot(t *testing.T) {
 // TestWorktreeRefusesForeignDir checks that a plain directory left at the
 // worktree path is refused, not reused (#333 review).
 func TestWorktreeRefusesForeignDir(t *testing.T) {
+	t.Parallel()
 	dir := worktreeRepo(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel", "worktrees", "T1"), 0o755); err != nil {
 		t.Fatal(err)

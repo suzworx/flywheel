@@ -12,6 +12,7 @@ import (
 // TestGitWriteStateDescribesHead checks gitHistoryState of a repo with one
 // commit contains ok=true and the expected format with HEAD, branch and stash.
 func TestGitWriteStateDescribesHead(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cmd := exec.Command("git", append(gitInitFlags(), "init", "-q")...)
 	cmd.Dir = dir
@@ -44,6 +45,7 @@ func TestGitWriteStateDescribesHead(t *testing.T) {
 // TestGitWriteStateNotARepo checks gitHistoryState of a plain temp dir returns
 // ok=false when GIT_CEILING_DIRECTORIES prevents git from finding a repo.
 func TestGitWriteStateNotARepo(t *testing.T) {
+	// not parallel: t.Setenv GIT_CEILING_DIRECTORIES
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 
@@ -60,6 +62,7 @@ func TestGitWriteStateNotARepo(t *testing.T) {
 // an empty commit during Run, a git-write signal is recorded and the finished
 // event's note mentions the change.
 func TestGitWriteCommitDuringRunRecordsSignal(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
@@ -120,6 +123,7 @@ func TestGitWriteCommitDuringRunRecordsSignal(t *testing.T) {
 // TestGitWriteCleanRunRecordsNoSignal checks that when no hook runs and git
 // history is unchanged, no git-write signal is recorded.
 func TestGitWriteCleanRunRecordsNoSignal(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
@@ -159,6 +163,7 @@ func TestGitWriteCleanRunRecordsNoSignal(t *testing.T) {
 // TestGitWriteStashDuringRunRecordsSignal checks that when commandHook runs
 // git stash, a git-write signal is recorded.
 func TestGitWriteStashDuringRunRecordsSignal(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 
 	// Initialize as a git repo with one commit.
@@ -245,6 +250,7 @@ func gitRepoWithCommit(t *testing.T, dir string) {
 // TestGitWriteSilentRunStillFlagged checks that the check runs on the silent
 // (timed-out) exit path too, not only after a normal finish (#318 review).
 func TestGitWriteSilentRunStillFlagged(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	gitRepoWithCommit(t, dir)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
@@ -279,6 +285,7 @@ func TestGitWriteSilentRunStillFlagged(t *testing.T) {
 // TestGitWriteUnreadableFinalStateCounts checks that a final state git can no
 // longer read is a change, not a clean attempt (#318 review).
 func TestGitWriteUnreadableFinalStateCounts(t *testing.T) {
+	// not parallel: t.Setenv GIT_CEILING_DIRECTORIES
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 	gitRepoWithCommit(t, dir)
@@ -301,6 +308,7 @@ func TestGitWriteUnreadableFinalStateCounts(t *testing.T) {
 // TestGitStateDetectsIndexWrite checks a staged file and a new tag are each
 // named as what changed and charged to the worker (#423).
 func TestGitStateDetectsIndexWrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gitRepoWithCommit(t, dir)
 	run := func(args ...string) {
@@ -347,6 +355,7 @@ func TestGitStateDetectsIndexWrite(t *testing.T) {
 // ref contains (a fetch by another process, #442) needs guard evidence, while
 // a local-only tag and a deleted tag stay the worker's (#423).
 func TestGitStateFetchedTagShared(t *testing.T) {
+	t.Parallel()
 	dir, origin := t.TempDir(), t.TempDir()
 	gitRepoWithCommit(t, dir)
 	run := func(args ...string) {
@@ -417,6 +426,7 @@ func guardLogWrite(dir, attempt, line string) {
 // TestGitWriteEvidence checks the three verdicts: no change, a change with a
 // write the guard recorded, and a change with none (#361).
 func TestGitWriteEvidence(t *testing.T) {
+	t.Parallel()
 	if signal, note := gitWriteVerdict(gitChange{}, []string{"commit"}); signal || note != "" {
 		t.Errorf("unchanged: %v %q, want false \"\"", signal, note)
 	}
@@ -435,6 +445,7 @@ func TestGitWriteEvidence(t *testing.T) {
 // (the lead committing in a shared worktree) with no write in the guard's log
 // raises no git-write signal, and the finished note says why (#361).
 func TestGitWriteSharedWorktreeNoSignal(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	gitRepoWithCommit(t, dir)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {

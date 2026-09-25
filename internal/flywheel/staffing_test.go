@@ -6,6 +6,7 @@ import (
 )
 
 func TestStaffingValidateAdapters(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
@@ -36,6 +37,7 @@ func TestStaffingValidateAdapters(t *testing.T) {
 }
 
 func TestStaffingValidateAuditorIndependence(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
@@ -69,6 +71,7 @@ func TestStaffingValidateAuditorIndependence(t *testing.T) {
 }
 
 func TestStaffingValidateEmptyOK(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
@@ -91,6 +94,7 @@ func TestStaffingValidateEmptyOK(t *testing.T) {
 }
 
 func TestStaffingConfigGetSet(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
@@ -161,6 +165,7 @@ func TestStaffingConfigGetSet(t *testing.T) {
 }
 
 func TestStaffingLine(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		role     string
@@ -186,6 +191,7 @@ func TestStaffingLine(t *testing.T) {
 }
 
 func TestStaffingMismatchReportsDifferentSession(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},
@@ -223,6 +229,7 @@ func TestStaffingMismatchReportsDifferentSession(t *testing.T) {
 }
 
 func TestStaffingSummaryShowsRoles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{
 		Version: 1,
@@ -248,6 +255,7 @@ func TestStaffingSummaryShowsRoles(t *testing.T) {
 }
 
 func TestStaffingSummaryUnchangedWithoutConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{
 		Version: 1,
@@ -268,6 +276,7 @@ func TestStaffingSummaryUnchangedWithoutConfig(t *testing.T) {
 // TestStaffingUnknownKeyIsAnError checks that a staffing key nobody defines
 // is reported as unknown instead of reading back as empty.
 func TestStaffingUnknownKeyIsAnError(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}}
 	for _, key := range []string{"staffing.lead.agent", "staffing.foreman.model", "staffing.lead"} {
 		if got, err := cfg.Get(key); err == nil {
@@ -286,6 +295,7 @@ func TestStaffingUnknownKeyIsAnError(t *testing.T) {
 // the auditor role and the lead or inspector role, whatever the models are
 // (#354 review).
 func TestStaffingAuditorSessionIndependence(t *testing.T) {
+	t.Parallel()
 	base := func(s *StaffingConfig) Config {
 		return Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}, Staffing: s}
 	}
@@ -310,6 +320,7 @@ func TestStaffingAuditorSessionIndependence(t *testing.T) {
 // TestStaffingSetLeavesNothingBehindOnError checks that a rejected Set does
 // not create an empty staffing section (#354 review).
 func TestStaffingSetLeavesNothingBehindOnError(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "default", Adapter: "sim", Model: "m", MaxParallel: 1}}}
 	if err := cfg.Set("staffing.lead.agent", "claude"); err == nil {
 		t.Fatal("Set(staffing.lead.agent) succeeded, want an unknown-key error")
@@ -323,6 +334,7 @@ func TestStaffingSetLeavesNothingBehindOnError(t *testing.T) {
 // settable and readable, a bad adapter is refused, it must not share a
 // session with the lead or the inspector, and it shows in the summary.
 func TestReviewerRole(t *testing.T) {
+	t.Parallel()
 	cfg := Config{
 		Version: 1,
 		Workers: []Worker{{Name: "default", Adapter: "claude", Model: "claude-opus-5"}},

@@ -40,6 +40,7 @@ func andonHas(a []Andon, task string) bool {
 }
 
 func TestStageOf(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		status string
 		reason string
@@ -66,6 +67,7 @@ func TestStageOf(t *testing.T) {
 }
 
 func TestClassifyRun(t *testing.T) {
+	t.Parallel()
 	if classifyRun(true, 1, 0, 0, false, "stop", 100, 0, 600, false, false, "") != "done" {
 		t.Error("done unit not classified done")
 	}
@@ -137,6 +139,7 @@ func TestClassifyRun(t *testing.T) {
 // hardcoded 600/300, so the view and the runner agree on a non-default
 // worker config (issue #85).
 func TestClassifyRunFollowsStallTimeout(t *testing.T) {
+	t.Parallel()
 	if classifyRun(false, 1, 0, 0, false, "stop", 100, 40, 100, false, false, "") != "running" {
 		t.Error("age 40 under a 100s stall timeout not classified running")
 	}
@@ -161,6 +164,7 @@ func TestClassifyRunFollowsStallTimeout(t *testing.T) {
 // all have to hold, so a quiet start, a run with edits, or a run that stated
 // its plan is left exactly as it classified before.
 func TestClassifyRunNoWrites(t *testing.T) {
+	t.Parallel()
 	if classifyRun(false, 20, 0, 0, false, "stop", 100, 0, 600, true, false, "") != "no-writes" {
 		t.Error("20 steps, 0 edits, no-plan recorded not classified no-writes")
 	}
@@ -194,6 +198,7 @@ func TestClassifyRunNoWrites(t *testing.T) {
 // rate-limited shows its own run state, wrote or not, and reaches the andon
 // like provider-error (issue #380).
 func TestClassifyRunRateLimited(t *testing.T) {
+	t.Parallel()
 	for _, wrote := range []bool{false, true} {
 		if got := classifyRun(true, 26, 0, 3, false, "rate-limited", 100, 0, 600, false, wrote, ""); got != "rate-limited" {
 			t.Errorf("classifyRun(done, rate-limited, wrote %v) = %q, want rate-limited", wrote, got)
@@ -212,6 +217,7 @@ func TestClassifyRunRateLimited(t *testing.T) {
 // abandoned-job shows its own run state, wrote or not, and reaches the andon
 // like provider-error (issue #390).
 func TestClassifyRunAbandoned(t *testing.T) {
+	t.Parallel()
 	for _, wrote := range []bool{false, true} {
 		if got := classifyRun(true, 12, 0, 3, false, "abandoned-job", 100, 0, 600, false, wrote, ""); got != "abandoned-job" {
 			t.Errorf("classifyRun(done, abandoned-job, wrote %v) = %q, want abandoned-job", wrote, got)
@@ -224,6 +230,7 @@ func TestClassifyRunAbandoned(t *testing.T) {
 }
 
 func TestClassifyRunBlocked(t *testing.T) {
+	t.Parallel()
 	for _, reason := range []string{"stop", ""} {
 		for _, s := range []string{"blocked", "no-writes"} {
 			if got := classifyRun(true, 3, 0, 0, false, reason, 100, 0, 600, false, false, s); got != s {
@@ -272,6 +279,7 @@ func TestClassifyRunBlocked(t *testing.T) {
 }
 
 func TestLiveRun(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{"running", "exploring", "long-step", "silent", "stalled", "no-writes"} {
 		if !liveRun(s) {
 			t.Errorf("liveRun(%q) = false, want true", s)
@@ -285,6 +293,7 @@ func TestLiveRun(t *testing.T) {
 }
 
 func TestFixtureRefresh(t *testing.T) {
+	t.Parallel()
 	stalled := filepath.Join("testdata", "factory", ".flywheel", "runs", "stalled.r1.jsonl")
 	mt, err := time.Parse(time.RFC3339Nano, "2026-09-12T00:30:00Z")
 	if err != nil {
@@ -373,6 +382,7 @@ func TestFixtureRefresh(t *testing.T) {
 }
 
 func TestIncrementalReadsOnlyAppended(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	src := filepath.Join("testdata", "factory", ".flywheel")
 	copyFile(filepath.Join(src, "events.jsonl"), filepath.Join(tmp, ".flywheel", "events.jsonl"), t)
@@ -422,6 +432,7 @@ func TestIncrementalReadsOnlyAppended(t *testing.T) {
 }
 
 func TestPartialRunLineWaitsForNewline(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	src := filepath.Join("testdata", "factory", ".flywheel")
 	copyFile(filepath.Join(src, "events.jsonl"), filepath.Join(tmp, ".flywheel", "events.jsonl"), t)
@@ -472,6 +483,7 @@ func TestPartialRunLineWaitsForNewline(t *testing.T) {
 }
 
 func TestPartialEventLineWaitsForNewline(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	src := filepath.Join("testdata", "factory", ".flywheel")
 	eventsPath := filepath.Join(tmp, ".flywheel", "events.jsonl")
@@ -565,6 +577,7 @@ func appendLine(path, line string, t *testing.T) {
 }
 
 func TestBuildStaffingLatestPerRole(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Kind: "staffed", Session: "s1", Persona: "lead", Model: "m1"},
 		{TS: "2026-09-13T00:00:01Z", Kind: "staffed", Session: "sf1", Persona: "foreman", Model: "m2"},
@@ -577,6 +590,7 @@ func TestBuildStaffingLatestPerRole(t *testing.T) {
 }
 
 func TestBuildStaffingModelShownInParentheses(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-13T00:00:00Z", Kind: "staffed", Session: "s1", Persona: "lead", Model: "m1"},
 	}
@@ -587,6 +601,7 @@ func TestBuildStaffingModelShownInParentheses(t *testing.T) {
 }
 
 func TestBuildStaffingNotRegisteredWithoutStaffedEvent(t *testing.T) {
+	t.Parallel()
 	st := buildStaffing(Config{}, []Event{})
 	if st.Lead != "not registered" {
 		t.Errorf("lead = %q, want not registered", st.Lead)
@@ -594,6 +609,7 @@ func TestBuildStaffingNotRegisteredWithoutStaffedEvent(t *testing.T) {
 }
 
 func TestBuildOutputFirstPassFromInspectedAndReviewed(t *testing.T) {
+	t.Parallel()
 	// The first verdict per task wins, whether it comes from inspected or
 	// reviewed; a later pass on a task whose first verdict was rework must not
 	// count.
@@ -627,6 +643,7 @@ func TestBuildOutputFirstPassFromInspectedAndReviewed(t *testing.T) {
 // log, decides the run state and stage instead of the unreadable run-file
 // tail (issue #131).
 func TestMissingNewlineReasonComesFromFinishedEvent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "cutoff", Kind: "planned", Brief: "b.txt"},
@@ -678,6 +695,7 @@ func TestMissingNewlineReasonComesFromFinishedEvent(t *testing.T) {
 // current attempt's latest finished event's peak_reasoning, and a unit with
 // no such finished event keeps Peak at 0 (issue #84).
 func TestPeakReasoningFillsUnit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "capped2", Kind: "planned", Brief: "b.txt"},
@@ -722,6 +740,7 @@ func TestPeakReasoningFillsUnit(t *testing.T) {
 // start-failed is a failed run state, reaches the andon, and its stage is
 // failed (issue #131).
 func TestStartFailedFinishIsFailedOnAndon(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "died", Kind: "planned", Brief: "b.txt"},
@@ -760,6 +779,7 @@ func TestStartFailedFinishIsFailedOnAndon(t *testing.T) {
 // TestFloorPausedModel checks a rate-limited unit shows its reset on the
 // floor and its model gets one paused andon entry until then (issue #383).
 func TestFloorPausedModel(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC)
 	reset := now.Add(20 * time.Minute)
@@ -818,6 +838,7 @@ func TestFloorPausedModel(t *testing.T) {
 // worktree's last path element and base, and the JSON view carries both; a unit
 // in the main checkout shows neither (issue #394).
 func TestFloorWorktreeBase(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	now := time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC)
 	wt := filepath.Join(dir, ".flywheel", "worktrees", "CP-A")
@@ -874,6 +895,7 @@ func TestFloorWorktreeBase(t *testing.T) {
 // unclean reason that also lists written files classifies failed-dirty
 // (not plain failed), reaches the andon, and is not live (issue #163).
 func TestUncleanFinishWithFilesIsFailedDirty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "dirty", Kind: "planned", Brief: "b.txt"},
@@ -913,6 +935,7 @@ func TestUncleanFinishWithFilesIsFailedDirty(t *testing.T) {
 // that also wrote files classifies failed-dirty, not capped, while a capped
 // attempt with no files stays capped (issue #163).
 func TestCappedWithFilesIsFailedDirty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "cappeddirty", Kind: "planned", Brief: "b.txt"},
@@ -959,6 +982,7 @@ func TestCappedWithFilesIsFailedDirty(t *testing.T) {
 // the unit stands at inspect, its open blocking findings raise a review-open
 // andon with their count, and a dismissal clears it.
 func TestFloorOpenFindings(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
@@ -1019,6 +1043,7 @@ func TestFloorOpenFindings(t *testing.T) {
 }
 
 func TestStopFinishIsDoneAndFinished(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "clean", Kind: "planned", Brief: "b.txt"},
@@ -1086,6 +1111,7 @@ func noStepsRunFile(t *testing.T, dir, task, attempt string, n int) {
 // edits and a recorded no-plan event on its current attempt classifies
 // no-writes, stays live, and reaches the andon (issue #176).
 func TestNoWritesReachesAndon(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "quiet", Kind: "planned", Brief: "b.txt"},
@@ -1128,6 +1154,7 @@ func TestNoWritesReachesAndon(t *testing.T) {
 // the andon (issue #176): a legitimately read-only unit that stated its plan
 // is left alone.
 func TestNoWritesUntouchedWithPlan(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := []Event{
 		{TS: "2026-09-15T00:00:00Z", Task: "stated", Kind: "planned", Brief: "b.txt"},
@@ -1166,6 +1193,7 @@ func TestNoWritesUntouchedWithPlan(t *testing.T) {
 // landed as a squash shows run state stacked and reaches the andon; once
 // rebased it does not (issue #414).
 func TestStackedRunState(t *testing.T) {
+	t.Parallel()
 	dir, _, _ := stackedRepo(t)
 	if err := AppendEvent(dir, Event{Task: "B", Kind: "finished", Attempt: "r1"}); err != nil {
 		t.Fatal(err)

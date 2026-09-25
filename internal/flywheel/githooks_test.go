@@ -9,6 +9,7 @@ import (
 )
 
 func TestGitHooksWritesBothOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initGitRepoAt(t, dir)
 
@@ -65,6 +66,7 @@ func TestGitHooksWritesBothOnce(t *testing.T) {
 }
 
 func TestGitHooksLeavesExistingHookUntouched(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initGitRepoAt(t, dir)
 
@@ -106,6 +108,7 @@ func TestGitHooksLeavesExistingHookUntouched(t *testing.T) {
 }
 
 func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
+	t.Parallel()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("sh not available")
@@ -156,6 +159,7 @@ func TestGitHooksCommitMsgRequiresTrailer(t *testing.T) {
 // below the repository root gets a pre-push hook that verifies its own
 // ledger, not the root's (#308 review).
 func TestGitHooksPrePushVerifiesSubdirLedger(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	initGitRepoAt(t, dir)
 	sub := filepath.Join(dir, "services", "api")
@@ -175,6 +179,7 @@ func TestGitHooksPrePushVerifiesSubdirLedger(t *testing.T) {
 }
 
 func TestGitHooksNotARepo(t *testing.T) {
+	// not parallel: t.Setenv GIT_CEILING_DIRECTORIES
 	dir := t.TempDir()
 	// Not a repository: and git must not find one above the temp dir.
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
@@ -186,6 +191,7 @@ func TestGitHooksNotARepo(t *testing.T) {
 }
 
 func TestGitHooksPrePushSkipsDeletes(t *testing.T) {
+	t.Parallel()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("sh not available")

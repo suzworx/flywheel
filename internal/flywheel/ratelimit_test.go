@@ -8,6 +8,7 @@ import (
 // TestParseResetTime covers the reset-clause forms a limit message carries,
 // the roll-over to tomorrow, and garbage (issue #380).
 func TestParseResetTime(t *testing.T) {
+	t.Parallel()
 	la, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +46,7 @@ func TestParseResetTime(t *testing.T) {
 // TestRateLimitPaused covers the pause a rate-limited finished event's
 // reset_at puts on its model (issue #383).
 func TestRateLimitPaused(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
 	reset := now.Add(20 * time.Minute)
 	limited := func(model string, at time.Time) Event {
@@ -84,6 +86,7 @@ func TestRateLimitPaused(t *testing.T) {
 // expired reset or a disabled threshold releases it; the refusal text and the
 // andon line name the cause (issue #417).
 func TestPauseAtUtilization(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
 	reset := now.Add(90 * time.Minute)
 	fin := func(model, reason string, util float64, at time.Time) Event {

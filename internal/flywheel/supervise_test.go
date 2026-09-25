@@ -7,6 +7,7 @@ import (
 )
 
 func TestSuperviseNeedsMeasuringFinishedOnly(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
 		{TS: "2026-09-12T00:30:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Session: "w1"},
@@ -22,6 +23,7 @@ func TestSuperviseNeedsMeasuringFinishedOnly(t *testing.T) {
 }
 
 func TestSuperviseNeedsMeasuringSkipsMeasured(t *testing.T) {
+	t.Parallel()
 	rc := 0
 	events := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
@@ -41,6 +43,7 @@ func TestSuperviseNeedsMeasuringSkipsMeasured(t *testing.T) {
 // that recorded a gate but never reached owns_checked (it was interrupted) is
 // measured again (#298 review).
 func TestSuperviseNeedsMeasuringPartialPassIsNotMeasured(t *testing.T) {
+	t.Parallel()
 	rc := 0
 	events := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
@@ -57,6 +60,7 @@ func TestSuperviseNeedsMeasuringPartialPassIsNotMeasured(t *testing.T) {
 // newest finish by timestamp, not the last line: a reading after an older
 // finish but before the newest does not count (#298 review).
 func TestSuperviseNeedsMeasuringUsesNewestFinish(t *testing.T) {
+	t.Parallel()
 	rc := 0
 	events := []Event{
 		{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
@@ -71,6 +75,7 @@ func TestSuperviseNeedsMeasuringUsesNewestFinish(t *testing.T) {
 }
 
 func TestSuperviseMeasuresFinishedTask(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -113,6 +118,7 @@ func TestSuperviseMeasuresFinishedTask(t *testing.T) {
 }
 
 func TestSuperviseReportsFailingGauges(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 1"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -136,6 +142,7 @@ func TestSuperviseReportsFailingGauges(t *testing.T) {
 }
 
 func TestSuperviseSecondPassMeasuresNothing(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -162,6 +169,7 @@ func TestSuperviseSecondPassMeasuresNothing(t *testing.T) {
 // TestSuperviseRemeasuresPassedUnitAfterOwnedEdit checks that supervise
 // re-measures a unit inspected as passed after an owned file changes (#300).
 func TestSuperviseRemeasuresPassedUnitAfterOwnedEdit(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -224,6 +232,7 @@ func TestSuperviseRemeasuresPassedUnitAfterOwnedEdit(t *testing.T) {
 // TestSuperviseIgnoresPassedUnitWhenUnchanged checks that supervise does not
 // re-measure a passed unit when its owned files haven't changed.
 func TestSuperviseIgnoresPassedUnitWhenUnchanged(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -279,6 +288,7 @@ func TestSuperviseIgnoresPassedUnitWhenUnchanged(t *testing.T) {
 // TestSuperviseIgnoresEditOutsideOwns checks that supervise does not
 // re-measure a passed unit when only files outside its owns changed.
 func TestSuperviseIgnoresEditOutsideOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)

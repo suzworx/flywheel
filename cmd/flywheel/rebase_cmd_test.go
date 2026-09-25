@@ -27,6 +27,7 @@ func rebaseGit(t *testing.T, dir string, args ...string) string {
 // exit 2; a unit with no task worktree exits 1; a unit stacked on a squashed
 // base rebases onto main and exits 0.
 func TestRebaseUnitCommand(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
 	for _, args := range [][]string{{}, {"A", "B"}, {"A", "--bogus"}} {
 		if rc := rebaseMain(args, &out, &errOut); rc != 2 {

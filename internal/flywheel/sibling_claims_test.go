@@ -11,6 +11,7 @@ import (
 // sibling has a dispatched, unlanded unit, so it is attributed "lead <session>"
 // and Outside is empty (issue #339).
 func TestSiblingClaimsExcuseClaimedEdit(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -49,6 +50,7 @@ func TestSiblingClaimsExcuseClaimedEdit(t *testing.T) {
 // path's content changes after the claim, the claim no longer covers it and the
 // path is reported in Outside (issue #339).
 func TestSiblingClaimsContentChangedAfterClaim(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -87,6 +89,7 @@ func TestSiblingClaimsContentChangedAfterClaim(t *testing.T) {
 // (no longer in-flight) before validation, the lead_edit claim no longer
 // counts and the claimed path is reported in Outside (issue #339).
 func TestSiblingClaimsNoInFlightUnit(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -125,6 +128,7 @@ func TestSiblingClaimsNoInFlightUnit(t *testing.T) {
 // whose session is a worker session of the sibling's unit does not excuse the
 // path: the path is reported in Outside (issue #339).
 func TestSiblingClaimsWorkerSessionIgnored(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -163,6 +167,7 @@ func TestSiblingClaimsWorkerSessionIgnored(t *testing.T) {
 // claim for a path, the path is still reported in Outside: the old behaviour
 // is unchanged when no claim covers it (issue #339).
 func TestSiblingClaimsUnclaimedStillOutside(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -195,6 +200,7 @@ func TestSiblingClaimsUnclaimedStillOutside(t *testing.T) {
 // tried first: when both the brief owner and a lead_edit claim cover the same
 // path, it is attributed to the brief owner, not to lead (issue #339).
 func TestSiblingClaimsBriefOwnerStillWins(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -230,6 +236,7 @@ func TestSiblingClaimsBriefOwnerStillWins(t *testing.T) {
 // flight in the sibling, a claim by one unit's worker session is not
 // accepted through the other unit (#343 review).
 func TestSiblingClaimsOtherUnitsWorkerIgnored(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)

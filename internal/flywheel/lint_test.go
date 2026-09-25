@@ -54,36 +54,42 @@ func want(t *testing.T, res LintResult, wantProblems, wantWarnings []string) {
 }
 
 func TestLintBriefMissingOwnsAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"needs: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"missing owns: line"}, nil)
 }
 
 func TestLintBriefNoGoalAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\n\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"no # TASK heading"}, nil)
 }
 
 func TestLintBriefNoGateAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"no gate: line"}, nil)
 }
 
 func TestLintBriefNoChecksAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\n\n# TASK: x\nAt most one write per response\nreport\n")
 	want(t, res, []string{"no ## Checks section"}, nil)
 }
 
 func TestLintBriefOwnsMissingFileAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"owns path missing.go does not exist; if the unit creates it, annotate it: missing.go (new)"}, nil)
 }
 
 func TestLintBriefOwnsMissingFileNamesNewAnnotation(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	if len(res.Problems) != 1 {
@@ -95,6 +101,7 @@ func TestLintBriefOwnsMissingFileNamesNewAnnotation(t *testing.T) {
 }
 
 func TestLintBriefSeveralErrorsTogether(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"needs: none\n\nbody without a goal, a gate or a checks section\n")
 	want(t, res, []string{
@@ -106,36 +113,42 @@ func TestLintBriefSeveralErrorsTogether(t *testing.T) {
 }
 
 func TestLintBriefNewAndDirectoryEntriesPass(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"sub/"},
 		"owns: missing.go (new), sub/\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
 
 func TestLintBriefWarningAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nreport\n")
 	want(t, res, nil, []string{`write rule "At most one write per response" is absent`})
 }
 
 func TestLintBriefMissingNeedsIsWarning(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, []string{"no needs: line"})
 }
 
 func TestLintBriefOwnsPatternMatchPasses(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"src/", "src/a.test.ts"},
 		"owns: src/*.test.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
 
 func TestLintBriefOwnsPatternNoMatchAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"owns pattern src/*.none.ts matches no file; if the unit creates it, annotate it: src/*.none.ts (new)"}, nil)
 }
 
 func TestLintBriefOwnsPatternNoMatchNamesNewAnnotation(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	if len(res.Problems) != 1 {
@@ -152,6 +165,7 @@ func TestLintBriefOwnsPatternNoMatchNamesNewAnnotation(t *testing.T) {
 // remedy would make lint pass while ownership stayed broken, so the message
 // must not offer it.
 func TestLintBriefOwnsPatternMalformedSyntax(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/[.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"owns pattern src/[.go is invalid: syntax error in pattern; correct the pattern"}, nil)
@@ -161,18 +175,21 @@ func TestLintBriefOwnsPatternMalformedSyntax(t *testing.T) {
 }
 
 func TestLintBriefOwnsMissingFileNewSkipsCheck(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: missing.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
 
 func TestLintBriefOwnsExistingFileAnnotatedPasses(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go", "b.go"},
 		"owns: a.go, b.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
 
 func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/*.none.ts (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
@@ -185,6 +202,7 @@ func TestLintBriefOwnsPatternNewSkipsCheck(t *testing.T) {
 // ownership stayed silently broken. The syntax check must run even when the
 // entry is annotated (new).
 func TestLintBriefOwnsPatternAnnotatedMalformedNewInvalid(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), nil,
 		"owns: src/[.go (new)\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"owns pattern src/[.go is invalid: syntax error in pattern; correct the pattern"}, nil)
@@ -194,18 +212,21 @@ func TestLintBriefOwnsPatternAnnotatedMalformedNewInvalid(t *testing.T) {
 }
 
 func TestLintBriefLiveGateRepeatsGateAlone(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\nlive-gate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"live-gate 1 repeats gate 1; a live gate must run the real path, not the mocked one"}, nil)
 }
 
 func TestLintBriefDistinctLiveGatePasses(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\nlive-gate: exit 0\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 }
 
 func TestLintBriefUnreadable(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, err := LintBrief(dir, filepath.Join(dir, "nope.txt"))
 	if err == nil {
@@ -214,12 +235,14 @@ func TestLintBriefUnreadable(t *testing.T) {
 }
 
 func TestLintBriefEmptyExclusiveEntry(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nexclusive:   \nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, []string{"exclusive: entry is empty"}, nil)
 }
 
 func TestLintBriefNormalExclusiveEntryPasses(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nexclusive: db\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
@@ -229,6 +252,7 @@ func TestLintBriefNormalExclusiveEntryPasses(t *testing.T) {
 // inside double quotes is command substitution and lint warns about it; single
 // quotes, "$(...)" and an escaped backtick are fine.
 func TestLintGateBacktick(t *testing.T) {
+	t.Parallel()
 	const warning = "gate 1 has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file"
 	cases := []struct {
 		name, gate string
@@ -255,6 +279,7 @@ func TestLintGateBacktick(t *testing.T) {
 // TestLintNegated checks a negated owns entry (issue #388) is never
 // existence-checked, and one no positive entry covers is a warning.
 func TestLintNegated(t *testing.T) {
+	t.Parallel()
 	const tail = "\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n"
 	cases := []struct {
 		name  string
@@ -282,6 +307,7 @@ func TestLintNegated(t *testing.T) {
 // pass cleanly and count as gates, while an unknown marker is a warning, not
 // a problem (issue #411).
 func TestLintBriefQuietGateMarkers(t *testing.T) {
+	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate[quiet]: ./hil\nlive-gate[quiet]: ./probe\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)

@@ -12,6 +12,7 @@ import (
 
 // TestDoctorLocalServed tests that a served model returns ok true.
 func TestDoctorLocalServed(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			w.WriteHeader(http.StatusNotFound)
@@ -41,6 +42,7 @@ func TestDoctorLocalServed(t *testing.T) {
 
 // TestDoctorLocalNotPulled tests that a missing model returns ClassLocalMissing.
 func TestDoctorLocalNotPulled(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			w.WriteHeader(http.StatusNotFound)
@@ -70,6 +72,7 @@ func TestDoctorLocalNotPulled(t *testing.T) {
 
 // TestDoctorLocalDown tests that a closed server returns ClassLocalDown.
 func TestDoctorLocalDown(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -91,6 +94,7 @@ func TestDoctorLocalDown(t *testing.T) {
 
 // TestDoctorLocalNon200 tests that a 500 response returns ClassLocalDown.
 func TestDoctorLocalNon200(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -115,6 +119,7 @@ func TestDoctorLocalNon200(t *testing.T) {
 
 // TestDoctorLocalOtherModelsUnchecked tests that non-local models are not checked.
 func TestDoctorLocalOtherModelsUnchecked(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("server handler was called, but non-local models should not trigger a request")
 	}))
@@ -135,6 +140,7 @@ func TestDoctorLocalOtherModelsUnchecked(t *testing.T) {
 
 // TestDoctorLocalUnknownWorker tests that DoctorWorker returns an error for unknown workers.
 func TestDoctorLocalUnknownWorker(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -151,6 +157,7 @@ func TestDoctorLocalUnknownWorker(t *testing.T) {
 // non-loopback baseURL is never requested directly (#330 review): the check
 // is skipped and left to the adapter probe.
 func TestDoctorLocalNonLoopbackNotContacted(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 	if _, err := InitLocal(dir, "m1", "http://10.255.255.1:9/v1"); err != nil {

@@ -75,6 +75,7 @@ func progressEvents() []Event {
 }
 
 func TestGoalsProgressCounts(t *testing.T) {
+	t.Parallel()
 	gs := Goals(progressEvents())
 	if len(gs) != 2 {
 		t.Fatalf("Goals() = %d views, want 2", len(gs))
@@ -112,6 +113,7 @@ func TestGoalsProgressCounts(t *testing.T) {
 }
 
 func TestGoalsLatestWinsAndCreatedAt(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		goalEvent("2026-09-01T00:00:00Z", "g1", "Old title", "active", []string{"t1"}),
 		goalEvent("2026-09-02T00:00:00Z", "g1", "Ship status", "met", []string{"t1", "t2"}),
@@ -136,6 +138,7 @@ func TestGoalsLatestWinsAndCreatedAt(t *testing.T) {
 }
 
 func TestGoalsSortsById(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		goalEvent("2026-09-01T00:00:00Z", "g2", "Two", "active", nil),
 		goalEvent("2026-09-01T00:00:01Z", "g1", "One", "active", nil),

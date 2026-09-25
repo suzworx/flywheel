@@ -12,6 +12,7 @@ import (
 // TestLandMergeFastForwards tests that LandMerge succeeds when main advanced
 // by an unrelated commit meanwhile.
 func TestLandMergeFastForwards(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -119,6 +120,7 @@ func TestLandMergeFastForwards(t *testing.T) {
 // TestLandMergeConflictWritesDelta tests that a rebase conflict writes a
 // correction brief and returns the correct status.
 func TestLandMergeConflictWritesDelta(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -266,6 +268,7 @@ func TestLandMergeConflictWritesDelta(t *testing.T) {
 // TestLandMergeNotPassedRefused tests that a task without passing status
 // is refused.
 func TestLandMergeNotPassedRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -325,6 +328,7 @@ func TestLandMergeNotPassedRefused(t *testing.T) {
 // TestLandMergeNoWorktreeRefused tests that a task without a worktree is
 // refused.
 func TestLandMergeNoWorktreeRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -379,6 +383,7 @@ func TestLandMergeNoWorktreeRefused(t *testing.T) {
 // TestLandMergeDirtyWorktreeRefused tests that a worktree with uncommitted
 // changes is refused.
 func TestLandMergeDirtyWorktreeRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -454,6 +459,7 @@ func TestLandMergeDirtyWorktreeRefused(t *testing.T) {
 // TestLandMergeGateFailsRefused tests that gates failing after rebase are
 // refused.
 func TestLandMergeGateFailsRefused(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -540,6 +546,7 @@ func TestLandMergeGateFailsRefused(t *testing.T) {
 // TestLandMergeAlreadyUpToDate tests that when main did not move, Rebased
 // is false but the landing succeeds.
 func TestLandMergeAlreadyUpToDate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	landRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n"), 0o644); err != nil {
@@ -666,6 +673,7 @@ func landMergeSetup(t *testing.T) (dir, wt string) {
 // the gates (T9: an untriaged signal) leaves the integration branch where it
 // was, and that --allow-untriaged then lands (#345 review).
 func TestLandMergeRefusalKeepsBranch(t *testing.T) {
+	t.Parallel()
 	dir, _ := landMergeSetup(t)
 	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:03:00Z", Task: "T1", Kind: "signal", Signal: "no-plan", Attempt: "r1"}); err != nil {
 		t.Fatalf("append signal: %v", err)
@@ -691,6 +699,7 @@ func TestLandMergeRefusalKeepsBranch(t *testing.T) {
 // TestLandMergeWrongBranchRefused checks that a worktree switched away from
 // fw/<task> is refused instead of landing another branch (#345 review).
 func TestLandMergeWrongBranchRefused(t *testing.T) {
+	t.Parallel()
 	dir, wt := landMergeSetup(t)
 	git(t, wt, []string{"checkout", "-q", "-b", "experiment"})
 	before := git(t, dir, []string{"rev-parse", "HEAD"})
@@ -707,6 +716,7 @@ func TestLandMergeWrongBranchRefused(t *testing.T) {
 // TestLandMergeOntoMustBeABranch checks that --onto is never passed to git
 // as an option and must name a local branch (#345 review).
 func TestLandMergeOntoMustBeABranch(t *testing.T) {
+	t.Parallel()
 	dir, _ := landMergeSetup(t)
 	for _, onto := range []string{"--exec=touch pwned", "-x", "no-such-branch"} {
 		_, err := LandMerge("T1", LandMergeOptions{Dir: dir, Onto: onto})

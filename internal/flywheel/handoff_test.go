@@ -20,6 +20,7 @@ func appendHandoffEvents(t *testing.T, dir string, events []Event) {
 }
 
 func TestHandoffFixtureDerivesSections(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendHandoffEvents(t, dir, []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -59,6 +60,7 @@ func TestHandoffFixtureDerivesSections(t *testing.T) {
 }
 
 func TestHandoffUnmetNeedKeepsTaskOutOfReady(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendHandoffEvents(t, dir, []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "t1", Kind: "planned", Needs: []string{"t2"}},
@@ -88,6 +90,7 @@ func TestHandoffUnmetNeedKeepsTaskOutOfReady(t *testing.T) {
 }
 
 func TestHandoffEmptyLogPrintsNoneSections(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	h, err := HandoffSummary(dir)
 	if err != nil {
@@ -111,6 +114,7 @@ func TestHandoffEmptyLogPrintsNoneSections(t *testing.T) {
 }
 
 func TestHandoffModelComesFromConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.Workers[0].Model = "openrouter/other/flash-1"
@@ -133,6 +137,7 @@ func TestHandoffModelComesFromConfig(t *testing.T) {
 }
 
 func TestHandoffBlockReplacedOnSecondRun(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	md := "before\n<!-- flywheel:handoff:start -->\nOLD SUMMARY\n<!-- flywheel:handoff:end -->\nafter\n"
@@ -181,6 +186,7 @@ func TestHandoffBlockReplacedOnSecondRun(t *testing.T) {
 }
 
 func TestHandoffCarriesUntriagedSignals(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendHandoffEvents(t, dir, []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
@@ -204,6 +210,7 @@ func TestHandoffCarriesUntriagedSignals(t *testing.T) {
 }
 
 func TestHandoffUntriagedNoneWhenTriaged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	appendHandoffEvents(t, dir, []Event{
 		{TS: "2026-09-14T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},

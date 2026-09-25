@@ -19,6 +19,7 @@ func writeAttemptBrief(t *testing.T, dir, name, body string) string {
 }
 
 func TestAttemptBriefFreshUsesPlannedBrief(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	events := []Event{
@@ -38,6 +39,7 @@ func TestAttemptBriefFreshUsesPlannedBrief(t *testing.T) {
 }
 
 func TestAttemptBriefFreshAttemptIgnoresDifferentPromptPath(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "copy.txt", "owns: a.go\nneeds: none\ngate: exit 9\n\n# TASK\n")
@@ -58,6 +60,7 @@ func TestAttemptBriefFreshAttemptIgnoresDifferentPromptPath(t *testing.T) {
 }
 
 func TestAttemptBriefCorrectionIdenticalContentUsesBriefAlone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	body := "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n"
 	writeAttemptBrief(t, dir, "brief.txt", body)
@@ -79,6 +82,7 @@ func TestAttemptBriefCorrectionIdenticalContentUsesBriefAlone(t *testing.T) {
 }
 
 func TestAttemptBriefAmendedReplacesPlanned(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "brief2.txt", "owns: b.go\nneeds: none\ngate: exit 1\n\n# TASK\n")
@@ -99,6 +103,7 @@ func TestAttemptBriefAmendedReplacesPlanned(t *testing.T) {
 }
 
 func TestAttemptBriefCorrectionDeltaWithGatesOverrides(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go\ngate: exit 2\n\n# TASK\n")
@@ -120,6 +125,7 @@ func TestAttemptBriefCorrectionDeltaWithGatesOverrides(t *testing.T) {
 }
 
 func TestAttemptBriefCorrectionDeltaNoGatesFallsBack(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go\n\n# TASK\n")
@@ -138,6 +144,7 @@ func TestAttemptBriefCorrectionDeltaNoGatesFallsBack(t *testing.T) {
 }
 
 func TestAttemptBriefOwnsUnionNoDuplicates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go, b.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go, c.go\ngate: exit 0\n\n# TASK\n")
@@ -161,6 +168,7 @@ func TestAttemptBriefOwnsUnionNoDuplicates(t *testing.T) {
 }
 
 func TestAttemptBriefMissingDeltaIsError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	events := []Event{
@@ -175,6 +183,7 @@ func TestAttemptBriefMissingDeltaIsError(t *testing.T) {
 }
 
 func TestAttemptBriefNoPlannedEventIsError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, _, err := AttemptBrief(dir, nil, "T1")
 	if err == nil {
@@ -192,6 +201,7 @@ func TestAttemptBriefNoPlannedEventIsError(t *testing.T) {
 // declaring exclusive: on a base with no exclusive: yields a merged header
 // carrying the delta's resource (issue #242).
 func TestAttemptBriefCorrectionDeltaExclusiveAdded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go\nexclusive: db\ngate: exit 0\n\n# TASK\n")
@@ -215,6 +225,7 @@ func TestAttemptBriefCorrectionDeltaExclusiveAdded(t *testing.T) {
 // it (issue #242). One exclusive: line is one resource name, so the delta
 // repeats a on its own line to exercise the dedup.
 func TestAttemptBriefCorrectionDeltaExclusiveUnionNoDuplicates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nexclusive: a\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go\nexclusive: b\nexclusive: a\ngate: exit 0\n\n# TASK\n")
@@ -244,6 +255,7 @@ func TestAttemptBriefCorrectionDeltaExclusiveUnionNoDuplicates(t *testing.T) {
 // passes, because the pass is measured against the recorded header. This is
 // the test that decides whether the unit is correct.
 func TestLedgerHeaderBriefEditedAfterPassKeepsPass(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -304,6 +316,7 @@ func TestLedgerHeaderBriefEditedAfterPassKeepsPass(t *testing.T) {
 // new gate set is in force for passes recorded after it. The pass with only
 // two readings must fail T3 naming the third gate.
 func TestLedgerHeaderAmendedInPlaceBeforePassApplies(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -372,6 +385,7 @@ func TestLedgerHeaderAmendedInPlaceBeforePassApplies(t *testing.T) {
 // the brief file, exactly as before the header field existed. The edit after
 // the planned event is picked up by the file read.
 func TestLedgerHeaderAbsentFallsBackToFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\n\n# TASK: w259\n")
 	events := []Event{
@@ -399,6 +413,7 @@ func TestLedgerHeaderAbsentFallsBackToFile(t *testing.T) {
 // gates/owns/exclusive merging exactly as today — and without the delta file
 // ever existing, proving the ledger header, not the file, is what counts.
 func TestLedgerHeaderCorrectionDeltaRecordedAndUsed(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nexclusive: cache\nneeds: none\ngate: exit 0\n\n# TASK\n")
 	delta := BriefHeader{
@@ -449,6 +464,7 @@ func TestLedgerHeaderCorrectionDeltaRecordedAndUsed(t *testing.T) {
 // base planned header records 2 gates; the file is edited to 3 after the
 // dispatch; the fallback must still return the recorded 2.
 func TestFreshDispatchHeaderAbsentFallsBackToBase(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\ngate: exit 0\n\n# TASK: w259\n")
 	base, err := ParseBriefHeader(filepath.Join(dir, "brief.txt"))
@@ -474,6 +490,7 @@ func TestFreshDispatchHeaderAbsentFallsBackToBase(t *testing.T) {
 // with its own gate still overrides, owns still unions base-first without
 // duplicates, and the delta's exclusive adds to the base's (issue #242).
 func TestAttemptBriefCorrectionDeltaMergesGatesOwnsExclusiveTogether(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nexclusive: cache\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "delta.txt", "owns: b.go, a.go\nexclusive: db\ngate: exit 2\n\n# TASK\n")
@@ -511,6 +528,7 @@ func TestAttemptBriefCorrectionDeltaMergesGatesOwnsExclusiveTogether(t *testing.
 // TestAttemptBriefFreshAmendedAfterDispatchWidensOwns checks that an amendment
 // after dispatch widens the attempt's owns and takes effect (issue #281).
 func TestAttemptBriefFreshAmendedAfterDispatchWidensOwns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\ngate: exit 0\n\n# TASK\n")
 	writeAttemptBrief(t, dir, "amended.txt", "owns: a.go, b.go\ngate: exit 0\n\n# TASK\n")
@@ -550,6 +568,7 @@ func TestAttemptBriefFreshAmendedAfterDispatchWidensOwns(t *testing.T) {
 // amendment happens BEFORE dispatch with the same owns in the dispatch brief,
 // there are no duplicates in the result.
 func TestAttemptBriefFreshAmendedBeforeDispatchIgnored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go, b.go\ngate: exit 0\n\n# TASK\n")
 

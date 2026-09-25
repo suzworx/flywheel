@@ -8,6 +8,7 @@ import (
 )
 
 func TestTelemetryRunAdapterFromDispatch(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Attempt: "r1", Kind: "dispatched", Adapter: "claude"},
 		{Task: "T1", Attempt: "r1", Kind: "started"},
@@ -43,6 +44,7 @@ func TestTelemetryRunAdapterFromDispatch(t *testing.T) {
 }
 
 func TestTelemetryClaudeRunCountsLiveSteps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, err := Init(dir, false)
 	if err != nil {
@@ -96,6 +98,7 @@ func TestTelemetryClaudeRunCountsLiveSteps(t *testing.T) {
 }
 
 func TestTelemetryCodexRunCountsLiveSteps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, err := Init(dir, false)
 	if err != nil {
@@ -149,6 +152,7 @@ func TestTelemetryCodexRunCountsLiveSteps(t *testing.T) {
 }
 
 func TestTelemetryCodexFileChangeAllPaths(t *testing.T) {
+	t.Parallel()
 	jsonLine := []byte(`{"type":"item.completed","item":{"id":"i","type":"file_change","changes":[{"path":"a.go","kind":"delete"},{"path":"b.go","kind":"add"}],"status":"completed"}}`)
 	codex := codexAdapter{}
 	obs, ok := codex.Parse(jsonLine)

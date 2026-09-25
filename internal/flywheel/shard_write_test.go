@@ -11,6 +11,7 @@ import (
 )
 
 func TestLegacyAppendUnchanged(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -35,6 +36,7 @@ func TestLegacyAppendUnchanged(t *testing.T) {
 }
 
 func TestAppendShardedRoutesByTaskFloorSession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -75,6 +77,7 @@ func TestAppendShardedRoutesByTaskFloorSession(t *testing.T) {
 }
 
 func TestAppendShardedFirstLineCarriesGenesis(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -109,6 +112,7 @@ func TestAppendShardedFirstLineCarriesGenesis(t *testing.T) {
 }
 
 func TestAppendShardedRefusesCrossShardBatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -134,6 +138,7 @@ func TestAppendShardedRefusesCrossShardBatch(t *testing.T) {
 }
 
 func TestAppendRefusesShardedKind(t *testing.T) {
+	t.Parallel()
 	// Test in both legacy and sharded layouts
 	for _, setupSharded := range []bool{false, true} {
 		dir := t.TempDir()
@@ -154,6 +159,7 @@ func TestAppendRefusesShardedKind(t *testing.T) {
 }
 
 func TestNextStampTable(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2020, 1, 1, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name     string
@@ -211,6 +217,7 @@ func TestNextStampTable(t *testing.T) {
 }
 
 func TestAppendShardedMonotonicPerShard(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -242,6 +249,7 @@ func TestAppendShardedMonotonicPerShard(t *testing.T) {
 }
 
 func TestAppendShardedBatchSharesOneInstant(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -274,6 +282,7 @@ func TestAppendShardedBatchSharesOneInstant(t *testing.T) {
 }
 
 func TestAppendShardedExplicitTSUntouched(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -300,6 +309,7 @@ func TestAppendShardedExplicitTSUntouched(t *testing.T) {
 }
 
 func TestAppendShardedCausalStampAfterRead(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -348,6 +358,7 @@ func TestAppendShardedCausalStampAfterRead(t *testing.T) {
 }
 
 func TestAppendShardedConcurrent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -435,6 +446,7 @@ func TestAppendShardedConcurrent(t *testing.T) {
 }
 
 func TestValidateSharded(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		event   Event
@@ -467,6 +479,7 @@ func TestValidateSharded(t *testing.T) {
 }
 
 func TestAppendLearningEventsSortsAfterSignal(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init: %v", err)

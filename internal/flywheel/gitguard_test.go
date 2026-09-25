@@ -11,6 +11,7 @@ import (
 )
 
 func TestGitGuardRefusesHistoryWrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		args []string
 		want string
@@ -42,6 +43,7 @@ func TestGitGuardRefusesHistoryWrites(t *testing.T) {
 }
 
 func TestGitGuardAllowsReads(t *testing.T) {
+	t.Parallel()
 	tests := []string{"status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "blame", "config"}
 
 	for _, subcmd := range tests {
@@ -113,6 +115,7 @@ func isolateGuardEnv(t *testing.T) {
 // TestGitGuardTestsIsolateLiveLog checks that a refusal under isolateGuardEnv
 // is logged to the test's own log, never to the enclosing attempt's (#442).
 func TestGitGuardTestsIsolateLiveLog(t *testing.T) {
+	// not parallel: isolateGuardEnv and t.Setenv change PATH and the guard env
 	live := filepath.Join(t.TempDir(), "T1.r1.bin")
 	t.Setenv(GitGuardEnv, live)
 	t.Run("isolated", func(t *testing.T) {
@@ -131,6 +134,7 @@ func TestGitGuardTestsIsolateLiveLog(t *testing.T) {
 }
 
 func TestGitGuardPassesThrough(t *testing.T) {
+	// not parallel: isolateGuardEnv changes PATH and the guard env
 	isolateGuardEnv(t)
 	var out, errb bytes.Buffer
 	rc := GitGuard([]string{"--version"}, nil, &out, &errb)
@@ -143,6 +147,7 @@ func TestGitGuardPassesThrough(t *testing.T) {
 }
 
 func TestGitGuardRefusalExitsOne(t *testing.T) {
+	// not parallel: isolateGuardEnv changes PATH and the guard env
 	isolateGuardEnv(t)
 	var out, errb bytes.Buffer
 	rc := GitGuard([]string{"commit", "-m", "test"}, nil, &out, &errb)
@@ -155,6 +160,7 @@ func TestGitGuardRefusalExitsOne(t *testing.T) {
 }
 
 func TestGitGuardSkipsGuardDir(t *testing.T) {
+	// not parallel: isolateGuardEnv and t.Setenv change PATH and the guard env
 	isolateGuardEnv(t)
 	guardDir := t.TempDir()
 	t.Setenv(GitGuardEnv, guardDir)
@@ -184,6 +190,7 @@ func TestGitGuardSkipsGuardDir(t *testing.T) {
 }
 
 func TestGitGuardInstall(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	bin, env, err := installGitGuard(dir, "T1", "r1")
 	if err != nil {
@@ -234,6 +241,7 @@ func TestGitGuardInstall(t *testing.T) {
 }
 
 func TestGitGuardBranchListing(t *testing.T) {
+	t.Parallel()
 	tests := [][]string{
 		{"branch", "-a"},
 		{"branch", "-r"},
@@ -253,6 +261,7 @@ func TestGitGuardBranchListing(t *testing.T) {
 // TestGitGuardSeparateValueOptions checks that a global option given its value
 // as the next argument (--git-dir /x) is skipped, not taken as the subcommand.
 func TestGitGuardSeparateValueOptions(t *testing.T) {
+	t.Parallel()
 	if refused, sub := GitGuardRefused([]string{"--git-dir", "/x/.git", "commit", "-m", "m"}); !refused || sub != "commit" {
 		t.Errorf("--git-dir /x commit = %v %q, want refused commit", refused, sub)
 	}
@@ -265,6 +274,7 @@ func TestGitGuardSeparateValueOptions(t *testing.T) {
 // and commands that mutate the index or working tree, are refused; branch,
 // tag, config, stash and worktree pass only in their read-only forms.
 func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
+	t.Parallel()
 	refused := [][]string{
 		{"-c", "alias.publish=push", "publish", "origin", "main"},
 		{"publish"},
@@ -298,6 +308,7 @@ func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
 // TestGitGuardIndexWrites checks that every index write a worker could leave
 // behind (#391: intent-to-add entries it could not undo) is refused.
 func TestGitGuardIndexWrites(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"add", "a.go"}, {"add", "-N", "a.go"}, {"add", "--intent-to-add", "a.go"},
 		{"rm", "--cached", "a.go"}, {"update-index", "--add", "a.go"},
@@ -340,6 +351,7 @@ func newRepo(t *testing.T) string {
 // repository only: a gate's tests must be able to init and commit in their own
 // temporary repositories (#325).
 func TestGitGuardScopedToUnitRepo(t *testing.T) {
+	// not parallel: isolateGuardEnv and t.Setenv change PATH and the guard env
 	isolateGuardEnv(t)
 	unit, other := newRepo(t), newRepo(t)
 	t.Setenv(GitGuardRepoEnv, commonDir(t, unit))
@@ -363,6 +375,7 @@ func TestGitGuardScopedToUnitRepo(t *testing.T) {
 // TestGitGuardLogsWrites checks that the guard logs each write-class call
 // beside its bin directory, and nothing for a read (#361).
 func TestGitGuardLogsWrites(t *testing.T) {
+	// not parallel: isolateGuardEnv and t.Setenv change PATH and the guard env
 	isolateGuardEnv(t)
 	unit := newRepo(t)
 	binDir := filepath.Join(t.TempDir(), "T1.r1.bin")

@@ -15,6 +15,7 @@ import (
 // durably in the log, the failure names the recorded id, and the message
 // never invites a re-add.
 func TestFeedbackAddRenderFailureRecordedNotLost(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
@@ -62,6 +63,7 @@ func TestFeedbackAddRenderFailureRecordedNotLost(t *testing.T) {
 // durable the moment it returns, so a later read failure must never invite a
 // re-add either.
 func TestFeedbackAddReadFailureRecordedNotLost(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// A title larger than the log parser's 16 MiB line budget makes the
 	// post-append reread fail ("token too long") while the append itself
@@ -96,6 +98,7 @@ func TestFeedbackAddReadFailureRecordedNotLost(t *testing.T) {
 // "none" when there are none; otherwise the count, one line per signal (the
 // run file only when recorded) and a triage hint naming the first signal.
 func TestPrintUntriaged(t *testing.T) {
+	t.Parallel()
 	var none bytes.Buffer
 	printUntriaged(&none, nil)
 	if got := none.String(); got != "untriaged signals: none\n" {

@@ -6,6 +6,7 @@ import (
 )
 
 func TestNeedsTargetsDropsNone(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   []string
@@ -28,6 +29,7 @@ func TestNeedsTargetsDropsNone(t *testing.T) {
 }
 
 func TestNeedsTargetsSplitsCommas(t *testing.T) {
+	t.Parallel()
 	got := NeedTargets("T1, T2", "T3", "T1")
 	want := []string{"T1", "T2", "T3"}
 	if len(got) != len(want) {
@@ -42,6 +44,7 @@ func TestNeedsTargetsSplitsCommas(t *testing.T) {
 }
 
 func TestNeedsHeaderNoneIsNoDependency(t *testing.T) {
+	t.Parallel()
 	// Brief with needs: none should have Needs empty but NeedsDeclared true
 	path := writeBrief(t, "owns: a.go\nneeds: none\ngate: true\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
@@ -70,6 +73,7 @@ func TestNeedsHeaderNoneIsNoDependency(t *testing.T) {
 }
 
 func TestNeedsDeriveLegacyNone(t *testing.T) {
+	t.Parallel()
 	// A planned event with Needs ["none"] should derive to task with no Needs
 	events := []Event{{
 		TS:    "2026-09-19T00:00:00Z",
@@ -88,6 +92,7 @@ func TestNeedsDeriveLegacyNone(t *testing.T) {
 }
 
 func TestNeedsReconcileDispatchesNone(t *testing.T) {
+	t.Parallel()
 	// Same planned event with Needs ["none"]; Reconcile should dispatch it
 	events := []Event{{
 		TS:    "2026-09-19T00:00:00Z",
@@ -112,6 +117,7 @@ func TestNeedsReconcileDispatchesNone(t *testing.T) {
 // TestNeedsRepeatedLinesDeduped checks that an id named on two needs: lines is
 // kept once (#310 review).
 func TestNeedsRepeatedLinesDeduped(t *testing.T) {
+	t.Parallel()
 	path := writeBrief(t, "owns: a.go\nneeds: T1\nneeds: T1, T2\ngate: true\n\n# TASK: x\n")
 	h, err := ParseBriefHeader(path)
 	if err != nil {

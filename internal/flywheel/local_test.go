@@ -8,6 +8,7 @@ import (
 )
 
 func TestInitLocalWritesProviderAndWorker(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -78,6 +79,7 @@ func TestInitLocalWritesProviderAndWorker(t *testing.T) {
 }
 
 func TestInitLocalRerunReplaces(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -153,6 +155,7 @@ func TestInitLocalRerunReplaces(t *testing.T) {
 }
 
 func TestInitLocalKeepsOtherKeys(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -198,6 +201,7 @@ func TestInitLocalKeepsOtherKeys(t *testing.T) {
 }
 
 func TestInitLocalRejectsBadURL(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -211,6 +215,7 @@ func TestInitLocalRejectsBadURL(t *testing.T) {
 }
 
 func TestInitLocalRejectsEmptyModel(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	Init(dir, false)
 
@@ -223,6 +228,7 @@ func TestInitLocalRejectsEmptyModel(t *testing.T) {
 // TestInitLocalNullPolicyIsAnError checks that a policy file holding JSON null
 // is reported, not a panic (#327 review).
 func TestInitLocalNullPolicyIsAnError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatal(err)
@@ -238,6 +244,7 @@ func TestInitLocalNullPolicyIsAnError(t *testing.T) {
 // TestInitLocalKeepsTunedConcurrency checks that a rerun keeps a max_parallel
 // the operator tuned for the host, changing only the adapter and model.
 func TestInitLocalKeepsTunedConcurrency(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatal(err)

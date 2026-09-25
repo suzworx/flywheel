@@ -10,6 +10,7 @@ import (
 )
 
 func TestReadKeyArrows(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seq  string
@@ -39,6 +40,7 @@ func TestReadKeyArrows(t *testing.T) {
 }
 
 func TestReadKeyNavigation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seq  string
@@ -69,6 +71,7 @@ func TestReadKeyNavigation(t *testing.T) {
 }
 
 func TestReadKeyControl(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seq  string
@@ -96,6 +99,7 @@ func TestReadKeyControl(t *testing.T) {
 }
 
 func TestReadKeyLoneEsc(t *testing.T) {
+	t.Parallel()
 	r := bufio.NewReader(strings.NewReader("\x1b"))
 	k, err := ReadKey(r)
 	if err != nil {
@@ -113,6 +117,7 @@ func TestReadKeyLoneEsc(t *testing.T) {
 }
 
 func TestReadKeyRunes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seq  string
@@ -163,6 +168,7 @@ func TestReadKeyRunes(t *testing.T) {
 }
 
 func TestIsTerminalFile(t *testing.T) {
+	t.Parallel()
 	// Test with a regular temp file (not a terminal)
 	f := t.TempDir()
 	tmpFile := f + "/test.txt"
@@ -194,6 +200,7 @@ func TestIsTerminalFile(t *testing.T) {
 // Alt-modified key is that key with Alt set and does not swallow the key
 // after it.
 func TestReadKeyModifiedAndAltSequences(t *testing.T) {
+	t.Parallel()
 	r := bufio.NewReader(strings.NewReader("\x1b[1;5Aj\x1bxk"))
 	want := []Key{{Kind: KeyUp}, {Kind: KeyRune, Rune: 'j'}, {Kind: KeyRune, Rune: 'x', Alt: true}, {Kind: KeyRune, Rune: 'k'}}
 	for i, w := range want {
@@ -210,6 +217,7 @@ func TestReadKeyModifiedAndAltSequences(t *testing.T) {
 // TestReadKeyAltKeys checks the Alt contract: ESC then a key in the same
 // burst is that key with Alt set; ESC ESC is Alt-Esc; Alt-Enter is Enter.
 func TestReadKeyAltKeys(t *testing.T) {
+	t.Parallel()
 	r := bufio.NewReader(strings.NewReader("\x1b\x1b\x1b\r\x1bé"))
 	want := []Key{{Kind: KeyEsc, Alt: true}, {Kind: KeyEnter, Alt: true}, {Kind: KeyRune, Rune: 'é', Alt: true}}
 	for i, w := range want {
@@ -227,6 +235,7 @@ func TestReadKeyAltKeys(t *testing.T) {
 // escape sequence that arrives in pieces (#341 review): ESC, then "[A" a
 // moment later, is Up, not Esc followed by '[' and 'A'.
 func TestReaderFragmentedSequence(t *testing.T) {
+	t.Parallel()
 	pr, pw := io.Pipe()
 	defer pw.Close()
 	r := NewReader(pr, 2*time.Second)
@@ -251,6 +260,7 @@ func TestReaderFragmentedSequence(t *testing.T) {
 // TestReaderLoneEscAfterDelay checks that a Reader reports a lone ESC once
 // the delay passes with nothing more, then keeps decoding.
 func TestReaderLoneEscAfterDelay(t *testing.T) {
+	t.Parallel()
 	pr, pw := io.Pipe()
 	defer pw.Close()
 	r := NewReader(pr, 10*time.Millisecond)
@@ -269,6 +279,7 @@ func TestReaderLoneEscAfterDelay(t *testing.T) {
 // TestReaderEOF checks that a Reader decodes what it read, multi-byte runes
 // included, and then returns the reader's error.
 func TestReaderEOF(t *testing.T) {
+	t.Parallel()
 	r := NewReader(strings.NewReader("é\x1b[Bz"), 0)
 	for i, w := range []Key{{Kind: KeyRune, Rune: 'é'}, {Kind: KeyDown}, {Kind: KeyRune, Rune: 'z'}} {
 		got, err := r.ReadKey()

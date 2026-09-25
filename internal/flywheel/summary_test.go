@@ -8,6 +8,7 @@ import (
 )
 
 func TestFactorySummaryFreshInit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	_, _, err := InitSeeded(dir, false, "", "", false)
@@ -41,6 +42,7 @@ func TestFactorySummaryFreshInit(t *testing.T) {
 }
 
 func TestFactorySummaryShowsLimits(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	cfg := DefaultConfig()
@@ -73,6 +75,7 @@ func TestFactorySummaryShowsLimits(t *testing.T) {
 }
 
 func TestFactorySummaryDetectsHooks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	initGitRepoAt(t, dir)
@@ -104,6 +107,7 @@ func TestFactorySummaryDetectsHooks(t *testing.T) {
 }
 
 func TestFactorySummaryMaxParallelZeroIsOne(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	cfg := DefaultConfig()
@@ -127,6 +131,7 @@ func TestFactorySummaryMaxParallelZeroIsOne(t *testing.T) {
 // prints exactly, an omitted breaker cooldown prints its effective 10m, and an
 // unrelated .claude/settings.json is not "agent hooks installed".
 func TestFactorySummaryReviewCases(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatal(err)

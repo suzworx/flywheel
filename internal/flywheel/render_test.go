@@ -31,6 +31,7 @@ func fixtureFloor(t *testing.T) Floor {
 }
 
 func TestRenderTextGolden(t *testing.T) {
+	t.Parallel()
 	fl := fixtureFloor(t)
 	var buf bytes.Buffer
 	RenderText(&buf, fl, 100, false)
@@ -45,6 +46,7 @@ func TestRenderTextGolden(t *testing.T) {
 }
 
 func TestRenderJSON(t *testing.T) {
+	t.Parallel()
 	fl := fixtureFloor(t)
 	var buf bytes.Buffer
 	RenderJSON(&buf, fl)
@@ -77,6 +79,7 @@ func TestRenderJSON(t *testing.T) {
 }
 
 func TestRenderTextWidth(t *testing.T) {
+	t.Parallel()
 	// 80 stays the minimum layout; the extra (width-80) columns are given to
 	// MODEL (two thirds) and TASK (one third). At width 120 a 40-character
 	// model id is shown in full; at width 80 the table keeps the fixed layout.
@@ -104,6 +107,7 @@ func TestRenderTextWidth(t *testing.T) {
 }
 
 func TestHumanAge(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		seconds int
 		want    string
@@ -122,6 +126,7 @@ func TestHumanAge(t *testing.T) {
 }
 
 func TestRenderTextPassedRejectedStages(t *testing.T) {
+	t.Parallel()
 	fl := Floor{
 		Refreshed: time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC),
 		Units: []Unit{
@@ -144,6 +149,7 @@ func TestRenderTextPassedRejectedStages(t *testing.T) {
 // peak reasoning figure, a capped unit with no recorded peak still renders
 // plain "capped", and every other state is unaffected (issue #84).
 func TestRenderTextCappedShowsPeak(t *testing.T) {
+	t.Parallel()
 	fl := Floor{
 		Refreshed: time.Date(2026, 9, 12, 1, 0, 0, 0, time.UTC),
 		Units: []Unit{
@@ -169,6 +175,7 @@ func TestRenderTextCappedShowsPeak(t *testing.T) {
 // TestRenderJSONCarriesPeakReasoning checks the units[] JSON entry carries
 // peak_reasoning, 0 when none (issue #84).
 func TestRenderJSONCarriesPeakReasoning(t *testing.T) {
+	t.Parallel()
 	fl := Floor{
 		Units: []Unit{
 			{Task: "peaked", RunState: "capped", Peak: 50},
@@ -196,6 +203,7 @@ func TestRenderJSONCarriesPeakReasoning(t *testing.T) {
 }
 
 func TestRenderOutputFormats(t *testing.T) {
+	t.Parallel()
 	fl := Floor{Output: Output{LandedToday: 1, Finished: 1, Rework: 0.33333, Tokens: 260, Cost: 0.001597088}}
 	var buf bytes.Buffer
 	RenderText(&buf, fl, 80, false)

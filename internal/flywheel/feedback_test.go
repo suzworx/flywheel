@@ -12,6 +12,7 @@ import (
 )
 
 func TestLearningsAssignsSequentialIDs(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning",
 		Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "runs/t1.r1.jsonl", Ask: "repeat",
@@ -42,6 +43,7 @@ func TestLearningsAssignsSequentialIDs(t *testing.T) {
 }
 
 func TestLearningsDismissMarksWithoutRenumbering(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for i, e := range []Event{
 		{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
@@ -71,6 +73,7 @@ func TestLearningsDismissMarksWithoutRenumbering(t *testing.T) {
 }
 
 func TestLearningsDismissUnknownIDIsNoop(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning",
 		Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
@@ -90,6 +93,7 @@ func TestLearningsDismissUnknownIDIsNoop(t *testing.T) {
 }
 
 func TestWriteLearningsFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	views := []LearningView{
 		{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "runs/t1.r1.jsonl",
@@ -127,6 +131,7 @@ func TestWriteLearningsFile(t *testing.T) {
 }
 
 func TestWriteLearningsFileRemovesMarkedRootCopy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := filepath.Join(dir, "learnings.md")
 	if err := os.WriteFile(old, []byte("# Learnings\n"+learningsMarker+"\nstale generated copy"), 0o644); err != nil {
@@ -149,6 +154,7 @@ func TestWriteLearningsFileRemovesMarkedRootCopy(t *testing.T) {
 }
 
 func TestWriteLearningsFileLeavesUnmarkedRootCopy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := filepath.Join(dir, "learnings.md")
 	original := []byte("my own training notes\n")
@@ -169,6 +175,7 @@ func TestWriteLearningsFileLeavesUnmarkedRootCopy(t *testing.T) {
 }
 
 func TestWriteLearningsFileFailedWriteLeavesOldCopy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := filepath.Join(dir, "learnings.md")
 	oldContent := "old content"
@@ -192,6 +199,7 @@ func TestWriteLearningsFileFailedWriteLeavesOldCopy(t *testing.T) {
 }
 
 func TestWriteLearningsFileRefusesHandMaintainedDotFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	curated := []byte("# Learnings\n\n## Hand written, precious\ndo not lose me\n")
@@ -218,6 +226,7 @@ func TestWriteLearningsFileRefusesHandMaintainedDotFile(t *testing.T) {
 }
 
 func TestWriteLearningsFileRegeneratesMarkedDotFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
@@ -243,6 +252,7 @@ func TestWriteLearningsFileRegeneratesMarkedDotFile(t *testing.T) {
 }
 
 func TestWriteLearningsFileLeavesReplacedRootFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := filepath.Join(dir, "learnings.md")
 	marked := []byte("# Learnings\n" + learningsMarker + "\nstale generated copy\n")
@@ -277,6 +287,7 @@ func TestWriteLearningsFileLeavesReplacedRootFile(t *testing.T) {
 }
 
 func TestWriteLearningsFileSucceedsWithUnreadableRoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	root := filepath.Join(dir, "learnings.md")
 	if err := os.Mkdir(root, 0o755); err != nil {
@@ -303,6 +314,7 @@ func TestWriteLearningsFileSucceedsWithUnreadableRoot(t *testing.T) {
 }
 
 func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
@@ -338,6 +350,7 @@ func TestWriteLearningsFileRefusesChangedDotFile(t *testing.T) {
 }
 
 func TestWriteLearningsFileCheckedAtRename(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	if err := os.MkdirAll(filepath.Dir(dot), 0o755); err != nil {
@@ -394,6 +407,7 @@ func TestWriteLearningsFileCheckedAtRename(t *testing.T) {
 }
 
 func TestSanitise(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ in, want string }{
 		{`run D:\secret-co\proj\scripts\validate.sh now`, "run <path> now"},
 		{`see C:\Users\me\file.txt`, "see <path>"},
@@ -420,6 +434,7 @@ func TestSanitise(t *testing.T) {
 }
 
 func TestFeedbackReportExportsUndismissedSanitised(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1",
 		Title:    "Gate rots unobserved",
@@ -462,6 +477,7 @@ func TestFeedbackReportExportsUndismissedSanitised(t *testing.T) {
 }
 
 func TestWriteFeedbackReportMatchesPrint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	views := []LearningView{{ID: "L-01", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}}
 	report := FeedbackReport("dev", views)
@@ -479,6 +495,7 @@ func TestWriteFeedbackReportMatchesPrint(t *testing.T) {
 }
 
 func TestFeedbackSubmitNeverIsRuleRefusal(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "d", Adapter: "sim", Model: "m"}},
 		Feedback: Feedback{Upstream: "owner/repo", Submit: "never"}}
 	_, err := FeedbackSubmit(t.TempDir(), cfg, "dev", nil, FeedbackSubmitOptions{Yes: true})
@@ -491,6 +508,7 @@ func TestFeedbackSubmitNeverIsRuleRefusal(t *testing.T) {
 }
 
 func TestFeedbackSubmitNoUpstreamIsUsage(t *testing.T) {
+	t.Parallel()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "d", Adapter: "sim", Model: "m"}},
 		Feedback: Feedback{Submit: "ask"}}
 	_, err := FeedbackSubmit(t.TempDir(), cfg, "dev", nil, FeedbackSubmitOptions{Yes: true})
@@ -500,6 +518,7 @@ func TestFeedbackSubmitNoUpstreamIsUsage(t *testing.T) {
 }
 
 func TestFeedbackSubmitWithoutYesSendsNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "d", Adapter: "sim", Model: "m"}},
 		Feedback: Feedback{Upstream: "owner/repo", Submit: "ask"}}
@@ -529,6 +548,7 @@ func TestFeedbackSubmitWithoutYesSendsNothing(t *testing.T) {
 }
 
 func TestFeedbackSubmitParksReportWhenSendFails(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "d", Adapter: "sim", Model: "m"}},
 		Feedback: Feedback{Upstream: "owner/repo", Submit: "ask"}}
@@ -561,6 +581,7 @@ func TestFeedbackSubmitParksReportWhenSendFails(t *testing.T) {
 }
 
 func TestFeedbackSubmitSendsViaGH(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "d", Adapter: "sim", Model: "m"}},
 		Feedback: Feedback{Upstream: "owner/repo", Submit: "ask"}}
@@ -597,6 +618,7 @@ func TestFeedbackSubmitSendsViaGH(t *testing.T) {
 // it with -count=20; -race is unavailable on this host (no C compiler, so
 // go test -race refuses).
 func TestFeedbackAddConcurrentSerialisesMutations(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	type result struct {
 		id, title  string
@@ -697,6 +719,7 @@ func learningsFileOf(t *testing.T, dir string) string {
 }
 
 func TestUntriagedSignalsNoLearning(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z", Path: "runs/t1.r1.jsonl"},
 	}
@@ -710,6 +733,7 @@ func TestUntriagedSignalsNoLearning(t *testing.T) {
 }
 
 func TestUntriagedSignalsTriagedBySameTaskLearning(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
@@ -721,6 +745,7 @@ func TestUntriagedSignalsTriagedBySameTaskLearning(t *testing.T) {
 }
 
 func TestUntriagedSignalsOtherTaskLearningDoesNotTriage(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
 		{Task: "t2", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
@@ -735,6 +760,7 @@ func TestUntriagedSignalsOtherTaskLearningDoesNotTriage(t *testing.T) {
 }
 
 func TestUntriagedSignalsOtherConditionDoesNotTriage(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Stalled", Observed: "stalled", Evidence: "e", Ask: "a", Signals: []string{"stalled"}},
@@ -752,6 +778,7 @@ func TestUntriagedSignalsOtherConditionDoesNotTriage(t *testing.T) {
 // the occurrences recorded before it: the same condition recurring on a later
 // attempt is untriaged again.
 func TestUntriagedSignalsRecurrenceAfterLearning(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
@@ -766,6 +793,7 @@ func TestUntriagedSignalsRecurrenceAfterLearning(t *testing.T) {
 // TestUntriagedSignalsKeepLogOrder checks untriaged signals come back in log
 // order, whatever order the backward scan found them in.
 func TestUntriagedSignalsKeepLogOrder(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1"},
 		{Task: "t2", Kind: "signal", Signal: "stalled", Attempt: "r1"},
@@ -778,6 +806,7 @@ func TestUntriagedSignalsKeepLogOrder(t *testing.T) {
 }
 
 func TestUntriagedSignalsDismissedLearningStillTriages(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "t1", Kind: "signal", Signal: "no-plan", Attempt: "r1", TS: "2026-09-16T00:00:00Z"},
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "No plan", Observed: "no plan", Evidence: "e", Ask: "a", Signals: []string{"no-plan"}},
@@ -794,6 +823,7 @@ func TestUntriagedSignalsDismissedLearningStillTriages(t *testing.T) {
 // learnings appends them all in one transaction — the artifact is rebuilt
 // once, after the whole batch landed, and matches the log exactly.
 func TestAppendLearningEventsBatchAppendsAllAndRebuildsOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	batch := []Event{
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
@@ -831,6 +861,7 @@ func TestAppendLearningEventsBatchAppendsAllAndRebuildsOnce(t *testing.T) {
 // events together — under one lock acquisition, and the artifact is rebuilt
 // from the full log.
 func TestAppendLearningEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	batch := []Event{
 		{Task: "t1", Kind: "planned", Brief: "b.txt"},
@@ -856,6 +887,7 @@ func TestAppendLearningEventsMixedBatchKeepsBatchSemantics(t *testing.T) {
 // line records nothing: the whole batch is validated before the first append,
 // so a bad event can never leave a partial import in the log.
 func TestAppendLearningEventsValidatesBatchBeforeAppending(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	batch := []Event{
 		{Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"},
@@ -880,6 +912,7 @@ func TestAppendLearningEventsValidatesBatchBeforeAppending(t *testing.T) {
 // .flywheel/learnings.md from the event log and appends no event: the event
 // count is unchanged (issue #254).
 func TestRegenLearningsRebuildsDeletedArtifact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -911,6 +944,7 @@ func TestRegenLearningsRebuildsDeletedArtifact(t *testing.T) {
 // already matches the log exits 0 (no error) and leaves the file
 // byte-identical, appending nothing.
 func TestRegenLearningsUpToDateChangesNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{TS: "2026-09-16T00:00:00Z", Task: "t1", Kind: "learning", Severity: "P1", Title: "Terse", Observed: "slow", Evidence: "e1", Ask: "a1"}); err != nil {
 		t.Fatalf("AppendEvent() error = %v", err)
@@ -949,6 +983,7 @@ func TestRegenLearningsUpToDateChangesNothing(t *testing.T) {
 // hand-maintained (unmarked) .flywheel/learnings.md exactly as the other
 // paths do, leaving it byte-for-byte untouched.
 func TestRegenLearningsRefusesHandMaintainedFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dot := filepath.Join(dir, ".flywheel", "learnings.md")
 	curated := []byte("# Learnings\n\n## Hand written, precious\ndo not lose me\n")
@@ -981,6 +1016,7 @@ func TestRegenLearningsRefusesHandMaintainedFile(t *testing.T) {
 // flywheel as the empty default, project explicitly — refuses any other
 // scope without recording, and an older learning without one is flywheel's.
 func TestFeedbackScope(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := AppendEvent(dir, Event{Task: "t1", Kind: "learning", Severity: "P2", Title: "Old", Observed: "o", Evidence: "e", Ask: "a"}); err != nil {
 		t.Fatal(err)
@@ -1012,6 +1048,7 @@ func TestFeedbackScope(t *testing.T) {
 // TestExportFlywheelOnly: export and submit carry only flywheel-scoped
 // learnings; project ones are counted as kept local (issue #409).
 func TestExportFlywheelOnly(t *testing.T) {
+	t.Parallel()
 	views := []LearningView{
 		{ID: "L-01", Severity: "P1", Title: "Gate rots", Observed: "o", Evidence: "e", Ask: "a", Scope: "flywheel"},
 		{ID: "L-02", Severity: "P1", Title: "Checkout 500s", Observed: "o", Evidence: "e", Ask: "a", Scope: "project"},
@@ -1051,6 +1088,7 @@ func TestExportFlywheelOnly(t *testing.T) {
 // TestLearningsScopeSections: learnings.md renders a flywheel section and a
 // project section, each keeping the log's L-numbering (issue #409).
 func TestLearningsScopeSections(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	views := []LearningView{
 		{ID: "L-01", Severity: "P1", Title: "Gate rots", Observed: "o", Evidence: "e", Ask: "a", Scope: "flywheel"},

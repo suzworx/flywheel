@@ -6,6 +6,7 @@ import (
 )
 
 func TestGateEmptyIsClear(t *testing.T) {
+	t.Parallel()
 	result := Gate([]Event{})
 	if !result.OK() {
 		t.Errorf("empty ledger: OK() = false, want true")
@@ -19,6 +20,7 @@ func TestGateEmptyIsClear(t *testing.T) {
 }
 
 func TestGateFinishedUninspectedBlocks(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -46,6 +48,7 @@ func TestGateFinishedUninspectedBlocks(t *testing.T) {
 }
 
 func TestGateInspectedPassIsClear(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -62,6 +65,7 @@ func TestGateInspectedPassIsClear(t *testing.T) {
 }
 
 func TestGateUntriagedSignalBlocks(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -89,6 +93,7 @@ func TestGateUntriagedSignalBlocks(t *testing.T) {
 }
 
 func TestGateTriagedSignalIsClear(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -109,6 +114,7 @@ func TestGateTriagedSignalIsClear(t *testing.T) {
 // TestGateUninspectedNamesCurrentAttempt checks a late stale finish of an older
 // attempt does not replace the current attempt in the blocker (#291 review).
 func TestGateUninspectedNamesCurrentAttempt(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{TS: "2026-09-18T10:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},

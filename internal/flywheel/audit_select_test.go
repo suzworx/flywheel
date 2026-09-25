@@ -7,6 +7,7 @@ import (
 )
 
 func TestAuditSelectCandidates(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
 		{Task: "T2", Kind: "inspected", Verdict: "pass"},
@@ -22,6 +23,7 @@ func TestAuditSelectCandidates(t *testing.T) {
 }
 
 func TestAuditSelectCandidateReinspectedAfterAudit(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
 		{Task: "T1", Kind: "audited", Verdict: "conforms"},
@@ -35,6 +37,7 @@ func TestAuditSelectCandidateReinspectedAfterAudit(t *testing.T) {
 }
 
 func TestAuditSelectFirstArticlePerLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
@@ -54,6 +57,7 @@ func TestAuditSelectFirstArticlePerLine(t *testing.T) {
 }
 
 func TestAuditSelectFirstArticleSkipsAuditedLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},
@@ -71,6 +75,7 @@ func TestAuditSelectFirstArticleSkipsAuditedLine(t *testing.T) {
 }
 
 func TestAuditSelectRateAdjusts(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seed int64
@@ -155,6 +160,7 @@ func TestAuditSelectRateAdjusts(t *testing.T) {
 }
 
 func TestAuditSelectSampleDeterministic(t *testing.T) {
+	t.Parallel()
 	// Create 50 passed candidates
 	var events []Event
 	for i := 0; i < 50; i++ {
@@ -195,6 +201,7 @@ func TestAuditSelectSampleDeterministic(t *testing.T) {
 // on another model belongs to the line that built its passing attempt, and that
 // a pass at log position 0 still makes a candidate.
 func TestAuditSelectFirstArticleUsesPassingAttemptLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T0", Kind: "inspected", Verdict: "pass"},
 		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
@@ -217,6 +224,7 @@ func TestAuditSelectFirstArticleUsesPassingAttemptLine(t *testing.T) {
 // line of the pass it audited: T1 passes on m1 and is audited, then retries
 // and passes on m2. m1 has had its first article; m2 has not (#309 review).
 func TestAuditSelectRetryKeepsAuditOnItsLine(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "m1"},
 		{Task: "T1", Kind: "inspected", Verdict: "pass"},

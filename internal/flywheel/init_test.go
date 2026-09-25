@@ -14,6 +14,7 @@ import (
 )
 
 func TestInitCreatesScaffold(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	got, pieces, err := InitSeeded(dir, false, "", "", false)
@@ -47,6 +48,7 @@ func TestInitCreatesScaffold(t *testing.T) {
 // adopted directory that already has everything except .gitattributes gets
 // exactly that piece added, and every other piece is left byte-identical.
 func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -98,6 +100,7 @@ func TestInitAddsOnlyMissingGitattributes(t *testing.T) {
 }
 
 func TestInitSeededOnInitializedDirCreatesNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "", "", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
@@ -115,6 +118,7 @@ func TestInitSeededOnInitializedDirCreatesNothing(t *testing.T) {
 }
 
 func TestInitWritesMarkdownHeadings(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -137,6 +141,7 @@ func TestInitWritesMarkdownHeadings(t *testing.T) {
 }
 
 func TestInitStateJSONContract(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -181,6 +186,7 @@ func TestInitStateJSONContract(t *testing.T) {
 }
 
 func TestInitRepeatedCallCreatesNothing(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -205,6 +211,7 @@ func TestInitRepeatedCallCreatesNothing(t *testing.T) {
 }
 
 func TestInitForceOverwrites(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -219,6 +226,7 @@ func TestInitForceOverwrites(t *testing.T) {
 }
 
 func TestInitCreatesMissingParentDirs(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "nested", "deep")
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() into nested dirs error = %v", err)
@@ -229,6 +237,7 @@ func TestInitCreatesMissingParentDirs(t *testing.T) {
 }
 
 func TestInitLeavesJunkStateUntouchedAndAddsMarkdown(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, ".flywheel", "state.json")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
@@ -270,6 +279,7 @@ func TestInitLeavesJunkStateUntouchedAndAddsMarkdown(t *testing.T) {
 }
 
 func TestInitLeavesExistingMarkdownUntouchedAndAddsState(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	custom := []byte("keep me")
@@ -296,6 +306,7 @@ func TestInitLeavesExistingMarkdownUntouchedAndAddsState(t *testing.T) {
 }
 
 func TestInitInvalidStateDestinationLeavesNoMarkdown(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Block .flywheel/state.json by making .flywheel a regular file.
 	dotFlywheel := filepath.Join(dir, ".flywheel")
@@ -325,6 +336,7 @@ func TestInitInvalidStateDestinationLeavesNoMarkdown(t *testing.T) {
 }
 
 func TestInitFailedForceRestoresMarkdown(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -377,6 +389,7 @@ func TestInitFailedForceRestoresMarkdown(t *testing.T) {
 }
 
 func TestInitForceResetsMarkdownOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	statePath := filepath.Join(dir, ".flywheel", "state.json")
@@ -414,6 +427,7 @@ func TestInitForceResetsMarkdownOnly(t *testing.T) {
 }
 
 func TestInitForceRejectsDirectoryDestination(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "flywheel.md")
 	if err := os.Mkdir(mdPath, 0o755); err != nil {
@@ -435,6 +449,7 @@ func TestInitForceRejectsDirectoryDestination(t *testing.T) {
 }
 
 func TestInitForceRejectsSymlinkDestination(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "elsewhere.md")
 	if err := os.WriteFile(target, []byte("do not touch"), 0o644); err != nil {
@@ -458,6 +473,7 @@ func TestInitForceRejectsSymlinkDestination(t *testing.T) {
 }
 
 func TestInitForcePreservesUnrelatedFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Pre-existing unrelated content, including a brief inside .flywheel/briefs.
 	notes := filepath.Join(dir, "notes.txt")
@@ -498,6 +514,7 @@ func keys(m map[string]json.RawMessage) []string {
 }
 
 func TestInitCreatesEventLogAndGitignore(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -523,6 +540,7 @@ func TestInitCreatesEventLogAndGitignore(t *testing.T) {
 }
 
 func TestInitWritesGitattributes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -540,6 +558,7 @@ func TestInitWritesGitattributes(t *testing.T) {
 // legacy and sharded, merge=union (issue #436), and that an existing file is
 // not rewritten to add it.
 func TestInitGitattributesUnion(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -566,6 +585,7 @@ func TestInitGitattributesUnion(t *testing.T) {
 }
 
 func TestInitForceLeavesExistingGitattributesUntouched(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -588,6 +608,7 @@ func TestInitForceLeavesExistingGitattributesUntouched(t *testing.T) {
 }
 
 func TestInitForceLeavesExistingEventLogUntouched(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -620,6 +641,7 @@ func TestInitForceLeavesExistingEventLogUntouched(t *testing.T) {
 }
 
 func TestInitWritesDefaultConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -637,6 +659,7 @@ func TestInitWritesDefaultConfig(t *testing.T) {
 }
 
 func TestInitForceKeepsExistingConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -660,6 +683,7 @@ func TestInitForceKeepsExistingConfig(t *testing.T) {
 }
 
 func TestInitRollbackRemovesCreatedConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Block .flywheel/.gitignore with a directory so Init fails after the
 	// config.json it created.
@@ -679,6 +703,7 @@ func TestInitRollbackRemovesCreatedConfig(t *testing.T) {
 }
 
 func TestInitRollbackRemovesCreatedGitattributes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Block .flywheel/.gitattributes with a directory so Init fails after
 	// the config.json it created.
@@ -698,6 +723,7 @@ func TestInitRollbackRemovesCreatedGitattributes(t *testing.T) {
 }
 
 func TestInitSeedsModelAndVariant(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "x/y", "max", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
@@ -722,6 +748,7 @@ func TestInitSeedsModelAndVariant(t *testing.T) {
 }
 
 func TestInitSeedsVariantOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "", "max", false); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
@@ -743,6 +770,7 @@ func TestInitSeedsVariantOnly(t *testing.T) {
 }
 
 func TestInitSeededKeepsExistingConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -781,6 +809,7 @@ func gitInit(t *testing.T, dir string) {
 }
 
 func TestIgnoredStateFilesReportsGitIgnored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/*\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
@@ -796,6 +825,7 @@ func TestIgnoredStateFilesReportsGitIgnored(t *testing.T) {
 }
 
 func TestIgnoredStateFilesReportsNothingWhenNotIgnored(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gitInit(t, dir)
 
@@ -805,6 +835,7 @@ func TestIgnoredStateFilesReportsNothingWhenNotIgnored(t *testing.T) {
 }
 
 func TestIgnoredStateFilesReportsNothingOutsideGit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	if ignored := IgnoredStateFiles(dir); len(ignored) != 0 {
@@ -813,6 +844,7 @@ func TestIgnoredStateFilesReportsNothingOutsideGit(t *testing.T) {
 }
 
 func TestIgnoreMarkdownCreatesFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	added, err := IgnoreMarkdown(dir)
 	if err != nil {
@@ -831,6 +863,7 @@ func TestIgnoreMarkdownCreatesFile(t *testing.T) {
 }
 
 func TestIgnoreMarkdownAppendsAfterOtherLines(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("runs/\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
@@ -852,6 +885,7 @@ func TestIgnoreMarkdownAppendsAfterOtherLines(t *testing.T) {
 }
 
 func TestIgnoreMarkdownNeverDuplicates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := IgnoreMarkdown(dir); err != nil {
 		t.Fatalf("IgnoreMarkdown() first call error = %v", err)
@@ -877,6 +911,7 @@ func TestIgnoreMarkdownNeverDuplicates(t *testing.T) {
 }
 
 func TestIgnoreMarkdownLeavesExistingLineAlone(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	custom := []byte("node_modules/\nflywheel.md\ndist/\n")
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), custom, 0o644); err != nil {
@@ -899,6 +934,7 @@ func TestIgnoreMarkdownLeavesExistingLineAlone(t *testing.T) {
 }
 
 func TestInitAgentsMDWritesBlock(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "", "", true); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
@@ -921,6 +957,7 @@ func TestInitAgentsMDWritesBlock(t *testing.T) {
 }
 
 func TestInitAgentsMDRerunReplacesBlockNotDuplicate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitSeeded(dir, false, "", "", true); err != nil {
 		t.Fatalf("InitSeeded() error = %v", err)
@@ -953,6 +990,7 @@ func TestInitAgentsMDRerunReplacesBlockNotDuplicate(t *testing.T) {
 }
 
 func TestInitAgentsMDKeepsExistingContent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -981,6 +1019,7 @@ func TestInitAgentsMDKeepsExistingContent(t *testing.T) {
 // TestInitHooksWritesBothFilesOnce checks InitHooks creates both hook files
 // on a fresh call and reports them added.
 func TestInitHooksWritesBothFilesOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, pieces, err := InitHooks(dir)
 	if err != nil {
@@ -1015,6 +1054,7 @@ func TestInitHooksWritesBothFilesOnce(t *testing.T) {
 // TestInitHooksSecondRunByteIdentical checks a rerun leaves both hook files
 // byte-identical: like every other init piece, they're created only once.
 func TestInitHooksSecondRunByteIdentical(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitHooks(dir); err != nil {
 		t.Fatalf("InitHooks() error = %v", err)
@@ -1052,6 +1092,7 @@ func TestInitHooksSecondRunByteIdentical(t *testing.T) {
 // TestInitHooksLeavesExistingSettingsUntouched checks a preexisting
 // .claude/settings.json is never overwritten.
 func TestInitHooksLeavesExistingSettingsUntouched(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
@@ -1084,6 +1125,7 @@ func TestInitHooksLeavesExistingSettingsUntouched(t *testing.T) {
 // can't be written, the settings.json this same call already created is
 // rolled back so a retry starts clean.
 func TestInitHooksRollbackRemovesCreatedFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Block .opencode/plugin/flywheel-session.mjs with a directory so the
 	// call fails after settings.json is already written.
@@ -1102,6 +1144,7 @@ func TestInitHooksRollbackRemovesCreatedFile(t *testing.T) {
 // TestInitHooksStopRunsGate checks InitHooks creates a Stop hook that runs
 // flywheel gate and blocks ending the session while work is left unjudged.
 func TestInitHooksStopRunsGate(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, _, err := InitHooks(dir); err != nil {
 		t.Fatalf("InitHooks() error = %v", err)
@@ -1138,6 +1181,7 @@ func TestInitHooksStopRunsGate(t *testing.T) {
 }
 
 func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -1177,6 +1221,7 @@ func TestInitAgentsMDRollbackRestoresPreexisting(t *testing.T) {
 // a gate error both allow the stop; stop_hook_active allows it without
 // running gate at all.
 func TestInitHooksStopHookRunsGate(t *testing.T) {
+	t.Parallel()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no sh on PATH")

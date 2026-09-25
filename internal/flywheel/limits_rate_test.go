@@ -10,6 +10,7 @@ import (
 // TestLimitsTokensRefusesDispatch checks that Run refuses a dispatch when the
 // recorded tokens have reached limits.budget.wave_tokens.
 func TestLimitsTokensRefusesDispatch(t *testing.T) {
+	// not parallel: setTestNow swaps the package-level now
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	cfg := simConfig(fixture)
@@ -54,6 +55,7 @@ func TestLimitsTokensRefusesDispatch(t *testing.T) {
 // TestLimitsTokensCacheDoesNotCount checks that cache read/write tokens do
 // not count toward the wave token budget.
 func TestLimitsTokensCacheDoesNotCount(t *testing.T) {
+	// not parallel: setTestNow swaps the package-level now
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	cfg := simConfig(fixture)
@@ -94,6 +96,7 @@ func TestLimitsTokensCacheDoesNotCount(t *testing.T) {
 // TestLimitsRateRefusesBurst checks that Run refuses a dispatch when the
 // model has already been dispatched the rate_per_minute limit in the last 60s.
 func TestLimitsRateRefusesBurst(t *testing.T) {
+	// not parallel: setTestNow swaps the package-level now
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	cfg := simConfig(fixture)
@@ -141,6 +144,7 @@ func TestLimitsRateRefusesBurst(t *testing.T) {
 // TestLimitsRateWindowSlides checks that dispatches older than 60 seconds
 // do not count toward the rate limit.
 func TestLimitsRateWindowSlides(t *testing.T) {
+	// not parallel: setTestNow swaps the package-level now
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	cfg := simConfig(fixture)
@@ -187,6 +191,7 @@ func TestLimitsRateWindowSlides(t *testing.T) {
 // TestLimitsTokensReconcileHolds checks that Reconcile holds a task when
 // the recorded tokens have reached the budget.
 func TestLimitsTokensReconcileHolds(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Task: "T1", Kind: "planned", Brief: "b.txt"},
 		{Task: "T2", Kind: "planned", Brief: "b.txt"},
@@ -212,6 +217,7 @@ func TestLimitsTokensReconcileHolds(t *testing.T) {
 // TestLimitsRateReconcileCapsCapacity checks that Reconcile caps capacity
 // based on the model's dispatch rate.
 func TestLimitsRateReconcileCapsCapacity(t *testing.T) {
+	// not parallel: setTestNow swaps the package-level now
 	now := limitsTestNow
 	setTestNow(t, now)
 	beforeWindow := now.Add(-10 * time.Second)
@@ -243,6 +249,7 @@ func TestLimitsRateReconcileCapsCapacity(t *testing.T) {
 // TestLimitsRateValidate checks that Config.Validate rejects invalid rate and
 // token budget values.
 func TestLimitsRateValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		limits  Limits
@@ -306,6 +313,7 @@ func setTestNow(t *testing.T, ts time.Time) {
 // over, next counts the fallback's own dispatches against the rate limit, as
 // run does (#329 review).
 func TestLimitsRateAppliesToFallback(t *testing.T) {
+	t.Parallel()
 	ts := func(d time.Duration) string { return limitsTestNow.Add(d).Format(time.RFC3339Nano) }
 	events := []Event{
 		{TS: ts(-5 * time.Minute), Task: "E1", Kind: "finished", Attempt: "r1", Model: "m1", Reason: "error"},

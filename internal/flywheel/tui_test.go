@@ -96,6 +96,7 @@ func makeTestTUIData() TUIData {
 }
 
 func TestTUIDefaultViewIsUnits(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 	view := m.View(d, 100, 20, false)
@@ -111,6 +112,7 @@ func TestTUIDefaultViewIsUnits(t *testing.T) {
 }
 
 func TestTUICursorMovesAndClamps(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -132,6 +134,7 @@ func TestTUICursorMovesAndClamps(t *testing.T) {
 }
 
 func TestTUICommandSwitchesView(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -161,6 +164,7 @@ func TestTUICommandSwitchesView(t *testing.T) {
 }
 
 func TestTUIUnknownCommandMessage(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -176,6 +180,7 @@ func TestTUIUnknownCommandMessage(t *testing.T) {
 }
 
 func TestTUIFilter(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -221,6 +226,7 @@ func TestTUIFilter(t *testing.T) {
 }
 
 func TestTUIEnterWantsExplain(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -267,6 +273,7 @@ func TestTUIEnterWantsExplain(t *testing.T) {
 }
 
 func TestTUILogKey(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -289,6 +296,7 @@ func TestTUILogKey(t *testing.T) {
 }
 
 func TestTUIQuit(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -307,6 +315,7 @@ func TestTUIQuit(t *testing.T) {
 }
 
 func TestTUIHelp(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -333,6 +342,7 @@ func TestTUIHelp(t *testing.T) {
 }
 
 func TestTUIWidthRespected(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -355,6 +365,7 @@ func TestTUIWidthRespected(t *testing.T) {
 }
 
 func TestTUIEventsNewestFirst(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -387,6 +398,7 @@ func TestTUIEventsNewestFirst(t *testing.T) {
 }
 
 func TestTUIScrollKeepsCursorVisible(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 	// Create a Floor with 30 units (T00..T29).
@@ -425,6 +437,7 @@ func TestTUIScrollKeepsCursorVisible(t *testing.T) {
 }
 
 func TestTUIDetailScroll(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 	d.Floor.Units = []Unit{{Task: "T1", Stage: "building", Attempt: "1", Session: "s1", Model: "claude", Steps: 1, LastAge: 1, RunState: "running", Peak: 0}}
@@ -470,6 +483,7 @@ func TestTUIDetailScroll(t *testing.T) {
 }
 
 func TestTUICtrlCQuitsEverywhere(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData()
 
 	// Ctrl-C in drill-down mode.
@@ -506,6 +520,7 @@ func TestTUICtrlCQuitsEverywhere(t *testing.T) {
 }
 
 func TestTUIColumnsAligned(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -553,6 +568,7 @@ func TestTUIColumnsAligned(t *testing.T) {
 }
 
 func TestTUIMultibyteWidth(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -578,6 +594,7 @@ func TestTUIMultibyteWidth(t *testing.T) {
 }
 
 func TestTUIColorCursorRow(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -600,6 +617,7 @@ func TestTUIColorCursorRow(t *testing.T) {
 }
 
 func TestTUILiveFilter(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -627,6 +645,7 @@ func TestTUILiveFilter(t *testing.T) {
 // TestTUIEmptyTableNoDrillDown checks that moving on an empty table keeps the
 // cursor at 0 and Enter/l open nothing (#344 review).
 func TestTUIEmptyTableNoDrillDown(t *testing.T) {
+	t.Parallel()
 	d := TUIData{}
 	m := NewTUI()
 	for _, k := range []term.Key{{Kind: term.KeyDown}, {Kind: term.KeyRune, Rune: 'j'}, {Kind: term.KeyPgDn}, {Kind: term.KeyEnd}, {Kind: term.KeyEnter}, {Kind: term.KeyRune, Rune: 'l'}} {
@@ -643,6 +662,7 @@ func TestTUIEmptyTableNoDrillDown(t *testing.T) {
 // TestTUIAndonStateColored checks that the andon view colours the STATE
 // cell of rows off the cursor (#344 review).
 func TestTUIAndonStateColored(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData()
 	d.Floor.Andon = append(d.Floor.Andon, Andon{Task: "T9", State: "stalled", Age: 5})
 	m := NewTUI()
@@ -658,6 +678,7 @@ func TestTUIAndonStateColored(t *testing.T) {
 // TestTUILastLineAtBottom checks that the prompt/status/breadcrumbs line is
 // the frame's last line in help and in a short drill-down (#344 review).
 func TestTUILastLineAtBottom(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData()
 	m := NewTUI()
 	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
@@ -677,6 +698,7 @@ func TestTUILastLineAtBottom(t *testing.T) {
 // TestTUISmallFrameNeverEnlarged checks that View never returns more lines
 // or wider lines than asked, and keeps the last line (#344 review).
 func TestTUISmallFrameNeverEnlarged(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData()
 	for _, size := range [][2]int{{10, 3}, {1, 1}, {15, 2}, {5, 6}} {
 		m := NewTUI()
@@ -701,6 +723,7 @@ func TestTUISmallFrameNeverEnlarged(t *testing.T) {
 // TestTUIHelpScrolls checks that help scrolls on a short screen so its last
 // line is reachable (#344 review).
 func TestTUIHelpScrolls(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData()
 	m := NewTUI()
 	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
@@ -718,6 +741,7 @@ func TestTUIHelpScrolls(t *testing.T) {
 
 // TestTUILinesView checks that :lines command switches to lines view and shows product lines.
 func TestTUILinesView(t *testing.T) {
+	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
 
@@ -747,6 +771,7 @@ func TestTUILinesView(t *testing.T) {
 
 // TestTUILinesUnitsLineColumn checks that units with Line set include a LINE column, and without do not.
 func TestTUILinesUnitsLineColumn(t *testing.T) {
+	t.Parallel()
 	// Test with Line set.
 	m := NewTUI()
 	d := makeTestTUIData()
@@ -792,6 +817,7 @@ func TestTUILinesUnitsLineColumn(t *testing.T) {
 // TestTUICappedPeakColoured checks that a capped unit's STATE cell shows its
 // peak and is coloured as capped (#336 review).
 func TestTUICappedPeakColoured(t *testing.T) {
+	t.Parallel()
 	d := makeTestTUIData() // T3 is capped with Peak 50000
 	frame := NewTUI().View(d, 120, 12, true)
 	if !strings.Contains(frame, stateColor("capped")+"capped 50k") {

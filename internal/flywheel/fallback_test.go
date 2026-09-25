@@ -13,6 +13,7 @@ import (
 // breaker is open, a fresh run dispatches to the first approved fallback
 // whose own breaker is closed (issue #46).
 func TestFallbackTakesOverWhenBreakerOpen(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	fallbackFixture := filepath.Join(t.TempDir(), "fallback.jsonl")
@@ -74,6 +75,7 @@ func TestFallbackTakesOverWhenBreakerOpen(t *testing.T) {
 // TestFallbackUnapprovedStillRefused checks that an unapproved fallback is
 // not used to take over when the breaker is open (issue #46).
 func TestFallbackUnapprovedStillRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	fallbackFixture := filepath.Join(t.TempDir(), "fallback.jsonl")
@@ -122,6 +124,7 @@ func TestFallbackUnapprovedStillRefused(t *testing.T) {
 // TestFallbackExplicitModelStillRefused checks that an explicit --model
 // option still gets refused when the breaker is open (issue #46).
 func TestFallbackExplicitModelStillRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	fallbackFixture := filepath.Join(t.TempDir(), "fallback.jsonl")
@@ -170,6 +173,7 @@ func TestFallbackExplicitModelStillRefused(t *testing.T) {
 // TestFallbackAlsoOpenRefused checks that when both the default model and
 // the fallback have open breakers, the dispatch is refused (issue #46).
 func TestFallbackAlsoOpenRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	fallbackFixture := filepath.Join(t.TempDir(), "fallback.jsonl")
@@ -234,6 +238,7 @@ func TestFallbackAlsoOpenRefused(t *testing.T) {
 // via an approved fallback when the default model's breaker is open and the
 // fallback's breaker is closed (issue #46).
 func TestFallbackReconcileDispatchesViaFallback(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)

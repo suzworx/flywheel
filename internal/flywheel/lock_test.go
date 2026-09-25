@@ -18,6 +18,7 @@ import (
 // The timings are this test's own, passed per acquisition: no package global
 // is reassigned (issue #260).
 func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
+	t.Parallel()
 	timings := repoLockTimings{
 		staleAfter: 15 * time.Second,
 		wait:       400 * time.Millisecond,
@@ -60,6 +61,7 @@ func TestDispatchLockLiveHolderNotStolen(t *testing.T) {
 // past the default dispatch timings, so this acquisition runs on the same
 // defaults Run uses.
 func TestDispatchLockDeadHolderTakenOver(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".flywheel", "dispatch.lock")
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -101,6 +103,7 @@ func TestDispatchLockDeadHolderTakenOver(t *testing.T) {
 // refreshed between the Chtimes and B's takeover. Each holder carries its
 // own timings: A parks its heartbeat, B runs the defaults.
 func TestDispatchLockReleaseDoesNotDeleteSuccessor(t *testing.T) {
+	t.Parallel()
 	aTimings := repoLockTimings{
 		staleAfter: 15 * time.Second,
 		wait:       5 * time.Second,

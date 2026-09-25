@@ -23,6 +23,7 @@ func writeDoctorFixture(t *testing.T, dir, name, errMsg string) {
 }
 
 func TestDoctorClassification(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cases := []struct {
 		name, errMsg, want string
@@ -74,6 +75,7 @@ func TestDoctorClassification(t *testing.T) {
 // classifies as ClassError instead of panicking, and every other probe still
 // runs.
 func TestDoctorMissingFixture(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeDoctorFixture(t, dir, "ok.jsonl", "")
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "sim", Adapter: "sim", Model: "ok.jsonl",

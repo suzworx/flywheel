@@ -8,6 +8,7 @@ import (
 )
 
 func TestConfigLogShardsGetAndRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.Log = &LogConfig{Shards: true}
@@ -40,6 +41,7 @@ func TestConfigLogShardsGetAndRoundTrip(t *testing.T) {
 }
 
 func TestConfigLogShardsNotSettable(t *testing.T) {
+	t.Parallel()
 	cfg := DefaultConfig()
 	err := cfg.Set("log.shards", "true")
 	if err == nil {
@@ -51,6 +53,7 @@ func TestConfigLogShardsNotSettable(t *testing.T) {
 }
 
 func TestInitGitignoreIncludesLocks(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	_, _, err := InitSeeded(dir, false, "", "", false)
 	if err != nil {
@@ -66,6 +69,7 @@ func TestInitGitignoreIncludesLocks(t *testing.T) {
 }
 
 func TestIgnoredStateFilesReportsShards(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/*\n"), 0o644); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
@@ -89,6 +93,7 @@ func TestIgnoredStateFilesReportsShards(t *testing.T) {
 }
 
 func TestCITemplateAcceptsShardedLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gitInit(t, dir)
 	_, _, err := InitCI(dir, "latest")
@@ -107,6 +112,7 @@ func TestCITemplateAcceptsShardedLog(t *testing.T) {
 }
 
 func TestGitHooksAcceptShardedLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	gitInit(t, dir)
 	_, _, err := InitGitHooks(dir)

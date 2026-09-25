@@ -51,6 +51,8 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
   own git index.
 - Golden files compare after normalising "\r\n"; inject clocks (a `now` parameter) instead of
   reading the real time; fixtures end with a newline.
+- New tests call t.Parallel() unless they touch process-wide state (env, cwd, package variables,
+  os.Stdout); say why in a `// not parallel: <reason>` comment.
 
 ## Code conventions
 

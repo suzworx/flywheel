@@ -9,6 +9,7 @@ import (
 // TestFindGoalResolvesRecordedGoal checks findGoal returns the goal view for
 // an id that was recorded with a goal event.
 func TestFindGoalResolvesRecordedGoal(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := flywheel.AppendEvent(dir, flywheel.Event{
 		Kind: "goal",
@@ -28,6 +29,7 @@ func TestFindGoalResolvesRecordedGoal(t *testing.T) {
 // TestFindGoalRejectsUnknownID checks findGoal reports not-found for an id
 // that was never recorded, even while other goals exist (issue #127).
 func TestFindGoalRejectsUnknownID(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := flywheel.AppendEvent(dir, flywheel.Event{
 		Kind: "goal",

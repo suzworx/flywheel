@@ -110,6 +110,7 @@ func appendEventsToFile(path string, events []Event) error {
 // TestTailLogLegacyMatchesTailEvents tests that TailLog in a legacy repo
 // returns the same events as TailEvents.
 func TestTailLogLegacyMatchesTailEvents(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := writeTestLog(dir, "events.jsonl", testEvents(3)); err != nil {
 		t.Fatalf("writeTestLog: %v", err)
@@ -160,6 +161,7 @@ func TestTailLogLegacyMatchesTailEvents(t *testing.T) {
 // TestTailLogShardedReadsOnlyAppended tests that TailLog in a sharded repo
 // returns only appended events on each tail.
 func TestTailLogShardedReadsOnlyAppended(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
 	os.Mkdir(filepath.Join(dir, ".flywheel", "events"), 0o755)
@@ -215,6 +217,7 @@ func TestTailLogShardedReadsOnlyAppended(t *testing.T) {
 
 // TestTailLogNewShardAppears tests that TailLog picks up a new shard file.
 func TestTailLogNewShardAppears(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
 	os.Mkdir(filepath.Join(dir, ".flywheel", "events"), 0o755)
@@ -250,6 +253,7 @@ func TestTailLogNewShardAppears(t *testing.T) {
 
 // TestTailLogCursorNotMutated tests that the input cursor is not mutated.
 func TestTailLogCursorNotMutated(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := writeTestLog(dir, "events.jsonl", testEvents(3)); err != nil {
 		t.Fatalf("writeTestLog: %v", err)
@@ -287,6 +291,7 @@ func TestTailLogCursorNotMutated(t *testing.T) {
 // TestTailEventsShardedLayoutErrors tests that TailEvents errors in a sharded
 // layout.
 func TestTailEventsShardedLayoutErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
 	os.Mkdir(filepath.Join(dir, ".flywheel", "events"), 0o755)
@@ -300,6 +305,7 @@ func TestTailEventsShardedLayoutErrors(t *testing.T) {
 // TestWatcherShardedEqualsReadEvents tests that a Watcher in a sharded repo
 // accumulates the same events as ReadEvents.
 func TestWatcherShardedEqualsReadEvents(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
 	os.Mkdir(filepath.Join(dir, ".flywheel", "events"), 0o755)
@@ -356,6 +362,7 @@ func TestWatcherShardedEqualsReadEvents(t *testing.T) {
 // TestWatcherShardedReadsOnlyAppendedBytes tests that EventsBytes grows only
 // by bytes appended.
 func TestWatcherShardedReadsOnlyAppendedBytes(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".flywheel"), 0o755)
 	os.Mkdir(filepath.Join(dir, ".flywheel", "events"), 0o755)
@@ -396,6 +403,7 @@ func TestWatcherShardedReadsOnlyAppendedBytes(t *testing.T) {
 // re-emitted from the start instead of slicing past its events (the count a
 // cursor remembers can exceed what the file now holds).
 func TestTailLogReReadsReplacedShard(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := filepath.Join(dir, ".flywheel", "events")
 	if err := os.MkdirAll(events, 0o755); err != nil {
@@ -428,6 +436,7 @@ func TestTailLogReReadsReplacedShard(t *testing.T) {
 // same number of bytes and events is still re-emitted: nothing in the offset
 // or the count shows the replacement, only the file's generation (#350 review).
 func TestTailLogReEmitsSameSizeReplacement(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	events := filepath.Join(dir, ".flywheel", "events")
 	if err := os.MkdirAll(events, 0o755); err != nil {

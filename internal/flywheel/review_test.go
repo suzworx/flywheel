@@ -9,6 +9,7 @@ import (
 )
 
 func TestReviewRefusedBadVerdict(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -23,6 +24,7 @@ func TestReviewRefusedBadVerdict(t *testing.T) {
 }
 
 func TestReviewRefusedEmptySession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -37,6 +39,7 @@ func TestReviewRefusedEmptySession(t *testing.T) {
 }
 
 func TestReviewRefusedFromWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -52,6 +55,7 @@ func TestReviewRefusedFromWorkerSession(t *testing.T) {
 }
 
 func TestReviewOwnsRefusalNamesOutsidePath(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -77,6 +81,7 @@ func TestReviewOwnsRefusalNamesOutsidePath(t *testing.T) {
 }
 
 func TestReviewFailingGateIsT3(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0", "exit 1"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -97,6 +102,7 @@ func TestReviewFailingGateIsT3(t *testing.T) {
 }
 
 func TestReviewSuccessRecordsPassAndDerivesStatus(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -134,6 +140,7 @@ func TestReviewSuccessRecordsPassAndDerivesStatus(t *testing.T) {
 }
 
 func TestReviewChecklistRecordsCountAndKeepsNote(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -169,6 +176,7 @@ func TestReviewChecklistRecordsCountAndKeepsNote(t *testing.T) {
 }
 
 func TestReviewRemovesTempWorktree(t *testing.T) {
+	// not parallel: t.Setenv TMP
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -189,6 +197,7 @@ func TestReviewRemovesTempWorktree(t *testing.T) {
 }
 
 func TestReviewReportsFinishedReasonAndReportPath(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -213,6 +222,7 @@ func TestReviewReportsFinishedReasonAndReportPath(t *testing.T) {
 }
 
 func TestReviewNoFinishedOrReportEvent(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -232,6 +242,7 @@ func TestReviewNoFinishedOrReportEvent(t *testing.T) {
 // and workdir (the git tree under review) are deliberately separate, as
 // flywheel run's own worktrees are.
 func TestReviewAppliesUncommittedChangesAndUntrackedFiles(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -263,6 +274,7 @@ func TestReviewAppliesUncommittedChangesAndUntrackedFiles(t *testing.T) {
 
 // TestReviewRecordsModelIdentity verifies the reviewer's model is recorded on the reviewed event.
 func TestReviewRecordsModelIdentity(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)

@@ -31,6 +31,7 @@ func attestSetup(t *testing.T, gates []string, paths ...string) (string, string)
 }
 
 func TestAttestAppendsExternalReadings(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"go build ./...", "go test ./..."}, "a.go")
 	tree, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1")
 	if err != nil {
@@ -73,6 +74,7 @@ func TestAttestAppendsExternalReadings(t *testing.T) {
 }
 
 func TestAttestRefusesWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"true"}, "a.go")
 	_, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "worker-1")
 	var r *RuleRefusal
@@ -85,6 +87,7 @@ func TestAttestRefusesWorkerSession(t *testing.T) {
 }
 
 func TestAttestRefusesPathsOutsideOwns(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"true"}, "a.go", "b.go")
 	_, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1")
 	var r *RuleRefusal
@@ -95,6 +98,7 @@ func TestAttestRefusesPathsOutsideOwns(t *testing.T) {
 }
 
 func TestAttestRefusesUnknownCommit(t *testing.T) {
+	t.Parallel()
 	dir, _ := attestSetup(t, []string{"true"}, "a.go")
 	if _, err := Attest(dir, "T1", "deadbeefdeadbeef", "https://ci.example/run/7", "lead-1"); err == nil || !strings.Contains(err.Error(), "not in the repository") {
 		t.Fatalf("Attest() error = %v, want an unknown-commit error", err)
@@ -103,6 +107,7 @@ func TestAttestRefusesUnknownCommit(t *testing.T) {
 }
 
 func TestAttestRefusesEmptyEvidence(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"true"}, "a.go")
 	if _, err := Attest(dir, "T1", commit, "", "lead-1"); err == nil || !strings.Contains(err.Error(), "evidence") {
 		t.Fatalf("Attest() error = %v, want an evidence error", err)
@@ -111,6 +116,7 @@ func TestAttestRefusesEmptyEvidence(t *testing.T) {
 }
 
 func TestAttestRefusesUndispatchedTask(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"true"})
 	if err != nil {
 		t.Fatal(err)

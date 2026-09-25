@@ -22,6 +22,7 @@ import (
 // TestAdapterForClaude checks AdapterFor("claude") resolves to the claude
 // adapter (issue #49).
 func TestAdapterForClaude(t *testing.T) {
+	t.Parallel()
 	a, err := AdapterFor("claude")
 	if err != nil || a.Name() != "claude" {
 		t.Errorf("AdapterFor(claude) = %v, %v", a, err)
@@ -31,6 +32,7 @@ func TestAdapterForClaude(t *testing.T) {
 // TestClaudeCommandFlags checks Command's binary and required flags: the
 // binary "claude" driving --output-format stream-json and the model.
 func TestClaudeCommandFlags(t *testing.T) {
+	t.Parallel()
 	a, _ := AdapterFor("claude")
 	briefPath := filepath.Join(t.TempDir(), "brief.txt")
 	if err := os.WriteFile(briefPath, []byte("do the thing"), 0o644); err != nil {
@@ -59,6 +61,7 @@ func TestClaudeCommandFlags(t *testing.T) {
 // and starting the real Claude CLI installed on this machine (the one used
 // to capture testdata/claude-real.jsonl) — this test never spawns it.
 func TestRunGeneralizesToNonSimAdapters(t *testing.T) {
+	// not parallel: t.Setenv PATH
 	dir := setupTask(t)
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -141,6 +144,7 @@ func writeDelta(t *testing.T, dir, task string) {
 // fresh attempt, the delta on a correction (issue #259), so a later reader
 // measures the attempt against the ledger rather than the mutable file.
 func TestRunDispatchedCarriesPromptHeader(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(fixturePath("clean.jsonl", t))
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -202,6 +206,7 @@ func TestRunDispatchedCarriesPromptHeader(t *testing.T) {
 // model that differs from the worker's model and is not an approved
 // fallback is refused before any event is read (issue #23).
 func TestRunResumeModelGateRefusesUnapproved(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	other := fixturePath("longcost.jsonl", t)
 	cfg := simConfig(fixturePath("clean.jsonl", t))
@@ -219,6 +224,7 @@ func TestRunResumeModelGateRefusesUnapproved(t *testing.T) {
 // TestRunResumeModelGateApprovedResumesNormally checks a resume onto an
 // approved fallback dispatches normally.
 func TestRunResumeModelGateApprovedResumesNormally(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	approved := fixturePath("longcost.jsonl", t)
 	cfg := simConfig(fixturePath("clean.jsonl", t))
@@ -243,6 +249,7 @@ func TestRunResumeModelGateApprovedResumesNormally(t *testing.T) {
 // resume onto a model that is not an approved fallback (or a fallback at
 // all).
 func TestRunResumeModelGateForceModelBypasses(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	other := fixturePath("longcost.jsonl", t)
 	cfg := simConfig(fixturePath("clean.jsonl", t))
@@ -263,6 +270,7 @@ func TestRunResumeModelGateForceModelBypasses(t *testing.T) {
 }
 
 func TestRunSimClean(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	model := fixturePath("clean.jsonl", t)
 	if err := WriteConfig(dir, simConfig(model)); err != nil {
@@ -389,6 +397,7 @@ func TestRunSimClean(t *testing.T) {
 // TestCostK checks the human-line cost formatter maps the issue's three
 // values exactly (issue #81).
 func TestCostK(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		c    float64
 		want string
@@ -406,6 +415,7 @@ func TestCostK(t *testing.T) {
 // TestRunSimCostRounded checks the finish line prints the rounded cost while
 // the finished event keeps the full float (issue #81).
 func TestRunSimCostRounded(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	model := fixturePath("longcost.jsonl", t)
 	if err := WriteConfig(dir, simConfig(model)); err != nil {
@@ -437,6 +447,7 @@ func TestRunSimCostRounded(t *testing.T) {
 }
 
 func TestRunSimAttemptNumbering(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -500,6 +511,7 @@ func TestRunSimAttemptNumbering(t *testing.T) {
 }
 
 func TestRunResumeWithoutSessionErrors(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -522,6 +534,7 @@ func TestRunResumeWithoutSessionErrors(t *testing.T) {
 }
 
 func TestRunResumeWithoutSessionRecordsNoEvents(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -541,6 +554,7 @@ func TestRunResumeWithoutSessionRecordsNoEvents(t *testing.T) {
 }
 
 func TestRunUnplannedTaskErrors(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -560,6 +574,7 @@ func TestRunUnplannedTaskErrors(t *testing.T) {
 // TestRunRecordsBaseline checks a dispatch in a git repo hashes every dirty
 // path and records the baseline on the dispatched event.
 func TestRunRecordsBaseline(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -610,6 +625,7 @@ func TestRunRecordsBaseline(t *testing.T) {
 // length) records no report event, keeps the last reply as a partial file
 // instead, and a clean run still records its report (issue #131).
 func TestRunSimCapped(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("capped.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -672,6 +688,7 @@ func TestRunSimCapped(t *testing.T) {
 // records a capped signal AFTER its finished event, carrying the attempt and
 // the run file in Path (issue #37).
 func TestRunCappedSignalAfterFinished(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("capped.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -710,6 +727,7 @@ func TestRunCappedSignalAfterFinished(t *testing.T) {
 // TestRunProviderErrorSignalAfterFinished checks a run finishing reason error
 // records a provider-error signal after its finished event (issue #37).
 func TestRunProviderErrorSignalAfterFinished(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("provider-error.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -748,6 +766,7 @@ func TestRunProviderErrorSignalAfterFinished(t *testing.T) {
 // TestRunCleanStopRecordsNoSignal checks a clean stop run records no signal
 // event at all (issue #37).
 func TestRunCleanStopRecordsNoSignal(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -771,6 +790,7 @@ func TestRunCleanStopRecordsNoSignal(t *testing.T) {
 // threshold AND finishes length records exactly one signal per condition,
 // never twice for the same condition and attempt (issue #37).
 func TestRunNoDuplicateSignalForOneAttempt(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	session := "ses_test_both_001"
 	var b strings.Builder
@@ -824,6 +844,7 @@ func TestRunNoDuplicateSignalForOneAttempt(t *testing.T) {
 // per-step reasoning tokens omits peak_reasoning from the finished event and
 // prints no hint line (issue #84).
 func TestRunCleanRecordsNoPeakOrHint(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	session := "ses_test_zeroreason_001"
 	fixture := filepath.Join(t.TempDir(), "zeroreason.jsonl")
@@ -866,6 +887,7 @@ func TestRunCleanRecordsNoPeakOrHint(t *testing.T) {
 }
 
 func TestRunSimProviderError(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("provider-error.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -897,6 +919,7 @@ func TestRunSimProviderError(t *testing.T) {
 }
 
 func TestRunStartTimeoutSilent(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	model := fixturePath("clean.jsonl", t)
 	if err := WriteConfig(dir, simConfig(model)); err != nil {
@@ -977,6 +1000,7 @@ func stallFixture(t *testing.T, n int) string {
 // distinct from silent's 3 and a generic failure's 4), keeping the last
 // completed step, and that the half-timeout notice reaches Stderr (issue #85).
 func TestRunStalledMidStream(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	model := stallFixture(t, 2)
 	if err := WriteConfig(dir, simConfig(model)); err != nil {
@@ -1025,6 +1049,7 @@ func TestRunStalledMidStream(t *testing.T) {
 // TestRunStalledUsesWorkerConfigWhenFlagAbsent checks the worker's configured
 // stall_timeout applies when --stall-timeout is not given (issue #85).
 func TestRunStalledUsesWorkerConfigWhenFlagAbsent(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	model := stallFixture(t, 1)
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "sim", Adapter: "sim", Model: model, StallTimeout: 1}}}
@@ -1044,6 +1069,7 @@ func TestRunStalledUsesWorkerConfigWhenFlagAbsent(t *testing.T) {
 // TestRunStallTimeoutOverrideCleanRun checks a generous --stall-timeout never
 // interferes with a normal clean run (issue #85).
 func TestRunStallTimeoutOverrideCleanRun(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1062,6 +1088,7 @@ func TestRunStallTimeoutOverrideCleanRun(t *testing.T) {
 }
 
 func TestWorkerEnvAndPolicy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
 		t.Fatalf("mkdir .flywheel: %v", err)
@@ -1110,6 +1137,7 @@ type policyDoc struct {
 // copy alone carries external_directory: deny and the canonical file stays
 // byte-identical without it (issue #87).
 func TestWorkerPolicyMatchesCanonicalFile(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile("../../skills/flywheel/references/worker-permissions.json")
 	if err != nil {
 		t.Fatalf("read canonical policy: %v", err)
@@ -1144,6 +1172,7 @@ func TestWorkerPolicyMatchesCanonicalFile(t *testing.T) {
 // (matching workerRules) and points the policy's "instructions" at it
 // (issue #31).
 func TestRunWritesWorkerRules(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1176,6 +1205,7 @@ func TestRunWritesWorkerRules(t *testing.T) {
 // TestRunLeavesPreExistingWorkerFilesUntouched checks a run never overwrites
 // an opencode-worker.json or worker-rules.md that already exists (issue #31).
 func TestRunLeavesPreExistingWorkerFilesUntouched(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1204,6 +1234,7 @@ func TestRunLeavesPreExistingWorkerFilesUntouched(t *testing.T) {
 // TestWorkerRulesMatchesReferenceFile checks workerRules stays identical to
 // skills/flywheel/references/worker-rules.md (issue #31).
 func TestWorkerRulesMatchesReferenceFile(t *testing.T) {
+	t.Parallel()
 	b, err := os.ReadFile("../../skills/flywheel/references/worker-rules.md")
 	if err != nil {
 		t.Fatalf("read reference worker-rules.md: %v", err)
@@ -1214,6 +1245,7 @@ func TestWorkerRulesMatchesReferenceFile(t *testing.T) {
 }
 
 func TestRunLongRunWithEarlyFirstLineFinishesStop(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1231,6 +1263,7 @@ func TestRunLongRunWithEarlyFirstLineFinishesStop(t *testing.T) {
 }
 
 func TestRunCommandSessionOnlyOnResume(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1276,6 +1309,7 @@ func TestRunCommandSessionOnlyOnResume(t *testing.T) {
 }
 
 func TestRunResumeAfterInspectedUsesWorkerSession(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1315,6 +1349,7 @@ func TestRunResumeAfterInspectedUsesWorkerSession(t *testing.T) {
 }
 
 func TestRunMissingFixtureRecordsFinished(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(filepath.Join(dir, "nope.jsonl"))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1338,6 +1373,7 @@ func TestRunMissingFixtureRecordsFinished(t *testing.T) {
 }
 
 func TestWorkerEnvUsesAbsoluteConfigPath(t *testing.T) {
+	t.Parallel()
 	env := workerEnv(".")
 	found := ""
 	for _, kv := range env {
@@ -1359,6 +1395,7 @@ func TestWorkerEnvUsesAbsoluteConfigPath(t *testing.T) {
 // (issue #87); a brief already inside the workdir is attached as is, with no
 // copy made.
 func TestRunCopiesExternalBriefIntoWorktree(t *testing.T) {
+	t.Parallel()
 	t.Run("external brief is copied", func(t *testing.T) {
 		dir := t.TempDir()
 		if _, err := Init(dir, false); err != nil {
@@ -1424,6 +1461,7 @@ func TestRunCopiesExternalBriefIntoWorktree(t *testing.T) {
 // issue #87): a freshly added worktree with no changes yet still appears,
 // with an empty file map.
 func TestRunRecordsOtherWorktreesAtDispatch(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	initRepo(t, dir)
 	wt := filepath.Join(t.TempDir(), "other")
@@ -1459,6 +1497,7 @@ func TestRunRecordsOtherWorktreesAtDispatch(t *testing.T) {
 // TestRunStartFailedOnEmptyFixture checks a worker that exits before any
 // completed step records finished reason start-failed.
 func TestRunStartFailedOnEmptyFixture(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("empty.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1487,6 +1526,7 @@ func TestRunStartFailedOnEmptyFixture(t *testing.T) {
 // TestRunStartFailedOnFailedFixture checks a worker that emits output but
 // exits before any completed step also records start-failed.
 func TestRunStartFailedOnFailedFixture(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("start-failed.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1512,6 +1552,7 @@ func TestRunStartFailedOnFailedFixture(t *testing.T) {
 // TestRunStartFailedTruncatesStderrNote checks the finished note carries the
 // first nonempty stderr line, trimmed to at most 200 characters.
 func TestRunStartFailedTruncatesStderrNote(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("empty.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1546,6 +1587,7 @@ func TestRunStartFailedTruncatesStderrNote(t *testing.T) {
 // the attempt is c1, the brief records the delta path, and no session flag
 // reaches the adapter (issue #106).
 func TestRunDeltaWithoutResume(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1601,6 +1643,7 @@ func TestRunDeltaWithoutResume(t *testing.T) {
 // TestRunResumeWithDelta checks --resume --delta D keeps resuming the
 // worker's session while sending D.
 func TestRunResumeWithDelta(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1672,6 +1715,7 @@ func lastFinished(t *testing.T, dir, task string) Event {
 // no-writes), a write records none, and a result line with permission denials
 // records permission-denied and names them in the finished note.
 func TestRunStopWithoutWrites(t *testing.T) {
+	t.Parallel()
 	session := "ses_test_nowrites_001"
 	start := fmt.Sprintf(`{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
 	stop := fmt.Sprintf(`{"type":"step_finish","sessionID":%q,"part":{"type":"step_finish","reason":"stop"}}`+"\n", session)
@@ -1734,6 +1778,7 @@ func TestRunStopWithoutWrites(t *testing.T) {
 // and the newly recorded dispatched hash is the brief's CURRENT content
 // (issue #135).
 func TestRunBriefDriftWarns(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1771,6 +1816,7 @@ func TestRunBriefDriftWarns(t *testing.T) {
 // RuleRefusal with no event appended: a strict refusal never half-dispatches
 // (issue #135).
 func TestRunBriefDriftStrictRefuses(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1809,6 +1855,7 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 // with --kind amended, never --kind planned, and a gate edit also names a
 // correction delta.
 func TestBriefDriftAdvice(t *testing.T) {
+	t.Parallel()
 	orig := []byte("owns: a.go\ngate: go test ./...\n\n# Task\nbody\n")
 	cases := []struct {
 		name      string
@@ -1853,6 +1900,7 @@ func TestBriefDriftAdvice(t *testing.T) {
 // drift, recording a fresh planned event with the edited brief and
 // dispatching again warns nothing (issue #135).
 func TestRunBriefDriftQuietAfterReplan(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1885,6 +1933,7 @@ func TestRunBriefDriftQuietAfterReplan(t *testing.T) {
 // TestRunFirstDispatchNeverWarnsBriefDrift checks a task with no previous
 // dispatch cannot drift and warns nothing (issue #135).
 func TestRunFirstDispatchNeverWarnsBriefDrift(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1901,6 +1950,7 @@ func TestRunFirstDispatchNeverWarnsBriefDrift(t *testing.T) {
 // TestRunUnchangedBriefNeverWarnsBriefDrift checks an unchanged brief never
 // warns, no matter how often it is dispatched (issue #135).
 func TestRunUnchangedBriefNeverWarnsBriefDrift(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1921,6 +1971,7 @@ func TestRunUnchangedBriefNeverWarnsBriefDrift(t *testing.T) {
 // edited after a fresh dispatch, then resumed with a delta, warns and still
 // dispatches the correction (issue #135).
 func TestRunBriefDriftWarnsOnResume(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -1981,6 +2032,7 @@ func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool)
 // worker's first line, renews it at least once when the renew interval is
 // small, and removes it after finished.
 func TestRunWritesAndRenewsLease(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(fixturePath("clean.jsonl", t))
 	cfg.Lease = &LeaseConfig{RenewInterval: "20ms", TTL: "2s"}
@@ -2038,6 +2090,7 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 // TestRunRemovesLeaseOnErrorPath checks the lease is removed after the
 // finished event on the error path.
 func TestRunRemovesLeaseOnErrorPath(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(filepath.Join(dir, "nope.jsonl"))
 	cfg.Lease = &LeaseConfig{RenewInterval: "20ms", TTL: "2s"}
@@ -2061,6 +2114,7 @@ func TestRunRemovesLeaseOnErrorPath(t *testing.T) {
 // a run still in progress, with the clock frozen at dispatch time, must keep
 // its lease file, whose expires_at is in the past relative to a later now.
 func TestLeaseRemainsWhenRunKilled(t *testing.T) {
+	// not parallel: swaps the package-level now
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2133,6 +2187,7 @@ func noPlanFixture(t *testing.T, n int, withPlan bool) string {
 // records exactly one no-plan event, carrying the task and attempt, and
 // finishes normally (issue #65).
 func TestRunNoPlanFlaggedAt20Steps(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, false))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2168,6 +2223,7 @@ func TestRunNoPlanFlaggedAt20Steps(t *testing.T) {
 // TestRunPlanRecordedNoNoPlan checks a 22-step run with a PLAN line records
 // no no-plan event (issue #65).
 func TestRunPlanRecordedNoNoPlan(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, true))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2190,6 +2246,7 @@ func TestRunPlanRecordedNoNoPlan(t *testing.T) {
 // TestRunShortRunNoNoPlan checks a run that never reaches step 20 records no
 // no-plan event even without a PLAN line (issue #65).
 func TestRunShortRunNoNoPlan(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 5, false))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2213,6 +2270,7 @@ func TestRunShortRunNoNoPlan(t *testing.T) {
 // fixture, proving the opencode/sim path did not shift when step counting moved
 // from obs.Kind == "step" to obs.EndsTurn (issue #187).
 func TestRunSimCleanStepsPinned(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2229,6 +2287,7 @@ func TestRunSimCleanStepsPinned(t *testing.T) {
 // TestRunNoPlanAtExactly20Steps checks a run whose stream ends turns exactly
 // 20 times with no PLAN text records one no-plan event (issue #187).
 func TestRunNoPlanAtExactly20Steps(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 20, false))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2260,6 +2319,7 @@ func TestRunNoPlanAtExactly20Steps(t *testing.T) {
 // records BOTH its no-plan event and a signal event whose Signal is no-plan,
 // carrying the attempt, the session and the run file in Path (issue #37).
 func TestRunNoPlanSignalRecordsBoth(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 22, false))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -2347,6 +2407,7 @@ func shortOutsideDir(dir string) string {
 // outside the worktree record exactly one off-course event naming the paths,
 // without changing the run's outcome (issue #72).
 func TestRunOffCourseFlaggedAt5DistinctPaths(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	outside := shortOutsideDir(dir)
 	calls := [][2]string{
@@ -2395,6 +2456,7 @@ func TestRunOffCourseFlaggedAt5DistinctPaths(t *testing.T) {
 // TestRunFourDistinctOutsideNoOffCourse checks 4 distinct outside paths never
 // trigger the off-course event (issue #72).
 func TestRunFourDistinctOutsideNoOffCourse(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	outside := t.TempDir()
 	calls := [][2]string{
@@ -2425,6 +2487,7 @@ func TestRunFourDistinctOutsideNoOffCourse(t *testing.T) {
 // never count toward off-course, however many distinct ones there are
 // (issue #72).
 func TestRunInsideReadsNeverCount(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	calls := [][2]string{
 		{"read", filepath.Join(dir, "a.go")},
@@ -2456,6 +2519,7 @@ func TestRunInsideReadsNeverCount(t *testing.T) {
 // whose path arrives via the state.input.path fallback (not filePath), still
 // count toward off-course (issue #72).
 func TestRunGrepGlobCountThroughPathFallback(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	outside := shortOutsideDir(dir)
 	calls := [][2]string{
@@ -2512,6 +2576,7 @@ func wroteFixture(t *testing.T, calls [][2]string, reason string) string {
 // recorded on the finished event's wrote field, sorted and deduplicated
 // (issue #163).
 func TestRunWroteRecordsSortedDedupedFiles(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	calls := [][2]string{
 		{"edit", filepath.Join(dir, "b.go")},
@@ -2540,6 +2605,7 @@ func TestRunWroteRecordsSortedDedupedFiles(t *testing.T) {
 // attempt, even when outside reads already recorded it; writes inside the
 // worktree record neither (issue #359).
 func TestRunWroteOutsideWorktree(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name         string
 		outsideWrite bool
@@ -2610,6 +2676,7 @@ func TestRunWroteOutsideWorktree(t *testing.T) {
 // TestRunNoEditsOmitsWroteField checks a run with no edit/write tool calls
 // omits the wrote field from its finished event (issue #163).
 func TestRunNoEditsOmitsWroteField(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	calls := [][2]string{{"read", filepath.Join(dir, "a.go")}}
 	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
@@ -2631,6 +2698,7 @@ func TestRunNoEditsOmitsWroteField(t *testing.T) {
 // (reason length) that wrote files prints one extra progress line naming
 // them after the finished line (issue #163).
 func TestRunUncleanFinishWithFilesPrintsExtraLine(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	editPath := filepath.Join(dir, "a.go")
 	calls := [][2]string{{"edit", editPath}}
@@ -2651,6 +2719,7 @@ func TestRunUncleanFinishWithFilesPrintsExtraLine(t *testing.T) {
 // wrote files prints no extra "wrote ... before failing" line, even though the
 // finished event itself still records the files (issue #163).
 func TestRunCleanFinishNoExtraWroteLine(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	calls := [][2]string{{"edit", filepath.Join(dir, "a.go")}}
 	if err := WriteConfig(dir, simConfig(wroteFixture(t, calls, "stop"))); err != nil {
@@ -2725,6 +2794,7 @@ func gateBrief(t *testing.T, dir, name, owns, gate string) string {
 // message names the shared path and the owning task, and no event is appended
 // (issue #164).
 func TestRunRefusesOwnsCollision(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2754,6 +2824,7 @@ func TestRunRefusesOwnsCollision(t *testing.T) {
 // TestRunOwnsDisjointFromRunningDispatches checks a dispatch whose owns: is
 // disjoint from the in-flight task's owns: dispatches normally (issue #164).
 func TestRunOwnsDisjointFromRunningDispatches(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2776,6 +2847,7 @@ func TestRunOwnsDisjointFromRunningDispatches(t *testing.T) {
 // despite an owns: collision and records the overlap on the dispatched event's
 // note, naming the colliding paths and the other task (issue #164).
 func TestRunAllowOverlapRecordsOwnsOverlap(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2806,6 +2878,7 @@ func TestRunAllowOverlapRecordsOwnsOverlap(t *testing.T) {
 // TestRunOwnsCollisionWithNotInFlightDispatches checks a collision with a task
 // that is no longer in flight (landed or passed) does not refuse (issue #164).
 func TestRunOwnsCollisionWithNotInFlightDispatches(t *testing.T) {
+	t.Parallel()
 	for _, final := range []string{"landed", "passed"} {
 		t.Run(final, func(t *testing.T) {
 			dir := t.TempDir()
@@ -2837,6 +2910,7 @@ func TestRunOwnsCollisionWithNotInFlightDispatches(t *testing.T) {
 // entry (internal/foo/) collides with a file owned by an in-flight task under
 // it (issue #164).
 func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2861,6 +2935,7 @@ func TestRunRefusesDirectoryPrefixOwnsCollision(t *testing.T) {
 // in-flight task owning apps/inc/wake.h, in either direction, while
 // apps/inc/** alone still does.
 func TestCollisionNegated(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		t1, t2     string
@@ -2898,6 +2973,7 @@ func TestCollisionNegated(t *testing.T) {
 // RuleRefusal, the message names the resource and the holding task, and no
 // event is appended (issue #220).
 func TestRunRefusesExclusiveCollision(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2927,6 +3003,7 @@ func TestRunRefusesExclusiveCollision(t *testing.T) {
 // TestRunExclusiveNamesDisjointBothDispatch checks two briefs declaring
 // different exclusive names both dispatch (issue #220).
 func TestRunExclusiveNamesDisjointBothDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2949,6 +3026,7 @@ func TestRunExclusiveNamesDisjointBothDispatch(t *testing.T) {
 // despite an exclusive: clash and records the crossing on the dispatched
 // event's note (issue #220).
 func TestRunAllowOverlapRecordsExclusiveOverlap(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -2979,6 +3057,7 @@ func TestRunAllowOverlapRecordsExclusiveOverlap(t *testing.T) {
 // TestRunExclusiveClashWithNotInFlightDispatches checks a clash with a task
 // that is no longer in flight (landed or passed) does not refuse (issue #220).
 func TestRunExclusiveClashWithNotInFlightDispatches(t *testing.T) {
+	t.Parallel()
 	for _, final := range []string{"landed", "passed"} {
 		t.Run(final, func(t *testing.T) {
 			dir := t.TempDir()
@@ -3009,6 +3088,7 @@ func TestRunExclusiveClashWithNotInFlightDispatches(t *testing.T) {
 // TestRunExclusiveAloneDispatches checks a brief declaring an exclusive name
 // dispatches normally when no in-flight peer holds it (issue #220).
 func TestRunExclusiveAloneDispatches(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3030,6 +3110,7 @@ func TestRunExclusiveAloneDispatches(t *testing.T) {
 // overlaps an in-flight task's owns: and whose exclusive: clashes with it too
 // is refused as owns, not exclusive — owns is checked first (issue #220).
 func TestRunOwnsCollisionBeatsExclusiveClash(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3051,6 +3132,7 @@ func TestRunOwnsCollisionBeatsExclusiveClash(t *testing.T) {
 // warning on its dispatched note and prints it through progress, and does
 // NOT refuse — the run proceeds with the exit unchanged (issue #223).
 func TestRunSharedGateWarnsAndDispatches(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3092,6 +3174,7 @@ func TestRunSharedGateWarnsAndDispatches(t *testing.T) {
 // TestRunDifferentGatesNoSharedGateWarning checks two in-flight tasks whose
 // gate lines differ produce no shared-gate warning (issue #223).
 func TestRunDifferentGatesNoSharedGateWarning(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3125,6 +3208,7 @@ func TestRunDifferentGatesNoSharedGateWarning(t *testing.T) {
 // TestRunSharedGateNoInFlightSiblingsNoWarning checks a dispatch with no
 // in-flight sibling produces no shared-gate warning (issue #223).
 func TestRunSharedGateNoInFlightSiblingsNoWarning(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3158,6 +3242,7 @@ func TestRunSharedGateNoInFlightSiblingsNoWarning(t *testing.T) {
 // units, not gate declarations: three siblings sharing the gate say three
 // (issue #223).
 func TestRunSharedGateCountsUnitsNotGates(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3198,6 +3283,7 @@ func TestRunSharedGateCountsUnitsNotGates(t *testing.T) {
 // actually introduces, so the two units ran the gate at once with no warning
 // (issue #223).
 func TestRunCorrectionDeltaGateWarns(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3248,6 +3334,7 @@ func TestRunCorrectionDeltaGateWarns(t *testing.T) {
 // the previous attempt's gates and warned about contention the delta removes
 // (issue #223).
 func TestRunCorrectionDeltaGateReplacedSharedNoWarning(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3307,6 +3394,7 @@ type concurrentOutcome struct {
 // status dispatched) while the losing run reads the log, so the collision
 // it must see is actually visible.
 func TestRunConcurrentOwnsCollisionDispatchesOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3365,6 +3453,7 @@ func TestRunConcurrentOwnsCollisionDispatchesOnce(t *testing.T) {
 // Run returns the exclusive collision refusal. Owns are disjoint so only the
 // exclusive check can refuse.
 func TestRunConcurrentExclusiveCollisionDispatchesOnce(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3422,6 +3511,7 @@ func TestRunConcurrentExclusiveCollisionDispatchesOnce(t *testing.T) {
 // dispatches with disjoint owns: and no shared exclusive both succeed
 // (issue #242).
 func TestRunConcurrentDisjointOwnsBothDispatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3476,6 +3566,7 @@ func TestRunConcurrentDisjointOwnsBothDispatch(t *testing.T) {
 // in the past — a crashed holder — is removed and the dispatch proceeds, so
 // a dead lead never wedges the repository (issue #242).
 func TestRunStaleDispatchLockCleared(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -3505,6 +3596,7 @@ func TestRunStaleDispatchLockCleared(t *testing.T) {
 // locked window: after Run returns on the success path and on the refusal
 // path alike, .flywheel/dispatch.lock does not exist (issue #242).
 func TestRunDispatchLockRemovedAfterRun(t *testing.T) {
+	t.Parallel()
 	lockPath := func(dir string) string {
 		return filepath.Join(dir, ".flywheel", "dispatch.lock")
 	}
@@ -3549,6 +3641,7 @@ func TestRunDispatchLockRemovedAfterRun(t *testing.T) {
 // validation checks work nobody measured; with it, the fresh dispatch's
 // recorded header (2 gates, owns a.go and shared.go) wins.
 func TestFreshDispatchHeaderUsedAfterDrift(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -3614,6 +3707,7 @@ func TestFreshDispatchHeaderUsedAfterDrift(t *testing.T) {
 // exercised directly in brief_test.go; here the dispatch must record a header
 // whose sha256 field equals its own SHA256.
 func TestRunDispatchedHeaderMatchesRecordedSHA256(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -3642,6 +3736,7 @@ func TestRunDispatchedHeaderMatchesRecordedSHA256(t *testing.T) {
 // TestRunIncrementRecordedOnDispatched checks that Increment is recorded on
 // the dispatched event and derived into TaskState (issue #83).
 func TestRunIncrementRecordedOnDispatched(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -3680,6 +3775,7 @@ func TestRunIncrementRecordedOnDispatched(t *testing.T) {
 // TestRunIncrementRejectsResumeAndDelta checks that --increment cannot be
 // combined with --resume or --delta (issue #83).
 func TestRunIncrementRejectsResumeAndDelta(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -3713,6 +3809,7 @@ func TestRunIncrementRejectsResumeAndDelta(t *testing.T) {
 // TestRunLimitsPerHostRefused checks that a dispatch is refused when
 // limits.per_host attempts are already in flight.
 func TestRunLimitsPerHostRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	cfg.Limits.PerHost = 1
@@ -3750,6 +3847,7 @@ func TestRunLimitsPerHostRefused(t *testing.T) {
 // TestRunLimitsPerHostAllowsBelowCap checks that a dispatch succeeds when
 // fewer than limits.per_host attempts are in flight.
 func TestRunLimitsPerHostAllowsBelowCap(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	cfg.Limits.PerHost = 2
@@ -3772,6 +3870,7 @@ func TestRunLimitsPerHostAllowsBelowCap(t *testing.T) {
 // TestRunBudgetReachedRefused checks that a dispatch is refused when
 // the ledger's recorded spend has reached limits.budget.wave_cost_usd.
 func TestRunBudgetReachedRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	cfg.Limits.Budget = &Budget{WaveCostUSD: 0.5}
@@ -3812,6 +3911,7 @@ func TestRunBudgetReachedRefused(t *testing.T) {
 // TestRunBudgetBelowCapDispatches checks that a dispatch succeeds when
 // the ledger's recorded spend is below limits.budget.wave_cost_usd.
 func TestRunBudgetBelowCapDispatches(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	cfg.Limits.Budget = &Budget{WaveCostUSD: 0.5}
@@ -3837,6 +3937,7 @@ func TestRunBudgetBelowCapDispatches(t *testing.T) {
 // TestBreakerOpenAfterConsecutiveErrors checks that breakerOpen returns open=true
 // when the newest b.Errors finished events for a model all have reason "error".
 func TestBreakerOpenAfterConsecutiveErrors(t *testing.T) {
+	t.Parallel()
 	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
 	events := []Event{
 		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
@@ -3857,6 +3958,7 @@ func TestBreakerOpenAfterConsecutiveErrors(t *testing.T) {
 // TestBreakerClosedWhenLatestSucceeded checks that breakerOpen returns open=false
 // when the latest finished event for a model has reason other than "error".
 func TestBreakerClosedWhenLatestSucceeded(t *testing.T) {
+	t.Parallel()
 	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
 	events := []Event{
 		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
@@ -3874,6 +3976,7 @@ func TestBreakerClosedWhenLatestSucceeded(t *testing.T) {
 // provider error: rate limits alone never open the breaker, and one between
 // errors neither counts nor breaks the error streak (issue #380).
 func TestBreakerIgnoresRateLimit(t *testing.T) {
+	t.Parallel()
 	now, _ := time.Parse(time.RFC3339, "2026-09-13T00:00:00Z")
 	b := Breaker{Errors: 2, Cooldown: "10m"}
 	limits := []Event{
@@ -3903,6 +4006,7 @@ func TestBreakerIgnoresRateLimit(t *testing.T) {
 // TestBreakerClosedAfterCooldown checks that breakerOpen returns open=false
 // when the cooldown has passed since the newest error.
 func TestBreakerClosedAfterCooldown(t *testing.T) {
+	t.Parallel()
 	now, _ := time.Parse(time.RFC3339, "2026-09-13T00:06:00Z")
 	events := []Event{
 		{TS: "2026-09-12T23:40:00Z", Task: "T1", Kind: "finished", Model: "m", Reason: "error"},
@@ -3918,6 +4022,7 @@ func TestBreakerClosedAfterCooldown(t *testing.T) {
 // TestBreakerIgnoresOtherModels checks that breakerOpen ignores errors for
 // models other than the one being checked.
 func TestBreakerIgnoresOtherModels(t *testing.T) {
+	t.Parallel()
 	now, _ := time.Parse(time.RFC3339, "2026-09-12T00:00:00Z")
 	events := []Event{
 		{TS: "2026-09-12T23:58:00Z", Task: "T1", Kind: "finished", Model: "other", Reason: "error"},
@@ -3934,6 +4039,7 @@ func TestBreakerIgnoresOtherModels(t *testing.T) {
 // probe runs: while a dispatch of the model made after the newest error has
 // not finished, the breaker stays open (#304 review).
 func TestBreakerHalfOpenAdmitsOneProbe(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	ts := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339Nano) }
 	b := Breaker{Errors: 2, Cooldown: "10m"}
@@ -3957,6 +4063,7 @@ func TestBreakerHalfOpenAdmitsOneProbe(t *testing.T) {
 // TestRunBreakerRefusesDispatch checks that Run refuses a dispatch when the
 // circuit breaker for the model is open due to consecutive provider errors.
 func TestRunBreakerRefusesDispatch(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	fixture := noPlanFixture(t, 5, false)
 	cfg := simConfig(fixture)
@@ -4023,6 +4130,7 @@ func TestRunBreakerRefusesDispatch(t *testing.T) {
 // TestRunRefusesPausedModel checks that a fresh Run refuses a model another
 // unit's rate limit paused until its reset (issue #383).
 func TestRunRefusesPausedModel(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -4063,6 +4171,7 @@ func TestRunRefusesPausedModel(t *testing.T) {
 // is already running counts toward limits.per_host: it is another attempt on
 // the host (#293 review).
 func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	cfg := simConfig(noPlanFixture(t, 5, false))
 	cfg.Limits.PerHost = 1
@@ -4082,6 +4191,7 @@ func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
 // TestRunIncrementMissingFromBriefRefused checks a brief without increment N
 // is refused before anything is dispatched (#295 review).
 func TestRunIncrementMissingFromBriefRefused(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -4105,6 +4215,7 @@ func TestRunIncrementMissingFromBriefRefused(t *testing.T) {
 // TestBriefHasIncrement checks where an increment may be defined: a numbered
 // item inside an Increments section, or an "Increment N" heading.
 func TestBriefHasIncrement(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		text string
@@ -4241,6 +4352,7 @@ func limitRun(t *testing.T, retries *int, maxWait string) (Result, []time.Durati
 // killed command, and that a second abandoned-job is returned as is (issue
 // #390).
 func TestResumeAbandonedJob(t *testing.T) {
+	// not parallel: t.Setenv PATH to a fake claude
 	const session = "ses_job_001"
 	head := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
 	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_bg","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`+"\n", session) +
@@ -4337,6 +4449,7 @@ func finishedOf(evs []Event) (fins []Event, signaled bool) {
 // minute, and resumes the same session with a continue delta; retries 0 or a
 // reset beyond the max wait does not resume (issue #380).
 func TestRunRetriesRateLimit(t *testing.T) {
+	// not parallel: limitRun sets PATH to a fake claude
 	t.Run("resumes", func(t *testing.T) {
 		res, sleeps, reqs, evs := limitRun(t, nil, "")
 		if len(sleeps) != 1 || sleeps[0] != 21*time.Minute {
@@ -4426,6 +4539,7 @@ func runFakeClaudeStream(t *testing.T, stream string) (string, Result) {
 // stop, and a background call whose result gives no id is not tracked
 // (issue #390).
 func TestRunAbandonedJob(t *testing.T) {
+	// not parallel: runFakeClaudeStream sets PATH to a fake claude
 	const session = "ses_bg_001"
 	bg := fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","id":"toolu_012eoA","name":"Bash","input":{"command":"go test ./...","run_in_background":true}}]}}`, session)
 	result := fmt.Sprintf(`{"type":"user","session_id":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_012eoA","content":"Command running in background with ID: bzkt5tsmf. Output is being written to: C:\\tasks\\bzkt5tsmf.output"}]}}`, session)
@@ -4487,6 +4601,7 @@ func TestRunAbandonedJob(t *testing.T) {
 // holds the PLAN text beside a tool_use records worker_plan and, past step
 // 20, no no-plan (issue #360).
 func TestRunPlanBeforeTool(t *testing.T) {
+	// not parallel: t.Setenv PATH to a fake claude
 	dir := setupTask(t)
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -4549,6 +4664,7 @@ func TestRunPlanBeforeTool(t *testing.T) {
 // TestRunLargePrompt checks a 100 KB brief, over Windows' ~32K command-line
 // cap, dispatches to claude and reaches it whole on stdin (issue #427).
 func TestRunLargePrompt(t *testing.T) {
+	// not parallel: t.Setenv PATH to a fake claude
 	dir := setupTask(t)
 	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
 	if err := WriteConfig(dir, cfg); err != nil {
@@ -4598,6 +4714,7 @@ func TestRunLargePrompt(t *testing.T) {
 // TestRunRecordsCommands: the finished event carries the shell commands a
 // claude worker ran, in order, and names the gate it never ran (issue #365).
 func TestRunRecordsCommands(t *testing.T) {
+	// not parallel: t.Setenv PATH
 	dir := setupTask(t)
 	brief := "gate: go build ./...\ngate: go test -count=1 ./...\n\n# TASK\n"
 	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
@@ -4676,6 +4793,7 @@ func TestRunRecordsCommands(t *testing.T) {
 
 // TestGatesUnrun unit-tests gateRan (issue #365).
 func TestGatesUnrun(t *testing.T) {
+	t.Parallel()
 	long := "for f in $(git ls-files -m -o --exclude-standard -- '*.go'); do gofmt -l \"$f\"; done"
 	cases := []struct {
 		name, gate string
@@ -4700,6 +4818,7 @@ func TestGatesUnrun(t *testing.T) {
 // no lease, no run file — does not block a dispatch owning the same file:
 // flywheel run marks it lost (reason idle) before the owns check (issue #402).
 func TestRunIgnoresLostCollision(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init() error = %v", err)
@@ -4746,6 +4865,7 @@ func TestRunIgnoresLostCollision(t *testing.T) {
 // the commit named on the finished event, the unowned one is left and named
 // on the note, and no git-write signal is raised for flywheel's own commit.
 func TestRunCommitsAttempt(t *testing.T) {
+	t.Parallel()
 	dir := worktreeRepo(t) // T1 owns a.go
 	wt, err := TaskWorktree(dir, "T1")
 	if err != nil {
@@ -4797,6 +4917,7 @@ func TestRunCommitsAttempt(t *testing.T) {
 // unstages it BEFORE its own attempt commit (#391): the commit still lands the
 // owned change and flywheel's index refresh is not charged to the worker.
 func TestRunDetectsWorkerGitAdd(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := worktreeRepo(t) // T1 owns a.go
 	wt, err := TaskWorktree(dir, "T1")
 	if err != nil {
@@ -4851,6 +4972,7 @@ func TestRunDetectsWorkerGitAdd(t *testing.T) {
 // index is clean again and the file's content is still in the working tree
 // (#423).
 func TestRunRestoresIndex(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupTask(t)
 	gitRepoWithCommit(t, dir)
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
@@ -4881,6 +5003,7 @@ func TestRunRestoresIndex(t *testing.T) {
 // and records nothing (issue #411). A holder on another host cannot be probed
 // and counts as live.
 func TestRunRefusedDuringQuietGate(t *testing.T) {
+	t.Parallel()
 	dir := setupTask(t)
 	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 5, false))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
@@ -4923,6 +5046,7 @@ func TestRunRefusedDuringQuietGate(t *testing.T) {
 // and every finish that saw an event records its utilization, reset and
 // window; with no event the parsed clause still decides (issue #417).
 func TestResetFromEvent(t *testing.T) {
+	// not parallel: runFakeClaudeStream sets PATH to a fake claude
 	const session = "ses_rle_001"
 	event := func(util float64) string {
 		return fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1790304000,"rateLimitType":"five_hour","utilization":%v},"session_id":%q}`, util, session)
@@ -5003,6 +5127,7 @@ func setupRepo(t *testing.T, command string) string {
 // command writes is there when the fake worker runs, and one worktree_setup
 // event records rc 0, before the dispatched event.
 func TestWorktreeSetupRuns(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupRepo(t, `echo "setting up $FLYWHEEL_TASK" && echo ok > setup.marker`)
 	wt := filepath.Join(dir, ".flywheel", "worktrees", "T1")
 	markerSeen := false
@@ -5041,6 +5166,7 @@ func TestWorktreeSetupRuns(t *testing.T) {
 // TestWorktreeSetupFailureRefuses checks a setup that exits non-zero refuses
 // the dispatch with rule setup (issue #430): no dispatched event, no worker.
 func TestWorktreeSetupFailureRefuses(t *testing.T) {
+	// not parallel: sets the package-level commandHook
 	dir := setupRepo(t, `echo "install broke"; exit 1`)
 	workerRan := false
 	commandHook = func(RunRequest) { workerRan = true }

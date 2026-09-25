@@ -9,6 +9,7 @@ import (
 )
 
 func TestLoadCalibrationCases(t *testing.T) {
+	t.Parallel()
 	cases, err := LoadCalibrationCases(filepath.Join("..", "..", "docs", "calibration", "external-review-bugs.json"))
 	if err != nil {
 		t.Fatalf("LoadCalibrationCases: %v", err)
@@ -39,6 +40,7 @@ func TestLoadCalibrationCases(t *testing.T) {
 }
 
 func TestMatchFindings(t *testing.T) {
+	t.Parallel()
 	exp := []CalibrationCase{
 		{Path: "a/x.go", Line: 10, Claim: "one"},
 		{Path: "a/x.go", Line: 30, Claim: "two"},
@@ -66,6 +68,7 @@ func TestMatchFindings(t *testing.T) {
 }
 
 func TestCalibrateSample(t *testing.T) {
+	t.Parallel()
 	a, b := sampleGroups(76, 10, 7), sampleGroups(76, 10, 7)
 	if !reflect.DeepEqual(a, b) || len(a) != 10 {
 		t.Fatalf("sample not deterministic: %v vs %v", a, b)
@@ -86,6 +89,7 @@ func TestCalibrateSample(t *testing.T) {
 }
 
 func TestCalibrateRun(t *testing.T) {
+	t.Parallel()
 	repo := t.TempDir()
 	initRepo(t, repo)
 	git(t, repo, []string{"branch", "-M", "main"})

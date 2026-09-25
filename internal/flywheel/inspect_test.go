@@ -29,6 +29,7 @@ func refusalRule(t *testing.T, err error) string {
 }
 
 func TestInspectPassRefusedWithoutReadings(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -44,6 +45,7 @@ func TestInspectPassRefusedWithoutReadings(t *testing.T) {
 }
 
 func TestInspectPassRefusedWhenTreeChanged(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -65,6 +67,7 @@ func TestInspectPassRefusedWhenTreeChanged(t *testing.T) {
 }
 
 func TestInspectRefusedFromWorkerSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -83,6 +86,7 @@ func TestInspectRefusedFromWorkerSession(t *testing.T) {
 }
 
 func TestInspectRefusedBadVerdict(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -97,6 +101,7 @@ func TestInspectRefusedBadVerdict(t *testing.T) {
 }
 
 func TestInspectAcceptedWhenAllHold(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -134,6 +139,7 @@ func TestInspectAcceptedWhenAllHold(t *testing.T) {
 // refused while a blocking review finding is open, a minor one never blocks,
 // and a lead's dismissal clears the refusal.
 func TestInspectRefusesOpenFindings(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -175,6 +181,7 @@ func TestInspectRefusesOpenFindings(t *testing.T) {
 // session is refused as T4 even when the pass's readings are also missing, so
 // an inspection from a worker session never gets a T3 message.
 func TestInspectWorkerSessionPriorityOverReadings(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -193,6 +200,7 @@ func TestInspectWorkerSessionPriorityOverReadings(t *testing.T) {
 // --workdir tree as validate: with Workdir == Workdir != Dir the trees match
 // and the pass is accepted.
 func TestInspectMatchesValidateWorkdir(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -214,6 +222,7 @@ func TestInspectMatchesValidateWorkdir(t *testing.T) {
 // #244): an inspected event records the workdir it measured when that differs
 // from the flywheel root, and a same-dir inspection records none.
 func TestInspectRecordsWorkdirWhenExternal(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -262,6 +271,7 @@ func TestInspectRecordsWorkdirWhenExternal(t *testing.T) {
 // live-gate is refused T3 on a pass verdict when only the ordinary gates
 // have a validated reading (issue #152).
 func TestInspectPassRefusedWithoutLiveReading(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskLive() error = %v", err)
@@ -283,6 +293,7 @@ func TestInspectPassRefusedWithoutLiveReading(t *testing.T) {
 // once a passing live reading exists on the same tree, from a single
 // Live: true validate pass (issue #152).
 func TestInspectPassAcceptedWithLiveReading(t *testing.T) {
+	t.Parallel()
 	dir, err := initTaskLive(t, []string{"exit 0"}, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTaskLive() error = %v", err)
@@ -300,6 +311,7 @@ func TestInspectPassAcceptedWithLiveReading(t *testing.T) {
 // never mistaken for a worker session: after a rework, the same inspector can
 // pass with the same session once the readings hold.
 func TestInspectReworkThenPassSameSession(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -320,6 +332,7 @@ func TestInspectReworkThenPassSameSession(t *testing.T) {
 // reading on tree T, then a change to a file the unit does not own — the pass
 // is accepted and the inspected note names T.
 func TestInspectPassOnOtherTreeOutsideOwns(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -354,6 +367,7 @@ func TestInspectPassOnOtherTreeOutsideOwns(t *testing.T) {
 // issue #218 relaxation: a change to a file the unit does own must be refused
 // with today's T3 message, never excused.
 func TestInspectPassRefusedWhenOwnedFileChanged(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -390,6 +404,7 @@ func TestInspectPassRefusedWhenOwnedFileChanged(t *testing.T) {
 // current tree still passes with no relaxation suffix: the note is exactly the
 // operator's.
 func TestInspectCurrentTreeNoteKeepsOperatorNote(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -416,6 +431,7 @@ func TestInspectCurrentTreeNoteKeepsOperatorNote(t *testing.T) {
 // different trees are refused: no single tree holds every gate and the clean
 // owns_checked, so neither can be the tree the pass is evidence about.
 func TestInspectPassRefusedSplitAcrossTrees(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -461,6 +477,7 @@ func TestInspectPassRefusedSplitAcrossTrees(t *testing.T) {
 // readings check and the event write; the recorded tree must still be the
 // measured tree and flywheel verify must accept the pass.
 func TestInspectRecordsTheMeasuredTree(t *testing.T) {
+	// not parallel: swaps the package-level hashTree
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -518,6 +535,7 @@ func TestInspectRecordsTheMeasuredTree(t *testing.T) {
 // with no interleaving records the same tree as the one the readings were
 // proved against, exactly as before issue #241.
 func TestInspectPassRecordsCurrentTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -548,6 +566,7 @@ func TestInspectPassRecordsCurrentTree(t *testing.T) {
 // on a different tree T still records the current tree (the one inspected)
 // and still names T in the note.
 func TestInspectPassFromOtherTreeRecordsCurrentTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -590,6 +609,7 @@ func TestInspectPassFromOtherTreeRecordsCurrentTree(t *testing.T) {
 // TestInspectReworkRecordsCurrentTree checks that a rework needs no readings
 // and records the current tree, hashed once on its own path.
 func TestInspectReworkRecordsCurrentTree(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -621,6 +641,7 @@ func TestInspectReworkRecordsCurrentTree(t *testing.T) {
 // TestInspectPassRefusedByLaterFinished checks that a finished event after the
 // reading still invalidates it, exactly as before the issue #218 relaxation.
 func TestInspectPassRefusedByLaterFinished(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)
@@ -662,6 +683,7 @@ func taskStatus(t *testing.T, dir, task string) string {
 // tree even though the working tree has moved on, the task becomes passed,
 // and it then lands on that commit (T5 satisfied).
 func TestInspectCommit(t *testing.T) {
+	t.Parallel()
 	dir, commit := attestSetup(t, []string{"exit 0"}, "a.go")
 	logFinished(t, dir, "T1", "worker-1")
 	// The working tree moves on after the merge: only --commit names the
@@ -703,6 +725,7 @@ func TestInspectCommit(t *testing.T) {
 
 // TestInspectCommitUnknown refuses a commit that is not in the repository.
 func TestInspectCommitUnknown(t *testing.T) {
+	t.Parallel()
 	dir, _ := attestSetup(t, []string{"exit 0"}, "a.go")
 	err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1", Commit: "deadbeefdeadbeef"})
 	if err == nil || !strings.Contains(err.Error(), "not in the repository") {
@@ -723,6 +746,7 @@ func panelEvents(tree, dim string, findings ...ReviewFinding) []Event {
 // review.required applies the rule before any panel review; and a task
 // neither reviewed by the panel nor required passes as before.
 func TestInspectRefusesIncompletePanel(t *testing.T) {
+	t.Parallel()
 	dir, err := initTask(t, []string{"exit 0"})
 	if err != nil {
 		t.Fatalf("initTask() error = %v", err)

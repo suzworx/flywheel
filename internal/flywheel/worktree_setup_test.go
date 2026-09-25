@@ -12,6 +12,7 @@ import (
 // in root is reachable through the link in the worktree, a second call is a
 // no-op, and a missing target is an error naming it.
 func TestNeedsStateLink(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	wt := t.TempDir()
 	target := filepath.Join(root, "apps", "web", "node_modules")
@@ -45,6 +46,7 @@ func TestNeedsStateLink(t *testing.T) {
 // TestRunWorktreeSetupEnvAndTail checks runWorktreeSetup runs in the
 // worktree with the FLYWHEEL_* variables and returns the exit code and tail.
 func TestRunWorktreeSetupEnvAndTail(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	wt := t.TempDir()
 	rc, tail, _, err := runWorktreeSetup(dir, wt, "t1", `echo "task=$FLYWHEEL_TASK" && echo ok > marker && exit 3`, time.Minute)
@@ -64,6 +66,7 @@ func TestRunWorktreeSetupEnvAndTail(t *testing.T) {
 
 // TestOutputTailKeepsLastLines checks the tail keeps the last n lines.
 func TestOutputTailKeepsLastLines(t *testing.T) {
+	t.Parallel()
 	var sb strings.Builder
 	for i := 0; i < 30; i++ {
 		sb.WriteString("line\r\n")

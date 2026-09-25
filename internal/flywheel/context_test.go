@@ -8,6 +8,7 @@ import (
 )
 
 func TestContextEmpty(t *testing.T) {
+	t.Parallel()
 	events := []Event{}
 	cfg := Config{}
 	pack := BuildContext(events, cfg, 5)
@@ -56,6 +57,7 @@ func TestContextEmpty(t *testing.T) {
 }
 
 func TestContextActiveGoalsOnly(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Kind: "goal", Goal: &GoalSpec{ID: "G1", Title: "Active goal", Status: "active"}},
 		{TS: "2026-09-18T10:00:01Z", Kind: "goal", Goal: &GoalSpec{ID: "G2", Title: "Met goal", Status: "met"}},
@@ -75,6 +77,7 @@ func TestContextActiveGoalsOnly(t *testing.T) {
 }
 
 func TestContextInFlightAndUnjudged(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -107,6 +110,7 @@ func TestContextInFlightAndUnjudged(t *testing.T) {
 }
 
 func TestContextRecentLearningsCapped(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "learning", Severity: "P1", Title: "L1", Observed: "o1", Evidence: "e1", Ask: "a1"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "learning", Severity: "P2", Title: "L2", Observed: "o2", Evidence: "e2", Ask: "a2"},
@@ -135,6 +139,7 @@ func TestContextRecentLearningsCapped(t *testing.T) {
 }
 
 func TestContextRenderMarkdown(t *testing.T) {
+	t.Parallel()
 	events := []Event{}
 	cfg := Config{}
 	pack := BuildContext(events, cfg, 5)
@@ -161,6 +166,7 @@ func TestContextRenderMarkdown(t *testing.T) {
 
 // TestContextJSON verifies the ContextPack can be marshaled to JSON.
 func TestContextJSON(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Kind: "goal", Goal: &GoalSpec{ID: "G1", Title: "Test goal", Status: "active"}},
 	}
@@ -186,6 +192,7 @@ func TestContextJSON(t *testing.T) {
 // TestContextRenderShowsSession checks an in-flight task's session is in the
 // Markdown, not only the JSON (#297 review).
 func TestContextRenderShowsSession(t *testing.T) {
+	t.Parallel()
 	p := ContextPack{InFlight: []HandoffTask{{ID: "T1", Status: "running", Model: "m1", Session: "s-42"}}}
 	var b bytes.Buffer
 	if err := RenderContext(&b, p); err != nil {
@@ -198,6 +205,7 @@ func TestContextRenderShowsSession(t *testing.T) {
 
 // TestContextRoleUnknownErrors verifies that an unknown role returns an error.
 func TestContextRoleUnknownErrors(t *testing.T) {
+	t.Parallel()
 	events := []Event{}
 	cfg := Config{}
 	_, err := BuildRoleContext(events, cfg, 5, "nobody")
@@ -211,6 +219,7 @@ func TestContextRoleUnknownErrors(t *testing.T) {
 
 // TestContextRoleInspectorOnlyUninspected verifies inspector gets only uninspected blockers.
 func TestContextRoleInspectorOnlyUninspected(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -243,6 +252,7 @@ func TestContextRoleInspectorOnlyUninspected(t *testing.T) {
 
 // TestContextRoleStewardOnlyUntriaged verifies steward gets only untriaged blockers.
 func TestContextRoleStewardOnlyUntriaged(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -275,6 +285,7 @@ func TestContextRoleStewardOnlyUntriaged(t *testing.T) {
 
 // TestContextRoleAuditorUnaudited verifies auditor sees only unaudited landed tasks.
 func TestContextRoleAuditorUnaudited(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned"},
 		{TS: "2026-09-18T10:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
@@ -302,6 +313,7 @@ func TestContextRoleAuditorUnaudited(t *testing.T) {
 
 // TestContextRoleRenderOnlyOwnSections verifies role-filtered rendering.
 func TestContextRoleRenderOnlyOwnSections(t *testing.T) {
+	t.Parallel()
 	p := ContextPack{
 		Role:     "inspector",
 		Goals:    []GoalView{{ID: "G1", Title: "Goal", Status: "active"}},

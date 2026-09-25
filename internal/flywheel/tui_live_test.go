@@ -11,6 +11,7 @@ import (
 )
 
 func TestTUILiveQuitKey(t *testing.T) {
+	t.Parallel()
 	keys := make(chan term.Key, 1)
 	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
 	close(keys)
@@ -47,6 +48,7 @@ func TestTUILiveQuitKey(t *testing.T) {
 }
 
 func TestTUILiveClosedKeys(t *testing.T) {
+	t.Parallel()
 	keys := make(chan term.Key)
 	close(keys)
 
@@ -77,6 +79,7 @@ func TestTUILiveClosedKeys(t *testing.T) {
 }
 
 func TestTUILiveTickRefetches(t *testing.T) {
+	t.Parallel()
 	// Deterministic order: only the tick is ready at first; the second
 	// fetch (the tick's) queues q. A key and a tick ready together would
 	// let select pick either.
@@ -108,6 +111,7 @@ func TestTUILiveTickRefetches(t *testing.T) {
 }
 
 func TestTUILiveEnterFetchesExplain(t *testing.T) {
+	t.Parallel()
 	keys := make(chan term.Key, 2)
 	ticks := make(chan time.Time)
 
@@ -159,6 +163,7 @@ func TestTUILiveEnterFetchesExplain(t *testing.T) {
 }
 
 func TestTUILiveFetchError(t *testing.T) {
+	t.Parallel()
 	keys := make(chan term.Key)
 	ticks := make(chan time.Time)
 	close(keys)
@@ -186,6 +191,7 @@ func TestTUILiveFetchError(t *testing.T) {
 }
 
 func TestTUILiveFetcherLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// Initialize the flywheel state.
@@ -233,6 +239,7 @@ func TestTUILiveFetcherLog(t *testing.T) {
 // fetch, so a failing read on the way out cannot turn a clean quit into an
 // error (#346 review).
 func TestTUILiveQuitDoesNotRefetch(t *testing.T) {
+	t.Parallel()
 	keys := make(chan term.Key, 1)
 	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
 	calls := 0
@@ -255,6 +262,7 @@ func TestTUILiveQuitDoesNotRefetch(t *testing.T) {
 // TestTUILiveStopEndsLoop checks that closing Stop (a signal from another
 // process) ends the loop cleanly so RunTUI's restoration runs (#346 review).
 func TestTUILiveStopEndsLoop(t *testing.T) {
+	t.Parallel()
 	stop := make(chan struct{})
 	close(stop)
 	tio := TUIIO{Keys: make(chan term.Key), Size: func() (int, int) { return 80, 20 }, Out: &bytes.Buffer{}, Stop: stop}
