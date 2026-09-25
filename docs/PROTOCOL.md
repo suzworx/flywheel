@@ -104,7 +104,15 @@ all.
   `flywheel run` refuses a fresh attempt on it (exit 6, rule `rate-limit`; a resume is exempt),
   `flywheel next` HOLDs with `rate-limit: <model> paused until <time>`, and the floor shows the
   unit `rate-limited until HH:MM` and an andon entry `model/<model>` `paused until HH:MM`; a later
-  clean `stop` finish on the model ends the pause early, issue #383; `abandoned-job` — a clean
+  clean `stop` finish on the model ends the pause early, issue #383. A claude stream's
+  `rate_limit_event` lines carry the exact reset epoch and the share of the window used: a
+  rate-limited finish takes `reset_at` from the latest one (else the parsed message), and EVERY
+  finish that saw one carries `limit_utilization` (0..1), `limit_reset_at` (RFC 3339) and
+  `limit_window` (e.g. `five_hour`). Pause before the wall: when a model's LATEST finish has
+  `limit_utilization` at or above `limits.rate_limit_pause_at` (default 0.95; negative disables) and
+  `limit_reset_at` is ahead, the model is paused until then exactly as for a hit limit, the refusal
+  naming `(<n>% of the <window> window used)` and the andon `paused until HH:MM (<n>% used)`; a later
+  finish below the threshold, or the reset passing, releases it, issue #417; `abandoned-job` — a clean
   stop that left a background shell it started (claude Bash `run_in_background`, whose
   tool_result reports `running in background with ID: <id>` or `agentId: <id>`) never collected
   — no later tool call's input names that id (`BashOutput`, `KillShell`, a `Read` of its output
@@ -194,7 +202,9 @@ all.
   not trusted: an answer whose file does not exist (and is not a changed path), whose `line` is not
   0 or a real line, with an empty claim or scenario, or with more than 3 nits is refused, and the
   agent runs once more, fresh, into `<task>.<round>b.jsonl`; a second refusal records nothing and
-  `flywheel review --agent` exits 1 naming both transcripts.
+  `flywheel review --agent` exits 1 naming both transcripts. `flywheel review calibrate --cases FILE
+  --session S` runs the same agent over a sample of past PR states in temporary worktrees and synthetic
+  ledgers (never this ledger) and reports its recall against the case file (docs/calibration/README.md).
 - Carries: `task`, `attempt` (the unit's latest), `session` (the reviewer, never a worker session
   of the task: refused T4), `model`, `tree`, `severity` (`blocker`, `major`, `minor` or `nit`),
   `category`, `title` (the claim), `observed` (the failure scenario), `ask` (the fix hint), `path`

@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // RunRequest is everything the adapter needs to build a dispatch command.
@@ -86,6 +87,15 @@ type Observation struct {
 	// Input is the raw JSON text of a tool_use block's input; run.go matches
 	// a background shell id against it to see the shell collected (issue #390).
 	Input string
+	// Utilization, ResetsAt, LimitStatus and LimitWindow are a "rate_limit"
+	// observation's fields, from claude's rate_limit_event: the share of the
+	// window used, its exact reset, the status ("allowed",
+	// "allowed_warning", ...) and the window (rateLimitType, e.g.
+	// "five_hour") (issue #417).
+	Utilization float64
+	ResetsAt    time.Time
+	LimitStatus string
+	LimitWindow string
 }
 
 // Adapter turns a run request into a dispatch command and a stream of JSONL
@@ -470,6 +480,11 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Denials = claudeDenials(m)
 	case typ == "user":
 		return claudeToolResultObs(m)
+	case typ == "rate_limit_event":
+		var ok bool
+		if obs, ok = claudeRateLimitObs(m); !ok {
+			return Observation{}, false
+		}
 	default:
 		return Observation{}, false
 	}
@@ -919,6 +934,36 @@ func claudeRateLimit(status float64, result string) (reset string, ok bool) {
 		}
 	}
 	return reset, true
+}
+
+// claudeRateLimitObs decodes a rate_limit_event line's rate_limit_info into a
+// "rate_limit" observation (issue #417). A line without a status, with a
+// non-positive resetsAt or a utilization outside [0, 1] is false.
+func claudeRateLimitObs(m map[string]json.RawMessage) (Observation, bool) {
+	var info struct {
+		Status        string   `json:"status"`
+		ResetsAt      *int64   `json:"resetsAt"`
+		RateLimitType string   `json:"rateLimitType"`
+		Utilization   *float64 `json:"utilization"`
+	}
+	raw, ok := m["rate_limit_info"]
+	if !ok || json.Unmarshal(raw, &info) != nil || info.Status == "" {
+		return Observation{}, false
+	}
+	obs := Observation{Kind: "rate_limit", LimitStatus: info.Status, LimitWindow: info.RateLimitType}
+	if info.ResetsAt != nil {
+		if *info.ResetsAt <= 0 {
+			return Observation{}, false
+		}
+		obs.ResetsAt = time.Unix(*info.ResetsAt, 0).UTC()
+	}
+	if info.Utilization != nil {
+		if *info.Utilization < 0 || *info.Utilization > 1 {
+			return Observation{}, false
+		}
+		obs.Utilization = *info.Utilization
+	}
+	return obs, true
 }
 
 // rawString returns the string value of key in m, or "" when absent or not

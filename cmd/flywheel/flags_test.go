@@ -241,6 +241,26 @@ func TestReviewAgentFlags(t *testing.T) {
 	}
 }
 
+// TestCalibrateRunFlags parses `flywheel review calibrate`'s flags (issue
+// #389) and asserts the defaults and the bound options.
+func TestCalibrateRunFlags(t *testing.T) {
+	fs, o := reviewCalibrateFlags()
+	if o.sample != 10 || o.window != 15 || o.main != "origin/main" || o.cases != "docs/calibration/external-review-bugs.json" {
+		t.Errorf("calibrate defaults = %#v", *o)
+	}
+	if err := fs.Parse([]string{"--cases", "c.json", "--session", "rev", "--sample", "4", "--seed", "9",
+		"--worker", "w", "--window", "20", "--main", "main", "--out", "r.md", "--dir", "D"}); err != nil {
+		t.Fatalf("reviewCalibrateFlags: %v", err)
+	}
+	if o.cases != "c.json" || o.session != "rev" || o.sample != 4 || o.seed != 9 || o.worker != "w" ||
+		o.window != 20 || o.main != "main" || o.out != "r.md" || o.dir != "D" {
+		t.Errorf("calibrate parsed = %#v", *o)
+	}
+	if !strings.Contains(reviewUsageLine, "flywheel review calibrate --cases FILE") {
+		t.Errorf("usage %q does not name review calibrate", reviewUsageLine)
+	}
+}
+
 // TestReviewLoopFlags parses the review loop's flags (issue #389): --fix with
 // its rounds, correcting worker and worktree, and a lead's --dismiss.
 func TestReviewLoopFlags(t *testing.T) {
