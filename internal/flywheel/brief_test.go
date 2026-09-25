@@ -188,6 +188,25 @@ func TestParseBriefHeaderNeedsStateAbsentIsEmpty(t *testing.T) {
 	}
 }
 
+// TestParseBriefHeaderNeedsStateLink checks the "(link)" annotation (issue
+// #430): NeedsState keeps every plain path, NeedsStateLink the linked ones.
+func TestParseBriefHeaderNeedsStateLink(t *testing.T) {
+	path := writeBrief(t, "owns: a.go\nneeds: none\n"+
+		"needs-state: node_modules/ (link), .env, apps/web/node_modules/(link)\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	wantAll := []string{"node_modules/", ".env", "apps/web/node_modules/"}
+	wantLink := []string{"node_modules/", "apps/web/node_modules/"}
+	if !reflect.DeepEqual(h.NeedsState, wantAll) {
+		t.Errorf("NeedsState = %v, want %v", h.NeedsState, wantAll)
+	}
+	if !reflect.DeepEqual(h.NeedsStateLink, wantLink) {
+		t.Errorf("NeedsStateLink = %v, want %v", h.NeedsStateLink, wantLink)
+	}
+}
+
 func TestParseBriefHeaderMissingHeader(t *testing.T) {
 	path := writeBrief(t, "# TASK: no header keys here\n\n## Context\nbody\n")
 	h, err := ParseBriefHeader(path)

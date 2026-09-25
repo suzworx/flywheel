@@ -1218,3 +1218,24 @@ func TestRebasedEvent(t *testing.T) {
 		t.Errorf("round trip = %+v", evs)
 	}
 }
+
+// TestWorktreeSetupEvent checks the worktree_setup kind (issue #430) is valid
+// and round-trips its linked paths, rc, duration and note.
+func TestWorktreeSetupEvent(t *testing.T) {
+	rc := 0
+	ev := Event{Task: "B", Kind: "worktree_setup", Attempt: "r1", Linked: []string{"node_modules/"}, RC: &rc, DurationMS: 42, Note: "done"}
+	if err := Validate(ev); err != nil {
+		t.Fatalf("Validate(worktree_setup) = %v", err)
+	}
+	dir := t.TempDir()
+	if err := AppendEvent(dir, ev); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Kind != "worktree_setup" || len(evs[0].Linked) != 1 || evs[0].RC == nil || evs[0].DurationMS != 42 {
+		t.Errorf("round trip = %+v", evs)
+	}
+}

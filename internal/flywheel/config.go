@@ -58,6 +58,33 @@ type Config struct {
 	Log        *LogConfig        `json:"log,omitempty"`
 	Staffing   *StaffingConfig   `json:"staffing,omitempty"`
 	Review     *ReviewConfig     `json:"review,omitempty"`
+	Worktree   *WorktreeConfig   `json:"worktree,omitempty"`
+}
+
+// WorktreeConfig configures `flywheel run --worktree` (issue #430): a setup
+// command run in the task's worktree before every dispatch.
+type WorktreeConfig struct {
+	// Setup is a shell command run (bash -c, cwd the worktree) before the
+	// worker starts; it runs on every dispatch, so it must be idempotent.
+	Setup string `json:"setup,omitempty"`
+	// SetupTimeout bounds Setup, a Go duration; "" means 10m.
+	SetupTimeout string `json:"setup_timeout,omitempty"`
+}
+
+// SetupCommand is worktree.setup, "" when unset.
+func (c Config) SetupCommand() string {
+	if c.Worktree == nil {
+		return ""
+	}
+	return c.Worktree.Setup
+}
+
+// SetupTimeoutDuration parses worktree.setup_timeout ("" means 10 minutes).
+func (c Config) SetupTimeoutDuration() (time.Duration, error) {
+	if c.Worktree == nil || c.Worktree.SetupTimeout == "" {
+		return 10 * time.Minute, nil
+	}
+	return time.ParseDuration(c.Worktree.SetupTimeout)
 }
 
 // ReviewConfig configures the review panel (issue #420): the personas that
@@ -546,6 +573,11 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if d, err := c.SetupTimeoutDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("worktree.setup_timeout %q: %v", c.Worktree.SetupTimeout, err))
+	} else if d <= 0 {
+		problems = append(problems, fmt.Sprintf("worktree.setup_timeout %q must be > 0", c.Worktree.SetupTimeout))
+	}
 	switch c.Feedback.Submit {
 	case "", "ask", "never":
 	default:
@@ -786,6 +818,13 @@ func (c Config) Get(key string) (string, error) {
 		return strings.Join(c.PanelDimensions(), ","), nil
 	case "review.required":
 		return strconv.FormatBool(c.ReviewRequired()), nil
+	case "worktree.setup":
+		return c.SetupCommand(), nil
+	case "worktree.setup_timeout":
+		if c.Worktree == nil || c.Worktree.SetupTimeout == "" {
+			return "10m", nil
+		}
+		return c.Worktree.SetupTimeout, nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -838,6 +877,7 @@ func (c Config) validKeys() []string {
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
+		"worktree.setup", "worktree.setup_timeout",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -999,6 +1039,16 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Review.Required = b
 		return nil
+	case "worktree.setup", "worktree.setup_timeout":
+		if c.Worktree == nil {
+			c.Worktree = &WorktreeConfig{}
+		}
+		if key == "worktree.setup" {
+			c.Worktree.Setup = value
+		} else {
+			c.Worktree.SetupTimeout = value
+		}
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -1041,6 +1091,7 @@ func (c Config) settableKeys() []string {
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"max_parallel", "model", "review.panel", "review.required", "stall_timeout", "variant",
+		"worktree.setup", "worktree.setup_timeout",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

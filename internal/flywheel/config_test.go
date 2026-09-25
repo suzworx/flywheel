@@ -934,3 +934,39 @@ func TestPanelConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestSetupConfig checks worktree.setup and worktree.setup_timeout (issue
+// #430): defaults, Set/Get round-trip, and validation of the timeout.
+func TestSetupConfig(t *testing.T) {
+	var c Config
+	if got, _ := c.Get("worktree.setup"); got != "" {
+		t.Errorf("Get(worktree.setup) = %q, want empty by default", got)
+	}
+	if got, _ := c.Get("worktree.setup_timeout"); got != "10m" {
+		t.Errorf("Get(worktree.setup_timeout) = %q, want 10m by default", got)
+	}
+	if d, err := c.SetupTimeoutDuration(); err != nil || d != 10*time.Minute {
+		t.Errorf("SetupTimeoutDuration() = %v, %v, want 10m", d, err)
+	}
+	if err := c.Set("worktree.setup", "npm ci"); err != nil {
+		t.Fatalf("Set(worktree.setup) error = %v", err)
+	}
+	if err := c.Set("worktree.setup_timeout", "90s"); err != nil {
+		t.Fatalf("Set(worktree.setup_timeout) error = %v", err)
+	}
+	if got, _ := c.Get("worktree.setup"); got != "npm ci" {
+		t.Errorf("Get(worktree.setup) = %q, want npm ci", got)
+	}
+	if d, err := c.SetupTimeoutDuration(); err != nil || d != 90*time.Second {
+		t.Errorf("SetupTimeoutDuration() = %v, %v, want 90s", d, err)
+	}
+	if !slices.Contains(c.settableKeys(), "worktree.setup") || !slices.Contains(c.validKeys(), "worktree.setup_timeout") {
+		t.Error("worktree keys missing from settableKeys/validKeys")
+	}
+	for _, bad := range []string{"soon", "-1m", "0s"} {
+		c.Worktree.SetupTimeout = bad
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "worktree.setup_timeout") {
+			t.Errorf("Validate(setup_timeout %q) = %v, want a worktree.setup_timeout error", bad, err)
+		}
+	}
+}

@@ -61,6 +61,20 @@ all.
   `amended` event between the dispatch and now excuses a fresh attempt's mismatch, but never a
   correction's.
 
+### `worktree_setup`
+- Written by: the CLI only, via `flywheel run <task> --worktree` (issue #430), after the task's
+  worktree (`.flywheel/worktrees/<task>`) exists and before `dispatched`, on every dispatch that has
+  something to prepare: the effective brief's `needs-state: <path> (link)` entries, each linked from
+  the repo into the worktree (a directory junction on Windows, a symlink elsewhere; a path already
+  present is left alone), then the `worktree.setup` command, run with bash (the gates' shell) in the
+  worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE` and `FLYWHEEL_ROOT` set and killed at
+  `worktree.setup_timeout` (default `10m`). Setup runs on every dispatch, so it must be idempotent.
+- Carries: `task`, `attempt` (the attempt being dispatched), `linked` (the linked paths), `command`,
+  `rc`, `duration_ms`, `note` (the last 20 lines of output, or the link error).
+- Effect: no status change. A link error (a `(link)` path missing in the repo) or a setup that does
+  not exit 0 refuses the dispatch (exit 6, rule `setup`, the fix naming the path or command and the
+  output tail): no `dispatched` event is recorded and no worker starts.
+
 ### `started`
 - Written by: the CLI, from the run's first parsed `start` observation.
 - Carries: `task`, `session` (the emitted OpenCode session id). No `model` — that rides only on
@@ -761,7 +775,7 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
 - Every other kind (`planned`, `dispatched`, `started`, `worker_plan`, `no-plan`, `finished`,
   `report`, `reviewed`, `blocked`, `lost`, `landed`, `amended`, `staffed`, `goal`) carries no
   persona restriction in `ruleT8`. In practice most of them are written only by a specific CLI
-  command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report` only by `flywheel
+  command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report`/`worktree_setup` only by `flywheel
   run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`;
   `review_finding` only by `flywheel review --agent`; `finding_response` only by `flywheel review
   --agent --fix` and a lead's `--dismiss`), which is what keeps them honest — not a
