@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -5354,5 +5355,137 @@ func TestDeltaReuseKeepsEarlierT1(t *testing.T) {
 		if !it.Pass {
 			t.Errorf("T1 failed: %s", it.Reason)
 		}
+	}
+}
+
+// TestRunWroteFromTree checks wrote also takes the tree's changes since
+// dispatch (issue #463): a file written through a shell, with no write
+// observation, is in wrote and wrote_from_tree; a file dirty at dispatch and
+// untouched is in neither; a file an observed write names is in wrote once
+// and not in wrote_from_tree.
+func TestRunWroteFromTree(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	git(t, dir, []string{"init", "-q"})
+	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	git(t, dir, []string{"config", "gc.auto", "0"})
+	git(t, dir, []string{"config", "maintenance.auto", "false"})
+	for name, body := range map[string]string{".gitignore": ".flywheel/\nflywheel.md\n", "a.go": "package x\n", "b.txt": "one line brief\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "init"})
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dirty.go"), []byte("package y\n"), 0o644); err != nil {
+		t.Fatalf("write dirty.go: %v", err)
+	}
+	observed := filepath.Join(dir, "obs.go")
+	if err := WriteConfig(dir, simConfig(wroteFixture(t, [][2]string{{"write", observed}}, "stop"))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	// The "worker" writes when Run reports the dispatch, which it does
+	// synchronously after the baseline is taken and before the worker starts:
+	// shell.go through a shell, obs.go through the observed write.
+	w := &dispatchWriter{do: func() error {
+		if err := os.WriteFile(filepath.Join(dir, "shell.go"), []byte("package z\n"), 0o644); err != nil {
+			return err
+		}
+		return os.WriteFile(observed, []byte("package o\n"), 0o644)
+	}}
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: w}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !w.done {
+		t.Fatalf("no dispatched progress line")
+	}
+	if w.err != nil {
+		t.Fatalf("worker write: %v", w.err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	f := evs[len(evs)-1]
+	if f.Kind != "finished" {
+		t.Fatalf("last event = %+v, want finished", f)
+	}
+	if want := []string{observed, "shell.go"}; !slices.Equal(f.Wrote, want) {
+		t.Errorf("wrote = %v, want %v", f.Wrote, want)
+	}
+	if want := []string{"shell.go"}; !slices.Equal(f.WroteFromTree, want) {
+		t.Errorf("wrote_from_tree = %v, want %v", f.WroteFromTree, want)
+	}
+}
+
+// dispatchWriter is a RunOptions.Progress that runs do, once, the first time
+// it sees a dispatched line, recording do's error.
+type dispatchWriter struct {
+	mu   sync.Mutex
+	do   func() error
+	done bool
+	err  error
+}
+
+func (w *dispatchWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.done && strings.Contains(string(p), " dispatched ") {
+		w.done = true
+		w.err = w.do()
+	}
+	return len(p), nil
+}
+
+// TestTreeWrites checks treeWrites against a dispatch baseline (issue #463):
+// new and re-changed paths are in, unchanged baseline paths, .flywheel/ and
+// observed paths are out, and 50 observed paths leave no room.
+func TestTreeWrites(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	git(t, dir, []string{"-c", "core.autocrlf=false", "init", "-q"})
+	git(t, dir, []string{"config", "core.autocrlf", "false"})
+	write := func(name, body string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("same.go", "package a\n")
+	write("changed.go", "package b\n")
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"-c", "core.autocrlf=false", "commit", "-q", "-m", "init"})
+	// Dirty at dispatch: same.go stays as it was, changed.go changes again.
+	write("same.go", "package a // dirty\n")
+	write("changed.go", "package b // dirty\n")
+	baseline := computeBaseline(dir)
+	if len(baseline) != 2 {
+		t.Fatalf("baseline = %v, want same.go and changed.go", baseline)
+	}
+	write("changed.go", "package b // again\n")
+	write("new.go", "package n\n")
+	write(".flywheel/state.json", "{}\n")
+	write("obs.go", "package o\n")
+
+	observed := []string{filepath.Join(dir, "obs.go")}
+	if got, want := treeWrites(dir, baseline, observed), []string{"changed.go", "new.go"}; !slices.Equal(got, want) {
+		t.Errorf("treeWrites() = %v, want %v", got, want)
+	}
+	full := make([]string, 50)
+	for i := range full {
+		full[i] = filepath.Join(dir, fmt.Sprintf("f%d.go", i))
+	}
+	if got := treeWrites(dir, baseline, full); got != nil {
+		t.Errorf("treeWrites() with 50 observed = %v, want nil", got)
 	}
 }

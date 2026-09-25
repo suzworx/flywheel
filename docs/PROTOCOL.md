@@ -142,7 +142,11 @@ all.
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
   #156), `sha256` (of the whole run file), `wrote` (the attempt's distinct edit/write paths, sorted,
-  at most 50, omitted when the attempt made no edits, issue #163), `commands` (the shell commands
+  at most 50, omitted when the attempt made no edits, issue #163; it also holds the worktree-relative
+  paths the worker changed in the tree since dispatch — changed at finish and not dirty at dispatch,
+  or with a sha that differs from the dispatch baseline, `.flywheel/` excluded — so MultiEdit,
+  NotebookEdit and shell writes count, issue #463), `wrote_from_tree` (the subset of `wrote` that
+  came only from the tree, not from a tool observation; omitted when empty, issue #463), `commands` (the shell commands
   the worker ran, in order, at most 100, each clipped to 300 characters; omitted when it ran none,
   issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
@@ -541,6 +545,10 @@ all.
   re-checked before recording (a tree that changed mid-audit records nothing). A record check that
   cannot be established (`INCONCLUSIVE`) is a finding: an audit that cannot confirm does not pass.
   The auditor's independence is checked again right before the event is appended. T7 gating is opt-in: see T7 below.
+  In config, `Validate` refuses a `staffing.auditor` on the same agent and model as another role
+  unless its RoleConfig `independence` is `"session"` (issue #463): a single-model factory then
+  relies on this fresh-session check; a shared session is refused either way, and `independence`
+  on any other role, or any other value, is a config problem.
 
 ### `release_audited`
 - Written by: `flywheel audit --release <version> --session S` (issue #420), after a release is published.

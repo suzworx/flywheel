@@ -863,6 +863,8 @@ func (a codexAdapter) Parse(line []byte) (Observation, bool) {
 // Observation carries; any other name is lowercased unchanged.
 var claudeToolNames = map[string]string{
 	"Read": "read", "Write": "write", "Edit": "edit", "Grep": "grep", "Glob": "glob",
+	// MultiEdit and NotebookEdit write files too, so wrote sees them (issue #463).
+	"MultiEdit": "edit", "NotebookEdit": "edit",
 }
 
 func claudeToolName(name string) string {
@@ -873,9 +875,12 @@ func claudeToolName(name string) string {
 }
 
 // claudeToolPath returns a tool_use block's target: input.file_path, else
-// input.path, else "".
+// input.notebook_path (NotebookEdit, issue #463), else input.path, else "".
 func claudeToolPath(block map[string]json.RawMessage) string {
 	if p := claudeToolInput(block, "file_path"); p != "" {
+		return p
+	}
+	if p := claudeToolInput(block, "notebook_path"); p != "" {
 		return p
 	}
 	return claudeToolInput(block, "path")
