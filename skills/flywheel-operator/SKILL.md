@@ -112,6 +112,8 @@ Everything is files — no database.
 | File | Purpose |
 | --- | --- |
 | `flywheel.md` | Human-readable state: Status, Main session, Workers, Roles, Task log. |
+| `.flywheel/state.json` | Machine-precise state: `version`, `status`, `tasks[]`. |
+| `.flywheel/briefs/` | One file per task brief (`<id>.txt`) and per correction (`<id>.delta.txt`), plus the per-attempt snapshot `flywheel run` records for each correction (`<id>.c<n>.delta.txt`). |
 | `.flywheel/state.json` | Machine-precise state: `version`, `status`, `tasks[]`, and `groups[]` for reviewed groups (a `group:<id>` task is never a unit). |
 | `.flywheel/briefs/` | One file per task brief (`<id>.txt`) and per correction (`<id>.delta.txt`). |
 | `.flywheel/runs/` | Raw dispatch output (JSONL) per attempt — `<id>.r1.jsonl` fresh run, `<id>.c<n>.jsonl` corrections. |
@@ -208,6 +210,11 @@ same state files the planned subcommands will automate. `$MODEL` comes from
      opencode run --pure -m "$MODEL" --auto --format json --title "<id>-c<n>" --variant low --session "<emitted-sessionID>" \
      "Apply the attached correction to the same task." --file .flywheel/briefs/<id>.delta.txt < /dev/null > .flywheel/runs/<id>.c<n>.jsonl; rc=$?
    ```
+   Give each correction its own delta. `flywheel run <id> --delta <file>` snapshots it to
+   `.flywheel/briefs/<id>.c<n>.delta.txt` and records that path on `dispatched`, so reusing the file
+   never breaks an earlier correction's T1. For an older ledger where a later delta overwrote an
+   earlier one, acknowledge the loss with `flywheel log --task <id> --kind amended --attempt c<n>
+   --note "<why>"`; T1 passes that correction with the note as its reason and waives nothing else.
 
 ### Validating while other units run
 

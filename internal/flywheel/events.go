@@ -420,6 +420,18 @@ func Validate(e Event) error {
 	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
 		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")
 	}
+	// An amended event naming an attempt acknowledges that correction's delta
+	// is not retained (issue #452): only a correction (c*) can be named, and
+	// the why is required. That the attempt was dispatched is checked by
+	// flywheel log, which has the events.
+	if e.Kind == "amended" && e.Attempt != "" {
+		if !isCorrection(e.Attempt) {
+			return fmt.Errorf("amended event attempt %q must be a correction attempt (c*)", e.Attempt)
+		}
+		if e.Note == "" {
+			return fmt.Errorf("amended event acknowledging %s must carry a note (why its delta is not retained)", e.Attempt)
+		}
+	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")
 	}

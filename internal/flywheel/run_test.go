@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -505,8 +506,8 @@ func TestRunSimAttemptNumbering(t *testing.T) {
 	if r1d.Brief != "b.txt" {
 		t.Errorf("fresh dispatched brief = %q, want b.txt", r1d.Brief)
 	}
-	if c1d.Brief != ".flywheel/briefs/T1.delta.txt" {
-		t.Errorf("resume dispatched brief = %q, want .flywheel/briefs/T1.delta.txt", c1d.Brief)
+	if c1d.Brief != ".flywheel/briefs/T1.c1.delta.txt" {
+		t.Errorf("resume dispatched brief = %q, want the snapshot .flywheel/briefs/T1.c1.delta.txt", c1d.Brief)
 	}
 }
 
@@ -1635,8 +1636,8 @@ func TestRunDeltaWithoutResume(t *testing.T) {
 	if d.Attempt != "c1" {
 		t.Errorf("dispatched attempt = %q, want c1", d.Attempt)
 	}
-	if d.Brief != "d.txt" {
-		t.Errorf("dispatched brief = %q, want the delta path d.txt", d.Brief)
+	if d.Brief != ".flywheel/briefs/T1.c1.delta.txt" {
+		t.Errorf("dispatched brief = %q, want the per-attempt delta snapshot", d.Brief)
 	}
 }
 
@@ -4240,9 +4241,80 @@ func TestBriefHasIncrement(t *testing.T) {
 	}
 }
 
+// TestRunNoResultLineIsError checks a worker that completes steps and then
+// exits non-zero with no result line (killed or crashed) finishes with reason
+// error and a note naming its exit code, and its written owned file is
+// checkpointed. It sets process-wide env, so it does not run in parallel.
+func TestRunNoResultLineIsError(t *testing.T) {
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a // partial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const session = "ses_killed_001"
+	stream := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	for range 3 {
+		stream += fmt.Sprintf(`{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"a.go"}}]}}`+"\n", session)
+	}
+	p := filepath.Join(t.TempDir(), "killed.jsonl")
+	if err := os.WriteFile(p, []byte(stream), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeClaudeEnv, p)
+	t.Setenv(fakeClaudeExitEnv, "3")
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Progress: &buf})
+	if err != nil || res.Reason != "error" {
+		t.Fatalf("Run() = %+v, %v; want reason error; progress:\n%s", res, err, buf.String())
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fin Event
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "finished" {
+			fin = e
+		}
+	}
+	if fin.Reason != "error" || fin.Steps == 0 {
+		t.Errorf("finished reason/steps = %q/%d, want error and some steps", fin.Reason, fin.Steps)
+	}
+	if want := "worker exited rc=3 with no result line (killed or crashed)"; !strings.Contains(fin.Note, want) {
+		t.Errorf("finished note = %q, want it to contain %q", fin.Note, want)
+	}
+	if fin.Checkpoint == "" {
+		t.Errorf("finished = %+v, want a checkpoint of a.go", fin)
+	}
+}
+
 // fakeClaudeEnv names the stream file the test binary replays when it runs
 // as a fake claude (see TestMain and TestRunPlanBeforeTool).
 const fakeClaudeEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STREAM"
+
+// fakeClaudeExitEnv, when set, is the exit code the fake claude exits with
+// after replaying its stream (default 0).
+const fakeClaudeExitEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_EXIT"
 
 // fakeClaudeStdinEnv names the file the fake claude saves its stdin to.
 const fakeClaudeStdinEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STDIN"
@@ -4271,7 +4343,8 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		_, _ = os.Stdout.Write(b)
-		os.Exit(0)
+		code, _ := strconv.Atoi(os.Getenv(fakeClaudeExitEnv))
+		os.Exit(code)
 	}
 	os.Exit(m.Run())
 }
@@ -5200,5 +5273,86 @@ func TestWorktreeSetupFailureRefuses(t *testing.T) {
 	}
 	if setups != 1 {
 		t.Errorf("worktree_setup events = %d, want 1", setups)
+	}
+}
+
+// correctionDispatch returns task's dispatched event for attempt.
+func correctionDispatch(t *testing.T, dir, task, attempt string) Event {
+	t.Helper()
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, e := range evs {
+		if e.Task == task && e.Kind == "dispatched" && e.Attempt == attempt {
+			return e
+		}
+	}
+	t.Fatalf("no dispatched %s event for %s", attempt, task)
+	return Event{}
+}
+
+// TestCorrectionDeltaSnapshot checks a correction's delta is snapshotted per
+// attempt at dispatch (issue #452): dispatched.Brief names
+// .flywheel/briefs/<task>.<attempt>.delta.txt, whose bytes are the prompt,
+// and the operator's file is left as it was.
+func TestCorrectionDeltaSnapshot(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	deltaB := []byte("fix the registry\n")
+	delta := filepath.Join(dir, "d.txt")
+	if err := os.WriteFile(delta, deltaB, 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", DeltaPath: delta}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	d := correctionDispatch(t, dir, "T1", "c1")
+	if want := ".flywheel/briefs/T1.c1.delta.txt"; d.Brief != want {
+		t.Fatalf("dispatched brief = %q, want the snapshot %q", d.Brief, want)
+	}
+	snap, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(d.Brief)))
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if !bytes.Equal(snap, deltaB) {
+		t.Errorf("snapshot = %q, want the prompt %q", snap, deltaB)
+	}
+	if orig, err := os.ReadFile(delta); err != nil || !bytes.Equal(orig, deltaB) {
+		t.Errorf("operator delta = %q, %v; want it untouched", orig, err)
+	}
+}
+
+// TestDeltaReuseKeepsEarlierT1 checks two corrections dispatched from the
+// same --delta file with different contents both pass T1 afterwards: the
+// second write to the file no longer breaks the first correction's record
+// (issue #452).
+func TestDeltaReuseKeepsEarlierT1(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	delta := filepath.Join(dir, "d.txt")
+	for i, body := range []string{"first correction\n", "second correction\n"} {
+		if err := os.WriteFile(delta, []byte(body), 0o644); err != nil {
+			t.Fatalf("write delta: %v", err)
+		}
+		if _, err := Run(dir, RunOptions{Task: "T1", DeltaPath: delta}); err != nil {
+			t.Fatalf("Run() %d error = %v", i+1, err)
+		}
+	}
+	correctionDispatch(t, dir, "T1", "c2")
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	for _, it := range ruleT1(dir, "T1", evs) {
+		if !it.Pass {
+			t.Errorf("T1 failed: %s", it.Reason)
+		}
 	}
 }

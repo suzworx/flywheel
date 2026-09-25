@@ -1741,3 +1741,66 @@ func TestVerifyPanel(t *testing.T) {
 		t.Errorf("a panel review after the pass failed P1: %+v", items)
 	}
 }
+
+// TestAcknowledgedLostDelta checks rule T1 passes a correction whose delta
+// was lost only when an amended event naming that attempt, with a note, was
+// recorded after its dispatch (issue #452), and never waives a correction
+// without one or a fresh attempt.
+func TestAcknowledgedLostDelta(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shared.delta.txt"), []byte("the later correction\n"), 0o644); err != nil {
+		t.Fatalf("write delta: %v", err)
+	}
+	c1 := Event{TS: "2026-09-20T10:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "shared.delta.txt", SHA256: "aaaaaaaaaaaaaaaa"}
+	c2 := Event{TS: "2026-09-20T11:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "gone.delta.txt", SHA256: "bbbbbbbbbbbbbbbb"}
+	ack := func(ts, attempt string) Event {
+		return Event{TS: ts, Task: "T1", Kind: "amended", Attempt: attempt, Note: "overwritten before #452"}
+	}
+	failing := func(items []VerifyItem) []string {
+		var out []string
+		for _, it := range items {
+			if !it.Pass {
+				out = append(out, it.Reason)
+			}
+		}
+		return out
+	}
+
+	if got := failing(ruleT1(dir, "T1", []Event{c1, c2})); len(got) != 2 {
+		t.Fatalf("unacknowledged T1 failures = %q, want the mismatch and the unreadable delta", got)
+	}
+	// An acknowledgement before the dispatch it names waives nothing.
+	if got := failing(ruleT1(dir, "T1", []Event{ack("2026-09-20T09:00:00Z", "c1"), c1})); len(got) != 1 {
+		t.Errorf("T1 with an earlier acknowledgement = %q, want the mismatch to still fail", got)
+	}
+	// c1 acknowledged, c2 not: only c1 is waived.
+	items := ruleT1(dir, "T1", []Event{c1, c2, ack("2026-09-20T12:00:00Z", "c1")})
+	if got := failing(items); len(got) != 1 || !strings.Contains(got[0], "gone.delta.txt") {
+		t.Errorf("T1 failures = %q, want only c2's unreadable delta", got)
+	}
+	want := "acknowledged: delta for c1 not retained (overwritten before #452)"
+	found := false
+	for _, it := range items {
+		found = found || it.Pass && it.Reason == want
+	}
+	if !found {
+		t.Errorf("T1 items = %+v, want a pass reading %q", items, want)
+	}
+	// Both acknowledged: T1 passes, each naming its note.
+	items = ruleT1(dir, "T1", []Event{c1, c2, ack("2026-09-20T12:00:00Z", "c1"), ack("2026-09-20T12:00:01Z", "c2")})
+	if got := failing(items); len(got) != 0 || len(items) != 2 {
+		t.Errorf("acknowledged T1 = %+v, want two acknowledged passes", items)
+	}
+
+	// An acknowledgement is not a brief amendment: it never waives a fresh
+	// attempt's mismatch against the planned brief.
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("brief now\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	planned := Event{TS: "2026-09-20T08:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"}
+	r1 := Event{TS: "2026-09-20T09:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "b.txt", SHA256: "cccccccccccccccc"}
+	if got := failing(ruleT1(dir, "T1", []Event{planned, r1, c1, ack("2026-09-20T12:00:00Z", "c1")})); len(got) != 1 {
+		t.Errorf("T1 failures = %q, want r1's brief mismatch to still fail", got)
+	}
+}

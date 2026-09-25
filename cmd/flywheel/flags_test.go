@@ -414,3 +414,35 @@ func TestRecoverJSON(t *testing.T) {
 		t.Errorf("parse --dormant-after 0 --all: %v, %+v", err, *o)
 	}
 }
+
+// TestAcknowledgeRequiresNote checks the acknowledgement of a lost delta
+// (`flywheel log --kind amended --attempt cN --note`, issue #452) needs a
+// note and a dispatched cN, carries no brief, and lands as an amended event
+// naming the attempt, on the JSON route too.
+func TestAcknowledgeRequiresNote(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := flywheel.AppendEvent(dir, flywheel.Event{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "d.txt", SHA256: "aaaaaaaaaaaaaaaa"}); err != nil {
+		t.Fatalf("AppendEvent(dispatched) error = %v", err)
+	}
+	if err := appendAmended(dir, flywheel.Event{Task: "T1", Kind: "amended", Attempt: "c1"}); err == nil {
+		t.Error("acknowledgement without a note was appended")
+	}
+	if err := appendAmended(dir, flywheel.Event{Task: "T1", Kind: "amended", Attempt: "c2", Note: "lost"}); err == nil || !strings.Contains(err.Error(), "no dispatched c2") {
+		t.Errorf("acknowledging an undispatched c2 = %v, want an error naming it", err)
+	}
+	if err := appendAmended(dir, flywheel.Event{Task: "T1", Kind: "amended", Attempt: "c1", Brief: "b.txt", Note: "lost"}); err == nil {
+		t.Error("acknowledgement carrying a brief was appended")
+	}
+	if err := appendAmended(dir, flywheel.Event{Task: "T1", Kind: "amended", Attempt: "c1", Note: "overwritten before #452"}); err != nil {
+		t.Fatalf("acknowledging c1 = %v, want nil", err)
+	}
+	evs, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	last := evs[len(evs)-1]
+	if len(evs) != 2 || last.Kind != "amended" || last.Attempt != "c1" || last.Brief != "" || last.Header != nil {
+		t.Errorf("events = %+v, want one acknowledgement of c1 with no brief after the dispatch", evs)
+	}
+}
