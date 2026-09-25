@@ -130,6 +130,47 @@ func TestInspectAcceptedWhenAllHold(t *testing.T) {
 	}
 }
 
+// TestInspectRefusesOpenFindings checks rule review (issue #389): a pass is
+// refused while a blocking review finding is open, a minor one never blocks,
+// and a lead's dismissal clears the refusal.
+func TestInspectRefusesOpenFindings(t *testing.T) {
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if err := AppendEvents(dir, roundEvents(1, blockerA, minorB)); err != nil {
+		t.Fatal(err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass with an open blocker")
+	}
+	if got := refusalRule(t, err); got != "review" {
+		t.Errorf("rule = %q, want review", got)
+	}
+	for _, want := range []string{"open blocking review findings: T1-r1-1;", "flywheel review T1 --agent --fix", "flywheel review T1 --dismiss <id>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "T1-r1-2") {
+		t.Errorf("a minor finding blocks: %v", err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "rework", Session: "i1"}); err != nil {
+		t.Errorf("rework refused with an open blocker: %v", err)
+	}
+	if err := DismissFinding(dir, "T1", "T1-r1-1", "lead-1", "by design"); err != nil {
+		t.Fatal(err)
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Errorf("pass refused after the blocker was dismissed: %v", err)
+	}
+}
+
 // TestInspectWorkerSessionPriorityOverReadings checks rule order: a worker
 // session is refused as T4 even when the pass's readings are also missing, so
 // an inspection from a worker session never gets a T3 message.

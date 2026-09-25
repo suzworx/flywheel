@@ -34,6 +34,7 @@ type StatsReport struct {
 	Tokens             Tokens         `json:"tokens"`
 	Spend              float64        `json:"spend"`
 	Baseline           *StatsBaseline `json:"baseline,omitempty"`
+	Review             StatsReview    `json:"review"`
 }
 
 // StatsBaseline is the frontier-only comparison: the recorded tokens priced
@@ -59,7 +60,7 @@ func Stats(dir string) (StatsReport, error) {
 		return StatsReport{}, fmt.Errorf("stats %s: %w", dir, err)
 	}
 
-	rep := StatsReport{FinishReasons: map[string]int{}}
+	rep := StatsReport{FinishReasons: map[string]int{}, Review: reviewStats(events)}
 
 	st := Derive(events)
 	for _, ts := range st.Tasks {
@@ -182,6 +183,100 @@ func Stats(dir string) (StatsReport, error) {
 	}
 
 	return rep, nil
+}
+
+// StatsReview is the review agent's numbers (issue #389).
+type StatsReview struct {
+	Reviews    int            `json:"reviews"`     // agent review rounds run
+	Findings   int            `json:"findings"`    // review findings raised
+	BySeverity map[string]int `json:"by_severity"` // findings per severity
+	ByCategory map[string]int `json:"by_category"` // findings per category; "uncategorized" when none
+	// CleanUnits counts the units whose latest agent review is pass;
+	// MedianRoundsToClean is the median of their agent review rounds.
+	CleanUnits          int     `json:"clean_units"`
+	MedianRoundsToClean float64 `json:"median_rounds_to_clean"`
+	// CaughtAfterGates counts the findings raised on a unit whose every gate
+	// reading since its latest dispatch had passed: what review caught that
+	// the gates missed.
+	CaughtAfterGates int `json:"caught_after_gates"`
+	Dismissals       int `json:"dismissals"` // findings a lead dismissed
+}
+
+// reviewStats folds the event log into StatsReview.
+func reviewStats(events []Event) StatsReview {
+	rs := StatsReview{BySeverity: map[string]int{}, ByCategory: map[string]int{}}
+	rounds := map[string]int{}
+	latest := map[string]string{}
+	gates := map[string]map[string]bool{} // task → gate → latest reading passed
+	workers := map[string]map[string]bool{}
+	var order []string
+	for _, e := range events {
+		switch {
+		case e.Kind == "dispatched":
+			gates[e.Task] = map[string]bool{}
+		case e.Kind == "validated":
+			if gates[e.Task] == nil {
+				gates[e.Task] = map[string]bool{}
+			}
+			gates[e.Task][e.Gate] = e.RC != nil && *e.RC == 0
+		case e.Kind == "review_finding":
+			rs.Findings++
+			rs.BySeverity[e.Severity]++
+			cat := e.Category
+			if cat == "" {
+				cat = "uncategorized"
+			}
+			rs.ByCategory[cat]++
+			if g := gates[e.Task]; len(g) > 0 && !slices.Contains(mapValues(g), false) {
+				rs.CaughtAfterGates++
+			}
+		case agentReviewed(e):
+			rs.Reviews++
+			if rounds[e.Task] == 0 {
+				order = append(order, e.Task)
+			}
+			rounds[e.Task]++
+			latest[e.Task] = e.Verdict
+		case e.Kind == "finding_response":
+			if workers[e.Task] == nil {
+				workers[e.Task] = workerSessions(events, e.Task)
+			}
+			if leadDismissal(e, workers[e.Task]) {
+				rs.Dismissals++
+			}
+		}
+	}
+	var clean []int
+	for _, task := range order {
+		if latest[task] == "pass" {
+			clean = append(clean, rounds[task])
+		}
+	}
+	rs.CleanUnits = len(clean)
+	rs.MedianRoundsToClean = median(clean)
+	return rs
+}
+
+// mapValues lists m's values in no particular order.
+func mapValues(m map[string]bool) []bool {
+	out := make([]bool, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
+
+// median is the median of xs, 0 when empty.
+func median(xs []int) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := slices.Clone(xs)
+	slices.Sort(s)
+	if n := len(s); n%2 == 1 {
+		return float64(s[n/2])
+	}
+	return float64(s[len(s)/2-1]+s[len(s)/2]) / 2
 }
 
 // round rounds x to n decimal places.

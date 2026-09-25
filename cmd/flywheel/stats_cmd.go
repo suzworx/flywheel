@@ -98,4 +98,27 @@ func printStats(rep flywheel.StatsReport) {
 	} else {
 		fmt.Printf("Frontier baseline: not configured (add \"baseline\" to .flywheel/config.json)\n")
 	}
+	rv := rep.Review
+	fmt.Printf("Review: %d round(s), %d finding(s), %d dismissed\n", rv.Reviews, rv.Findings, rv.Dismissals)
+	fmt.Printf("Review findings by severity:%s\n", countLine(rv.BySeverity))
+	fmt.Printf("Review findings by category:%s\n", countLine(rv.ByCategory))
+	fmt.Printf("Review median rounds to clean: %.1f (%d clean unit(s))\n", rv.MedianRoundsToClean, rv.CleanUnits)
+	fmt.Printf("Review caught what gates missed: %d finding(s) on units whose gates had all passed\n", rv.CaughtAfterGates)
+}
+
+// countLine renders counts as " k=v ..." in key order, or " none".
+func countLine(m map[string]int) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 {
+		return " none"
+	}
+	s := ""
+	for _, k := range keys {
+		s += fmt.Sprintf(" %s=%d", k, m[k])
+	}
+	return s
 }

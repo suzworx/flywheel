@@ -84,6 +84,7 @@ type Unit struct {
 	ResetAt  time.Time // a rate-limited attempt's parsed reset (issue #383); zero when none
 	Workdir  string    // the latest dispatched event's workdir (issue #394); "" in the main checkout
 	Base     string    // that event's base commit, first 7 characters; "" when none
+	Open     int       // open blocking review findings (issue #389); 0 when none or never reviewed
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -626,6 +627,13 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Line = LineOf(cfg, dir, w.events, t.ID)
 		}
 		u.Station = StationFor(t, w.events)
+		// An agent review is inspection work (issue #389): a unit whose latest
+		// event is one stands at inspect — not back at measure after a pass, nor
+		// at build after a correct verdict until a correction is dispatched.
+		if (u.Station == "measure" || u.Station == "build") && latestIsAgentReview(w.events, t.ID) {
+			u.Station = "inspect"
+		}
+		u.Open = len(openBlockingIDs(w.events, t.ID))
 		if !finished && liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
@@ -745,6 +753,9 @@ func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty", "stacked":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
+		if u.Open > 0 {
+			out = append(out, Andon{Task: u.Task, State: fmt.Sprintf("review-open (%d)", u.Open), Age: u.LastAge})
+		}
 	}
 	for _, r := range roles {
 		if r.Mismatch {
@@ -759,6 +770,17 @@ func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 		return strings.Compare(a.Task, b.Task)
 	})
 	return out
+}
+
+// latestIsAgentReview reports whether the task's latest event is a reviewed
+// event written by the review agent (issue #389).
+func latestIsAgentReview(events []Event, task string) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Task == task {
+			return agentReviewed(events[i])
+		}
+	}
+	return false
 }
 
 // pausedAndon is one andon entry per model a rate limit pauses at now (issue

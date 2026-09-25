@@ -111,7 +111,28 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 	items = append(items, ruleT4(task, events)...)
 	items = append(items, ruleT5(task, events)...)
 	items = append(items, ruleT8(task, events)...)
+	items = append(items, ruleR1(task, events)...)
 	return items, nil
+}
+
+// ruleR1 checks that no inspected pass was recorded while a blocking review
+// finding was open (issue #389): OpenFindings over the events before each
+// inspected pass must hold no blocker or major.
+func ruleR1(task string, events []Event) []VerifyItem {
+	var items []VerifyItem
+	for i, e := range events {
+		if e.Task != task || e.Kind != "inspected" || e.Verdict != "pass" {
+			continue
+		}
+		if ids := openBlockingIDs(events[:i], task); len(ids) > 0 {
+			items = append(items, VerifyItem{Task: task, Rule: "R1", Pass: false,
+				Reason: fmt.Sprintf("inspected pass by %q recorded while blocking review findings were open: %s", e.Session, strings.Join(ids, ", "))})
+		}
+	}
+	if len(items) == 0 {
+		return []VerifyItem{{Task: task, Rule: "R1", Pass: true, Reason: "no inspected pass while a blocking review finding was open"}}
+	}
+	return items
 }
 
 // passWorkdir resolves the repository to check one inspected pass's tree in
