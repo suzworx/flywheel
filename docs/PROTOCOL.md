@@ -165,6 +165,21 @@ all.
   `<task> <attempt> never ran gate(s) <ids>` progress line; no signal is recorded (the lead
   re-measures every gate). `flywheel validate` prints `<task> note: the worker never ran gate(s)
   <ids> itself; its report's claims about them are unmeasured` after the gate lines (issue #365).
+- Workers never write git (issue #423). The guarantee is two layers that do not depend on PATH:
+  **denied at dispatch** — the claude adapter's default `--disallowedTools` denies `git` commit,
+  push, stash, reset, checkout, rebase, merge, add, rm, mv, restore, update-index, apply, tag,
+  branch (so `git branch --show-current` too; use `git rev-parse --abbrev-ref HEAD`), switch,
+  cherry-pick, revert, am, worktree, clean, notes, replace, update-ref and gc — and **detected after
+  each attempt** — on every exit path, before flywheel's own attempt commit (so its index refresh is
+  never charged to the worker), flywheel compares the worktree's HEAD, branch, stash, index (`git
+  diff --cached --name-only`) and tags with the state captured at dispatch, and `note` names what
+  changed: `HEAD: <old> -> <new>`, `stash`, `index: staged <paths>`, `index: unstaged <paths>`,
+  `tags: +<name>/-<name>`. An index or tag change is a `git-write` signal whatever the guard logged;
+  a HEAD or stash move is one only when the git guard logged a worker write (issue #361; otherwise
+  another process moved it and the note says so). Paths the worker staged are unstaged by flywheel
+  (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
+  <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
+  `git` first on PATH never reaches it.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.
@@ -253,6 +268,35 @@ all.
   an open blocking finding, and `flywheel verify` fails rule R1 for an `inspected` pass recorded
   while one was open (§2). `flywheel floor` shows such a unit as `review-open (<count>)` on the
   andon, and `flywheel stats` reports a review block.
+- The review panel (issue #420): `flywheel review <task> --agent --panel --session S [--round N]
+  [--fix [--rounds N] [--fix-worker NAME] [--worktree]]` runs the review agent once per member of
+  `review.panel`, sequentially, each a persona owning one dimension. The personas are embedded
+  (`internal/flywheel/review_personas/<dimension>.md`): `correctness`, `security`, `tests`, `errors`
+  (error handling and resources), `cross-os`, `contract` (flags, event kinds, exit codes, config keys,
+  backwards compatibility) and `docs`. A member's prompt is `review_prompt.md` plus its persona file,
+  kept at `.flywheel/reviews/<task>.<round>.<dimension>.prompt.md`. Every finding in its answer must
+  carry its dimension as `category`; one outside it refuses the answer (the same refuse-and-retry-once
+  path). All members of one run share a round; their findings are `<task>-r<round>-<dimension>-<n>`.
+  A member's `reviewed` event keeps persona `reviewer` (so status derivation and every agent-review
+  check are unchanged) and records its dimension in `category`; `Validate` refuses a `reviewed`
+  category that is not a persona, and accepts a persona `reviewer:<dimension>` only for a known one.
+  A member's round closes only its own dimension's findings; a general round closes all. Rounds are
+  counted with a panel run as one round until a dimension repeats. With `--fix` each loop round is a
+  whole panel. The command prints the findings (or, with `--fix`, the open blocking ones), then the
+  verdict matrix, and exits 0 when every dimension is `pass`, else 1 (6 on a refusal, 2 on usage).
+- The verdict matrix (`VerdictMatrix`): per panel dimension, the verdict of the latest agent `reviewed`
+  event of that dimension on the tree — `pass` or `correct` — else `missing`; a `correct` whose
+  blocking findings are all dismissed counts as `pass`. The thread groups a panel round as one
+  `## Round <n> — review panel` section with one line per member and its findings under a
+  `### <dimension>` heading, then `## Panel verdict matrix — tree <sha7>`.
+- Config: `review.panel` — the members, `[{"persona": ..., "worker"|"adapter"+"model": ...}]`;
+  `config get/set review.panel` reads and writes a comma-separated persona list (a member keeps its
+  reviewer). Unset, the panel is `correctness, tests, errors, contract, docs`; `security` and `cross-os`
+  are opt-in. `review.required` (default `false`) makes a complete panel a condition of every pass.
+- Enforced: when the task has been reviewed by the panel, or `review.required` is set, `flywheel
+  inspect --verdict pass` is refused (rule `panel`, exit 6) unless every configured dimension is
+  `pass` on the tree being inspected, naming each `<dimension>=missing|correct` and the command; and
+  `flywheel verify` fails rule P1 for such a pass (§2).
 
 ### `blocked`
 - Written by: the controller (`flywheel controller`), when a task's `needs:` target is scrapped.
@@ -585,10 +629,10 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
 
 ## 2. Transitions the code enforces
 
-`flywheel verify` runs six rules against every task it is asked about — `VerifyTasks` calls
-`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1` in that order — and the same rules are
-enforced **live**, before the record is written, inside `InspectTask` (T3, T4, T8, and R1 as the
-refusal rule `review`) and `LandTask` (T5).
+`flywheel verify` runs seven rules against every task it is asked about — `VerifyTasks` calls
+`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1`, `ruleP1` in that order — and the same
+rules are enforced **live**, before the record is written, inside `InspectTask` (T3, T4, T8, R1 as
+the refusal rule `review`, and P1 as the refusal rule `panel`) and `LandTask` (T5).
 `ValidateTask` produces the readings T3 needs but enforces nothing itself; it can fail its own
 gates (exit 5) without touching the log's legality.
 
@@ -650,6 +694,14 @@ gates (exit 5) without touching the log's legality.
   passes. Live, `InspectTask` refuses such a pass as rule `review`, before T3: `open blocking review
   findings: <ids>; fix them (flywheel review <task> --agent --fix) or dismiss one (flywheel review
   <task> --dismiss <id> --session <you> --note "<why>")`. A non-pass verdict is never refused by it.
+- **P1 — no inspected pass without a complete review panel** (issue #420). Where the panel applied —
+  `review.required` is set, or an agent `reviewed` event carrying a dimension preceded the pass — an
+  `inspected` pass fails when `VerdictMatrix` over the events BEFORE it, on the pass's tree, has a
+  configured dimension that is not `pass`; the reason names each `<dimension>=missing|correct`. The
+  panel and `review.required` are read from today's configuration. Live, `InspectTask` refuses such
+  a pass as rule `panel`, after T3 (the tree it checks is the one T3 measured): `the review panel is
+  not complete on tree <tree>: <dimension>=<verdict>, ...; run flywheel review <task> --agent --panel
+  --session <reviewer> (add --fix to correct and re-review)`.
 
 ## 3. Designed, not enforced
 
@@ -753,7 +805,7 @@ Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard,
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1 for the requested
+`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/P1 for the requested
 tasks (`--all` derives the task list from every `task` seen in the log) and prints one
 `PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
 "items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when

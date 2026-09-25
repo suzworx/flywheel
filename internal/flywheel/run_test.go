@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -4788,6 +4789,90 @@ func TestRunCommitsAttempt(t *testing.T) {
 	}
 	if msg := git(t, wt, []string{"log", "-1", "--format=%B", fin.Commit}); !strings.Contains(msg, "Flywheel-Task: T1") {
 		t.Errorf("commit message %q lacks the Flywheel-Task trailer", msg)
+	}
+}
+
+// TestRunDetectsWorkerGitAdd checks a worker `git add` the guard never saw
+// (#423) raises a git-write signal naming the staged path, and that flywheel
+// unstages it BEFORE its own attempt commit (#391): the commit still lands the
+// owned change and flywheel's index refresh is not charged to the worker.
+func TestRunDetectsWorkerGitAdd(t *testing.T) {
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandHook = func(RunRequest) {
+		if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a\n"), 0o644); err != nil {
+			return
+		}
+		cmd := exec.Command("git", "add", "a.go")
+		cmd.Dir = wt
+		_ = cmd.Run()
+	}
+	t.Cleanup(func() { commandHook = nil })
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fin *Event
+	signals := 0
+	for i := range events {
+		if events[i].Kind == "signal" && events[i].Signal == "git-write" {
+			signals++
+		}
+		if events[i].Task == "T1" && events[i].Kind == "finished" {
+			fin = &events[i]
+		}
+	}
+	if fin == nil {
+		t.Fatal("no finished event")
+	}
+	if signals != 1 {
+		t.Errorf("git-write signals = %d, want 1", signals)
+	}
+	for _, want := range []string{"index: staged a.go", "index restored: a.go"} {
+		if !strings.Contains(fin.Note, want) {
+			t.Errorf("note = %q, want %q", fin.Note, want)
+		}
+	}
+	if fin.Reason != "stop" || !CommitOK(fin.Commit) {
+		t.Fatalf("finished reason=%q commit=%q, want stop with flywheel's commit", fin.Reason, fin.Commit)
+	}
+	if files := strings.TrimSpace(git(t, wt, []string{"show", "--name-only", "--format=", fin.Commit})); files != "a.go" {
+		t.Errorf("committed files = %q, want a.go", files)
+	}
+}
+
+// TestRunRestoresIndex checks that after a run whose worker staged a file the
+// index is clean again and the file's content is still in the working tree
+// (#423).
+func TestRunRestoresIndex(t *testing.T) {
+	dir := setupTask(t)
+	gitRepoWithCommit(t, dir)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatal(err)
+	}
+	commandHook = func(RunRequest) {
+		if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("kept\n"), 0o644); err != nil {
+			return
+		}
+		cmd := exec.Command("git", "add", "staged.txt")
+		cmd.Dir = dir
+		_ = cmd.Run()
+	}
+	t.Cleanup(func() { commandHook = nil })
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if cached := strings.TrimSpace(git(t, dir, []string{"diff", "--cached", "--name-only"})); cached != "" {
+		t.Errorf("git diff --cached = %q after the run, want empty", cached)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "staged.txt")); err != nil || string(b) != "kept\n" {
+		t.Errorf("staged.txt = %q, %v; want its content kept", b, err)
 	}
 }
 

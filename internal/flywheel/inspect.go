@@ -88,6 +88,13 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		// taken later: the worktree could have changed in between, and the
 		// ledger must not bless a tree no gate ever measured (issue #241).
 		tree = res.currentTree
+		cfg, _, err := LoadConfig(o.Dir)
+		if err != nil {
+			return err
+		}
+		if r := panelRefusal(events, task, tree, cfg.PanelDimensions(), cfg.ReviewRequired()); r != nil {
+			return r
+		}
 		if res.readingTree != "" {
 			suffix := fmt.Sprintf("reading from tree %s (diff outside owns)", res.readingTree)
 			if note != "" {
@@ -136,6 +143,27 @@ func openBlockingRefusal(events []Event, task string) *RuleRefusal {
 	}
 	return &RuleRefusal{Rule: "review", Fix: fmt.Sprintf("open blocking review findings: %s; fix them (flywheel review %s --agent --fix) or dismiss one (flywheel review %s --dismiss <id> --session <you> --note \"<why>\")",
 		strings.Join(ids, ", "), task, task)}
+}
+
+// panelApplies reports whether a pass of task needs a complete review panel
+// (issue #420): review.required is set, or the panel has reviewed the task.
+func panelApplies(events []Event, task string, required bool) bool {
+	return required || panelReviewed(events, task)
+}
+
+// panelRefusal refuses a pass (rule panel) on tree when the panel applies
+// and a dimension of panel is not pass on that tree (VerdictMatrix): missing
+// (no review of that dimension on this tree) or correct.
+func panelRefusal(events []Event, task, tree string, panel []string, required bool) *RuleRefusal {
+	if !panelApplies(events, task, required) {
+		return nil
+	}
+	bad := panelIncomplete(VerdictMatrix(events, task, tree, panel), panel)
+	if len(bad) == 0 {
+		return nil
+	}
+	return &RuleRefusal{Rule: "panel", Fix: fmt.Sprintf("the review panel is not complete on tree %s: %s; run flywheel review %s --agent --panel --session <reviewer> (add --fix to correct and re-review)",
+		tree, strings.Join(bad, ", "), task)}
 }
 
 // wd returns the working tree to hash, using recordedWorkdir when workdir is empty,

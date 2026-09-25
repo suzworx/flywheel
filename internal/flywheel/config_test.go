@@ -608,6 +608,27 @@ func TestWorkerToolDefaults(t *testing.T) {
 	}
 }
 
+// TestDefaultDisallowedIndexWrites checks the default deny list covers every
+// index, ref and history write (#423) and leaves read-only git allowed.
+func TestDefaultDisallowedIndexWrites(t *testing.T) {
+	has := map[string]bool{}
+	for _, d := range defaultDisallowedTools {
+		has[d] = true
+	}
+	for _, sub := range []string{"commit", "push", "stash", "reset", "checkout", "rebase", "merge",
+		"add", "rm", "mv", "restore", "update-index", "apply", "tag", "branch", "switch",
+		"cherry-pick", "revert", "am", "worktree", "clean", "notes", "replace", "update-ref", "gc"} {
+		if !has["Bash(git "+sub+":*)"] {
+			t.Errorf("defaultDisallowedTools lacks Bash(git %s:*)", sub)
+		}
+	}
+	for _, sub := range []string{"status", "diff", "log"} {
+		if has["Bash(git "+sub+":*)"] {
+			t.Errorf("defaultDisallowedTools denies read-only git %s", sub)
+		}
+	}
+}
+
 // TestConfigBaselineValidate checks baseline validation: a valid baseline
 // passes, empty model fails, negative prices fail (issue #59).
 func TestConfigBaselineValidate(t *testing.T) {
@@ -855,5 +876,61 @@ func TestRateLimitPauseAtConfig(t *testing.T) {
 	}
 	if k := "limits.rate_limit_pause_at"; !slices.Contains(cfg.validKeys(), k) || !slices.Contains(cfg.settableKeys(), k) {
 		t.Errorf("%s missing from validKeys or settableKeys", k)
+	}
+}
+
+// TestPanelConfig covers review.panel and review.required (issue #420): the
+// default panel, Get/Set as a comma-separated persona list that keeps a
+// member's worker, the key lists, and validation refusing an unknown or
+// duplicate persona and an unknown worker.
+func TestPanelConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if v, err := cfg.Get("review.panel"); err != nil || v != "correctness,tests,errors,contract,docs" {
+		t.Errorf("default Get(review.panel) = %q, %v; want the default panel", v, err)
+	}
+	if v, err := cfg.Get("review.required"); err != nil || v != "false" {
+		t.Errorf("default Get(review.required) = %q, %v; want false", v, err)
+	}
+	for _, k := range []string{"review.panel", "review.required"} {
+		if !slices.Contains(cfg.validKeys(), k) || !slices.Contains(cfg.settableKeys(), k) {
+			t.Errorf("%s missing from validKeys or settableKeys", k)
+		}
+	}
+	cfg.Review = &ReviewConfig{Panel: []PanelMember{{Persona: "tests", Worker: cfg.DefaultWorker().Name}}}
+	if err := cfg.Set("review.panel", " security, tests ,cross-os"); err != nil {
+		t.Fatalf("Set(review.panel) error = %v", err)
+	}
+	if v, _ := cfg.Get("review.panel"); v != "security,tests,cross-os" {
+		t.Errorf("Get(review.panel) = %q, want security,tests,cross-os", v)
+	}
+	if w := cfg.Review.Panel[1].Worker; w != cfg.DefaultWorker().Name {
+		t.Errorf("tests member worker = %q, want it kept (%q)", w, cfg.DefaultWorker().Name)
+	}
+	if err := cfg.Set("review.required", "true"); err != nil || !cfg.ReviewRequired() {
+		t.Errorf("Set(review.required, true) = %v, required = %v", err, cfg.ReviewRequired())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := cfg.Set("review.required", "maybe"); err == nil {
+		t.Error("Set(review.required, maybe) = nil, want an error")
+	}
+	if err := cfg.Set("review.panel", " , "); err == nil {
+		t.Error("Set(review.panel, empty) = nil, want an error")
+	}
+	for _, tc := range []struct {
+		panel []PanelMember
+		want  string
+	}{
+		{[]PanelMember{{Persona: "style"}}, `persona "style" must be one of`},
+		{[]PanelMember{{Persona: "tests"}, {Persona: "tests"}}, `duplicate persona "tests"`},
+		{[]PanelMember{{Persona: "docs", Worker: "nobody"}}, `worker "nobody" is not in workers[]`},
+		{[]PanelMember{{Persona: "docs", Adapter: "sim"}}, `adapter "sim"`},
+	} {
+		c := DefaultConfig()
+		c.Review = &ReviewConfig{Panel: tc.panel}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate(%+v) = %v, want error containing %q", tc.panel, err, tc.want)
+		}
 	}
 }

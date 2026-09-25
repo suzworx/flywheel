@@ -376,6 +376,16 @@ func Validate(e Event) error {
 			return fmt.Errorf("finding_response verdict %q is not one of fixed, disputed", e.Verdict)
 		}
 	}
+	// A panel review (issue #420) keeps persona reviewer — the agent-review
+	// checks key on it — and records its dimension in Category, which must
+	// then name an embedded persona. persona reviewer:<dimension> is accepted
+	// under the same condition.
+	if e.Kind == "reviewed" && e.Category != "" && !personaKnown(e.Category) {
+		return fmt.Errorf("reviewed category %q is not a review persona (%s)", e.Category, strings.Join(PanelPersonas(), ", "))
+	}
+	if dim, ok := strings.CutPrefix(e.Persona, "reviewer:"); ok && !personaKnown(dim) {
+		return fmt.Errorf("persona %q names no review persona (%s)", e.Persona, strings.Join(PanelPersonas(), ", "))
+	}
 	if e.Kind == "review_finding" {
 		if e.Session == "" || e.Title == "" || e.Path == "" {
 			return fmt.Errorf("review_finding event must carry a session, a title (the claim) and a path")

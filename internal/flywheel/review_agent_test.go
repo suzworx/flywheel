@@ -258,9 +258,19 @@ func TestValidateFindings(t *testing.T) {
 		"three nits":               {[]ReviewFinding{nit, nit, nit}, 0},
 		"four nits":                {[]ReviewFinding{nit, nit, nit, nit}, 1},
 	} {
-		if got := validateFindings(wd, []string{"gone.go", "d/f.go"}, c.findings); len(got) != c.want {
+		if got := validateFindings(wd, []string{"gone.go", "d/f.go"}, c.findings, ""); len(got) != c.want {
 			t.Errorf("%s: violations %q, want %d", name, got, c.want)
 		}
+	}
+	// A panel member's answer (issue #420): every finding carries its
+	// dimension, or the finding is a violation.
+	tests := with(func(f *ReviewFinding) { f.Category = "tests" })
+	if got := validateFindings(wd, nil, []ReviewFinding{tests}, "tests"); len(got) != 0 {
+		t.Errorf("in-dimension finding: violations %q, want none", got)
+	}
+	got := validateFindings(wd, nil, []ReviewFinding{tests, ok, with(func(f *ReviewFinding) { f.Category = "docs" })}, "tests")
+	if len(got) != 2 || !strings.Contains(got[0], "finding 2") || !strings.Contains(got[1], `category "docs" is outside your dimension`) {
+		t.Errorf("out-of-dimension findings: violations %q, want findings 2 and 3 refused", got)
 	}
 }
 

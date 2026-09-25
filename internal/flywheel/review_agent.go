@@ -84,8 +84,10 @@ const maxReviewNits = 3
 // forward-slash, repo-relative path that exists in workdir or is one of the
 // changed paths (a deleted file); line must be 0 (whole file) or within the
 // file's line count; claim and scenario must be non-empty; and the answer may
-// carry at most maxReviewNits nits.
-func validateFindings(workdir string, changed []string, findings []ReviewFinding) []string {
+// carry at most maxReviewNits nits. A panel member's answer (issue #420)
+// passes its dimension as category: every finding must carry exactly that
+// category; "" allows any.
+func validateFindings(workdir string, changed []string, findings []ReviewFinding, category string) []string {
 	isChanged := map[string]bool{}
 	for _, p := range changed {
 		isChanged[filepath.ToSlash(p)] = true
@@ -125,6 +127,9 @@ func validateFindings(workdir string, changed []string, findings []ReviewFinding
 		if strings.TrimSpace(f.Scenario) == "" {
 			bad = append(bad, "has an empty scenario")
 		}
+		if category != "" && strings.TrimSpace(f.Category) != category {
+			bad = append(bad, fmt.Sprintf("category %q is outside your dimension; report only %s findings, with category %q", f.Category, category, category))
+		}
 		if len(bad) > 0 {
 			out = append(out, fmt.Sprintf("finding %d: %s", n, strings.Join(bad, "; ")))
 		}
@@ -145,13 +150,19 @@ const maxReviewDiff = 200 * 1024
 
 // ReviewAgentOptions configures one review-agent run (issue #389).
 type ReviewAgentOptions struct {
-	Worker   string    // a worker in config; default: the staffing reviewer role, else the default worker
-	Session  string    // the reviewer session label; required, never a worker session of the task
-	Workdir  string    // the unit's worktree; default: the recorded workdir, else dir
-	Round    int       // review round; <= 0 means the task's next round
-	Progress io.Writer // one line per step; optional
-	Stdout   io.Writer // the reviewer's text as it arrives; optional
-	Stderr   io.Writer // a copy of the reviewer's stderr; optional
+	Worker  string // a worker in config; default: the staffing reviewer role, else the default worker
+	Adapter string // run on this adapter instead (a panel member's adapter; issue #420); with Model
+	Model   string // override the resolved worker's model (a panel member's model)
+	// Dimension makes this run a panel member (issue #420): the prompt is
+	// review_prompt.md plus review_personas/<Dimension>.md, every finding
+	// must carry it as category, and the reviewed event records it.
+	Dimension string
+	Session   string    // the reviewer session label; required, never a worker session of the task
+	Workdir   string    // the unit's worktree; default: the recorded workdir, else dir
+	Round     int       // review round; <= 0 means the task's next round
+	Progress  io.Writer // one line per step; optional
+	Stdout    io.Writer // the reviewer's text as it arrives; optional
+	Stderr    io.Writer // a copy of the reviewer's stderr; optional
 }
 
 // ReviewAgentResult is what one review-agent run recorded.
@@ -199,12 +210,26 @@ func reviewWorker(cfg Config, name string) (Worker, error) {
 
 // nextReviewRound is one more than the review-agent rounds already recorded
 // for task: the reviewed events that name an adapter (a verdict passed in by
-// hand names none).
+// hand names none). One panel round (issue #420) records one reviewed event
+// per dimension: consecutive panel events count as one round until a
+// dimension repeats or a general review intervenes.
 func nextReviewRound(events []Event, task string) int {
 	n := 0
+	var seen map[string]bool // the dimensions of the current panel round; nil outside one
 	for _, e := range events {
-		if e.Task == task && e.Kind == "reviewed" && e.Adapter != "" {
+		if e.Task != task || e.Kind != "reviewed" || e.Adapter == "" {
+			continue
+		}
+		dim := reviewDimension(e)
+		switch {
+		case dim == "":
 			n++
+			seen = nil
+		case seen == nil || seen[dim]:
+			n++
+			seen = map[string]bool{dim: true}
+		default:
+			seen[dim] = true
 		}
 	}
 	return n + 1
@@ -297,11 +322,12 @@ func reviewReadings(events []Event, task string) string {
 	return b.String()
 }
 
-// buildReviewPrompt joins the reviewer's instructions, the unit's brief files
-// (relative paths resolve against dir), the gate readings and the diff.
-func buildReviewPrompt(dir string, briefs []string, readings, diff string) string {
+// buildReviewPrompt joins the reviewer's instructions (base: review_prompt.md,
+// plus a persona for a panel member), the unit's brief files (relative paths
+// resolve against dir), the gate readings and the diff.
+func buildReviewPrompt(base, dir string, briefs []string, readings, diff string) string {
 	var b strings.Builder
-	b.WriteString(reviewPrompt)
+	b.WriteString(base)
 	for _, p := range briefs {
 		path := p
 		if !filepath.IsAbs(path) {
@@ -341,14 +367,26 @@ func reviewRunRequest(task string, round int, promptFile, model string) RunReque
 // any finding is a blocker or major, else pass. It returns the events, the
 // verdict and the note.
 func reviewEvents(task, attempt string, round int, session, model, adapter, tree string, findings []ReviewFinding) ([]Event, string, string) {
+	return dimensionReviewEvents(task, attempt, round, session, model, adapter, tree, "", findings)
+}
+
+// dimensionReviewEvents is reviewEvents for a panel member (issue #420): its
+// dimension goes into the ids (<task>-r<round>-<dimension>-<n>, unique
+// across one panel round) and the reviewed event's Category; persona stays
+// reviewer. dimension "" is the general reviewer.
+func dimensionReviewEvents(task, attempt string, round int, session, model, adapter, tree, dimension string, findings []ReviewFinding) ([]Event, string, string) {
 	count := map[string]int{}
 	var evs []Event
+	prefix := fmt.Sprintf("%s-r%d-", task, round)
+	if dimension != "" {
+		prefix += dimension + "-"
+	}
 	for i, f := range findings {
 		count[f.Severity]++
 		evs = append(evs, Event{
 			Task: task, Kind: "review_finding", Attempt: attempt, Session: session, Model: model, Tree: tree,
 			Severity: f.Severity, Category: f.Category, Title: f.Claim, Observed: f.Scenario, Ask: f.Fix,
-			Path: f.File, LineNo: f.Line, Finding: fmt.Sprintf("%s-r%d-%d", task, round, i+1),
+			Path: f.File, LineNo: f.Line, Finding: fmt.Sprintf("%s%d", prefix, i+1),
 		})
 	}
 	verdict := "pass"
@@ -361,7 +399,7 @@ func reviewEvents(task, attempt string, round int, session, model, adapter, tree
 	}
 	evs = append(evs, Event{
 		Task: task, Kind: "reviewed", Verdict: verdict, Persona: "reviewer", Session: session,
-		Model: model, Adapter: adapter, Tree: tree, Note: note,
+		Model: model, Adapter: adapter, Tree: tree, Note: note, Category: dimension,
 	})
 	return evs, verdict, note
 }
@@ -395,9 +433,22 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	if r := sessionClash(task, events, o.Session); r != "" {
 		return ReviewAgentResult{}, &RuleRefusal{Rule: "T4", Fix: r}
 	}
-	worker, err := reviewWorker(cfg, o.Worker)
-	if err != nil {
+	base := reviewPrompt
+	if o.Dimension != "" {
+		if base, err = personaPrompt(o.Dimension); err != nil {
+			return ReviewAgentResult{}, err
+		}
+	}
+	var worker Worker
+	if o.Adapter != "" {
+		worker = Worker{Name: "reviewer", Adapter: o.Adapter, Model: o.Model}
+		if worker.Adapter == "sim" || !adapterKnown(worker.Adapter, false) {
+			return ReviewAgentResult{}, fmt.Errorf("adapter %q cannot run a review agent; use claude, opencode or codex", worker.Adapter)
+		}
+	} else if worker, err = reviewWorker(cfg, o.Worker); err != nil {
 		return ReviewAgentResult{}, err
+	} else if o.Model != "" {
+		worker.Model = o.Model
 	}
 	adap, err := AdapterFor(worker.Adapter)
 	if err != nil {
@@ -423,9 +474,13 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	if err := os.MkdirAll(reviews, 0o755); err != nil {
 		return ReviewAgentResult{}, err
 	}
-	stem := filepath.Join(reviews, fmt.Sprintf("%s.%d", task, res.Round))
+	name := fmt.Sprintf("%s.%d", task, res.Round)
+	if o.Dimension != "" {
+		name += "." + o.Dimension
+	}
+	stem := filepath.Join(reviews, name)
 	res.Prompt, res.Transcript = stem+".prompt.md", stem+".jsonl"
-	prompt := buildReviewPrompt(dir, briefs, reviewReadings(events, task), diff)
+	prompt := buildReviewPrompt(base, dir, briefs, reviewReadings(events, task), diff)
 	if err := os.WriteFile(res.Prompt, []byte(prompt), 0o644); err != nil {
 		return ReviewAgentResult{}, fmt.Errorf("write %s: %w", res.Prompt, err)
 	}
@@ -439,7 +494,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
-	findings, problems := checkReviewAnswer(workdir, changed, answer)
+	findings, problems := checkReviewAnswer(workdir, changed, answer, o.Dimension)
 	if len(problems) > 0 {
 		// The contract is checked, not trusted: one fresh run with the
 		// refusal appended to the same prompt file, then nothing more.
@@ -455,11 +510,11 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		if err != nil {
 			return ReviewAgentResult{}, err
 		}
-		if findings, problems = checkReviewAnswer(workdir, changed, answer); len(problems) > 0 {
+		if findings, problems = checkReviewAnswer(workdir, changed, answer, o.Dimension); len(problems) > 0 {
 			return ReviewAgentResult{}, fmt.Errorf("review answer refused twice; nothing recorded, transcripts %s and %s:\n%s", first, res.Transcript, strings.Join(problems, "\n"))
 		}
 	}
-	res, err = recordReview(dir, task, events, workdir, worker, o.Session, findings, res)
+	res, err = recordReview(dir, task, events, workdir, worker, o.Session, o.Dimension, findings, res)
 	if err == nil {
 		refreshReviewThread(dir, task, o.Progress)
 	}
@@ -467,13 +522,14 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 }
 
 // checkReviewAnswer parses the reviewer's answer and validates its findings;
-// it returns the findings, or the reasons the answer is refused.
-func checkReviewAnswer(workdir string, changed []string, answer string) ([]ReviewFinding, []string) {
+// it returns the findings, or the reasons the answer is refused. category is
+// a panel member's dimension, or "" for the general reviewer.
+func checkReviewAnswer(workdir string, changed []string, answer, category string) ([]ReviewFinding, []string) {
 	findings, err := parseReviewFindings(answer)
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
-	if v := validateFindings(workdir, changed, findings); len(v) > 0 {
+	if v := validateFindings(workdir, changed, findings, category); len(v) > 0 {
 		return nil, v
 	}
 	return findings, nil
@@ -543,7 +599,7 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 
 // recordReview records the reviewer's checked findings and verdict in one
 // append.
-func recordReview(dir, task string, events []Event, workdir string, worker Worker, session string, findings []ReviewFinding, res ReviewAgentResult) (ReviewAgentResult, error) {
+func recordReview(dir, task string, events []Event, workdir string, worker Worker, session, dimension string, findings []ReviewFinding, res ReviewAgentResult) (ReviewAgentResult, error) {
 	tree, err := treeHash(workdir)
 	if err != nil {
 		return ReviewAgentResult{}, err
@@ -554,7 +610,7 @@ func recordReview(dir, task string, events []Event, workdir string, worker Worke
 			attempt = e.Attempt
 		}
 	}
-	evs, verdict, note := reviewEvents(task, attempt, res.Round, session, worker.Model, worker.Adapter, tree, findings)
+	evs, verdict, note := dimensionReviewEvents(task, attempt, res.Round, session, worker.Model, worker.Adapter, tree, dimension, findings)
 	if err := AppendEvents(dir, evs); err != nil {
 		return ReviewAgentResult{}, err
 	}
