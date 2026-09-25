@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.19.0](https://github.com/suzworx/flywheel/compare/v0.18.2...v0.19.0) (2026-09-24)
+
+
+### Features
+
+* a quiet gate waits for an idle host and holds dispatch while it runs ([#413](https://github.com/suzworx/flywheel/issues/413)) ([57882fa](https://github.com/suzworx/flywheel/commit/57882fa7f40739d9532000ed6400d195f502ad3f)), closes [#411](https://github.com/suzworx/flywheel/issues/411)
+* an independent review agent reads a unit's diff and records findings ([#399](https://github.com/suzworx/flywheel/issues/399)) ([6cef732](https://github.com/suzworx/flywheel/commit/6cef732f103fcdafea6ab31d96574618d3f33596))
+* flywheel commits each attempt on the unit's branch; workers never touch index or history ([#404](https://github.com/suzworx/flywheel/issues/404)) ([12d6682](https://github.com/suzworx/flywheel/commit/12d6682b00cf5e291dab98324cb2490feb80176a)), closes [#391](https://github.com/suzworx/flywheel/issues/391)
+* flywheel wait and run --notify, so a finished unit always reaches the lead ([#403](https://github.com/suzworx/flywheel/issues/403)) ([f2dea2a](https://github.com/suzworx/flywheel/commit/f2dea2a0da338dbb03d62d2814335f4339ef976c)), closes [#393](https://github.com/suzworx/flywheel/issues/393)
+* learnings carry a scope, and a journal line is a note, never a learning ([#412](https://github.com/suzworx/flywheel/issues/412)) ([21c555a](https://github.com/suzworx/flywheel/commit/21c555a6adbdad9e79a1b95d3fdbdad6622df348)), closes [#409](https://github.com/suzworx/flywheel/issues/409)
+* owns supports negated entries so an exception is machine-checked ([#405](https://github.com/suzworx/flywheel/issues/405)) ([9d24f07](https://github.com/suzworx/flywheel/commit/9d24f07408c269112a0a9e04852ca1e62506bcab)), closes [#388](https://github.com/suzworx/flywheel/issues/388)
+* the floor shows each unit's worktree and base; --worktree is the parallel default; corrections cite evidence ([#407](https://github.com/suzworx/flywheel/issues/407)) ([e11c4c0](https://github.com/suzworx/flywheel/commit/e11c4c08db1e5e45cbd7e9bfb036b0c1fa08659e)), closes [#394](https://github.com/suzworx/flywheel/issues/394)
+* the review loop sends open findings back to the worker, who must answer each by id ([#410](https://github.com/suzworx/flywheel/issues/410)) ([d70417e](https://github.com/suzworx/flywheel/commit/d70417eb9e87a3841d2bd4f305cd9e87661fa887))
+
+
+### Bug Fixes
+
+* a flywheel command run inside a unit's worktree uses the main ledger ([#398](https://github.com/suzworx/flywheel/issues/398)) ([38cc486](https://github.com/suzworx/flywheel/commit/38cc486f6cafb9ba1fae7d1a022e696110163ce6)), closes [#395](https://github.com/suzworx/flywheel/issues/395)
+* a missing flag in flywheel log prints the error and the fixed command, not the whole usage ([#397](https://github.com/suzworx/flywheel/issues/397)) ([e98e8c2](https://github.com/suzworx/flywheel/commit/e98e8c2ea584f8820ec73cf2470dafb6a6bfca0a)), closes [#392](https://github.com/suzworx/flywheel/issues/392)
+* a worker that ends its session while its background job runs is abandoned-job, and is resumed ([#406](https://github.com/suzworx/flywheel/issues/406)) ([2c7d884](https://github.com/suzworx/flywheel/commit/2c7d884ef872605b39b3874e2f30809068ecaf10)), closes [#390](https://github.com/suzworx/flywheel/issues/390)
+* an abandoned attempt is marked lost and never blocks dispatch ([#408](https://github.com/suzworx/flywheel/issues/408)) ([00894fd](https://github.com/suzworx/flywheel/commit/00894fdbf877ffe78703a7e948546d6bad111502)), closes [#402](https://github.com/suzworx/flywheel/issues/402)
+* another unit's run --worktree worktree is attributed to that unit, not blamed on this one ([#396](https://github.com/suzworx/flywheel/issues/396)) ([b065b1f](https://github.com/suzworx/flywheel/commit/b065b1ffed758af3e6cefe7fc0e1af20adbd9cad)), closes [#386](https://github.com/suzworx/flywheel/issues/386)
+* brief-drift advice names the step that takes effect on a dispatched attempt ([#401](https://github.com/suzworx/flywheel/issues/401)) ([3af035f](https://github.com/suzworx/flywheel/commit/3af035f822298c310c02e3bddb8ec3b39975547a)), closes [#387](https://github.com/suzworx/flywheel/issues/387)
+
 ## [0.18.2](https://github.com/suzworx/flywheel/compare/v0.18.1...v0.18.2) (2026-09-24)
 
 
