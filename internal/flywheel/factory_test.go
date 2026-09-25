@@ -1042,6 +1042,124 @@ func TestFloorOpenFindings(t *testing.T) {
 	}
 }
 
+// TestFloorVerdictMatrix: with review.panel configured each unit row shows
+// its verdict matrix on the measured tree (issue #420) — ✓ pass, ✗ correct,
+// · not reviewed — the cells dropped, never the id cut, when the row would
+// pass the width, and all · once the tree moves on.
+func TestFloorVerdictMatrix(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.Review = &ReviewConfig{Panel: []PanelMember{{Persona: "correctness"}, {Persona: "tests"}, {Persona: "errors"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:01Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop", Wrote: []string{"a.go"}},
+		{TS: "2026-09-15T00:00:02Z", Task: "T1", Kind: "owns_checked", Attempt: "r1", Tree: "t1"},
+	}
+	events = append(events, panelEvents("t1", "correctness")...)
+	testsBlocker := blockerA
+	testsBlocker.Category = "tests"
+	events = append(events, panelEvents("t1", "tests", testsBlocker)...)
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC)
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, _ := unitBy(fl.Units, "T1"); u.Panel != "✓✗·" {
+		t.Fatalf("T1 panel = %q, want ✓✗·", u.Panel)
+	}
+	for _, width := range []int{80, 100} {
+		var b strings.Builder
+		RenderText(&b, fl, width, false)
+		row := ""
+		for _, l := range strings.Split(b.String(), "\n") {
+			if strings.HasPrefix(l, "  T1 ") && row == "" {
+				row = l // the units table's row, not the andon's
+			}
+		}
+		if n := len([]rune(row)); row == "" || n > width {
+			t.Errorf("width %d: T1 row %q is %d runes", width, row, n)
+		}
+		if !strings.HasSuffix(row, " panel ✓✗·") {
+			t.Errorf("width %d: T1 row %q, want the panel cells", width, row)
+		}
+	}
+	// LINE and TREE leave MODEL and SESSION no room: the cells go, the id stays.
+	var narrow strings.Builder
+	RenderText(&narrow, Floor{Units: []Unit{{Task: "T1-abc", Line: "core", Workdir: "/w/fw-x", Panel: "✓✓✗··"}}}, 80, false)
+	if out := narrow.String(); strings.Contains(out, "panel") || !strings.Contains(out, "  T1-abc ") {
+		t.Errorf("narrow floor keeps the panel or cuts the id:\n%s", out)
+	}
+	var j strings.Builder
+	RenderJSON(&j, fl)
+	if !strings.Contains(j.String(), `"panel": "✓✗·"`) {
+		t.Errorf("RenderJSON lacks the panel cells:\n%s", j.String())
+	}
+	if err := AppendEvents(dir, []Event{{TS: "2026-09-15T00:00:30Z", Task: "T1", Kind: "owns_checked", Attempt: "r1", Tree: "t2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if fl, err = w.Refresh(dir, now); err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if u, _ := unitBy(fl.Units, "T1"); u.Panel != "···" {
+		t.Errorf("T1 panel on a new tree = %q, want ···", u.Panel)
+	}
+}
+
+// TestFloorGroupRow: a reviewed group is a group section row, not a unit
+// (issue #420); its open blocking integration finding raises group-open.
+func TestFloorGroupRow(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "A", Kind: "planned"},
+		{TS: "2026-09-15T00:00:00Z", Task: "B", Kind: "planned"},
+		{TS: "2026-09-15T00:00:01Z", Task: "A", Kind: "review_finding", Category: IntegrationPersona, Severity: "blocker",
+			Session: "rev-1", Reason: "group:g1", Finding: "group:g1-r1-1", Path: "a.go", Title: "clash"},
+		{TS: "2026-09-15T00:00:01Z", Task: "group:g1", Kind: "group_reviewed", Verdict: "correct", Session: "rev-1",
+			Note: "members A,B,a-very-long-member-name-one,a-very-long-member-name-two; missing -; conflicts -; gates -; 1 finding(s)"},
+	}
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	if _, ok := unitBy(fl.Units, "group:g1"); ok || len(fl.Units) != 2 {
+		t.Errorf("units = %+v, want A and B only", fl.Units)
+	}
+	found := false
+	for _, a := range fl.Andon {
+		found = found || a.Task == "group:g1" && a.State == "group-open (1)"
+	}
+	if !found {
+		t.Errorf("andon lacks group:g1 group-open (1): %+v", fl.Andon)
+	}
+	var b strings.Builder
+	RenderText(&b, fl, 80, false)
+	out := b.String()
+	if !strings.Contains(out, "\ngroups (1)\n  g1 ") || !strings.Contains(out, "correct  open 1  members A,B,") {
+		t.Errorf("group section missing:\n%s", out)
+	}
+	_, section, _ := strings.Cut(out, "\ngroups (1)\n")
+	section, _, _ = strings.Cut(section, "\n\n")
+	for _, l := range strings.Split(section, "\n") {
+		if n := len([]rune(l)); n > 80 {
+			t.Errorf("group line %q is %d runes, over 80", l, n)
+		}
+	}
+}
+
 func TestStopFinishIsDoneAndFinished(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

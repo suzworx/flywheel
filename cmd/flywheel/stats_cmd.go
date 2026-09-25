@@ -104,6 +104,15 @@ func printStats(rep flywheel.StatsReport) {
 	fmt.Printf("Review findings by category:%s\n", countLine(rv.ByCategory))
 	fmt.Printf("Review median rounds to clean: %.1f (%d clean unit(s))\n", rv.MedianRoundsToClean, rv.CleanUnits)
 	fmt.Printf("Review caught what gates missed: %d finding(s) on units whose gates had all passed\n", rv.CaughtAfterGates)
+	for _, l := range rv.ByLevel {
+		fmt.Printf("Review level %-7s %d round(s), %d not pass, %d finding(s), %d blocking\n", l.Level+":", l.Rounds, l.NotPass, l.Findings, l.Blocking)
+	}
+	if len(rv.ByPersona) > 0 {
+		fmt.Printf("  %-12s %-5s %7s %8s %5s %8s %9s  %s\n", "PERSONA", "LEVEL", "REVIEWS", "FINDINGS", "FIXED", "DISPUTED", "DISMISSED", "BY SEVERITY")
+		for _, p := range rv.ByPersona {
+			fmt.Printf("  %-12s %-5s %7d %8d %5d %8d %9d %s\n", p.Persona, p.Level, p.Reviews, p.Findings, p.Fixed, p.Disputed, p.Dismissed, countLine(p.BySeverity))
+		}
+	}
 }
 
 // countLine renders counts as " k=v ..." in key order, or " none".

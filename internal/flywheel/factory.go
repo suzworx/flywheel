@@ -22,6 +22,7 @@ type Floor struct {
 	ProductLines []ProductLine
 	Staffing     Staffing
 	Units        []Unit
+	Groups       []GroupState // reviewed groups (issue #420), from Derive
 	Andon        []Andon
 	Output       Output
 }
@@ -85,6 +86,7 @@ type Unit struct {
 	Workdir  string    // the latest dispatched event's workdir (issue #394); "" in the main checkout
 	Base     string    // that event's base commit, first 7 characters; "" when none
 	Open     int       // open blocking review findings (issue #389); 0 when none or never reviewed
+	Panel    string    // the verdict matrix, one cell per review.panel dimension (issue #420); "" when no panel is configured
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -441,8 +443,16 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.Lines = buildLines(cfg, byModel)
 	fl.ProductLines = buildProductLines(cfg, units)
 	fl.Staffing = buildStaffing(cfg, w.events)
+	if cfg.Review != nil && len(cfg.Review.Panel) > 0 {
+		dims := cfg.PanelDimensions()
+		for i := range units {
+			units[i].Panel = panelCells(w.events, units[i].Task, units[i].Attempt, dims)
+		}
+	}
 	fl.Units = units
-	fl.Andon = buildAndon(units, fl.Staffing.Roles, pausedAndon(w.events, now, cfg.Limits.RateLimitPauseThreshold()))
+	fl.Groups = st.Groups
+	extra := append(pausedAndon(w.events, now, cfg.Limits.RateLimitPauseThreshold()), groupAndon(st.Groups, now)...)
+	fl.Andon = buildAndon(units, fl.Staffing.Roles, extra)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -781,6 +791,62 @@ func latestIsAgentReview(events []Event, task string) bool {
 		}
 	}
 	return false
+}
+
+// measuredTree is the tree of the task's latest gauge reading (owns_checked or
+// validated) for attempt, in ledger order, or "" when it has none: the tree
+// the panel's verdicts must be on to count.
+func measuredTree(events []Event, task, attempt string) string {
+	tree := ""
+	for _, e := range events {
+		if e.Task == task && (e.Kind == "owns_checked" || e.Kind == "validated") && e.Tree != "" && (e.Attempt == "" || e.Attempt == attempt) {
+			tree = e.Tree
+		}
+	}
+	return tree
+}
+
+// Panel matrix cells (issue #420): pass, correct or an open finding, and not
+// reviewed on the current tree.
+const (
+	cellPass    = "✓"
+	cellCorrect = "✗"
+	cellMissing = "·"
+)
+
+// panelCells is the unit's verdict matrix as one cell per dimension of panel,
+// in panel order, on its measured tree: every cell reads not reviewed when
+// the unit has no measured tree yet.
+func panelCells(events []Event, task, attempt string, panel []string) string {
+	tree := measuredTree(events, task, attempt)
+	m := map[string]string{}
+	if tree != "" {
+		m = VerdictMatrix(events, task, tree, panel)
+	}
+	var b strings.Builder
+	for _, d := range panel {
+		switch m[d] {
+		case "pass":
+			b.WriteString(cellPass)
+		case "correct":
+			b.WriteString(cellCorrect)
+		default:
+			b.WriteString(cellMissing)
+		}
+	}
+	return b.String()
+}
+
+// groupAndon is one andon entry per group with open blocking integration
+// findings (issue #420): task group:<id>, state "group-open (N)".
+func groupAndon(groups []GroupState, now time.Time) []Andon {
+	var out []Andon
+	for _, g := range groups {
+		if g.Open > 0 {
+			out = append(out, Andon{Task: g.Task, State: fmt.Sprintf("group-open (%d)", g.Open), Age: ageOf(g.UpdatedAt, now)})
+		}
+	}
+	return out
 }
 
 // pausedAndon is one andon entry per model a rate limit pauses at now (issue

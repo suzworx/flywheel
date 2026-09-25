@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Column widths for the units table. They total 80 with the single-space
@@ -78,6 +79,7 @@ func RenderText(w io.Writer, f Floor, width int, color bool) {
 	renderFloor(w, f, modelLineWd, width)
 	renderProductLines(w, f, width)
 	renderUnits(w, f, taskWd, modelWd, color)
+	renderGroups(w, f, width)
 	renderAndon(w, f, color)
 	renderOutput(w, f)
 }
@@ -237,7 +239,26 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			}
 		}
 	}
-	row := func(task, line, tree, stage, att, sess, model, steps, age, run string) {
+	// The panel matrix (issue #420) follows the RUN cell; its room comes out
+	// of MODEL, then SESSION, never TASK: when they cannot give it all, the
+	// cells are dropped from every row and the ids stay whole.
+	panelWd := 0
+	for _, u := range f.Units {
+		panelWd = max(panelWd, utf8.RuneCountInString(u.Panel))
+	}
+	if panelWd > 0 {
+		need := panelWd + len(" panel ")
+		if need > (modelWd-6)+(sessWd-6) {
+			panelWd = 0
+		} else {
+			for _, wd := range []*int{&modelWd, &sessWd} {
+				n := min(need, *wd-6)
+				*wd -= n
+				need -= n
+			}
+		}
+	}
+	row := func(task, line, tree, stage, att, sess, model, steps, age, run string) string {
 		cells := []string{fmt.Sprintf("%-*s", taskWd, task)}
 		if hasLine {
 			cells = append(cells, fmt.Sprintf("%-*s", lineW, line))
@@ -249,22 +270,45 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			fmt.Sprintf("%-*s", stageW, stage), fmt.Sprintf("%-*s", attW, att),
 			fmt.Sprintf("%-*s", sessWd, sess), fmt.Sprintf("%-*s", modelWd, model),
 			fmt.Sprintf("%*s", stepsW, steps), fmt.Sprintf("%*s", ageW, age), run)
-		fmt.Fprintf(w, "  %s\n", strings.Join(cells, " "))
+		return "  " + strings.Join(cells, " ")
 	}
-	row("TASK", "LINE", "TREE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN"))
+	fmt.Fprintf(w, "%s\n", row("TASK", "LINE", "TREE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN")))
 	for _, u := range f.Units {
-		cell := truncate(u.RunState, runW)
-		if u.RunState == "capped" && u.Peak > 0 {
-			cell = truncate("capped "+tokensK(Tokens{Reasoning: u.Peak}), runW)
+		panel := ""
+		if panelWd > 0 && u.Panel != "" {
+			panel = " panel " + u.Panel
 		}
-		if u.RunState == "rate-limited" && !u.ResetAt.IsZero() {
-			// The last column: the reset clock may run past runW (issue #383).
-			cell = "rate-limited until " + u.ResetAt.Local().Format("15:04")
-		}
-		run := paint(color, stateColor(u.RunState), padLeft(cell, runW))
-		row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(treeCell(u), treeW), truncate(u.Stage, stageW),
+		run := paint(color, stateColor(u.RunState), padLeft(unitRunCell(u), runW))
+		fmt.Fprintf(w, "%s%s\n", row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(treeCell(u), treeW), truncate(u.Stage, stageW),
 			truncate(u.Attempt, attW), truncate(u.Session, sessWd), truncate(u.Model, modelWd),
-			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run)
+			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run), panel)
+	}
+}
+
+// unitRunCell is a unit's RUN cell before padding and colour.
+func unitRunCell(u Unit) string {
+	cell := truncate(u.RunState, runW)
+	if u.RunState == "capped" && u.Peak > 0 {
+		cell = truncate("capped "+tokensK(Tokens{Reasoning: u.Peak}), runW)
+	}
+	if u.RunState == "rate-limited" && !u.ResetAt.IsZero() {
+		// The last column: the reset clock may run past runW (issue #383).
+		cell = "rate-limited until " + u.ResetAt.Local().Format("15:04")
+	}
+	return cell
+}
+
+// renderGroups prints each reviewed group (issue #420): its id, latest
+// verdict, open blocking integration findings and members, cut to the width;
+// nothing when the floor has no group.
+func renderGroups(w io.Writer, f Floor, width int) {
+	if len(f.Groups) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\ngroups (%d)\n", len(f.Groups))
+	for _, g := range f.Groups {
+		line := fmt.Sprintf("  %-*s  %-7s  open %d  members %s", taskW, truncate(g.ID, taskW), orDash(g.Verdict), g.Open, orDash(strings.Join(g.Members, ",")))
+		fmt.Fprintf(w, "%s\n", truncate(line, width))
 	}
 }
 
@@ -327,6 +371,7 @@ type jUnit struct {
 	ResetAt       string `json:"reset_at,omitempty"` // a rate-limited unit's reset, RFC 3339 (issue #383)
 	Workdir       string `json:"workdir,omitempty"`  // the unit's worktree (issue #394)
 	Base          string `json:"base,omitempty"`     // its base commit, first 7 characters
+	Panel         string `json:"panel,omitempty"`    // the verdict matrix cells (issue #420)
 }
 
 type jAndon struct {
@@ -364,6 +409,7 @@ type jFloor struct {
 	ProductLines []jProductLine `json:"product_lines,omitempty"`
 	Staffing     jStaff         `json:"staffing"`
 	Units        []jUnit        `json:"units"`
+	Groups       []GroupState   `json:"groups,omitempty"`
 	Andon        []jAndon       `json:"andon"`
 	Output       jOutput        `json:"output"`
 }
@@ -386,12 +432,13 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = js
 	for _, u := range f.Units {
-		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base}
+		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base, Panel: u.Panel}
 		if !u.ResetAt.IsZero() {
 			ju.ResetAt = u.ResetAt.UTC().Format(time.RFC3339)
 		}
 		j.Units = append(j.Units, ju)
 	}
+	j.Groups = f.Groups
 	for _, a := range f.Andon {
 		j.Andon = append(j.Andon, jAndon{Task: a.Task, State: a.State, Age: a.Age})
 	}

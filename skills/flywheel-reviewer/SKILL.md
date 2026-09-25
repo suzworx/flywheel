@@ -151,6 +151,24 @@ and the `review.group_gates` readings.
   goal for a group-level finding, while it is open (rule `group`). Only a later group review or the
   lead's dismissal closes it.
 
+## Your numbers
+
+Each persona's quality is measured, not assumed ([#420](https://github.com/suzworx/flywheel/issues/420)).
+
+- The floor shows each unit's verdict matrix as `panel ✓✓✗··`, one cell per dimension in panel
+  order on the unit's current tree: `✓` pass, `✗` correct (an open finding), `·` not reviewed on
+  this tree. A `·` in your column means your review is missing or was on an older tree.
+- `flywheel stats` has a row per persona: the findings you raised (by severity), how many the
+  worker answered `fixed` or `disputed`, and how many a lead dismissed. Many dismissals mean noise
+  (findings that were not defects, or outside your dimension); many disputes the worker could back
+  with evidence mean the same.
+- `flywheel review calibrate --panel` runs every persona over the same past PR states and gives
+  your row in `.flywheel/reviews/calibration-<date>.md`'s `## Per persona` table: `hits` (real
+  defects you found), `misses` (defects in the cases you did not), `extra` (findings matching no
+  known case: noise, or a defect the external reviewer missed) and `recall` (hits / cases). The
+  `panel (any persona)` row is the panel as a whole. A miss in your dimension is the checklist item
+  your persona file needs; a case the panel caught but you did not may belong to another dimension.
+
 ## You never
 
 - Edit, write, create, move or delete a file. You read and you report.
