@@ -194,6 +194,13 @@ all.
   (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
   <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
   `git` first on PATH never reaches it.
+- Workers load no MCP servers unless the worker config lists them (issue #425). Every claude
+  dispatch passes `--strict-mcp-config` with `--mcp-config` set to the worker's `mcp` value (the
+  Claude CLI's `{"mcpServers": {...}}` shape, compacted), or to the empty set `{"mcpServers":{}}`
+  when `mcp` is unset — so the user-level MCP servers (mail, calendar, drive, trackers, chat,
+  plugins) that `--setting-sources user` would still load never reach a worker. The review agent
+  sets no `mcp` and gets the empty set. `flywheel` rejects a config whose `mcp` is not a JSON
+  object with an `mcpServers` object.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

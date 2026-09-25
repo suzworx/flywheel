@@ -152,6 +152,44 @@ type Worker struct {
 	// push") at the permission layer (issue #192). An explicitly configured
 	// list REPLACES that default; it is not merged with it.
 	DisallowedTools []string `json:"disallowed_tools,omitempty"`
+	// MCP is the MCP servers a claude worker may load, in the Claude CLI's
+	// --mcp-config JSON shape ({"mcpServers": {...}}). When unset the worker
+	// loads no MCP server at all (issue #425).
+	MCP json.RawMessage `json:"mcp,omitempty"`
+}
+
+// validateMCP checks that a set MCP value is a JSON object with an
+// "mcpServers" object; an unset value is valid (issue #425).
+func (w Worker) validateMCP() error {
+	if len(bytes.TrimSpace(w.MCP)) == 0 {
+		return nil
+	}
+	var v map[string]json.RawMessage
+	if err := json.Unmarshal(w.MCP, &v); err != nil || v == nil {
+		return errors.New("mcp must be a JSON object")
+	}
+	var servers map[string]json.RawMessage
+	raw, ok := v["mcpServers"]
+	if !ok {
+		return errors.New("mcp must have an \"mcpServers\" object")
+	}
+	if err := json.Unmarshal(raw, &servers); err != nil || servers == nil {
+		return errors.New("mcp.mcpServers must be a JSON object")
+	}
+	return nil
+}
+
+// mcpConfig returns the worker's MCP value as a compact JSON string, or ""
+// when unset or invalid (issue #425).
+func (w Worker) mcpConfig() string {
+	if w.validateMCP() != nil || len(bytes.TrimSpace(w.MCP)) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, w.MCP); err != nil {
+		return ""
+	}
+	return buf.String()
 }
 
 // defaultStallTimeout applies when a worker's StallTimeout is unset (0).
@@ -499,6 +537,9 @@ func (c Config) Validate() error {
 		}
 		if w.StallTimeout < 0 {
 			problems = append(problems, fmt.Sprintf("%s: stall_timeout %d must be >= 0", where, w.StallTimeout))
+		}
+		if err := w.validateMCP(); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 		}
 		for j, f := range w.Fallbacks {
 			switch {
