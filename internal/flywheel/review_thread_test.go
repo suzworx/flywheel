@@ -7,6 +7,34 @@ import (
 	"testing"
 )
 
+// TestRenderReviewThreadOwns checks that an open blocking finding outside
+// the effective owns is marked, rendered directly and written from the
+// task's brief (issue #458).
+func TestRenderReviewThreadOwns(t *testing.T) {
+	t.Parallel()
+	events := roundEvents(1, blockerA, blockerC)
+	if got := string(RenderReviewThread(events, "T1", "a.go")); !strings.Contains(got, "## Open blocking findings\n\nT1-r1-1, T1-r1-2 (outside owns)\n") {
+		t.Errorf("rendered with owns:\n%s", got)
+	}
+	if got := string(RenderReviewThread(events, "T1")); strings.Contains(got, "outside owns") {
+		t.Errorf("no owns passed, yet marked:\n%s", got)
+	}
+	dir := loopRepo(t)
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteReviewThread(dir, "T1"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".flywheel", "reviews", "T1.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "T1-r1-1, T1-r1-2 (outside owns)\n") {
+		t.Errorf("written thread lacks the marking:\n%s", data)
+	}
+}
+
 // TestReviewThreadRender checks the generated thread over two rounds: one
 // finding closed, one re-reported, one dismissed, with the worker's answers
 // and the open blocking findings; and that a hand-written file is never

@@ -114,7 +114,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
-- Never commit, push, or write secrets.
+- Git is read-only for you: never commit, push, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. Never write secrets.
 - Never end your turn while a background job you started is running: run long commands in the foreground and wait for them.
 - Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `

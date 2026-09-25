@@ -76,8 +76,8 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
 - Conventional Commit titles (feat:, fix:, docs:, test:, chore:, ci:, build:; CI checks the PR
   title); squash merges.
 - release-please opens the release PRs and the owner publishes.
-- Workers never commit, stash, reset, checkout or push (the worker permission policy denies every
-  git write command); the lead commits after inspection.
+- Workers never commit, add (index writes), stash, reset, checkout or push (the worker permission
+  policy denies every git write command); the lead commits after inspection.
 
 ## How flywheel is built (it builds itself)
 
