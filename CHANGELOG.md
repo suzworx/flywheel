@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/suzworx/flywheel/compare/v0.22.0...v0.23.0) (2026-09-25)
+
+
+### Features
+
+* review observability — the verdict matrix on the floor, groups as groups, per-persona stats and calibration ([#453](https://github.com/suzworx/flywheel/issues/453)) ([f25dcfa](https://github.com/suzworx/flywheel/commit/f25dcfae658976ab45a927829bedcef7af7d5689)), closes [#420](https://github.com/suzworx/flywheel/issues/420)
+
+
+### Bug Fixes
+
+* snapshot each correction's delta at dispatch, and let a lead acknowledge a delta already lost ([#455](https://github.com/suzworx/flywheel/issues/455)) ([56b45df](https://github.com/suzworx/flywheel/commit/56b45dfb9ce03a34c1a6ef5a3c3c9ba439290178)), closes [#452](https://github.com/suzworx/flywheel/issues/452)
+
 ## [0.22.0](https://github.com/suzworx/flywheel/compare/v0.21.1...v0.22.0) (2026-09-25)
 
 
