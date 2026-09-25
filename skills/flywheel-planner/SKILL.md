@@ -27,6 +27,8 @@ You do:
 - Decompose a goal into ordered, bounded work orders.
 - Write each work order with `owns:`, `needs:`, optional `exclusive:`, goal, exact change,
   don't-touch list, gates, acceptance criteria and the report contract.
+- Give every work order a gate that runs the full suite, and own the tests of the packages that
+  import a changed Go package: `flywheel lint` warns on both (`lint.full_suite`, `lint.importers`).
 - Never offer a choice of remedy. A disjunction reads as satisfied when either half is done,
   and the report contract does not force the worker to name the branch, so the cheaper branch
   wins silently — a brief that said "either drop the list to three entries, or make the row fill

@@ -1,10 +1,18 @@
 package flywheel
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
 )
 
 // LintResult is every problem and warning found in one brief. Problems make
@@ -27,7 +35,60 @@ type LintResult struct {
 // entry ("!path", issue #388) is never existence-checked. Warnings cover the
 // missing write rule, a missing needs line and a negated entry no positive
 // entry covers.
+//
+// Two more warnings guard the gates and owns against what CI catches later
+// (issue #462). No gate matching the full-suite pattern (config
+// lint.full_suite, else go test over ./... when dir has go.mod, else a
+// package manager's test script when package.json defines one) is a warning;
+// an invalid lint.full_suite is a problem. When dir has go.mod and
+// lint.importers is not false, go list finds each owned Go package's direct
+// importers, and one whose tests owns does not cover is a warning.
 func LintBrief(dir, path string) (LintResult, error) {
+	return lintBrief(dir, path, goList)
+}
+
+// lintBrief is LintBrief with the go list call injected, for tests.
+func lintBrief(dir, path string, list func(string) (string, error)) (LintResult, error) {
+	res, err := lintStructure(dir, path)
+	if err != nil {
+		return res, err
+	}
+	header, err := ParseBriefHeader(path)
+	if err != nil {
+		return res, fmt.Errorf("parse brief %s: %w", path, err)
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("config not read, lint defaults apply: %v", err))
+	}
+	lc := cfg.Lint
+	if lc == nil {
+		lc = &LintConfig{}
+	}
+	pattern := lc.FullSuite
+	if pattern == "" {
+		pattern = defaultFullSuite(dir)
+	}
+	if pattern != "" {
+		if re, err := regexp.Compile(pattern); err != nil {
+			res.Problems = append(res.Problems, fmt.Sprintf("config lint.full_suite %q is not a valid regular expression: %v", pattern, err))
+		} else if len(header.Gates) > 0 && !slices.ContainsFunc(header.Gates, re.MatchString) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; set lint.full_suite to change it)", pattern))
+		}
+	}
+	if fileExists(filepath.Join(dir, "go.mod")) && (lc.Importers == nil || *lc.Importers) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return res, fmt.Errorf("read brief %s: %w", path, err)
+		}
+		res.Warnings = append(res.Warnings, importerWarnings(dir, header.Owns, ownsEntries(string(b)), list)...)
+	}
+	return res, nil
+}
+
+// lintStructure is LintBrief's structural checks: the header lines, headings,
+// owns paths and gate quoting.
+func lintStructure(dir, path string) (LintResult, error) {
 	var res LintResult
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -195,6 +256,146 @@ func literalPrefix(p string) string {
 		return p[:i]
 	}
 	return p
+}
+
+// defaultFullSuite is the full-suite gate pattern for dir's toolchain (issue
+// #462): go test over ./... when go.mod exists, else a package manager's test
+// script when package.json has one, else "" (no check).
+func defaultFullSuite(dir string) string {
+	if fileExists(filepath.Join(dir, "go.mod")) {
+		return `go test\b.*\./\.\.\.`
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pj struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(b, &pj) == nil && strings.TrimSpace(pj.Scripts["test"]) != "" {
+		return `\b(npm|pnpm|yarn|bun)( run)? test\b`
+	}
+	return ""
+}
+
+// fileExists reports whether p exists and is not a directory.
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// goListFormat is the go list template the importer check parses: one package
+// per line, tab-separated, list fields comma-joined.
+const goListFormat = "{{.ImportPath}}\t{{.Dir}}\t{{join .Imports \",\"}}\t{{join .TestImports \",\"}}\t{{join .XTestImports \",\"}}\t{{join .TestGoFiles \",\"}}\t{{join .XTestGoFiles \",\"}}"
+
+// goList runs go list over every package under dir, bounded by 60 seconds.
+func goList(dir string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "list", "-f", goListFormat, "./...")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); ok && len(bytes.TrimSpace(ee.Stderr)) > 0 {
+		return "", fmt.Errorf("%w: %s", err, bytes.TrimSpace(ee.Stderr))
+	}
+	return string(out), err
+}
+
+// goPackage is one go list line: the package, everything it and its tests
+// import, and its test file names.
+type goPackage struct {
+	importPath string
+	imports    []string
+	testFiles  []string
+}
+
+// parseGoList parses goListFormat output; a line without seven fields is
+// skipped.
+func parseGoList(out string) []goPackage {
+	split := func(s string) []string { return strings.FieldsFunc(s, func(r rune) bool { return r == ',' }) }
+	var pkgs []goPackage
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(strings.TrimSuffix(line, "\r"), "\t")
+		if len(f) != 7 {
+			continue
+		}
+		p := goPackage{importPath: f[0]}
+		for _, s := range f[2:5] {
+			p.imports = append(p.imports, split(s)...)
+		}
+		for _, s := range f[5:7] {
+			p.testFiles = append(p.testFiles, split(s)...)
+		}
+		pkgs = append(pkgs, p)
+	}
+	return pkgs
+}
+
+// goModulePath returns the module path go.mod in dir declares, "" if none.
+func goModulePath(dir string) string {
+	b, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+			return strings.Trim(strings.TrimSpace(rest), `"`)
+		}
+	}
+	return ""
+}
+
+// importerWarnings warns, per owned Go package, about its direct importers
+// whose test files owns does not cover (issue #462). Owned packages are the
+// directories of literal and (new) non-test .go entries; a test file a negated
+// entry covers is a deliberate exclusion. A go list failure is a warning.
+func importerWarnings(dir string, owns []string, entries []ownsEntry, list func(string) (string, error)) []string {
+	var dirs []string
+	for _, e := range entries {
+		p := filepath.ToSlash(e.path)
+		if _, neg := negatedEntry(p); neg || isOwnsPattern(p) || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		if d := path.Dir(p); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	out, err := list(dir)
+	if err != nil {
+		return []string{fmt.Sprintf("importer check skipped: go list: %v", err)}
+	}
+	mod := goModulePath(dir)
+	if mod == "" {
+		return []string{"importer check skipped: go.mod declares no module"}
+	}
+	pkgs := parseGoList(out)
+	var warns []string
+	for _, d := range dirs {
+		p := mod
+		if d != "." {
+			p = mod + "/" + d
+		}
+		var unowned []string
+		for _, q := range pkgs {
+			qd, inMod := strings.CutPrefix(q.importPath, mod+"/")
+			if q.importPath == mod {
+				qd, inMod = ".", true
+			}
+			if q.importPath == p || !inMod || !slices.Contains(q.imports, p) {
+				continue
+			}
+			for _, f := range q.testFiles {
+				if fp := path.Join(qd, f); !ownsNegated(owns, fp) && !ownsContains(owns, fp) {
+					unowned = append(unowned, q.importPath)
+					break
+				}
+			}
+		}
+		if len(unowned) > 0 {
+			warns = append(warns, fmt.Sprintf("owns changes %s, imported by %s whose tests are not owned", p, strings.Join(unowned, ", ")))
+		}
+	}
+	return warns
 }
 
 // hasHeading reports whether content has a line starting with prefix, e.g. a
