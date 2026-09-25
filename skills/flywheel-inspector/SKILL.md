@@ -71,6 +71,8 @@ and steward's).
   worker's session as your own — pass your own inspector session id; never a worker's session of the
   task. T8 means the verdict was not pass/rework/scrap/escalate. Cross-check the chain
   with `flywheel verify` before landing a pass.
+- Check the unit's review thread (`.flywheel/reviews/<task>.md`) before passing: the `review` rule
+  refuses a pass while a blocking finding is open.
 - Never inspect your own session's work. If you wrote or planned the unit, hand it to another
   inspector or to audit.
 - Independence: you are never the auditor's session; the auditor re-inspects your verdicts.
