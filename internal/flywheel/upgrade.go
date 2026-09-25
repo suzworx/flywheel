@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // UpgradeOptions drives the self-update flow. Every field is overridable so
@@ -224,6 +225,24 @@ func unzipSingle(b []byte) ([]byte, error) {
 		return nil, fmt.Errorf("read %s from release zip: %w", zr.File[0].Name, err)
 	}
 	return p, nil
+}
+
+// LiveLeases returns the leases in dir that are live at now: the runs an
+// upgrade would pull the binary out from under (issue #461). A dir with no
+// .flywheel/leases has none; a lease read error is returned, never a silent
+// pass.
+func LiveLeases(dir string, now time.Time) ([]Lease, error) {
+	leases, err := ReadLeases(dir)
+	if err != nil {
+		return nil, err
+	}
+	var live []Lease
+	for _, l := range leases {
+		if LeaseLive(l, now) {
+			live = append(live, l)
+		}
+	}
+	return live, nil
 }
 
 // installOver replaces dest with payload atomically in a way that works on

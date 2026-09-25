@@ -2,13 +2,57 @@ package flywheel
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestGitGuardLinkRetry checks linkGuardBinary waits out a flywheel binary
+// missing mid-upgrade (issue #461): a source that appears after two tries is
+// linked, and one that never appears fails after five tries naming the path.
+func TestGitGuardLinkRetry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "flywheel")
+	var sleeps int
+	appear := func(time.Duration) {
+		sleeps++
+		if sleeps == 2 {
+			if err := os.WriteFile(src, []byte("binary"), 0o755); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+		}
+	}
+	dst := filepath.Join(dir, "git")
+	if err := linkGuardBinary(src, dst, 5, time.Millisecond, appear); err != nil {
+		t.Fatalf("linkGuardBinary with a source appearing after two tries: %v", err)
+	}
+	if sleeps != 2 {
+		t.Errorf("slept %d times, want 2", sleeps)
+	}
+	if got, err := os.ReadFile(dst); err != nil || string(got) != "binary" {
+		t.Errorf("dst = %q, %v; want %q", got, err, "binary")
+	}
+
+	missing := filepath.Join(dir, "gone")
+	var tries int
+	err := linkGuardBinary(missing, filepath.Join(dir, "git2"), 5, time.Millisecond, func(time.Duration) { tries++ })
+	if err == nil {
+		t.Fatal("linkGuardBinary with a source that never appears succeeded")
+	}
+	if tries != 4 {
+		t.Errorf("slept %d times, want 4 (5 tries)", tries)
+	}
+	if !strings.Contains(err.Error(), missing) || !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("error = %v, want it to name %s and wrap not-exist", err, missing)
+	}
+}
 
 func TestGitGuardRefusesHistoryWrites(t *testing.T) {
 	t.Parallel()

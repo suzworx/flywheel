@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // buildZip returns a zip archive with a single entry named name holding
@@ -266,5 +267,35 @@ func TestUpgradeIgnoresStaleOld(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Errorf("installed bytes = %q, want %q", got, payload)
+	}
+}
+
+// TestUpgradeLiveLeases checks LiveLeases returns only the leases live at
+// the injected now, and nothing for a dir with no .flywheel (issue #461).
+func TestUpgradeLiveLeases(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	live := Lease{Task: "A1", Attempt: "a2", PID: 42, ExpiresAt: at.Add(time.Minute).Format(time.RFC3339)}
+	expired := Lease{Task: "B1", Attempt: "a1", PID: 43, ExpiresAt: at.Add(-time.Minute).Format(time.RFC3339)}
+	for _, l := range []Lease{live, expired} {
+		if err := WriteLease(dir, l); err != nil {
+			t.Fatalf("WriteLease %s: %v", l.Task, err)
+		}
+	}
+	got, err := LiveLeases(dir, at)
+	if err != nil {
+		t.Fatalf("LiveLeases: %v", err)
+	}
+	if len(got) != 1 || got[0].Task != "A1" || got[0].Attempt != "a2" || got[0].PID != 42 {
+		t.Errorf("LiveLeases = %+v, want only A1 a2", got)
+	}
+
+	none, err := LiveLeases(t.TempDir(), at)
+	if err != nil {
+		t.Fatalf("LiveLeases on a dir with no .flywheel: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("LiveLeases on a dir with no .flywheel = %+v, want none", none)
 	}
 }
