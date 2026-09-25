@@ -168,6 +168,12 @@ type Event struct {
 	// or removed) and Note (why).
 	File      string `json:"file,omitempty"`
 	BreakPrev string `json:"break_prev,omitempty"`
+	// Release audit fields (issue #420): a release_audited event names the
+	// audited Version (the tag, v0.21.1) and its Checks as "name=status"
+	// strings in the order they ran; it reuses Session, Verdict (pass, fail or
+	// inconclusive) and Note (the one-line summary).
+	Version string   `json:"version,omitempty"`
+	Checks  []string `json:"checks,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
@@ -229,6 +235,9 @@ var kinds = map[string]bool{
 	// reanchored acknowledges one explained chain break, append-only (issue
 	// #436): File, LineNo, BreakPrev, SHA256, Reason and Note.
 	"reanchored": true,
+	// release_audited closes one `flywheel audit --release` (issue #420):
+	// Version, Checks, Session, Verdict and Note.
+	"release_audited": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -319,7 +328,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited":
 		return true
 	default:
 		return false
@@ -380,7 +389,17 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited", e.Kind)
+	}
+	if e.Kind == "release_audited" {
+		if e.Task != "" || e.Session == "" || e.Version == "" || len(e.Checks) == 0 {
+			return fmt.Errorf("release_audited event must carry a session, a version and at least one check, and no task")
+		}
+		if e.Verdict != "pass" && e.Verdict != "fail" && e.Verdict != "inconclusive" {
+			return fmt.Errorf("release_audited verdict %q is not one of pass, fail, inconclusive", e.Verdict)
+		}
+	} else if e.Version != "" || len(e.Checks) > 0 {
+		return fmt.Errorf("event kind %q cannot carry a version or checks", e.Kind)
 	}
 	if e.Kind == "reanchored" {
 		if e.Note == "" || e.File == "" || e.BreakPrev == "" || e.SHA256 == "" || e.Task != "" || e.LineNo < 1 {

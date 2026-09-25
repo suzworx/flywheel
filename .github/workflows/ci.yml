@@ -5,6 +5,12 @@ on:
     types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
+  # The full 1,000-task scale suite runs nightly and on main; PRs run a smaller
+  # smoke (issue #440).
+  schedule:
+    - cron: '17 9 * * *'
+  # release.yml dispatches this workflow on the release-please branch, because
+  # a pull_request run on a PR the bot opened never starts (issue #440).
   workflow_dispatch:
 
 permissions:
@@ -17,56 +23,83 @@ concurrency:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubicloud-standard-2, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      # Windows runners keep TEMP and the Go cache on C:, which is much slower
+      # than the D: drive the workspace lives on. The tests are git- and
+      # temp-dir-heavy, so move both before setup-go computes its cache paths
+      # (issue #440).
+      - name: Temp and Go cache on the fast drive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tmp = Join-Path "${{ runner.temp }}" "tmp"
+          $cache = Join-Path "${{ runner.temp }}" "gocache"
+          New-Item -ItemType Directory -Force $tmp, $cache | Out-Null
+          "TEMP=$tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "TMP=$tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "GOCACHE=$cache" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go build ./...
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
+      # go build is covered: vet type-checks every package, test builds them,
+      # and the checks job cross-compiles and installs the binary.
       - run: go vet ./...
       - run: go test ./...
 
   scale:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: 1,000-task simulated wave
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
+      # PRs run 200 tasks; main, the nightly schedule and dispatches run 1,000.
+      - name: simulated wave
         run: go test -count=1 -run 'TestScaleWave' -timeout 30m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: "1000"
-      - name: 1,000-task simulated loop (next, run, validate, inspect, land, watch)
-        run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 60m -v ./internal/flywheel/
+          FLYWHEEL_SCALE: ${{ github.event_name == 'pull_request' && '200' || '1000' }}
+      - name: simulated loop (next, run, validate, inspect, land, watch)
+        run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 50m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: "1000"
+          FLYWHEEL_SCALE: ${{ github.event_name == 'pull_request' && '200' || '1000' }}
 
-  install-check:
+  # One job for the quick checks: each Ubicloud job pays a runner start and is
+  # billed by the started minute (issue #440). PR title first, so a bad title
+  # fails fast.
+  checks:
     runs-on: ubicloud-standard-2
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: go install and run the installed binary
+      - name: Check PR title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
-          set -euo pipefail
-          rm -rf "$(go env GOMODCACHE)" "$(go env GOPATH)/bin"
-          go install ./cmd/flywheel
-          "$(go env GOPATH)/bin/flywheel" version
-
-  lint:
-    runs-on: ubicloud-standard-2
-    steps:
+          re='^(feat|fix|perf|docs|refactor|revert|chore|ci|test|style|build)(\([^)]+\))?!?: .+'
+          if ! [[ "$TITLE" =~ $re ]]; then
+            echo "PR title must be a conventional commit: <type>(<scope>)!: <subject>" >&2
+            echo "allowed types: feat fix perf docs refactor revert chore ci test style build" >&2
+            echo "which release: feat -> minor; fix/perf/docs/refactor/revert -> patch;" >&2
+            echo "'!' before the colon -> breaking (major, or minor while major is 0); others -> no release" >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # stdlib only, so there is no go.sum to key the cache on (issue #440)
+          cache-dependency-path: go.mod
       - name: gofmt check
         run: |
           unformatted="$(gofmt -l .)"
@@ -87,20 +120,9 @@ jobs:
           for f in skills/*/evals/*.json release-please-config.json .release-please-manifest.json; do
             node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$f"
           done
-
-  pr-title:
-    runs-on: ubicloud-standard-2
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Check PR title
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
+      - name: go install and run the installed binary
         run: |
-          re='^(feat|fix|perf|docs|refactor|revert|chore|ci|test|style|build)(\([^)]+\))?!?: .+'
-          if ! [[ "$TITLE" =~ $re ]]; then
-            echo "PR title must be a conventional commit: <type>(<scope>)!: <subject>" >&2
-            echo "allowed types: feat fix perf docs refactor revert chore ci test style build" >&2
-            echo "which release: feat -> minor; fix/perf/docs/refactor/revert -> patch;" >&2
-            echo "'!' before the colon -> breaking (major, or minor while major is 0); others -> no release" >&2
-            exit 1
-          fi
+          set -euo pipefail
+          rm -rf "$(go env GOMODCACHE)" "$(go env GOPATH)/bin"
+          go install ./cmd/flywheel
+          "$(go env GOPATH)/bin/flywheel" version
