@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -605,6 +606,46 @@ func TestWorkerToolDefaults(t *testing.T) {
 	}
 	if got := w.disallowedTools(); !reflect.DeepEqual(got, []string{"Bash(git commit:*)"}) {
 		t.Errorf("disallowedTools() = %v, want the explicit list to replace the default", got)
+	}
+}
+
+// TestWorkerMCPOptIn checks the worker's mcp key (issue #425): unset and a
+// valid {"mcpServers": {...}} object pass and compact to a JSON string; a
+// non-object, a missing mcpServers or a non-object mcpServers fail Validate.
+func TestWorkerMCPOptIn(t *testing.T) {
+	valid := map[string]string{
+		"unset": "",
+		"empty": `{"mcpServers": {}}`,
+		"one":   "{\n  \"mcpServers\": {\"fs\": {\"command\": \"mcp-fs\", \"args\": [\"/tmp\"]}}\n}",
+	}
+	for name, raw := range valid {
+		w := Worker{Name: "w", Adapter: "claude", Model: "m", MCP: json.RawMessage(raw)}
+		if err := (Config{Version: 1, Workers: []Worker{w}}).Validate(); err != nil {
+			t.Errorf("%s: Validate() = %v, want nil", name, err)
+		}
+	}
+	if got := (Worker{}).mcpConfig(); got != "" {
+		t.Errorf("unset mcpConfig() = %q, want empty", got)
+	}
+	w := Worker{MCP: json.RawMessage(valid["one"])}
+	if got, want := w.mcpConfig(), `{"mcpServers":{"fs":{"command":"mcp-fs","args":["/tmp"]}}}`; got != want {
+		t.Errorf("mcpConfig() = %q, want compact %q", got, want)
+	}
+	invalid := map[string]string{
+		"array":          `[1]`,
+		"string":         `"x"`,
+		"no mcpServers":  `{"servers": {}}`,
+		"list servers":   `{"mcpServers": []}`,
+		"null servers":   `{"mcpServers": null}`,
+		"not json":       `{mcpServers`,
+		"top-level null": `null`,
+	}
+	for name, raw := range invalid {
+		w := Worker{Name: "w", Adapter: "claude", Model: "m", MCP: json.RawMessage(raw)}
+		err := (Config{Version: 1, Workers: []Worker{w}}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "workers[0]: mcp") {
+			t.Errorf("%s: Validate() = %v, want a workers[0]: mcp error", name, err)
+		}
 	}
 }
 

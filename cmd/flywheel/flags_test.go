@@ -293,6 +293,21 @@ func TestReviewLoopFlags(t *testing.T) {
 	}
 }
 
+// TestReviewGroupFlags parses the group review's flags (issue #420): --group
+// with --agent, a base and a worker, and names them in the usage.
+func TestReviewGroupFlags(t *testing.T) {
+	fs, o := reviewFlags()
+	if err := fs.Parse([]string{"--group", "tasks:A,B", "--agent", "--base", "origin/main", "--worker", "w", "--session", "rev"}); err != nil {
+		t.Fatalf("reviewFlags: %v", err)
+	}
+	if o.group != "tasks:A,B" || !o.agent || o.base != "origin/main" || o.worker != "w" || o.session != "rev" {
+		t.Errorf("--group parsed = %#v", *o)
+	}
+	if !strings.Contains(reviewUsageLine, "flywheel review --group <goal|tasks:a,b> --agent --session <session> [--base REF]") {
+		t.Errorf("usage %q does not name --group", reviewUsageLine)
+	}
+}
+
 // TestReviewPanelFlags parses the review panel's flags (issue #420): --panel
 // with --agent, alone or with the loop's --fix and --rounds.
 func TestReviewPanelFlags(t *testing.T) {
