@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.20.0](https://github.com/suzworx/flywheel/compare/v0.19.0...v0.20.0) (2026-09-25)
+
+
+### Features
+
+* a review panel of dimension personas, and a verdict matrix a unit must complete ([#428](https://github.com/suzworx/flywheel/issues/428)) ([cec1e63](https://github.com/suzworx/flywheel/commit/cec1e634ea9d8b2d53c0edd2165087be936f0d57))
+* detect a unit stacked on a squashed base, and flywheel rebase it ([#415](https://github.com/suzworx/flywheel/issues/415)) ([d8649fb](https://github.com/suzworx/flywheel/commit/d8649fb28793616e3827e2f2f3b084d3f6c3ba54)), closes [#414](https://github.com/suzworx/flywheel/issues/414)
+* flywheel review calibrate measures the review agent against real external-review findings ([#424](https://github.com/suzworx/flywheel/issues/424)) ([a25be35](https://github.com/suzworx/flywheel/commit/a25be35ad25a90350b548172c824b4e59a69ff11))
+* review rules and observability — no pass over an open blocker, a generated local thread, floor and stats ([#416](https://github.com/suzworx/flywheel/issues/416)) ([042d72b](https://github.com/suzworx/flywheel/commit/042d72b6a747c720438ea337e0c41b5bc4008cbc))
+* use claude's rate_limit_event to pause dispatch before the limit hits ([#421](https://github.com/suzworx/flywheel/issues/421)) ([cece8e7](https://github.com/suzworx/flywheel/commit/cece8e7026e0fd60438761d40739488b5b3ed489)), closes [#417](https://github.com/suzworx/flywheel/issues/417)
+
+
+### Bug Fixes
+
+* deny every index and ref write at dispatch, and detect any that slip past the git guard ([#426](https://github.com/suzworx/flywheel/issues/426)) ([978ffe3](https://github.com/suzworx/flywheel/commit/978ffe3b48e1b3e7c0effefb71983608911742bb)), closes [#423](https://github.com/suzworx/flywheel/issues/423)
+* the claude adapter passes the prompt on stdin, so a large diff or brief starts on Windows ([#429](https://github.com/suzworx/flywheel/issues/429)) ([dd0d2db](https://github.com/suzworx/flywheel/commit/dd0d2db284db290157bbe7330b62ea88ca794901)), closes [#427](https://github.com/suzworx/flywheel/issues/427)
+
+
+### Documentation
+
+* the flywheel-reviewer persona skill, and the review loop in the lead's skill ([#419](https://github.com/suzworx/flywheel/issues/419)) ([67f13a7](https://github.com/suzworx/flywheel/commit/67f13a7a066a038438b6025936d5f3cc1d31c8a9))
+
 ## [0.19.0](https://github.com/suzworx/flywheel/compare/v0.18.2...v0.19.0) (2026-09-24)
 
 
