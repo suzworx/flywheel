@@ -276,7 +276,7 @@ from the terminal instead of through a lead agent? [**HUMAN.md**](HUMAN.md) walk
    ```bash
    npx skills add suzworx/flywheel --skill flywheel
    npx skills add suzworx/flywheel --skill flywheel-worker
-   # ... flywheel-planner, flywheel-foreman, flywheel-inspector,
+   # ... flywheel-planner, flywheel-foreman, flywheel-inspector, flywheel-reviewer,
    #     flywheel-auditor, flywheel-steward, flywheel-operator
    ```
 
@@ -363,6 +363,7 @@ Each role ships as a skill folder any agent can load:
 - [`flywheel-foreman`](skills/flywheel-foreman/SKILL.md) — run a line of workers; retry by policy.
 - [`flywheel-worker`](skills/flywheel-worker/SKILL.md) — execute one brief, run its gates, report evidence.
 - [`flywheel-inspector`](skills/flywheel-inspector/SKILL.md) — QC verdicts: pass, rework, scrap, escalate.
+- [`flywheel-reviewer`](skills/flywheel-reviewer/SKILL.md) — independent diff review: findings with a failure scenario, never a pass.
 - [`flywheel-auditor`](skills/flywheel-auditor/SKILL.md) — independent audit of first articles and samples.
 - [`flywheel-steward`](skills/flywheel-steward/SKILL.md) — turn signals and nonconformances into learnings.
 - [`flywheel-operator`](skills/flywheel-operator/SKILL.md) — install, configure, assign personas.
