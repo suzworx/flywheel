@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -314,4 +315,133 @@ func TestLintBriefQuietGateMarkers(t *testing.T) {
 	res = lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate[loud]: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, []string{"gate[loud] has unknown marker [loud]; the known marker is [quiet], and the line runs as a plain gate"})
+}
+
+// suiteBrief is a structurally clean brief with the given owns and one gate.
+func suiteBrief(owns, gate string) string {
+	return "owns: " + owns + "\nneeds: none\ngate: " + gate + "\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n"
+}
+
+// lintWith writes files (path to content) and brief under a new temp dir and
+// runs lintBrief with list as the go list call.
+func lintWith(t *testing.T, files map[string]string, brief string, list func(string) (string, error)) LintResult {
+	t.Helper()
+	dir := t.TempDir()
+	files["brief.txt"] = brief
+	for p, c := range files {
+		fp := filepath.Join(dir, p)
+		if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fp, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := lintBrief(dir, filepath.Join(dir, "brief.txt"), list)
+	if err != nil {
+		t.Fatalf("lintBrief() error = %v", err)
+	}
+	return res
+}
+
+// noGoList is a go list call a test does not expect.
+func noGoList(string) (string, error) { return "", errors.New("go list not expected") }
+
+// lintConfigJSON is a valid config.json with the given lint section.
+func lintConfigJSON(lint string) string {
+	return `{"version":1,"workers":[{"name":"w","adapter":"sim","model":"m"}],"lint":` + lint + `}`
+}
+
+// TestLintFullSuiteGate checks the full-suite warning (issue #462): the go.mod
+// default, the package.json default, a lint.full_suite override, and no check
+// without either file.
+func TestLintFullSuiteGate(t *testing.T) {
+	t.Parallel()
+	goWarn := `no gate runs the full suite (want a gate matching go test\b.*\./\.\.\.; set lint.full_suite to change it)`
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		gate  string
+		warns []string
+	}{
+		{"go.mod targeted gate", map[string]string{"go.mod": "module m\n"}, "go test -run X ./a/", []string{goWarn}},
+		{"go.mod full suite", map[string]string{"go.mod": "module m\n"}, "go test -count=1 ./...", nil},
+		{"package.json npm test", map[string]string{"package.json": `{"scripts":{"test":"jest"}}`}, "npm test", nil},
+		{"package.json no test gate", map[string]string{"package.json": `{"scripts":{"test":"jest"}}`}, "npx tsc",
+			[]string{`no gate runs the full suite (want a gate matching \b(npm|pnpm|yarn|bun)( run)? test\b; set lint.full_suite to change it)`}},
+		{"override unmatched", map[string]string{"go.mod": "module m\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"make check"}`)},
+			"go test ./...", []string{"no gate runs the full suite (want a gate matching make check; set lint.full_suite to change it)"}},
+		{"override matched", map[string]string{"go.mod": "module m\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"make check"}`)}, "make check", nil},
+		{"no toolchain", map[string]string{}, "true", nil},
+	} {
+		tc.files["README.md"] = "x\n"
+		res := lintWith(t, tc.files, suiteBrief("README.md", tc.gate), noGoList)
+		if len(res.Problems) != 0 || !slices.Equal(res.Warnings, tc.warns) {
+			t.Errorf("%s: problems %v warnings %v, want no problems and warnings %v", tc.name, res.Problems, res.Warnings, tc.warns)
+		}
+	}
+}
+
+// TestLintFullSuiteInvalidRegex checks an invalid lint.full_suite is a problem
+// naming the key (issue #462).
+func TestLintFullSuiteInvalidRegex(t *testing.T) {
+	t.Parallel()
+	res := lintWith(t, map[string]string{"README.md": "x\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"("}`)},
+		suiteBrief("README.md", "true"), noGoList)
+	if len(res.Problems) != 1 || !strings.HasPrefix(res.Problems[0], `config lint.full_suite "(" is not a valid regular expression`) {
+		t.Errorf("problems = %v, want one naming lint.full_suite", res.Problems)
+	}
+}
+
+// importerFiles is a module where m/b imports m/a and has a test.
+func importerFiles() map[string]string {
+	return map[string]string{
+		"go.mod":        "module m\n\ngo 1.21\n",
+		"a/a.go":        "package a\n\nfunc A() int { return 1 }\n",
+		"b/b.go":        "package b\n\nimport \"m/a\"\n\nfunc B() int { return a.A() }\n",
+		"b/b_test.go":   "package b\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {}\n",
+		"a/a_x_test.go": "package a_test\n",
+	}
+}
+
+// TestLintImporters checks the importer-coverage warning from injected go
+// list output (issue #462): an unowned importer test warns, owning or
+// negating it does not, lint.importers false turns it off, and a go list
+// failure is a skipped warning.
+func TestLintImporters(t *testing.T) {
+	t.Parallel()
+	out := "m/a\tD/a\t\t\tm/a\t\ta_x_test.go\nm/b\tD/b\tm/a\ttesting\t\tb_test.go\t\n"
+	list := func(string) (string, error) { return out, nil }
+	gate := "go test -count=1 ./..."
+	warn := "owns changes m/a, imported by m/b whose tests are not owned"
+	for _, tc := range []struct {
+		name, owns string
+		config     string
+		list       func(string) (string, error)
+		warns      []string
+	}{
+		{"unowned importer test", "a/a.go", "", list, []string{warn}},
+		{"owned importer test", "a/a.go, b/b_test.go", "", list, nil},
+		{"negated importer test", "a/a.go, b/, !b/b_test.go", "", list, nil},
+		{"importers off", "a/a.go", lintConfigJSON(`{"importers":false}`), noGoList, nil},
+		{"go list fails", "a/a.go", "", func(string) (string, error) { return "", errors.New("boom") }, []string{"importer check skipped: go list: boom"}},
+		{"no owned Go package", "b/b_test.go", "", noGoList, nil},
+	} {
+		files := importerFiles()
+		if tc.config != "" {
+			files[".flywheel/config.json"] = tc.config
+		}
+		res := lintWith(t, files, suiteBrief(tc.owns, gate), tc.list)
+		if len(res.Problems) != 0 || !slices.Equal(res.Warnings, tc.warns) {
+			t.Errorf("%s: problems %v warnings %v, want no problems and warnings %v", tc.name, res.Problems, res.Warnings, tc.warns)
+		}
+	}
+}
+
+// TestLintImportersRealGoList runs the real go list on a tiny module to prove
+// goListFormat parses (issue #462).
+func TestLintImportersRealGoList(t *testing.T) {
+	t.Parallel()
+	res := lintWith(t, importerFiles(), suiteBrief("a/a.go", "go test ./..."), goList)
+	want(t, res, nil, []string{"owns changes m/a, imported by m/b whose tests are not owned"})
 }
