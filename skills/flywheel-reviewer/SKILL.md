@@ -101,6 +101,7 @@ And the ones this repository's history shows:
   breaks any of these is refused and retried once.
 - Each finding gets an id. Under `--fix` the open findings go back to the worker, who answers each
   id on its own line: `FINDING <id>: fixed` or `FINDING <id>: disputed` (with the reason).
+  A finding on a file outside the unit's owns is not sent; it waits for an owner (`NEEDS-OWNER`).
 - Only a later review round closes a finding — you re-read the new diff and leave out what is
   truly fixed — or the lead's `flywheel review <task> --dismiss <id>`. A worker's `fixed` closes
   nothing on its own.
@@ -183,6 +184,7 @@ The lead runs these; you are the agent they start.
 - `flywheel review <task> --agent --session <reviewer>` — one review round on the unit's diff.
 - `flywheel review <task> --agent --fix [--rounds N] --session <reviewer>` — the loop: review, send
   the open findings to the worker, re-review, until nothing blocking is open or the rounds run out.
+  It stops with `needs-owner` when only findings outside the unit's owns remain.
 - `flywheel review <task> --agent --panel [--fix] --session <reviewer>` — the review panel: one
   persona per `review.panel` dimension, then the verdict matrix; `--fix` loops whole panels.
 - `flywheel review --group <goal|tasks:a,b> --agent --session <reviewer> [--base REF]` — the group

@@ -99,16 +99,21 @@ func orDash(s string) string {
 // #389): one section per review round with its findings, each finding's
 // current status (open, closed in round m, re-reported in round m, or
 // dismissed) and the worker's answers under it, then the open blocking
-// findings. It is derived from the event log only; every free-text field is
-// sanitised.
-func RenderReviewThread(events []Event, task string) []byte {
+// findings, an id outside owns (the task's effective brief owns, passed in;
+// none marks nothing) marked "(outside owns)" (issue #458). It is derived
+// from the event log only; every free-text field is sanitised.
+func RenderReviewThread(events []Event, task string, owns ...string) []byte {
 	workers := workerSessions(events, task)
 	open := map[string]bool{}
 	var blocking []string
 	for _, f := range OpenFindings(events, task) {
 		open[f.Finding] = true
 		if blockingFinding(f) {
-			blocking = append(blocking, f.Finding)
+			id := f.Finding
+			if len(owns) > 0 && !FindingInOwns(owns, f.Path) {
+				id += " (outside owns)"
+			}
+			blocking = append(blocking, id)
 		}
 	}
 	dismissal := map[string]Event{}
@@ -260,7 +265,9 @@ func WriteReviewThread(dir, task string) error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteChecked(reviews, task+".md", "thread-*.md", RenderReviewThread(events, task), func() error {
+	// A task with no readable brief has no owns to mark findings against.
+	header, _, _ := AttemptBrief(dir, events, task)
+	return atomicWriteChecked(reviews, task+".md", "thread-*.md", RenderReviewThread(events, task, header.Owns...), func() error {
 		return reviewThreadOwned(path)
 	})
 }

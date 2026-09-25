@@ -16,8 +16,8 @@ import (
 // review agent (--agent, issue #389).
 const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
-	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--dir DIR]\n" +
-	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree]] [--dir DIR] [--workdir PATH]\n" +
+	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--allow-overlap] [--dir DIR]\n" +
+	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree] [--allow-overlap]] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review --group <goal|tasks:a,b> --agent --session <session> [--base REF] [--worker NAME] [--dir DIR]\n" +
 	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]\n" +
 	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--panel [dims]] [--out FILE] [--dir DIR]"
@@ -44,6 +44,7 @@ type reviewOptions struct {
 	rounds    int
 	fixWorker string
 	worktree  bool
+	overlap   bool
 	dismiss   string
 	group     string
 	base      string
@@ -69,6 +70,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.IntVar(&o.rounds, "rounds", 3, "with --fix: review rounds at most")
 	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the default worker)")
 	fs.BoolVar(&o.worktree, "worktree", false, "with --fix: run the correction in the task's own git worktree")
+	fs.BoolVar(&o.overlap, "allow-overlap", false, "with --fix: skip the owns-collision refusal for the correction dispatch; the dispatched note records the overlap")
 	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
 	fs.StringVar(&o.group, "group", "", "with --agent: review a group together, a goal id or tasks:<a>,<b>,... (issue #420)")
 	fs.StringVar(&o.base, "base", "", "with --group: the ref the integration tree starts from (default main)")
@@ -229,7 +231,7 @@ func runReviewFix(task string, o *reviewOptions) {
 		},
 		Correct: func(delta string) (flywheel.Result, error) {
 			return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
-				Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree,
+				Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree, AllowOverlap: o.overlap,
 				Progress: os.Stderr, Stderr: os.Stderr,
 			}, time.Sleep, time.Now)
 		},
@@ -244,9 +246,18 @@ func runReviewFix(task string, o *reviewOptions) {
 	for _, f := range res.Open {
 		fmt.Printf("OPEN %s [%s] %s:%d %s\n", f.Finding, f.Severity, f.Path, f.LineNo, f.Title)
 	}
+	printNeedsOwner(res.NeedsOwner)
 	fmt.Printf("review loop: %s after %d review(s), %d correction(s)\n", res.Verdict, res.Reviews, res.Corrections)
 	if res.Verdict != "pass" {
 		os.Exit(1)
+	}
+}
+
+// printNeedsOwner prints one line per open blocking finding outside the
+// unit's owns (issue #458): the fix loop never sends it to the worker.
+func printNeedsOwner(findings []flywheel.Event) {
+	for _, f := range findings {
+		fmt.Printf("NEEDS-OWNER %s [%s] %s %s:%d %s\n", f.Finding, f.Severity, f.Category, f.Path, f.LineNo, f.Title)
 	}
 }
 
@@ -454,7 +465,7 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 			},
 			Correct: func(delta string) (flywheel.Result, error) {
 				return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
-					Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree,
+					Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree, AllowOverlap: o.overlap,
 					Progress: os.Stderr, Stderr: os.Stderr,
 				}, time.Sleep, time.Now)
 			},
@@ -465,6 +476,7 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 		for _, f := range res.Open {
 			fmt.Printf("OPEN %s [%s] %s %s:%d %s\n", f.Finding, f.Severity, f.Category, f.Path, f.LineNo, f.Title)
 		}
+		printNeedsOwner(res.NeedsOwner)
 		fmt.Printf("review loop: %s after %d panel review(s), %d correction(s)\n", res.Verdict, res.Reviews, res.Corrections)
 	}
 	fmt.Printf("review panel round %d on tree %s:\n%s", last.Round, last.Tree, flywheel.FormatMatrix(last.Matrix, last.Panel))

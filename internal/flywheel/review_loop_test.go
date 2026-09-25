@@ -91,16 +91,16 @@ func TestFindingsDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	events, _ := ReadEvents(dir)
-	if path, n, err := FindingsDelta(dir, events, "T1"); err != nil || n != 0 || path != "" {
-		t.Fatalf("minor only: FindingsDelta = %q, %d, %v; want no file", path, n, err)
+	if path, n, outside, err := FindingsDelta(dir, events, "T1"); err != nil || n != 0 || path != "" || len(outside) != 0 {
+		t.Fatalf("minor only: FindingsDelta = %q, %d, %v, %v; want no file", path, n, outside, err)
 	}
 	if err := AppendEvents(dir, roundEvents(2, blockerA, minorB)); err != nil {
 		t.Fatal(err)
 	}
 	events, _ = ReadEvents(dir)
-	path, n, err := FindingsDelta(dir, events, "T1")
-	if err != nil || n != 1 || filepath.ToSlash(path) != ".flywheel/briefs/T1.review-2.txt" {
-		t.Fatalf("FindingsDelta = %q, %d, %v", path, n, err)
+	path, n, outside, err := FindingsDelta(dir, events, "T1")
+	if err != nil || n != 1 || len(outside) != 0 || filepath.ToSlash(path) != ".flywheel/briefs/T1.review-2.txt" {
+		t.Fatalf("FindingsDelta = %q, %d, %v, %v", path, n, outside, err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, path))
 	if err != nil {
@@ -210,6 +210,66 @@ func TestReviewLoop(t *testing.T) {
 	}
 	if len(*deltas) != 2 {
 		t.Errorf("deltas = %v, want 2", *deltas)
+	}
+}
+
+// TestFindingInOwns checks which findings the fixing worker can take (issue
+// #458).
+func TestFindingInOwns(t *testing.T) {
+	t.Parallel()
+	owns := []string{"a.go", "internal/*.go", "docs/", "!docs/private.md"}
+	for _, c := range []struct {
+		path string
+		want bool
+	}{
+		{"", true},
+		{"a.go", true},
+		{"internal/x.go", true},
+		{"docs/guide.md", true},
+		{"docs/private.md", false},
+		{"c.go", false},
+	} {
+		if got := FindingInOwns(owns, c.path); got != c.want {
+			t.Errorf("FindingInOwns(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+// blockerC is a blocking finding on c.go, outside loopRepo's owns.
+var blockerC = ReviewFinding{Severity: "major", File: "c.go", Line: 7, Claim: "Leaks the handle", Scenario: "error path", Fix: "close it"}
+
+// TestReviewLoopOwns checks the routing by owns (issue #458): an outside
+// finding is never sent nor answered for, and alone it stops the loop with
+// needs-owner and no correction.
+func TestReviewLoopOwns(t *testing.T) {
+	t.Parallel()
+	dir := loopRepo(t)
+	plan := map[int][]ReviewFinding{1: {blockerA, blockerC}, 2: {blockerC}}
+	review, correct, deltas := loopFakes(t, dir, plan, "FINDING T1-r1-1: fixed flushed\n")
+	res, err := ReviewLoop(dir, "T1", ReviewLoopOptions{Rounds: 2, Review: review, Correct: correct})
+	if err != nil || res.Verdict != "open" || res.Corrections != 1 {
+		t.Fatalf("mixed loop = %+v, %v", res, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, (*deltas)[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(data); !strings.Contains(text, "FINDING T1-r1-1 ") || strings.Contains(text, "T1-r1-2") {
+		t.Errorf("delta routes by owns wrongly:\n%s", text)
+	}
+	if r := responses(t, dir); len(r) != 1 || r[0].Finding != "T1-r1-1" {
+		t.Errorf("responses = %+v, want only T1-r1-1", r)
+	}
+	if len(res.NeedsOwner) != 1 || res.NeedsOwner[0].Path != "c.go" || len(res.Missing) != 0 {
+		t.Errorf("needs owner = %+v, missing = %v", res.NeedsOwner, res.Missing)
+	}
+
+	dir = loopRepo(t)
+	calls := 0
+	review, _, _ = loopFakes(t, dir, map[int][]ReviewFinding{1: {blockerC}}, "")
+	res, err = ReviewLoop(dir, "T1", ReviewLoopOptions{Review: review, Correct: func(string) (Result, error) { calls++; return Result{}, nil }})
+	if err != nil || res.Verdict != "needs-owner" || res.Corrections != 0 || calls != 0 || len(res.NeedsOwner) != 1 {
+		t.Fatalf("outside only = %+v, %v, corrections called %d", res, err, calls)
 	}
 }
 
