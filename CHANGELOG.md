@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.0](https://github.com/suzworx/flywheel/compare/v0.21.1...v0.22.0) (2026-09-25)
+
+
+### Features
+
+* flywheel audit --release checks a published release against what was merged ([#443](https://github.com/suzworx/flywheel/issues/443)) ([7156e13](https://github.com/suzworx/flywheel/commit/7156e13a5c4a4f629e120ecdd24724165b537f00)), closes [#420](https://github.com/suzworx/flywheel/issues/420)
+
+
+### Bug Fixes
+
+* git-write no longer charges a worker for a fetched tag or the guard tests' own refusals ([#447](https://github.com/suzworx/flywheel/issues/447)) ([49281b7](https://github.com/suzworx/flywheel/commit/49281b7580ddf199e76cd046433fbeb50657ca68)), closes [#442](https://github.com/suzworx/flywheel/issues/442)
+
 ## [0.21.1](https://github.com/suzworx/flywheel/compare/v0.21.0...v0.21.1) (2026-09-25)
 
 
