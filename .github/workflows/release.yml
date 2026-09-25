@@ -52,13 +52,23 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          branch=$(gh pr list -R "$REPO" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // ""')
-          if [ -z "$branch" ]; then
+          read -r branch sha < <(gh pr list -R "$REPO" --state open --label "autorelease: pending" --json headRefName,headRefOid --jq '.[0] // {} | "\(.headRefName // "") \(.headRefOid // "")"') || true
+          if [ -z "${branch:-}" ]; then
             echo "no open release PR"
             exit 0
           fi
+          # Every push to main runs this job, but the release PR's head only moves
+          # when release-please rewrites it. Re-dispatching on an unchanged head
+          # would cancel the run in progress (ci.yml cancels per ref), so the
+          # release PR might never finish CI. Dispatch only when no run on this
+          # head is queued, running or finished (cancelled does not count).
+          runs=$(gh run list -R "$REPO" --workflow ci.yml --branch "$branch" --event workflow_dispatch --limit 20             --json headSha,conclusion --jq "[.[] | select(.headSha == \"$sha\" and .conclusion != \"cancelled\")] | length")
+          if [ "$runs" -gt 0 ]; then
+            echo "ci.yml already ran or is running on $branch at $sha"
+            exit 0
+          fi
           gh workflow run ci.yml -R "$REPO" --ref "$branch"
-          echo "dispatched ci.yml on $branch"
+          echo "dispatched ci.yml on $branch at $sha"
 
   binaries:
     runs-on: ubicloud-standard-2
