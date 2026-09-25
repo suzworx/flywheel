@@ -265,6 +265,85 @@ func WriteReviewThread(dir, task string) error {
 	})
 }
 
+// GroupThreadPath is the generated thread of a group's reviews (issue #420),
+// relative to dir: .flywheel/reviews/group-<id>.md.
+func GroupThreadPath(group string) string {
+	return filepath.ToSlash(filepath.Join(".flywheel", "reviews", "group-"+GroupID(group)+".md"))
+}
+
+// RenderGroupThread renders a group's review thread as markdown (issue
+// #420): one section per group review round — verdict, session, model, tree
+// and its note (members, conflicts, gates) — with the findings it raised,
+// each with the task it was routed to and its status (open, closed, or
+// advisory for a minor or nit), then the open blocking integration findings.
+func RenderGroupThread(events []Event, group string) []byte {
+	gtask := GroupTask(group)
+	open := map[string]bool{}
+	seen := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "review_finding" && e.Reason == gtask && !seen[e.Task] {
+			seen[e.Task] = true
+			for _, f := range openIntegrationFindings(events, e.Task) {
+				if f.Reason == gtask {
+					open[f.Finding] = true
+				}
+			}
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Group review thread: %s\n%s\n", group, reviewThreadMarker)
+	var pending, blocking []string
+	round := 0
+	for _, e := range events {
+		switch {
+		case e.Kind == "review_finding" && e.Reason == gtask:
+			status := "closed"
+			switch {
+			case open[e.Finding]:
+				status = "open"
+				blocking = append(blocking, e.Finding+" ("+e.Task+")")
+			case !blockingFinding(e):
+				status = "advisory"
+			}
+			pending = append(pending, fmt.Sprintf("- **%s** [%s] on %s — %s:%d — %s\n  scenario: %s\n  fix hint: %s\n  status: %s\n",
+				e.Finding, e.Severity, e.Task, e.Path, e.LineNo, Sanitise(e.Title), Sanitise(orDash(e.Observed)), Sanitise(orDash(e.Ask)), status))
+		case e.Task == gtask && e.Kind == "group_reviewed":
+			round++
+			fmt.Fprintf(&b, "\n## Round %d — %s, %s, %s, tree %s\n\n%s\n\n", round, e.Verdict, orDash(e.Session), orDash(e.Model), orDash(sha7(e.Tree)), Sanitise(orDash(e.Note)))
+			if len(pending) == 0 {
+				b.WriteString("no findings\n")
+			}
+			b.WriteString(strings.Join(pending, ""))
+			pending = nil
+		}
+	}
+	b.WriteString("\n## Open blocking findings\n\n")
+	if len(blocking) == 0 {
+		b.WriteString("none\n")
+	} else {
+		b.WriteString(strings.Join(blocking, ", ") + "\n")
+	}
+	return []byte(b.String())
+}
+
+// WriteGroupThread regenerates the group's thread from the event log, as
+// WriteReviewThread does a task's: atomically, never over a hand-written file.
+func WriteGroupThread(dir, group string) error {
+	reviews := filepath.Join(dir, ".flywheel", "reviews")
+	name := "group-" + GroupID(group) + ".md"
+	path := filepath.Join(reviews, name)
+	if err := reviewThreadOwned(path); err != nil {
+		return err
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return err
+	}
+	return atomicWriteChecked(reviews, name, "thread-*.md", RenderGroupThread(events, group), func() error {
+		return reviewThreadOwned(path)
+	})
+}
+
 // refreshReviewThread rewrites the task's review thread; a failure is only a
 // progress warning, never an error of the caller.
 func refreshReviewThread(dir, task string, w io.Writer) {

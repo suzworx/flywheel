@@ -137,6 +137,11 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 		if base, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
 			return &RuleRefusal{Rule: "stacked", Fix: stackedFix(task, base, landedAs, baseTask)}
 		}
+		// group (issue #420): a cross-unit defect the group review found
+		// blocks the unit it was routed to, and every unit of its goal.
+		if r := groupRefusal(events, task); r != nil {
+			return r
+		}
 	} else {
 		// Exception landing: covers a task that is not passed (T5), or a
 		// passed task T7 refuses (#317 review).
@@ -246,6 +251,26 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 // kept first and the reason appended after "; " (issue #198).
 func LandTask(dir, task, commit, note string, leadImplemented bool, reason string) error {
 	return LandTaskWithException(dir, task, commit, note, leadImplemented, reason, "", "", "")
+}
+
+// groupRefusal refuses a landing (rule group, issue #420) while an open
+// blocking integration finding (openIntegrationFindings) is on the task, or
+// on its goal's group task group:<goal> when it was planned under a goal.
+func groupRefusal(events []Event, task string) *RuleRefusal {
+	owners := []string{task}
+	if goal := taskGoal(events, task); goal != "" {
+		owners = append(owners, GroupTask(goal))
+	}
+	var open []string
+	for _, owner := range owners {
+		for _, f := range openIntegrationFindings(events, owner) {
+			open = append(open, fmt.Sprintf("%s on %s (%s:%d)", f.Finding, owner, f.Path, f.LineNo))
+		}
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	return &RuleRefusal{Rule: "group", Fix: fmt.Sprintf("task %s has %d open blocking integration finding(s): %s; correct them and re-run flywheel review --group, or dismiss one with flywheel review <task> --dismiss <id> --session <lead> --note <why>", task, len(open), strings.Join(open, ", "))}
 }
 
 // signalNames returns a human-readable list of untriaged signals in comma-separated

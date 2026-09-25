@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -17,6 +18,7 @@ const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|re
 	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--dir DIR]\n" +
 	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree]] [--dir DIR] [--workdir PATH]\n" +
+	"       flywheel review --group <goal|tasks:a,b> --agent --session <session> [--base REF] [--worker NAME] [--dir DIR]\n" +
 	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]\n" +
 	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--out FILE] [--dir DIR]"
 
@@ -43,6 +45,8 @@ type reviewOptions struct {
 	fixWorker string
 	worktree  bool
 	dismiss   string
+	group     string
+	base      string
 }
 
 // reviewFlags defines review's flags once, so help and run share them.
@@ -66,6 +70,8 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the default worker)")
 	fs.BoolVar(&o.worktree, "worktree", false, "with --fix: run the correction in the task's own git worktree")
 	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
+	fs.StringVar(&o.group, "group", "", "with --agent: review a group together, a goal id or tasks:<a>,<b>,... (issue #420)")
+	fs.StringVar(&o.base, "base", "", "with --group: the ref the integration tree starts from (default main)")
 	return fs, o
 }
 
@@ -88,6 +94,15 @@ func runReview(args []string) {
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+		reviewUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.group != "" {
+		runReviewGroup(pos, o)
+		return
+	}
+	if o.base != "" {
+		fmt.Fprintf(os.Stderr, "flywheel review: --base needs --group\n")
 		reviewUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -412,4 +427,59 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 			os.Exit(1)
 		}
 	}
+}
+
+// runReviewGroup implements `flywheel review --group <goal|tasks:a,b> --agent`
+// (issue #420): the group's members merged into one integration tree, the
+// group gates run there and the integration reviewer over the combined diff.
+// It prints the members, the conflicts, the group gate results and the
+// findings by the task each was routed to, and exits 0 on pass, 1 on correct
+// or an error, 6 on a rule refusal and 2 on a usage error.
+func runReviewGroup(pos []string, o *reviewOptions) {
+	switch {
+	case len(pos) > 0:
+		fmt.Fprintf(os.Stderr, "flywheel review: --group takes no task id\n")
+	case !o.agent:
+		fmt.Fprintf(os.Stderr, "flywheel review: --group needs --agent\n")
+	case o.panel || o.fix || o.dismiss != "" || o.verdict != "" || o.note != "" || o.model != "" || len(o.checklist) > 0 ||
+		o.round != 0 || o.workdir != "" || o.fixWorker != "" || o.worktree || o.rounds != 3:
+		fmt.Fprintf(os.Stderr, "flywheel review: --group takes only --agent, --session, --base, --worker and --dir\n")
+	default:
+		res, err := flywheel.ReviewGroup(o.dir, o.group, flywheel.ReviewGroupOptions{
+			Session: o.session, Base: o.base, Worker: o.worker, Progress: os.Stderr,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+			if flywheel.IsRuleRefusal(err) {
+				os.Exit(6)
+			}
+			os.Exit(1)
+		}
+		fmt.Printf("group %s round %d: members %s\n", res.Task, res.Round, strings.Join(res.Members, ", "))
+		for _, m := range res.Missing {
+			fmt.Printf("missing %s: no branch and no finished commit; not merged\n", m)
+		}
+		for _, m := range res.Members {
+			if c := res.Conflicts[m]; len(c) > 0 {
+				fmt.Printf("conflict %s: %s\n", m, strings.Join(c, ", "))
+			}
+		}
+		for _, g := range res.Gates {
+			fmt.Printf("gate %s rc=%d: %s\n", g.Gate, g.RC, g.Command)
+		}
+		for _, owner := range append(append([]string(nil), res.Members...), res.Task) {
+			for _, f := range res.Findings {
+				if f.Task == owner {
+					fmt.Printf("%s: %s [%s] %s:%d %s\n", owner, f.Finding, f.Severity, f.Path, f.LineNo, f.Title)
+				}
+			}
+		}
+		fmt.Printf("group review: %s on tree %s (%s); thread %s\n", res.Verdict, res.Tree, res.Note, flywheel.GroupThreadPath(res.Group))
+		if res.Verdict != "pass" {
+			os.Exit(1)
+		}
+		return
+	}
+	reviewUsage(os.Stderr)
+	os.Exit(2)
 }

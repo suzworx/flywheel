@@ -298,6 +298,46 @@ all.
   `pass` on the tree being inspected, naming each `<dimension>=missing|correct` and the command; and
   `flywheel verify` fails rule P1 for such a pass (§2).
 
+### `group_reviewed`
+- Written by: the CLI only, via `flywheel review --group <goal|tasks:a,b> --agent --session S
+  [--base REF] [--worker NAME]` (issue #420): a group of units validated together. A group is a goal
+  id (every task planned with that `goal_id`) or an explicit `tasks:<a>,<b>,...`; its own records
+  carry task `group:<id>` (the goal id, or the list with `:` and `,` turned into `-`:
+  `tasks:a,b` is `group:tasks-a-b`), which `Validate` accepts wherever a task id is required.
+- The integration tree: a detached `git worktree add` of the base (default `main`) in a temp dir,
+  then each member's work merged in member order with `git merge --no-ff --no-edit` as flywheel's
+  identity — its task branch `fw/<task>` when it exists, else the `commit` of its latest `finished`
+  event. A member with neither is reported as missing and skipped; a merge that conflicts is aborted,
+  its paths recorded, and the next member continues. The tree is removed afterwards.
+- Group gates: each `review.group_gates` command runs in the integration tree like a gate (bash -c,
+  captured output) and is recorded as a `validated` event with task `group:<id>` and gate `g<n>`.
+- The integration reviewer: the embedded `integration` persona (never a panel dimension) reviews the
+  combined diff base..tree, with a prompt section listing each member and its effective owns, the
+  missing members, the conflicts and the gate readings; its prompt and stream are
+  `.flywheel/reviews/group-<id>.<round>.prompt.md` and `.jsonl`. It reports only defects that
+  involve more than one unit's change or the merge itself (merge seams, duplicated logic,
+  conflicting assumptions, contract drift between units); every finding must carry category
+  `integration` (the same refuse-and-retry-once path as the review agent).
+- Routing: each finding becomes a `review_finding` (persona `reviewer:integration`, category
+  `integration`, `reason` the group task, id `group:<id>-r<round>-<n>`) on the first member whose
+  effective owns contain its file, else on `group:<id>`. Each conflicting path becomes a `blocker`
+  on the member whose merge conflicted.
+- Carries: `task` (`group:<id>`), `verdict` (`correct` when any blocker or major finding or any
+  failed group gate, else `pass`), `tree` (the integration tree), `commit` (its HEAD), `session`,
+  `model`, `adapter`, persona `reviewer:integration`, `note` (`members ...; missing ...; conflicts
+  ...; gates g1=<rc> ...; <n> finding(s)`). The gate readings, the findings and this event are one
+  append. A session that is a worker session of a member is refused (T4).
+- Effect: no status change. An integration finding is closed only by a later review of the same
+  group (which re-reports a defect still present under a new id) or by a lead's dismissal
+  (`flywheel review <task> --dismiss <id>`); a unit's own review never closes one. The thread is
+  `.flywheel/reviews/group-<id>.md` (same marker rule as a task's thread), and each member a finding
+  was routed to has its own thread refreshed.
+- Config: `review.group_gates` (default none); `config get/set review.group_gates` reads and writes
+  the commands separated by `;;` (set also splits on newlines; an empty value clears them).
+- Enforced: `flywheel land` refuses (rule `group`, below).
+- Known gap: the group task `group:<id>` appears as a task with no status in the derived state.
+- Exit: 0 on `pass`, 1 on `correct` or an error, 6 on a refusal, 2 on usage.
+
 ### `blocked`
 - Written by: the controller (`flywheel controller`), when a task's `needs:` target is scrapped.
 - Carries: `task`, `reason` (names the needs target).
@@ -344,6 +384,9 @@ all.
   (exit 6, rule T9) while the task has untriaged signals unless `--allow-untriaged <reason>`
   records why, refuses (exit 6, rule `stacked`, issue #414) a unit whose base landed as a squash
   (see `rebased` above; the fix is `flywheel rebase <task>`, and an exception landing overrides it),
+  refuses (exit 6, rule `group`, issue #420) while an open blocking finding with category
+  `integration` is on the task or, when it was planned under a goal, on `group:<goal>` (see
+  `group_reviewed` above; close it by a new group review or a lead's dismissal),
   and refuses to re-land the same task under a different commit than it already
   recorded. The read, the checks and the append(s) run under `.flywheel/dispatch.lock` (the lock
   `run` and `amended` take) and then `.flywheel/feedback.lock` (the lock learning writers take;

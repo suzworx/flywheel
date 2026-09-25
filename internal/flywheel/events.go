@@ -199,6 +199,10 @@ var kinds = map[string]bool{
 	// rebased records `flywheel rebase` moving a unit onto a new base (issue
 	// #414): Base is the new base, Note "was <old>, onto <ref>".
 	"rebased": true,
+	// group_reviewed closes one group review (issue #420): Task group:<id>,
+	// Verdict pass or correct, Tree the integration tree, Note the members,
+	// conflicts and group gate results.
+	"group_reviewed": true,
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -311,7 +315,8 @@ func externalReadingOK(e Event) bool {
 // one) but staffed, lead_edit and the two session-boundary kinds must carry a
 // session, and session_command must also carry a note.
 func Validate(e Event) error {
-	if !floorLevel(e.Kind) && !taskOK(e.Task) {
+	// A group's own records (issue #420) carry Task group:<id>.
+	if !floorLevel(e.Kind) && !taskOK(e.Task) && !groupTaskOK(e.Task) {
 		return fmt.Errorf("event task %q does not match ^[A-Za-z0-9._-]+$", e.Task)
 	}
 	if e.Kind == "staffed" && e.Session == "" {
@@ -349,7 +354,10 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed", e.Kind)
+	}
+	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
+		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")
 	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")
@@ -383,7 +391,7 @@ func Validate(e Event) error {
 	if e.Kind == "reviewed" && e.Category != "" && !personaKnown(e.Category) {
 		return fmt.Errorf("reviewed category %q is not a review persona (%s)", e.Category, strings.Join(PanelPersonas(), ", "))
 	}
-	if dim, ok := strings.CutPrefix(e.Persona, "reviewer:"); ok && !personaKnown(dim) {
+	if dim, ok := strings.CutPrefix(e.Persona, "reviewer:"); ok && dim != IntegrationPersona && !personaKnown(dim) {
 		return fmt.Errorf("persona %q names no review persona (%s)", e.Persona, strings.Join(PanelPersonas(), ", "))
 	}
 	if e.Kind == "review_finding" {
