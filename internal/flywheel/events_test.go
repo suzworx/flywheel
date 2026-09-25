@@ -1184,3 +1184,37 @@ func TestNoteEvent(t *testing.T) {
 		t.Errorf("round trip = %+v", evs)
 	}
 }
+
+// TestRebasedEvent checks the rebased kind (issue #414): it needs a task, the
+// new base and a note; an attempt is optional; it round-trips.
+func TestRebasedEvent(t *testing.T) {
+	ok := Event{Task: "B", Kind: "rebased", Base: "abc1234", Note: "was def5678, onto main"}
+	if err := Validate(ok); err != nil {
+		t.Fatalf("Validate(rebased) = %v", err)
+	}
+	withAttempt := ok
+	withAttempt.Attempt = "c1"
+	if err := Validate(withAttempt); err != nil {
+		t.Fatalf("Validate(rebased with attempt) = %v", err)
+	}
+	for _, bad := range []Event{
+		{Kind: "rebased", Base: "abc1234", Note: "n"},
+		{Task: "B", Kind: "rebased", Note: "n"},
+		{Task: "B", Kind: "rebased", Base: "abc1234"},
+	} {
+		if err := Validate(bad); err == nil {
+			t.Errorf("Validate(%+v) accepted", bad)
+		}
+	}
+	dir := t.TempDir()
+	if err := AppendEvent(dir, ok); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Kind != "rebased" || evs[0].Base != "abc1234" || evs[0].Note != ok.Note {
+		t.Errorf("round trip = %+v", evs)
+	}
+}

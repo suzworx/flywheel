@@ -262,6 +262,25 @@ all.
 - Effect: a stale-kind event, ignored unless its `attempt` matches the task's current one;
   otherwise `Derive` sets status `lost`.
 
+### `rebased`
+- Written by: the CLI only, via `flywheel rebase <task> [--onto REF]` (issue #414), after
+  `git rebase --onto <onto> <base> fw/<task>` succeeded in the unit's task worktree
+  (`.flywheel/worktrees/<task>`; anywhere else the command refuses). `onto` defaults to `main`, else
+  `master`. On a conflict the rebase is aborted, the branch is left as it was, the conflicting paths
+  are listed (exit 1) and nothing is recorded.
+- Carries: `task`, optionally `attempt`, `base` (the new base: `git rev-parse <onto>`), `note`
+  (`was <old base>, onto <onto>`). `Validate` requires the base and the note.
+- Effect: no status change. The unit's base (`dispatchBase`) becomes the latest `rebased` event's
+  `base` instead of the first `dispatched` event's, so the owns check and the review ranges measure
+  from there.
+- A unit is **stacked** when its base is not an ancestor of `main` (else `master`) and a commit on
+  main after their merge-base carries a `Flywheel-Task: <T>` trailer for another unit `T` whose
+  branch `fw/<T>` contains the base (or, with `fw/<T>` gone, `T` is `landed`): `T` landed as a
+  squash and the unit still carries `T`'s pre-squash commits. `flywheel validate` then records the
+  warning `base <sha7> (unit <T>) was squash-merged as <sha7>; run: flywheel rebase <task>` as the
+  `owns_checked` note (the reading still runs), `flywheel land` refuses (rule `stacked`, below), and
+  the floor shows the done unit's run state as `stacked` on the andon.
+
 ### `landed`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
 - Carries: `task`, `commit`, `note`.
@@ -269,7 +288,9 @@ all.
   or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6, rule T5)
   unless the task's derived status is already `passed` or an exception is provided, and refuses
   (exit 6, rule T9) while the task has untriaged signals unless `--allow-untriaged <reason>`
-  records why, and refuses to re-land the same task under a different commit than it already
+  records why, refuses (exit 6, rule `stacked`, issue #414) a unit whose base landed as a squash
+  (see `rebased` above; the fix is `flywheel rebase <task>`, and an exception landing overrides it),
+  and refuses to re-land the same task under a different commit than it already
   recorded. The read, the checks and the append(s) run under `.flywheel/dispatch.lock` (the lock
   `run` and `amended` take) and then `.flywheel/feedback.lock` (the lock learning writers take;
   always in that order), so two concurrent landings of one task can never both pass the
@@ -420,7 +441,8 @@ working exactly as before.
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside` on the same tree.
 - The changed paths are the unit's changes since the attempt was dispatched — uncommitted and untracked
   files plus files touched by the branch's own commits since the `base` commit of the unit's first
-  dispatched event (a correction attempt's check still counts what an earlier attempt committed)
+  dispatched event, or of its latest `rebased` event (issue #414) (a correction attempt's check still
+  counts what an earlier attempt committed)
   (files merged in from another branch are not the unit's) — so committing a stray edit does not hide
   it (issue #332).
 - A changed path outside `owns:` and not baselined is **attributed** rather than outside when some
