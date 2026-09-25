@@ -830,6 +830,23 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var noticeOnce sync.Once
 	noticeLine := fmt.Sprintf("%s %s long step: no output for %ds; the stall timeout fires at %ds",
 		o.Task, attempt, int(halfDur.Seconds()), int(stallDur.Seconds()))
+	// halfTimer.Stop does not wait for a callback already running, so the
+	// notice could still be writing o.Stderr after Run returned and the caller
+	// read it (a data race the race detector caught, issue #440). The callback
+	// writes under noticeMu and only while noticeDone is unset; stopNotice sets
+	// it under the same mutex, so once it returns no notice is written or
+	// mid-write. Deferred too, so early returns are covered.
+	var noticeMu sync.Mutex
+	noticeDone := false
+	stopNotice := func() {
+		if halfTimer != nil {
+			halfTimer.Stop()
+		}
+		noticeMu.Lock()
+		noticeDone = true
+		noticeMu.Unlock()
+	}
+	defer stopNotice()
 
 	if worker.Adapter == "sim" {
 		if o.SimDelay > 0 {
@@ -915,6 +932,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				killChild()
 			})
 			halfTimer = time.AfterFunc(halfDur, func() {
+				noticeMu.Lock()
+				defer noticeMu.Unlock()
+				if noticeDone {
+					return
+				}
 				noticeOnce.Do(func() { progress(o.Stderr, noticeLine) })
 			})
 		} else {
@@ -1069,9 +1091,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if stallTimer != nil {
 		stallTimer.Stop()
 	}
-	if halfTimer != nil {
-		halfTimer.Stop()
-	}
+	stopNotice()
 	stopRenewer()
 
 	// wrote is the distinct edit/write paths collected during the stream,
