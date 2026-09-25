@@ -155,7 +155,11 @@ func GitGuard(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if refused, sub := GitGuardRefused(args); refused {
 		if stillRefused(gitPath, env, args, sub) {
 			logGitGuard("refused " + sub)
-			io.WriteString(stderr, "flywheel: workers never commit, stash, reset, checkout or push; \"git "+sub+"\" is refused in this unit's repository — under flywheel run, git runs read-only commands only there (the lead commits after inspection)\n")
+			msg := "flywheel: workers never write git state (commit, add, rm, mv, stash, reset, checkout, push); \"git " + sub + "\" is refused in this unit's repository — under flywheel run, git runs read-only commands only there (the lead commits after inspection)"
+			if indexWrites[sub] {
+				msg += "; \"git " + sub + "\" writes the index — to check a new file read-only run git diff --no-index --check /dev/null <file> (exit 1 = clean, 3 = whitespace errors)"
+			}
+			io.WriteString(stderr, msg+"\n")
 			return 1
 		}
 		logGitGuard("allowed " + sub)
@@ -478,6 +482,10 @@ var objectOnly = map[string]bool{"write-tree": true, "hash-object": true, "mktre
 // (add -A, read-tree, update-index into a throwaway index) and any tool that
 // follows the same idiom touch only objects and that file.
 var tempIndexWrites = map[string]bool{"add": true, "read-tree": true, "update-index": true}
+
+// indexWrites lists the subcommands whose refusal names the index and the
+// read-only way to diff a new file (issue #478: workers put git add -N in gates).
+var indexWrites = map[string]bool{"add": true, "rm": true, "mv": true, "update-index": true}
 
 // stillRefused decides a command the allow-list refused (#325): object-only
 // commands and temp-index writes pass; a global or system config write is
