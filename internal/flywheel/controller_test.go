@@ -380,3 +380,115 @@ func TestTickNoLostForFinishedTask(t *testing.T) {
 		t.Errorf("tick = %+v, want 0 lost for a finished task", res)
 	}
 }
+
+// ctlResumeConfig writes a config whose controller block is cc.
+func ctlResumeConfig(t *testing.T, dir string, cc ControllerConfig) {
+	t.Helper()
+	if err := WriteConfig(dir, Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "m"}}, Controller: &cc}); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+}
+
+// ctlResumeTick runs TickWith at recoverNow with a Start that appends to calls
+// and asserts the auto-resume recovered event is already in the ledger.
+func ctlResumeTick(t *testing.T, dir string, calls *[]string, notify func(string, string) error) TickResult {
+	t.Helper()
+	res, err := TickWith(dir, recoverNow, TickOptions{Session: "controller", Notify: notify,
+		Start: func(task string) error {
+			if n := len(autoResumes(t, dir)); n != len(*calls)+1 {
+				t.Errorf("Start(%s): %d auto-resume events recorded before Start, want %d", task, n, len(*calls)+1)
+			}
+			*calls = append(*calls, task)
+			return nil
+		}})
+	if err != nil {
+		t.Fatalf("TickWith: %v", err)
+	}
+	return res
+}
+
+// TestControllerAutoResumeStartsOnce: a tick resumes the rate-limited unit
+// past its reset once, recording the controller's session before Start; a
+// second tick starts nothing; a unit still paused is never started.
+func TestControllerAutoResumeStartsOnce(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir, append(limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour)),
+		limitedUnit("P", "n", "rate-limited", recoverNow.Add(time.Hour))...)...)
+	var calls []string
+	res := ctlResumeTick(t, dir, &calls, nil)
+	if len(calls) != 1 || calls[0] != "T" {
+		t.Fatalf("Start calls = %q, want [T] (P's reset has not passed)", calls)
+	}
+	if len(res.Resumed) != 1 || !res.Resumed[0].Started || res.Resumed[0].Attempt != "r1" {
+		t.Errorf("Resumed = %+v, want T r1 started", res.Resumed)
+	}
+	if ev := autoResumes(t, dir); len(ev) != 1 || ev[0].Session != "controller" {
+		t.Errorf("auto-resume events = %+v, want one by session controller", ev)
+	}
+	if res2 := ctlResumeTick(t, dir, &calls, nil); len(calls) != 1 || len(res2.Resumed) != 0 {
+		t.Errorf("second tick: calls = %q, Resumed = %+v; want no second start", calls, res2.Resumed)
+	}
+}
+
+// TestControllerAutoResumeOff: controller.auto_resume false starts nothing and
+// records nothing.
+func TestControllerAutoResumeOff(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	off := false
+	ctlResumeConfig(t, dir, ControllerConfig{AutoResume: &off})
+	recoverLedger(t, dir, limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour))...)
+	var calls []string
+	res := ctlResumeTick(t, dir, &calls, nil)
+	if len(calls) != 0 || len(res.Resumed) != 0 || len(autoResumes(t, dir)) != 0 {
+		t.Errorf("auto_resume false: calls = %q, Resumed = %+v; want nothing", calls, res.Resumed)
+	}
+}
+
+// TestControllerNotifyRunsPerStart: controller.notify runs once for the one
+// started unit, through the shell ShellArgv picks, with FLYWHEEL_RESUMED
+// naming the task, attempt and model.
+func TestControllerNotifyRunsPerStart(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	out := filepath.ToSlash(filepath.Join(t.TempDir(), "resumed.txt"))
+	ctlResumeConfig(t, dir, ControllerConfig{Notify: `printf '%s\n' "$FLYWHEEL_RESUMED" >> '` + out + `'`})
+	recoverLedger(t, dir, append(limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour)),
+		limitedUnit("P", "n", "rate-limited", recoverNow.Add(time.Hour))...)...)
+	var calls []string
+	if res := ctlResumeTick(t, dir, &calls, nil); len(res.Warnings) != 0 {
+		t.Errorf("Warnings = %q, want none", res.Warnings)
+	}
+	ctlResumeTick(t, dir, &calls, nil)
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("notify output: %v", err)
+	}
+	if got := strings.TrimSpace(strings.ReplaceAll(string(b), "\r", "")); got != "T r1 model=m" {
+		t.Errorf("FLYWHEEL_RESUMED lines = %q, want exactly %q", got, "T r1 model=m")
+	}
+}
+
+// TestControllerNotifyFailureWarns: a failing notify is a warning, never a
+// tick error; with no notify configured the runner never runs.
+func TestControllerNotifyFailureWarns(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir, limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour))...)
+	ran := 0
+	fail := func(string, string) error { ran++; return os.ErrPermission }
+	var calls []string
+	ctlResumeTick(t, dir, &calls, fail)
+	if ran != 0 || len(calls) != 1 {
+		t.Fatalf("no controller.notify: notify ran %d times (calls %q), want 0", ran, calls)
+	}
+	dir2 := t.TempDir()
+	ctlResumeConfig(t, dir2, ControllerConfig{Notify: "exit 1"})
+	recoverLedger(t, dir2, limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour))...)
+	calls = nil
+	res := ctlResumeTick(t, dir2, &calls, fail)
+	if ran != 1 || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "controller.notify failed for T") {
+		t.Errorf("notify ran %d, Warnings = %q; want one warning naming T", ran, res.Warnings)
+	}
+}

@@ -7,13 +7,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 func init() {
-	register("controller", "run the controller loop: lock, reconcile, mark lost and blocked", runController)
+	register("controller", "run the controller loop: lock, reconcile, mark lost and blocked, resume rate-limited units", runController)
 	registerHelp("controller", "flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]", func() *flag.FlagSet { fs, _ := controllerFlags(); return fs })
 }
 
@@ -90,7 +91,7 @@ func runController(args []string) {
 		os.Exit(1)
 	}
 	if o.once {
-		res, terr := flywheel.Tick(o.dir, clock())
+		res, terr := flywheel.TickWith(o.dir, clock(), controllerTickOptions(o.dir, false))
 		relErr := flywheel.ReleaseLock(o.dir, lock)
 		if terr != nil {
 			fmt.Fprintf(os.Stderr, "flywheel controller: %v\n", terr)
@@ -121,8 +122,9 @@ func controllerLoop(dir string, clock func() time.Time, interval time.Duration) 
 	defer cancel()
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	opts := controllerTickOptions(dir, true)
 	for {
-		res, terr := flywheel.Tick(dir, clock())
+		res, terr := flywheel.TickWith(dir, clock(), opts)
 		if terr != nil {
 			fmt.Fprintf(os.Stderr, "flywheel controller: %v\n", terr)
 			if flywheel.IsRuleRefusal(terr) {
@@ -139,8 +141,35 @@ func controllerLoop(dir string, clock func() time.Time, interval time.Duration) 
 	}
 }
 
-// printTick writes the one-line tick summary.
+// controllerTickOptions are the tick options the controller runs with: it
+// resumes rate-limited units through the same starter supervise
+// --resume-limited uses, recording session $FLYWHEEL_SESSION, else
+// controller. With reap (live mode) each child is waited for; with --once it
+// outlives the tick.
+func controllerTickOptions(dir string, reap bool) flywheel.TickOptions {
+	session := os.Getenv("FLYWHEEL_SESSION")
+	if session == "" {
+		session = "controller"
+	}
+	return flywheel.TickOptions{Start: superviseStarter(dir, session, reap), Session: session}
+}
+
+// printTick writes the one-line tick summary, then one line per unit the
+// auto-resume pass acted on; notify failures and a skipped pass go to stderr.
 func printTick(res flywheel.TickResult) {
 	fmt.Printf("tick %s: %d actions (%d lost, %d blocked, %d proposed)\n",
 		res.TS, res.Actions, res.Lost, res.Blocked, res.Proposed)
+	for _, r := range res.Resumed {
+		if r.Started {
+			fmt.Printf("resumed %s %s (log %s)\n", r.Task, r.Attempt, filepath.ToSlash(autoResumeLog(r.Task)))
+		} else {
+			fmt.Printf("not resumed %s: %s\n", r.Task, r.Reason)
+		}
+	}
+	if res.ResumeSkipped != "" {
+		fmt.Fprintf(os.Stderr, "flywheel controller: auto-resume skipped this tick: %s\n", res.ResumeSkipped)
+	}
+	for _, w := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "flywheel controller: warning: %s\n", w)
+	}
 }

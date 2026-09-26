@@ -563,6 +563,70 @@ func TestConfigSetUnknownKeyListsSettableKeys(t *testing.T) {
 	}
 }
 
+// TestConfigSetPermissionMode pins permission_mode as a worker key for Set and
+// Get, with Validate refusing a bad value and leaving config.json unchanged
+// (issue #543).
+func TestConfigSetPermissionMode(t *testing.T) {
+	t.Parallel()
+	base := Config{Version: 1, Workers: []Worker{
+		{Name: "c", Adapter: "claude", Model: "m"},
+		{Name: "o", Adapter: "opencode", Model: "m"},
+	}}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("base config invalid: %v", err)
+	}
+	for _, key := range []string{"permission_mode", "workers.c.permission_mode"} {
+		cfg := base
+		cfg.Workers = slices.Clone(base.Workers)
+		if err := cfg.Set(key, "bypassPermissions"); err != nil {
+			t.Fatalf("Set(%s) error = %v", key, err)
+		}
+		if got, err := cfg.Get(key); err != nil || got != "bypassPermissions" {
+			t.Errorf("Get(%s) = %q, %v; want bypassPermissions", key, got, err)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate after Set(%s) = %v", key, err)
+		}
+		if err := cfg.Set(key, ""); err != nil {
+			t.Fatalf("Set(%s, \"\") error = %v", key, err)
+		}
+		if cfg.Workers[0].PermissionMode != "" || cfg.Workers[0].permissionMode() != defaultPermissionMode {
+			t.Errorf("Set(%s, \"\") left %q, want cleared", key, cfg.Workers[0].PermissionMode)
+		}
+	}
+	if !slices.Contains(base.settableKeys(), "workers.c.permission_mode") {
+		t.Error("settableKeys missing workers.c.permission_mode")
+	}
+
+	for _, tc := range []struct{ key, value string }{
+		{"workers.c.permission_mode", "nonsense"},
+		{"workers.o.permission_mode", "bypassPermissions"},
+	} {
+		dir := t.TempDir()
+		if err := WriteConfig(dir, base); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		path := filepath.Join(dir, ".flywheel", "config.json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Set(tc.key, tc.value); err != nil {
+			t.Fatalf("Set(%s, %s) error = %v (validation is WriteConfig's job)", tc.key, tc.value, err)
+		}
+		if err := WriteConfig(dir, cfg); err == nil {
+			t.Errorf("WriteConfig after Set(%s, %s) = nil, want refusal", tc.key, tc.value)
+		}
+		if after, _ := os.ReadFile(path); !reflect.DeepEqual(after, before) {
+			t.Errorf("config.json changed after refused Set(%s, %s)", tc.key, tc.value)
+		}
+	}
+}
+
 func TestConfigSetFallbacksUnsupported(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
@@ -647,6 +711,34 @@ func TestConfigControllerTimingsFromBlock(t *testing.T) {
 	interval, ttl, intent := cfg.controllerTimings()
 	if interval != 20*time.Second || ttl != 60*time.Second || intent != 5*time.Minute {
 		t.Errorf("controllerTimings() = %s/%s/%s, want 20s/60s/5m", interval, ttl, intent)
+	}
+}
+
+// TestControllerConfigAutoResume: controller.auto_resume and controller.notify
+// round-trip through the config file; an absent block or key means on.
+func TestControllerConfigAutoResume(t *testing.T) {
+	t.Parallel()
+	if !DefaultConfig().controllerAutoResume() || DefaultConfig().controllerNotify() != "" {
+		t.Errorf("absent controller block: auto_resume must default on and notify empty")
+	}
+	if !(Config{Controller: &ControllerConfig{Interval: "10s"}}).controllerAutoResume() {
+		t.Errorf("nil controller.auto_resume must mean on")
+	}
+	for _, on := range []bool{false, true} {
+		dir := t.TempDir()
+		cfg := DefaultConfig()
+		// No timings: a block holding only auto_resume and notify is valid.
+		cfg.Controller = &ControllerConfig{AutoResume: &on, Notify: "echo resumed"}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig: %v", err)
+		}
+		got, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if got.controllerAutoResume() != on || got.controllerNotify() != "echo resumed" {
+			t.Errorf("auto_resume %v: loaded auto_resume=%v notify=%q", on, got.controllerAutoResume(), got.controllerNotify())
+		}
 	}
 }
 

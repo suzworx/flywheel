@@ -512,12 +512,33 @@ const (
 
 // ControllerConfig tunes the controller loop: the tick interval, the lock
 // ttl and the intent timeout (unused until the dispatch phase). All three
-// are Go duration strings; when the block is absent the defaults apply:
+// are Go duration strings; when the block or a value is absent the defaults apply:
 // interval 10s, lock_ttl 30s, intent_timeout 2m.
+//
+// AutoResume (default on when absent) makes every tick resume the
+// rate-limited units whose model's reset has passed, as supervise
+// --resume-limited does; Notify is a shell command run once per unit a tick
+// started, with FLYWHEEL_RESUMED="<task> <attempt> model=<model>".
 type ControllerConfig struct {
 	Interval      string `json:"interval,omitempty"`
 	LockTTL       string `json:"lock_ttl,omitempty"`
 	IntentTimeout string `json:"intent_timeout,omitempty"`
+	AutoResume    *bool  `json:"auto_resume,omitempty"`
+	Notify        string `json:"notify,omitempty"`
+}
+
+// controllerAutoResume reports whether the controller resumes rate-limited
+// units: true unless controller.auto_resume is false.
+func (c Config) controllerAutoResume() bool {
+	return c.Controller == nil || c.Controller.AutoResume == nil || *c.Controller.AutoResume
+}
+
+// controllerNotify returns controller.notify, "" when unset.
+func (c Config) controllerNotify() string {
+	if c.Controller == nil {
+		return ""
+	}
+	return c.Controller.Notify
 }
 
 const (
@@ -930,26 +951,37 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.Controller != nil {
-		interval, ierr := time.ParseDuration(c.Controller.Interval)
+		// An empty duration means its default, so a block may set only
+		// auto_resume or notify.
+		cc := *c.Controller
+		for _, d := range []struct {
+			v   *string
+			def time.Duration
+		}{{&cc.Interval, defaultControllerInterval}, {&cc.LockTTL, defaultControllerLockTTL}, {&cc.IntentTimeout, defaultControllerIntentTimeout}} {
+			if *d.v == "" {
+				*d.v = d.def.String()
+			}
+		}
+		interval, ierr := time.ParseDuration(cc.Interval)
 		if ierr != nil {
-			problems = append(problems, fmt.Sprintf("controller.interval %q is not a valid duration", c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.interval %q is not a valid duration", cc.Interval))
 		} else if interval <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.interval %s must be positive", c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.interval %s must be positive", cc.Interval))
 		}
-		lockTTL, terr := time.ParseDuration(c.Controller.LockTTL)
+		lockTTL, terr := time.ParseDuration(cc.LockTTL)
 		if terr != nil {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %q is not a valid duration", c.Controller.LockTTL))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %q is not a valid duration", cc.LockTTL))
 		} else if lockTTL <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be positive", c.Controller.LockTTL))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be positive", cc.LockTTL))
 		}
-		intent, merr := time.ParseDuration(c.Controller.IntentTimeout)
+		intent, merr := time.ParseDuration(cc.IntentTimeout)
 		if merr != nil {
-			problems = append(problems, fmt.Sprintf("controller.intent_timeout %q is not a valid duration", c.Controller.IntentTimeout))
+			problems = append(problems, fmt.Sprintf("controller.intent_timeout %q is not a valid duration", cc.IntentTimeout))
 		} else if intent <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.intent_timeout %s must be positive", c.Controller.IntentTimeout))
+			problems = append(problems, fmt.Sprintf("controller.intent_timeout %s must be positive", cc.IntentTimeout))
 		}
 		if ierr == nil && terr == nil && lockTTL <= interval {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", c.Controller.LockTTL, c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", cc.LockTTL, cc.Interval))
 		}
 	}
 	if c.Baseline != nil {
@@ -1201,6 +1233,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return w.Model, true
 	case "variant":
 		return w.Variant, true
+	case "permission_mode":
+		return w.PermissionMode, true
 	case "adapter":
 		return w.Adapter, true
 	case "max_parallel":
@@ -1233,7 +1267,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"log.shards", "max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1244,7 +1278,7 @@ func (c Config) validKeys() []string {
 		keys = append(keys, "lines."+l.Name+".wip")
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
+		for _, k := range append([]string{"fallbacks", "fallbacks.all"}, settableWorkerKeys...) {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}
@@ -1254,8 +1288,8 @@ func (c Config) validKeys() []string {
 
 // Set assigns value to the given configuration key. Bare worker keys apply to
 // the default worker; every worker key is also addressable as
-// workers.<name>.<key>. The settable keys are model, variant, adapter,
-// max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
+// workers.<name>.<key>. The settable keys are settableWorkerKeys (worker;
+// an empty permission_mode clears it), feedback.upstream, feedback.submit,
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.required (true or false) and
@@ -1317,7 +1351,7 @@ func (c *Config) Set(key, value string) error {
 		}
 	}
 	switch key {
-	case "model", "variant", "adapter", "max_parallel", "stall_timeout":
+	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -1482,6 +1516,10 @@ func (c *Config) Set(key, value string) error {
 	return c.settableErr(key)
 }
 
+// settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
+// default worker or as workers.<name>.<key>.
+var settableWorkerKeys = []string{"adapter", "max_parallel", "model", "permission_mode", "stall_timeout", "variant"}
+
 // setWorkerValue assigns a worker-scoped value, parsing integer keys.
 func setWorkerValue(w *Worker, key, value string) error {
 	switch key {
@@ -1489,6 +1527,8 @@ func setWorkerValue(w *Worker, key, value string) error {
 		w.Model = value
 	case "variant":
 		w.Variant = value
+	case "permission_mode":
+		w.PermissionMode = value
 	case "adapter":
 		w.Adapter = value
 	case "max_parallel":
@@ -1504,7 +1544,7 @@ func setWorkerValue(w *Worker, key, value string) error {
 		}
 		w.StallTimeout = n
 	default:
-		return fmt.Errorf("unknown key %q; valid worker keys: model, variant, adapter, max_parallel, stall_timeout", key)
+		return fmt.Errorf("unknown key %q; valid worker keys: %s", key, strings.Join(settableWorkerKeys, ", "))
 	}
 	return nil
 }
@@ -1519,7 +1559,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1527,7 +1567,7 @@ func (c Config) settableKeys() []string {
 		"staffing.reviewer.adapter", "staffing.reviewer.model", "staffing.reviewer.session",
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "max_parallel", "model", "stall_timeout", "variant"} {
+		for _, k := range settableWorkerKeys {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}
