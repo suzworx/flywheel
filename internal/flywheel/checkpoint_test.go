@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestCheckpointUnclean checks an attempt that ends with a provider error
@@ -69,6 +71,107 @@ func TestCheckpointUnclean(t *testing.T) {
 	cps, err := ListCheckpoints(dir, "T1")
 	if err != nil || len(cps) != 1 || !slices.Equal(cps[0].Paths, []string{"a.go"}) {
 		t.Errorf("ListCheckpoints = %+v, %v", cps, err)
+	}
+}
+
+// timedCheckpointRun starts a clean-stopping sim Run of T1 in its worktree
+// with limits.checkpoint_every set to every and the sim held for simDelay;
+// a.go is written before dispatch. It returns the flywheel dir, the worktree,
+// the tick counter and a channel closed when Run returns.
+func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration) (dir, wt string, ticks *atomic.Int64, done chan struct{}) {
+	t.Helper()
+	dir = worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a // one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(t.TempDir(), "stop.jsonl")
+	lines := `{"type":"step_start","sessionID":"ses_tc","part":{"type":"step_start","step":1}}
+{"type":"step_finish","sessionID":"ses_tc","part":{"type":"step_finish","reason":"stop","tokens":{"input":1,"output":1}}}
+`
+	if err := os.WriteFile(fixture, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := simConfig(fixture)
+	cfg.Limits.CheckpointEvery = every
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	ticks = new(atomic.Int64)
+	done = make(chan struct{})
+	t.Cleanup(func() { <-done }) // a failed test still waits for Run before its temp dirs go
+	go func() {
+		defer close(done)
+		if res, err := Run(dir, RunOptions{Task: "T1", Worktree: true, SimDelay: simDelay, checkpointTicks: ticks}); err != nil || res.Reason != "stop" {
+			t.Errorf("Run() = %+v, %v; want reason stop", res, err)
+		}
+	}()
+	return dir, wt, ticks, done
+}
+
+// waitMidRun polls cond until it holds; it fails when Run finished first (the
+// condition must hold mid-run) or after a hang guard.
+func waitMidRun(t *testing.T, done chan struct{}, what string, cond func() bool) {
+	t.Helper()
+	for guard := time.Now().Add(60 * time.Second); !cond(); time.Sleep(10 * time.Millisecond) {
+		select {
+		case <-done:
+			t.Fatalf("Run finished before %s", what)
+		default:
+		}
+		if time.Now().After(guard) {
+			t.Fatalf("hang guard: never saw %s", what)
+		}
+	}
+}
+
+// TestTimedCheckpoint checks a worktree attempt is checkpointed on the
+// limits.checkpoint_every timer while it runs (issue #528): the ref holds the
+// owned file before the run finishes, a tick with no change writes no new
+// commit, and a later change moves the ref.
+func TestTimedCheckpoint(t *testing.T) {
+	t.Parallel()
+	dir, wt, ticks, done := timedCheckpointRun(t, "20ms", 10*time.Second)
+	ref := checkpointRef("T1", "r1")
+	refSHA := func() string { sha, _ := gitWith(dir, nil, "rev-parse", "--verify", "-q", ref); return sha }
+	waitMidRun(t, done, "a timed checkpoint", func() bool { return refSHA() != "" })
+	if body, err := gitWith(dir, nil, "show", ref+":a.go"); err != nil || body != "package a // one" {
+		t.Fatalf("checkpoint a.go = %q, %v", body, err)
+	}
+	first, seen := refSHA(), time.Now()
+	// A commit's date has one-second resolution: only a tick more than a
+	// second later would write a different sha were the unchanged tree not
+	// skipped.
+	waitMidRun(t, done, "a second to pass", func() bool { return time.Since(seen) > 1100*time.Millisecond })
+	n := ticks.Load()
+	waitMidRun(t, done, "two more ticks", func() bool { return ticks.Load() >= n+2 })
+	if got := refSHA(); got != first {
+		t.Errorf("ref moved from %s to %s with no change", first, got)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a // two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitMidRun(t, done, "the change checkpointed", func() bool {
+		body, _ := gitWith(dir, nil, "show", ref+":a.go")
+		return body == "package a // two"
+	})
+	<-done
+}
+
+// TestTimedCheckpointDisabled checks checkpoint_every "0" takes no timed
+// checkpoint: a clean run leaves no ref and the timer never ticked.
+func TestTimedCheckpointDisabled(t *testing.T) {
+	t.Parallel()
+	dir, _, ticks, done := timedCheckpointRun(t, "0", 500*time.Millisecond)
+	<-done
+	if sha, err := gitWith(dir, nil, "rev-parse", "--verify", "-q", checkpointRef("T1", "r1")); err == nil {
+		t.Errorf("checkpoint ref = %s, want none with checkpoint_every 0", sha)
+	}
+	if n := ticks.Load(); n != 0 {
+		t.Errorf("ticks = %d, want 0", n)
 	}
 }
 

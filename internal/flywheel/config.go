@@ -422,6 +422,19 @@ type Limits struct {
 	// an ordinary gate waits for a running quiet gate to end), a Go
 	// duration; "" means 30m (issue #411).
 	QuietWait string `json:"quiet_wait,omitempty"`
+	// CheckpointEvery is how often an attempt running in its task worktree
+	// has its changed owned files checkpointed, a Go duration; "" means 10m,
+	// "0" disables it (issue #528).
+	CheckpointEvery string `json:"checkpoint_every,omitempty"`
+}
+
+// CheckpointEveryDuration parses CheckpointEvery ("" means 10 minutes, 0
+// means no timed checkpoints).
+func (l Limits) CheckpointEveryDuration() (time.Duration, error) {
+	if l.CheckpointEvery == "" {
+		return 10 * time.Minute, nil
+	}
+	return time.ParseDuration(l.CheckpointEvery)
 }
 
 // QuietWaitDuration parses QuietWait ("" means 30 minutes).
@@ -901,6 +914,11 @@ func (c Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q: %v", c.Limits.QuietWait, err))
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q must be > 0", c.Limits.QuietWait))
+	}
+	if d, err := c.Limits.CheckpointEveryDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q: %v", c.Limits.CheckpointEvery, err))
+	} else if d < 0 {
+		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q must be >= 0", c.Limits.CheckpointEvery))
 	}
 	if c.Limits.Budget != nil && c.Limits.Budget.WaveTokens < 0 {
 		problems = append(problems, fmt.Sprintf("limits.budget.wave_tokens %d must be >= 0", c.Limits.Budget.WaveTokens))

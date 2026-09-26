@@ -53,9 +53,18 @@ func ownedChanged(wt string, owns []string) ([]string, error) {
 // in a temporary index (read-tree HEAD, add the paths, write-tree), exactly
 // as commitAttempt does, so it never moves a branch or touches the real index.
 func checkpointAttempt(wt, task, attempt string, paths []string) (string, error) {
+	sha, _, err := checkpointTree(wt, task, attempt, paths)
+	return sha, err
+}
+
+// checkpointTree is checkpointAttempt that also returns the snapshot's tree.
+// When the ref already names a commit of that tree on the same HEAD, nothing
+// is written and the ref's commit is returned: an unchanged tick costs no
+// commit (issue #528).
+func checkpointTree(wt, task, attempt string, paths []string) (sha, tree string, err error) {
 	tmp, err := os.MkdirTemp("", "flywheel-checkpoint-")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer os.RemoveAll(tmp)
 	env := append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(tmp, "index"),
@@ -63,26 +72,33 @@ func checkpointAttempt(wt, task, attempt string, paths []string) (string, error)
 		"GIT_COMMITTER_NAME="+unitCommitName, "GIT_COMMITTER_EMAIL="+unitCommitEmail)
 	head, err := gitWith(wt, env, "rev-parse", "--verify", "HEAD")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := gitWith(wt, env, "read-tree", "HEAD"); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := gitWith(wt, env, append([]string{"--literal-pathspecs", "add", "-A", "--"}, paths...)...); err != nil {
-		return "", err
+		return "", "", err
 	}
-	tree, err := gitWith(wt, env, "write-tree")
+	tree, err = gitWith(wt, env, "write-tree")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	sha, err := gitWith(wt, env, "commit-tree", tree, "-p", head, "-m", "checkpoint "+task+" "+attempt)
+	ref := checkpointRef(task, attempt)
+	// A missing ref fails here: no previous checkpoint, so write one.
+	if prev, err := gitWith(wt, env, "rev-parse", ref, ref+"^{tree}", ref+"^"); err == nil {
+		if f := strings.Fields(prev); len(f) == 3 && f[1] == tree && f[2] == head {
+			return f[0], tree, nil
+		}
+	}
+	sha, err = gitWith(wt, env, "commit-tree", tree, "-p", head, "-m", "checkpoint "+task+" "+attempt)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	if _, err := gitWith(wt, env, "update-ref", checkpointRef(task, attempt), sha); err != nil {
-		return "", err
+	if _, err := gitWith(wt, env, "update-ref", ref, sha); err != nil {
+		return "", "", err
 	}
-	return sha, nil
+	return sha, tree, nil
 }
 
 // checkpointUnclean is Run's hook before an unclean finished event: when
