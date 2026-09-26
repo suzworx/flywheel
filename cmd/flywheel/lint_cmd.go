@@ -10,14 +10,15 @@ import (
 )
 
 func init() {
-	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem)\n    exit 1 on any problem; warnings alone exit 0", runLint)
-	registerHelp("lint", "flywheel lint <brief> [--probe] [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
+	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem)\n    --task ID with --probe records each probe in the ledger, so validate and explain can tell a broken gate from broken work\n    exit 1 on any problem; warnings alone exit 0", runLint)
+	registerHelp("lint", "flywheel lint <brief> [--probe [--task ID]] [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
 }
 
 // lintOptions holds the parsed lint flags.
 type lintOptions struct {
 	dir   string
 	probe bool
+	task  string
 }
 
 // lintFlags defines lint's flags once, so help and run share them.
@@ -27,12 +28,13 @@ func lintFlags() (*flag.FlagSet, *lintOptions) {
 	o := &lintOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.BoolVar(&o.probe, "probe", false, "run each gate: once in the target directory after a clean lint")
+	fs.StringVar(&o.task, "task", "", "with --probe, record each probe as a gate_probed event for this task")
 	return fs, o
 }
 
 // lintUsage prints the flywheel lint usage line.
 func lintUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel lint <brief> [--probe] [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel lint <brief> [--probe [--task ID]] [--dir DIR]")
 }
 
 // runLint implements `flywheel lint <brief>`: read one brief and print every
@@ -53,6 +55,16 @@ func runLint(args []string) {
 		lintUsage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.task != "" && !o.probe {
+		fmt.Fprintf(os.Stderr, "flywheel lint: --task records gate probes and needs --probe\n")
+		lintUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.task != "" && !flywheel.TaskIDOK(o.task) {
+		fmt.Fprintf(os.Stderr, "flywheel lint: task %q does not match ^[A-Za-z0-9._-]+$\n", o.task)
+		lintUsage(os.Stderr)
+		os.Exit(2)
+	}
 	brief := pos[0]
 	res, err := flywheel.LintBrief(o.dir, brief)
 	if err != nil {
@@ -65,7 +77,14 @@ func runLint(args []string) {
 			fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
 			os.Exit(1)
 		}
-		probeLint(os.Stderr, brief, flywheel.ProbeGates(o.dir, header.Gates), &res)
+		probes := flywheel.ProbeGates(o.dir, header.Gates)
+		probeLint(os.Stderr, brief, probes, &res)
+		if o.task != "" {
+			if err := flywheel.RecordGateProbes(o.dir, o.task, header.Gates, probes); err != nil {
+				fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
+				os.Exit(1)
+			}
+		}
 	}
 	writeLint(os.Stderr, brief, res)
 	if len(res.Problems) > 0 {

@@ -87,7 +87,7 @@ func allTasks(events []Event) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, e := range events {
-		if e.Task != "" && !seen[e.Task] {
+		if e.Task != "" && e.Kind != "gate_probed" && !seen[e.Task] { // a probe alone is not a unit (#544)
 			seen[e.Task] = true
 			out = append(out, e.Task)
 		}

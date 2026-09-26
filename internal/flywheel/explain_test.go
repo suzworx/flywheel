@@ -340,3 +340,33 @@ func TestExplainSmallCostVisible(t *testing.T) {
 		t.Errorf("summary lacks cost: $0.0040:\n%s", b.String())
 	}
 }
+
+// TestExplainBaseProbeFailure checks a failed gate whose command also failed
+// its probe on the base tree says so, matched by command, and a failed gate
+// whose probe passed or that was never probed does not (issue #544).
+func TestExplainBaseProbeFailure(t *testing.T) {
+	t.Parallel()
+	rc := func(n int) *int { return &n }
+	events := []Event{
+		{TS: "2026-09-18T09:00:00Z", Task: "T1", Kind: "gate_probed", Gate: "1", Command: "go test ./x", RC: rc(1), Reason: "FAIL x"},
+		{TS: "2026-09-18T09:00:00Z", Task: "T1", Kind: "gate_probed", Gate: "2", Command: "go vet ./...", RC: rc(0)},
+		{TS: "2026-09-18T10:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-18T11:00:00Z", Task: "T1", Kind: "validated", Gate: "3", Command: "go test ./x", RC: rc(1)},
+		{TS: "2026-09-18T11:00:01Z", Task: "T1", Kind: "validated", Gate: "2", Command: "go vet ./...", RC: rc(1)},
+		{TS: "2026-09-18T11:00:02Z", Task: "T1", Kind: "validated", Gate: "4", Command: "go build ./...", RC: rc(2)},
+	}
+	x, err := Explain(events, "T1")
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	want := []string{
+		"gate 3: fail rc=1 (also failed on the base tree before dispatch, exit 1)",
+		"gate 2: fail rc=1",
+		"gate 4: fail rc=2",
+	}
+	for i, w := range want {
+		if got := x.Timeline[3+i].Line; got != w {
+			t.Errorf("timeline[%d] = %q, want %q", 3+i, got, w)
+		}
+	}
+}
