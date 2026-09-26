@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestParseReviewFindings checks the reviewer's answer parser (issue #389): a
@@ -320,5 +321,42 @@ func TestReviewerNoWorkerRules(t *testing.T) {
 	_, args = claudeAdapter{}.Command(RunRequest{Task: "T1", PromptFile: "missing.md", Model: "m"})
 	if !strings.Contains(strings.Join(args, " "), "--append-system-prompt") {
 		t.Errorf("worker args lack --append-system-prompt: %q", args)
+	}
+}
+
+// TestReviewAgentFailureCause checks why a failed reviewer run failed (issue
+// #469): the stream's error result first, else the stderr tail, one clipped
+// line either way.
+func TestReviewAgentFailureCause(t *testing.T) {
+	t.Parallel()
+	if got := reviewFailureCause("  API Error: 529 overloaded\n", "stderr noise"); got != "API Error: 529 overloaded" {
+		t.Errorf("result preferred: got %q", got)
+	}
+	if got := reviewFailureCause("", "panic: boom\n  at main.go:3"); got != "panic: boom at main.go:3" {
+		t.Errorf("err tail fallback: got %q", got)
+	}
+	if got := reviewFailureCause(" ", ""); got != "" {
+		t.Errorf("no cause: got %q", got)
+	}
+	long := reviewFailureCause(strings.Repeat("é", 400), "")
+	if len(long) > maxFailureCause || !strings.HasSuffix(long, "...") || !utf8.ValidString(long) {
+		t.Errorf("long cause: %d bytes, %q...; want <= %d valid bytes ending ...", len(long), long[:10], maxFailureCause)
+	}
+	if got := lastNonEmptyLine("first\r\nlast line\r\n\r\n  \n"); got != "last line" {
+		t.Errorf("lastNonEmptyLine = %q", got)
+	}
+	for _, c := range []struct {
+		line, want string
+		ok         bool
+	}{
+		{`{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached"}`, "Claude AI usage limit reached", true},
+		{`{"type":"result","subtype":"error_max_turns","is_error":true}`, "error_max_turns", true},
+		{`{"type":"result","subtype":"success","is_error":false,"result":"done"}`, "", false},
+		{`{"type":"assistant","is_error":true}`, "", false},
+		{`not json`, "", false},
+	} {
+		if got, ok := resultErrorText([]byte(c.line)); got != c.want || ok != c.ok {
+			t.Errorf("resultErrorText(%s) = %q, %v; want %q, %v", c.line, got, ok, c.want, c.ok)
+		}
 	}
 }

@@ -253,7 +253,8 @@ all.
 - Written by: `flywheel review <task> --verdict pass|correct|reject --session S [--model M]`, from
   an isolated copy of the tree; by the review agent, `flywheel review <task> --agent --session S
   [--worker NAME] [--round N]` (issue #389); `flywheel log --kind reviewed` remains valid input.
-- Carries: `task`, `verdict` (`pass`, `correct`, or `reject` — enforced by `Validate`), `session`,
+- Carries: `task`, `verdict` (`pass`, `correct`, `reject`, or `crashed` — a panel member whose run
+  failed twice, only with a `category`, issue #469 — enforced by `Validate`), `session`,
   `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`). The review agent's
   event also carries `adapter` (the agent that reviewed; a verdict passed in by hand names none, and
   the next agent round is one more than the task's `reviewed` events that do), verdict `correct`
@@ -346,9 +347,18 @@ all.
   counted with a panel run as one round until a dimension repeats. With `--fix` each loop round is a
   whole panel. The command prints the findings (or, with `--fix`, the open blocking ones), then the
   verdict matrix, and exits 0 when every dimension is `pass`, else 1 (6 on a refusal, 2 on usage).
-- The verdict matrix (`VerdictMatrix`): per panel dimension, the verdict of the latest agent `reviewed`
-  event of that dimension on the tree — `pass` or `correct` — else `missing`; a `correct` whose
-  blocking findings are all dismissed counts as `pass`. The thread groups a panel round as one
+- A crashed member (issue #469): a member whose run fails (the reviewer exits non-zero, its stream
+  breaks, or its answer is refused twice) runs once more; failing again, the panel appends one
+  `reviewed` event with verdict `crashed`, persona `reviewer`, the dimension in `category`, the
+  reviewed tree and the cause (the stream's error result, else the stderr tail; about 300 bytes) in
+  `note`, and goes on with the next member. `Validate` accepts `crashed` only with a `category`. It
+  names no adapter, so it closes no finding, counts as no round and changes no status. Any other
+  error (persona, config, ledger, rule) still stops the panel. With `--fix`, a round with a crash
+  still corrects the open blocking findings inside owns; with none open it never passes: it reviews
+  again while rounds remain, then ends with verdict `incomplete` naming the crashed dimensions.
+- The verdict matrix (`VerdictMatrix`): per panel dimension, the verdict of the latest agent or
+  crashed `reviewed` event of that dimension on the tree — `pass`, `correct` or `crashed` (never
+  `pass`) — else `missing`; a `correct` whose blocking findings are all dismissed counts as `pass`. The thread groups a panel round as one
   `## Round <n> — review panel` section with one line per member and its findings under a
   `### <dimension>` heading, then `## Panel verdict matrix — tree <sha7>`. When `review.panel` is
   configured, the floor shows each unit's matrix after its run state as `panel <cells>`, one cell per

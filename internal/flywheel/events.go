@@ -563,8 +563,13 @@ func Validate(e Event) error {
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)
 	}
-	if e.Kind == "reviewed" && e.Verdict != "pass" && e.Verdict != "correct" && e.Verdict != "reject" {
-		return fmt.Errorf("reviewed event must carry verdict pass, correct, or reject (got %q)", e.Verdict)
+	// A panel member whose run failed twice is recorded crashed (issue #469):
+	// only a dimension's review can crash, so crashed needs a Category.
+	if e.Kind == "reviewed" && e.Verdict == "crashed" && e.Category == "" {
+		return fmt.Errorf("reviewed verdict crashed must carry the crashed dimension as category")
+	}
+	if e.Kind == "reviewed" && e.Verdict != "pass" && e.Verdict != "correct" && e.Verdict != "reject" && e.Verdict != "crashed" {
+		return fmt.Errorf("reviewed event must carry verdict pass, correct, reject, or crashed (got %q)", e.Verdict)
 	}
 	if e.Kind == "inspected" && e.Verdict != "pass" && e.Verdict != "rework" && e.Verdict != "scrap" && e.Verdict != "escalate" {
 		return fmt.Errorf("inspected event must carry verdict pass, rework, scrap, or escalate (got %q)", e.Verdict)

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ReviewFinding is one defect the review agent reports (issue #389): its
@@ -175,6 +176,9 @@ type ReviewAgentResult struct {
 	Model      string
 	Prompt     string // the prompt file
 	Transcript string // the reviewer's stream
+	// Crashed lists the panel dimensions whose run crashed in this round
+	// (issue #469); a review loop never passes a round with one.
+	Crashed []string
 }
 
 // reviewWorker resolves who runs the review: the named worker; else the
@@ -526,7 +530,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 			return ReviewAgentResult{}, err
 		}
 		if findings, problems = checkReviewAnswer(workdir, changed, answer, o.Dimension); len(problems) > 0 {
-			return ReviewAgentResult{}, fmt.Errorf("review answer refused twice; nothing recorded, transcripts %s and %s:\n%s", first, res.Transcript, strings.Join(problems, "\n"))
+			return ReviewAgentResult{}, &reviewRunError{fmt.Sprintf("review answer refused twice:\n%s\nnothing recorded, transcripts %s and %s", strings.Join(problems, "\n"), first, res.Transcript)}
 		}
 	}
 	res, err = recordReview(dir, task, events, workdir, worker, o.Session, o.Dimension, findings, res)
@@ -590,15 +594,22 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start %s: %w", bin, err)
+		return "", &reviewRunError{fmt.Sprintf("start %s: %v", bin, err)}
 	}
-	lastText := ""
+	lastText, lastResult := "", ""
 	sc := bufio.NewScanner(out)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
 		_, _ = transcript.Write(append(append([]byte(nil), line...), '\n'))
-		if obs, ok := adap.Parse(line); ok && obs.Kind == "text" && obs.Text != "" {
+		if text, ok := resultErrorText(line); ok {
+			lastResult = text
+		}
+		obs, ok := adap.Parse(line)
+		if ok && obs.Kind == "error" && obs.Error != "" {
+			lastResult = obs.Error
+		}
+		if ok && obs.Kind == "text" && obs.Text != "" {
 			lastText = obs.Text
 			if o.Stdout != nil {
 				fmt.Fprintln(o.Stdout, obs.Text)
@@ -607,9 +618,80 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 	}
 	scanErr := sc.Err()
 	if werr := cmd.Wait(); werr != nil || scanErr != nil {
-		return "", fmt.Errorf("review agent %s failed (%v, stream %v); transcript %s", bin, werr, scanErr, transcriptPath)
+		errData, _ := os.ReadFile(stem + ".err")
+		cause := reviewFailureCause(lastResult, lastNonEmptyLine(string(errData)))
+		if cause != "" {
+			cause = ": " + cause
+		}
+		return "", &reviewRunError{fmt.Sprintf("review agent %s failed (%v, stream %v)%s; transcript %s", bin, werr, scanErr, cause, transcriptPath)}
 	}
 	return lastText, nil
+}
+
+// reviewRunError is a reviewer run that failed or whose answer was refused
+// twice (issue #469): the member's review did not happen, as opposed to a
+// config, ledger or rule error. A panel retries it once, then records the
+// dimension crashed.
+type reviewRunError struct{ msg string }
+
+func (e *reviewRunError) Error() string { return e.msg }
+
+// maxFailureCause caps a reviewer failure's cause and a crashed note, in bytes.
+const maxFailureCause = 300
+
+// resultErrorText reads a stream line that reports the run's end as an
+// error — claude's {"type":"result","is_error":true,...} — and returns its
+// result text, else its subtype.
+func resultErrorText(line []byte) (string, bool) {
+	var r struct {
+		Type    string `json:"type"`
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+		Subtype string `json:"subtype"`
+	}
+	if json.Unmarshal(line, &r) != nil || r.Type != "result" || !r.IsError {
+		return "", false
+	}
+	if strings.TrimSpace(r.Result) != "" {
+		return r.Result, true
+	}
+	return r.Subtype, r.Subtype != ""
+}
+
+// reviewFailureCause is why a reviewer run failed (issue #469): the stream's
+// last error result text, else the last non-empty stderr line, else "";
+// folded to one line and clipped to maxFailureCause bytes.
+func reviewFailureCause(lastResult, errTail string) string {
+	cause := strings.TrimSpace(lastResult)
+	if cause == "" {
+		cause = strings.TrimSpace(errTail)
+	}
+	return clipLine(cause, maxFailureCause)
+}
+
+// clipLine folds s onto one line and cuts it to at most n bytes on a rune
+// boundary, marking a cut with "...".
+func clipLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= n {
+		return s
+	}
+	cut := n - 3
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
+}
+
+// lastNonEmptyLine is the last line of s holding more than whitespace.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // recordReview records the reviewer's checked findings and verdict in one

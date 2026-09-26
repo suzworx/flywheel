@@ -51,12 +51,14 @@ func TestPanelDimensionEnforced(t *testing.T) {
 	// not parallel: reviewAgentRepo sets PATH to a fake claude
 	outside := "```json\n{\"findings\":[{\"severity\":\"major\",\"category\":\"docs\",\"file\":\"a.go\",\"line\":1,\"claim\":\"c\",\"scenario\":\"s\"}]}\n```"
 	dir := reviewAgentRepo(t, outside)
-	_, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: []PanelMember{{Persona: "tests"}}, Session: "rev-1"})
-	if err == nil || !strings.Contains(err.Error(), "review panel tests") || !strings.Contains(err.Error(), `category "docs" is outside your dimension`) {
-		t.Fatalf("out-of-dimension answer: err = %v, want refused twice naming the category", err)
+	// Refused twice, twice: the member crashed (issue #469), no finding kept.
+	crashed, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: []PanelMember{{Persona: "tests"}}, Session: "rev-1"})
+	if err != nil || strings.Join(crashed.Crashed, ",") != "tests" || crashed.Matrix["tests"] != "crashed" {
+		t.Fatalf("out-of-dimension answer: %+v, %v; want tests crashed", crashed, err)
 	}
-	if f, r := reviewKinds(t, dir); len(f)+len(r) != 0 {
-		t.Errorf("refused answer recorded %d findings and %d reviewed", len(f), len(r))
+	if f, r := reviewKinds(t, dir); len(f) != 0 || len(r) != 1 || r[0].Verdict != "crashed" ||
+		!strings.Contains(r[0].Note, `category "docs" is outside your dimension`) {
+		t.Errorf("refused answer recorded findings %+v and reviewed %+v; want one crashed naming the category", f, r)
 	}
 
 	inside := strings.ReplaceAll(outside, `"docs"`, `"tests"`)
@@ -166,5 +168,76 @@ func TestReviewThreadPanel(t *testing.T) {
 	}
 	if strings.Contains(got, "## Round 2") {
 		t.Errorf("one panel run rendered as two rounds:\n%s", got)
+	}
+}
+
+// crashingMember is a fake panel member run: dimension d fails (a run
+// failure) its first fails[d] calls, then records a clean review on tree t.
+func crashingMember(fails map[string]int, calls map[string]int) func(string, string, ReviewAgentOptions) (ReviewAgentResult, error) {
+	return func(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, error) {
+		calls[o.Dimension]++
+		if calls[o.Dimension] <= fails[o.Dimension] {
+			return ReviewAgentResult{}, &reviewRunError{"review agent claude failed (exit status 1, stream <nil>): API Error: overloaded; transcript x.jsonl"}
+		}
+		evs, verdict, _ := dimensionReviewEvents(task, "r1", o.Round, o.Session, "m", "claude", "t", o.Dimension, nil)
+		return ReviewAgentResult{Round: o.Round, Verdict: verdict, Tree: "t"}, AppendEvents(dir, evs)
+	}
+}
+
+// TestReviewPanelCrash checks a crashed member (issue #469): run once more,
+// then recorded crashed while the other members still run; the matrix never
+// passes it. A member that fails once and then succeeds records normally; an
+// error that is not a run failure still stops the panel.
+func TestReviewPanelCrash(t *testing.T) {
+	t.Parallel()
+	members := []PanelMember{{Persona: "correctness"}, {Persona: "tests"}, {Persona: "docs"}}
+	dims := []string{"correctness", "tests", "docs"}
+	dir := loopRepo(t)
+	calls := map[string]int{}
+	res, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: members, Session: "rev-1", review: crashingMember(map[string]int{"tests": 2}, calls)})
+	if err != nil || strings.Join(res.Crashed, ",") != "tests" || len(res.Members) != 2 || res.Tree != "t" {
+		t.Fatalf("ReviewPanel = %+v, %v; want tests crashed, two members on t", res, err)
+	}
+	if calls["correctness"] != 1 || calls["tests"] != 2 || calls["docs"] != 1 {
+		t.Errorf("calls = %v, want tests retried once and the others run once", calls)
+	}
+	var crashed []Event
+	for _, e := range mustEvents(t, dir) {
+		if e.Kind == "reviewed" && e.Verdict == "crashed" {
+			crashed = append(crashed, e)
+		}
+	}
+	if len(crashed) != 1 || crashed[0].Category != "tests" || crashed[0].Persona != "reviewer" || crashed[0].Session != "rev-1" ||
+		crashed[0].Tree != "t" || !strings.Contains(crashed[0].Note, "API Error: overloaded") {
+		t.Errorf("crashed events = %+v, want one for tests on t noting the cause", crashed)
+	}
+	if res.Matrix["tests"] != "crashed" || res.Matrix["correctness"] != "pass" || res.Matrix["docs"] != "pass" {
+		t.Errorf("matrix = %v, want tests crashed, the others pass", res.Matrix)
+	}
+	if got := panelIncomplete(res.Matrix, dims); strings.Join(got, ",") != "tests=crashed" {
+		t.Errorf("panelIncomplete = %v, want tests=crashed", got)
+	}
+	if n := nextReviewRound(mustEvents(t, dir), "T1"); n != 2 {
+		t.Errorf("nextReviewRound after a panel with a crash = %d, want 2", n)
+	}
+
+	dir = loopRepo(t)
+	calls = map[string]int{}
+	res, err = ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: members, Session: "rev-1", review: crashingMember(map[string]int{"tests": 1}, calls)})
+	if err != nil || len(res.Crashed) != 0 || len(res.Members) != 3 || calls["tests"] != 2 || res.Matrix["tests"] != "pass" {
+		t.Errorf("fail once then succeed = %+v, %v, calls %v; want recorded normally", res, err, calls)
+	}
+	for _, e := range mustEvents(t, dir) {
+		if e.Verdict == "crashed" {
+			t.Errorf("a retried success recorded %+v", e)
+		}
+	}
+
+	dir = loopRepo(t)
+	fail := func(string, string, ReviewAgentOptions) (ReviewAgentResult, error) {
+		return ReviewAgentResult{}, &RuleRefusal{Rule: "T4", Fix: "worker session"}
+	}
+	if _, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: members, Session: "rev-1", review: fail}); err == nil || !IsRuleRefusal(err) {
+		t.Errorf("rule refusal: err = %v, want it returned", err)
 	}
 }
