@@ -6,9 +6,15 @@
 <title>flywheel - own the factory</title>
 <meta name="description" content="A dark factory for AI coding work. Cheap agents build, deterministic gauges re-run every claim, and nothing lands without a reading bound to the exact tree that produced it.">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://suzworx.github.io/flywheel/">
+<meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e141a" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="flywheel">
 <meta property="og:description" content="Own the factory. Rent the agents and the intelligence.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://suzworx.github.io/flywheel/">
+<meta property="og:image" content="https://suzworx.github.io/flywheel/assets/logo-lockup.svg">
+<meta name="twitter:card" content="summary">
 <script>document.documentElement.classList.add('js')</script>
 <style>
 /* tokens */
@@ -164,7 +170,7 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
   <div class="navlinks">
     <a data-opt href="#loop">The loop</a>
     <a data-opt href="#guarantees">Guarantees</a>
-    <a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a>
+    <a href="quickstart.html">Quickstart</a>
     <a href="https://github.com/suzworx/flywheel">GitHub</a>
   </div>
 </div></nav>
@@ -176,7 +182,7 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
     <h1>Rent the agents.<br><span class="dim">Own the factory.</span></h1>
     <p class="lede">Cheap agents build. Deterministic gauges re-run every claim they make. One expensive lead makes only the calls that need judgement.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">
+      <a class="btn primary" href="quickstart.html">
         Start the quickstart
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
       </a>
@@ -231,7 +237,7 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
     </div>
     <div class="row rv">
       <h3>Any vendor, swapped at will</h3>
-      <p>Adapters for OpenCode, Claude Code and an offline simulator. <code>flywheel doctor</code> probes every configured model and says which are actually reachable, before you dispatch anything.</p>
+      <p>Adapters for OpenCode, Claude Code (with a <code>permission_mode</code> per worker), codex and an offline simulator. <code>flywheel doctor</code> probes every configured model and says which are actually reachable, before you dispatch anything.</p>
     </div>
   </div>
 </div></section>
@@ -251,7 +257,7 @@ footer{padding-block:40px 56px; font-size:14.5px; color:var(--soft)}
         <tr><td><code>owns:</code> check</td><td>A set comparison of the paths actually changed against the declared list.</td></tr>
         <tr><td>Brief hash</td><td>SHA-256 stamped at dispatch, so a work order edited afterwards is detectable.</td></tr>
         <tr><td>Event log</td><td>Append-only. Derived state is a fold over it and is never hand-edited.</td></tr>
-        <tr><td>Rules T1 to T10</td><td>Pure functions over that log. Same log, same verdict.</td></tr>
+        <tr><td>Rules</td><td><code>flywheel verify</code> checks T1, T3, T4, T5, T8, R1, W1 and P1 as pure functions over that log: same log, same verdict. <code>flywheel land</code> enforces T7 and T9. T2, T6 and parts of T9 and T10 are still design only (<a href="PROTOCOL.html">protocol</a>).</td></tr>
       </tbody>
     </table>
   </div>
@@ -295,24 +301,35 @@ flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></p
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>flywheel init</code></td><td>Scaffold the factory state files into a repo.</td></tr>
+        <tr><td><code>flywheel brief</code></td><td>Write a linted brief from a tracker issue and record it planned.</td></tr>
         <tr><td><code>flywheel lint</code></td><td>Catch a missing owns, a missing gate, or a live-gate that only repeats a mocked one.</td></tr>
         <tr><td><code>flywheel run</code></td><td>Dispatch a worker and record everything it does.</td></tr>
+        <tr><td><code>flywheel wait</code></td><td>Block until the named tasks finish, printing each finish as it lands.</td></tr>
         <tr><td><code>flywheel validate</code></td><td>Re-run a task's gates and check its owns boundary. <code>--live</code> adds the real-path gates.</td></tr>
         <tr><td><code>flywheel inspect</code></td><td>Apply the poka-yoke rules and record a verdict.</td></tr>
+        <tr><td><code>flywheel review</code></td><td>Re-run a task's gates in an isolated worktree, or run the review agent (<code>--agent</code>).</td></tr>
+        <tr><td><code>flywheel ship</code></td><td>Commit a passed unit's leftovers, merge the integration branch into <code>fw/&lt;task&gt;</code> and re-run its gates.</td></tr>
+        <tr><td><code>flywheel land</code></td><td>Record a landing for a passed task.</td></tr>
+        <tr><td><code>flywheel recover</code></td><td>Report where every unit is, whether the world matches the ledger, and the next safe action.</td></tr>
+        <tr><td><code>flywheel supervise</code></td><td>Validate every finished unit that has not been measured yet; <code>--resume-limited</code> re-dispatches rate-limited units.</td></tr>
+        <tr><td><code>flywheel controller</code></td><td>Run the controller loop: lock, reconcile, mark lost and blocked, resume rate-limited units.</td></tr>
+        <tr><td><code>flywheel status</code></td><td>Print the factory's deterministic summary.</td></tr>
         <tr><td><code>flywheel factory</code></td><td>The floor at a glance, with an andon for units that stalled or went quiet.</td></tr>
         <tr><td><code>flywheel doctor</code></td><td>Probe every configured model and classify its availability.</td></tr>
         <tr><td><code>flywheel feedback</code></td><td>Curate signals into learnings, and export them without leaking paths or tokens.</td></tr>
       </tbody>
     </table>
   </div>
+  <p class="sub rv" style="margin-top:28px">Every command, flag and exit code is in the <a href="https://github.com/suzworx/flywheel#readme">README on GitHub</a>.</p>
 </div></section>
 
 <section class="closing"><div class="wrap">
   <p class="lead rv">It builds itself.</p>
   <p class="sub rv">Work orders are written, rented workers build, the CLI measures, and the lead lands only what the gauges will vouch for. Pointing the factory at itself is also how several of its own defects were found, including a worker path where a failed run was being recorded as a clean success.</p>
   <div class="cta rv">
-    <a class="btn primary" href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Start the quickstart</a>
-    <a class="btn" href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Read the concepts</a>
+    <a class="btn primary" href="quickstart.html">Start the quickstart</a>
+    <a class="btn" href="concepts.html">Read the concepts</a>
+    <a class="btn" href="PROTOCOL.html">Read the protocol</a>
   </div>
 </div></section>
 
@@ -321,8 +338,9 @@ flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></p
 <footer><div class="wrap foot">
   <span>Built by flywheel, by Sujeet.</span>
   <span class="foot-links">
-    <a href="https://github.com/suzworx/flywheel/blob/main/docs/quickstart.md">Quickstart</a>
-    <a href="https://github.com/suzworx/flywheel/blob/main/docs/concepts.md">Concepts</a>
+    <a href="quickstart.html">Quickstart</a>
+    <a href="concepts.html">Concepts</a>
+    <a href="PROTOCOL.html">Protocol</a>
     <a href="https://github.com/suzworx/flywheel/releases">Releases</a>
     <a href="https://github.com/suzworx/flywheel">GitHub</a>
   </span>
