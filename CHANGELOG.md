@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0](https://github.com/suzworx/flywheel/compare/v0.25.3...v0.26.0) (2026-09-26)
+
+
+### Features
+
+* needs-state (install) runs the package manager's offline install in a unit's worktree ([#508](https://github.com/suzworx/flywheel/issues/508)) ([e6d2cea](https://github.com/suzworx/flywheel/commit/e6d2cea527d04e2492423f5a9f8fbbae203a3366)), closes [#460](https://github.com/suzworx/flywheel/issues/460)
+
+
+### Bug Fixes
+
+* needs-state (copy) and worktree.carry copy git-ignored files into a unit's worktree at dispatch ([#503](https://github.com/suzworx/flywheel/issues/503)) ([27c64a4](https://github.com/suzworx/flywheel/commit/27c64a4792a3f1f769fdd6d6af57b683137f620f)), closes [#471](https://github.com/suzworx/flywheel/issues/471)
+* open review findings outside a unit's owns show as needs-owner on the floor and in recover ([#504](https://github.com/suzworx/flywheel/issues/504)) ([5ff293f](https://github.com/suzworx/flywheel/commit/5ff293f75eb0f3d3b6c71baa45fa5795bb55bbc6)), closes [#458](https://github.com/suzworx/flywheel/issues/458)
+* the review agent judges against the brief plus every correction delta since the latest fresh attempt ([#505](https://github.com/suzworx/flywheel/issues/505)) ([4184c50](https://github.com/suzworx/flywheel/commit/4184c50aaae27d8b57606e8aaf74ed01b337dd03)), closes [#458](https://github.com/suzworx/flywheel/issues/458)
+
 ## [0.25.3](https://github.com/suzworx/flywheel/compare/v0.25.2...v0.25.3) (2026-09-26)
 
 
