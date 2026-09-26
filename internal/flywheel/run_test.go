@@ -371,6 +371,30 @@ func TestDispatchedRecordsLead(t *testing.T) {
 	}
 }
 
+// TestDispatchedRecordsVariant checks a dispatched event records the worker's
+// reasoning variant, and none for a worker without one (issue #473).
+func TestDispatchedRecordsVariant(t *testing.T) {
+	t.Parallel()
+	for _, variant := range []string{"high", ""} {
+		dir := setupTask(t)
+		cfg := simConfig(fixturePath("clean.jsonl", t))
+		cfg.Workers[0].Variant = variant
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+			t.Fatalf("Run(variant %q) error = %v", variant, err)
+		}
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		if d, ok := LastDispatched(evs, "T1"); !ok || d.Variant != variant {
+			t.Errorf("dispatched event = %+v, want variant %q", d, variant)
+		}
+	}
+}
+
 // TestBuilderWorker checks the worker of the last dispatched attempt resolves
 // by its recorded name, else by adapter and model, else not at all (#469).
 func TestBuilderWorker(t *testing.T) {

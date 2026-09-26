@@ -170,3 +170,36 @@ func TestCostUnreadableLog(t *testing.T) {
 		t.Error("Cost() on an unreadable log succeeded, want error")
 	}
 }
+
+// TestCostPerAttemptModel checks a finished event is charged to its own
+// attempt's dispatched model even when a later attempt's dispatched line
+// precedes it in the log, and the fallbacks: no attempt uses the task's latest
+// preceding model, no dispatched event is unknown (issue #473).
+func TestCostPerAttemptModel(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-14T10:00:00Z", Task: "T", Kind: "dispatched", Attempt: "r1", Model: "A"},
+		{TS: "2026-09-14T10:02:00Z", Task: "T", Kind: "dispatched", Attempt: "r2", Model: "B"},
+		{TS: "2026-09-14T10:01:00Z", Task: "T", Kind: "finished", Attempt: "r1", Reason: "stop", Cost: 0.5},
+		{TS: "2026-09-14T10:03:00Z", Task: "T", Kind: "finished", Attempt: "r2", Reason: "stop", Cost: 0.25},
+		{TS: "2026-09-14T10:00:00Z", Task: "U", Kind: "dispatched", Attempt: "r1", Model: "C"},
+		{TS: "2026-09-14T10:01:00Z", Task: "U", Kind: "finished", Reason: "stop", Cost: 0.125},
+		{TS: "2026-09-14T10:01:00Z", Task: "V", Kind: "finished", Attempt: "r1", Reason: "stop", Cost: 1},
+	}
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	rep, err := Cost(dir)
+	if err != nil {
+		t.Fatalf("Cost() error = %v", err)
+	}
+	for id, want := range map[string]float64{"A": 0.5, "B": 0.25, "C": 0.125, "unknown": 1} {
+		if got := costRow(t, rep.Models, id).Cost; got != want {
+			t.Errorf("model %s cost = %v, want %v", id, got, want)
+		}
+	}
+	if len(rep.Models) != 4 {
+		t.Errorf("models = %#v, want exactly A, B, C and unknown", rep.Models)
+	}
+}

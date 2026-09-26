@@ -688,7 +688,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
-		Adapter: worker.Adapter, Worker: worker.Name, Model: model, Path: runRel, SHA256: promptSHA,
+		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
 		Line: usedLine, Lead: o.Lead,
