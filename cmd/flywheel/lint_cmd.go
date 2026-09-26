@@ -10,13 +10,14 @@ import (
 )
 
 func init() {
-	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    exit 1 on any problem; warnings alone exit 0", runLint)
-	registerHelp("lint", "flywheel lint <brief> [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
+	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem)\n    exit 1 on any problem; warnings alone exit 0", runLint)
+	registerHelp("lint", "flywheel lint <brief> [--probe] [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
 }
 
 // lintOptions holds the parsed lint flags.
 type lintOptions struct {
-	dir string
+	dir   string
+	probe bool
 }
 
 // lintFlags defines lint's flags once, so help and run share them.
@@ -25,12 +26,13 @@ func lintFlags() (*flag.FlagSet, *lintOptions) {
 	fs.SetOutput(io.Discard)
 	o := &lintOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
+	fs.BoolVar(&o.probe, "probe", false, "run each gate: once in the target directory after a clean lint")
 	return fs, o
 }
 
 // lintUsage prints the flywheel lint usage line.
 func lintUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel lint <brief> [--dir DIR]")
+	fmt.Fprintln(w, "usage: flywheel lint <brief> [--probe] [--dir DIR]")
 }
 
 // runLint implements `flywheel lint <brief>`: read one brief and print every
@@ -57,11 +59,42 @@ func runLint(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
 		os.Exit(1)
 	}
+	if o.probe && len(res.Problems) == 0 {
+		header, err := flywheel.ParseBriefHeader(brief)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
+			os.Exit(1)
+		}
+		probeLint(os.Stderr, brief, flywheel.ProbeGates(o.dir, header.Gates), &res)
+	}
 	writeLint(os.Stderr, brief, res)
 	if len(res.Problems) > 0 {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+// probeLint prints one line per gate probe for brief and adds a warning for
+// each gate that fails on the base tree and a problem for each gate that
+// cannot start (issue #544).
+func probeLint(w io.Writer, brief string, probes []flywheel.GateProbe, res *flywheel.LintResult) {
+	for _, p := range probes {
+		switch {
+		case p.CannotStart:
+			detail := p.FirstLine
+			if p.Err != nil {
+				detail = p.Err.Error()
+			}
+			fmt.Fprintf(w, "lint: %s: gate %d: error: %s\n", brief, p.N, detail)
+			res.Problems = append(res.Problems, fmt.Sprintf("gate %d cannot start (exit %d): %s", p.N, p.RC, detail))
+		case p.RC != 0:
+			fmt.Fprintf(w, "lint: %s: gate %d: fail (exit %d): %s\n", brief, p.N, p.RC, p.FirstLine)
+			res.Warnings = append(res.Warnings, fmt.Sprintf("gate %d fails on the base tree (exit %d): %s; "+
+				"a test-first gate is expected to fail, a wrong runner or path is not", p.N, p.RC, p.FirstLine))
+		default:
+			fmt.Fprintf(w, "lint: %s: gate %d: pass (%dms)\n", brief, p.N, p.DurMS)
+		}
+	}
 }
 
 // writeLint prints res for brief: each problem labelled `problem:`, then each
