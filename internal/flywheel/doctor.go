@@ -107,41 +107,114 @@ func shellWarning(h shellHost) string {
 	return fmt.Sprintf("bash on PATH is the WSL launcher (%s); gates and worktree.setup use %s", wsl, chosen)
 }
 
-// DoctorLedgerWarning is the local tracked-ledger check (issue #464): when
-// git tracks dir's ledger (.flywheel/events.jsonl or anything under the
-// shard directory .flywheel/events), one line naming at most three of the
-// paths and the fix; "" otherwise, and "" when dir is not a repository or git
-// fails. Read-only: ls-files never writes the index.
+// DoctorLedgerWarning is the committed-ledger check (issue #464; owner
+// decision 2026-09-26: the ledger is committed, so init --ci's audit can
+// verify every pull request). For dir's ledger (.flywheel/events.jsonl and the
+// shard files under .flywheel/events) it returns one line naming at most three
+// of the paths and the fix when a ledger file is untracked (or git-ignored),
+// or when a tracked one lacks merge=union in .gitattributes (#436); "" when
+// every ledger file is tracked with merge=union, when there is no ledger yet,
+// when dir is not a repository, or when git fails. Read-only: ls-files,
+// check-ignore and check-attr never write the index.
 func DoctorLedgerWarning(dir string) string {
 	root, _, err := LedgerRoot(dir)
 	if err != nil {
 		return ""
 	}
+	const legacy = ".flywheel/events.jsonl"
 	shardDir := ".flywheel/" + shardDirName
-	paths, err := gitList(root, "\x00", "ls-files", "-z", "--", ".flywheel/events.jsonl", shardDir)
-	if err != nil || len(paths) == 0 {
+	var present []string
+	if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(legacy))); err == nil && fi.Mode().IsRegular() {
+		present = append(present, legacy)
+	}
+	if ents, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(shardDir))); err == nil {
+		for _, e := range ents {
+			if e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".jsonl") {
+				present = append(present, shardDir+"/"+e.Name())
+			}
+		}
+	}
+	if len(present) == 0 {
 		return ""
 	}
-	named := strings.Join(paths, ", ")
-	if len(paths) > 3 {
-		named = fmt.Sprintf("%s and %d more", strings.Join(paths[:3], ", "), len(paths)-3)
+	tracked, err := gitList(root, "\x00", append([]string{"ls-files", "-z", "--"}, present...)...)
+	if err != nil {
+		return ""
 	}
-	// The untrack command names the shard directory once (rm -r takes it),
-	// not every shard file.
-	var rm []string
-	seen := map[string]bool{}
-	for _, p := range paths {
+	isTracked := map[string]bool{}
+	for _, p := range tracked {
+		isTracked[p] = true
+	}
+	var untracked []string
+	for _, p := range present {
+		if !isTracked[p] {
+			untracked = append(untracked, p)
+		}
+	}
+	// git add names the shard directory once, not every shard file.
+	addPaths := func(paths []string) string {
+		var out []string
+		seen := map[string]bool{}
+		for _, p := range paths {
+			if strings.HasPrefix(p, shardDir+"/") {
+				p = shardDir
+			}
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if len(untracked) > 0 {
+		out, absent, err := gitQuery(root, append([]string{"check-ignore", "-v", "--"}, untracked...)...)
+		if err != nil {
+			return ""
+		}
+		if !absent && out != "" {
+			// -v prints "<source>:<line>:<pattern>\t<path>"; name the first rule.
+			rule, _, _ := strings.Cut(strings.SplitN(out, "\n", 2)[0], "\t")
+			return fmt.Sprintf("the ledger is git-ignored (%s, by %s): flywheel's audit verifies pull requests against the committed ledger; "+
+				"remove that ignore rule, then commit it (git add %s)", namePaths(untracked), rule, addPaths(untracked))
+		}
+		return fmt.Sprintf("the ledger is not tracked by git (%s): flywheel's audit verifies pull requests against the committed ledger; "+
+			"commit it (git add %s)", namePaths(untracked), addPaths(untracked))
+	}
+	out, _, err := gitQuery(root, append([]string{"check-attr", "-z", "merge", "--"}, tracked...)...)
+	if err != nil {
+		return ""
+	}
+	// -z prints "<path>\0merge\0<value>\0" per path.
+	var noUnion []string
+	fields := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(fields); i += 3 {
+		if fields[i+2] != "union" {
+			noUnion = append(noUnion, fields[i])
+		}
+	}
+	if len(noUnion) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, p := range noUnion {
+		l := "\"" + legacy + " merge=union\""
 		if strings.HasPrefix(p, shardDir+"/") {
-			p = shardDir
+			l = "\"" + shardDir + "/*.jsonl merge=union\""
 		}
-		if !seen[p] {
-			seen[p] = true
-			rm = append(rm, p)
+		if !strings.Contains(strings.Join(lines, " "), l) {
+			lines = append(lines, l)
 		}
 	}
-	return fmt.Sprintf("the ledger is tracked by git (%s): branch switches and merges rewrite it; "+
-		"untrack it (git rm --cached -r %s) and add .flywheel/ to .gitignore, "+
-		"or add \".flywheel/events.jsonl merge=union\" to .gitattributes (#436)", named, strings.Join(rm, " "))
+	return fmt.Sprintf("the ledger is tracked without merge=union (%s): parallel branches' appends conflict on merge; "+
+		"add %s to .gitattributes (#436)", namePaths(noUnion), strings.Join(lines, " and "))
+}
+
+// namePaths joins at most three paths, counting the rest.
+func namePaths(paths []string) string {
+	if len(paths) > 3 {
+		return fmt.Sprintf("%s and %d more", strings.Join(paths[:3], ", "), len(paths)-3)
+	}
+	return strings.Join(paths, ", ")
 }
 
 // DoctorIntegrationBranch is the integration-branch check (issue #456): line

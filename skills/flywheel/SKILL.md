@@ -35,7 +35,9 @@ back to the documented raw commands where it doesn't yet.
 
 - `flywheel init --dir <target>` — scaffold `flywheel.md`, `.flywheel/state.json`,
   `.flywheel/events.jsonl`, `.flywheel/config.json`, `.flywheel/.gitignore` and
-  `.flywheel/briefs/`; warns when the repo's `.gitignore` hides the state files. By default (or
+  `.flywheel/briefs/`; warns when the repo's `.gitignore` hides the state files. The ledger is
+  committed, with `.flywheel/events.jsonl merge=union` in `.gitattributes` (init writes it into
+  `.flywheel/.gitattributes`); `flywheel doctor` warns when it is untracked or lacks it. By default (or
   with `--track`), `flywheel.md` is committed as the shared status page; `flywheel init --ignore`
   appends `flywheel.md` to the target's root `.gitignore` so every worktree stays clean (a
   local-only setup can add it to `.git/info/exclude` instead) — the owns check never treats
