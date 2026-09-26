@@ -469,3 +469,132 @@ func TestPanelReviewerSource(t *testing.T) {
 		}
 	}
 }
+
+// intentPaths lists parts as "<attempt> <path>", the base brief as "<path>".
+func intentPaths(parts []intentPart) []string {
+	var out []string
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p.attempt+" "+p.path))
+	}
+	return out
+}
+
+// TestReviewIntentEveryDelta checks the reviewer gets the base brief and every
+// correction delta in order, once per path, not only the latest (issue #458).
+func TestReviewIntentEveryDelta(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, n := range []string{"brief.txt", "d1.txt", "d2.txt", "old.txt"} {
+		writeAttemptBrief(t, dir, n, "text of "+n)
+	}
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "d1.txt"},
+		{Task: "T2", Kind: "dispatched", Attempt: "c1", Brief: "old.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c3", Brief: "brief.txt"},
+	}
+	parts := reviewIntent(dir, events, "T1", "brief.txt")
+	if got, want := intentPaths(parts), []string{"brief.txt", "c1 d1.txt", "c2 d2.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("parts = %q, want %q", got, want)
+	}
+	for _, p := range parts {
+		if p.err != nil || p.text != "text of "+p.path {
+			t.Errorf("part %s = %q, %v; want its whole text", p.path, p.text, p.err)
+		}
+	}
+
+	amended := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "old.txt"},
+		{Task: "T1", Kind: "amended", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"},
+	}
+	if got, want := intentPaths(reviewIntent(dir, amended, "T1", "brief.txt")), []string{"brief.txt", "c2 d2.txt"}; !slices.Equal(got, want) {
+		t.Errorf("after amended: parts = %q, want %q (a delta before the amendment is excluded)", got, want)
+	}
+}
+
+// TestReviewIntentFreshAttemptResets checks a fresh attempt starts from the
+// base brief alone: corrections sent to earlier attempts are not its intent,
+// only those dispatched after it are.
+func TestReviewIntentFreshAttemptResets(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, n := range []string{"brief.txt", "d1.txt", "d2.txt"} {
+		writeAttemptBrief(t, dir, n, "text of "+n)
+	}
+	fresh := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "d1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r2", Brief: "brief.txt"},
+	}
+	if got, want := intentPaths(reviewIntent(dir, fresh, "T1", "brief.txt")), []string{"brief.txt"}; !slices.Equal(got, want) {
+		t.Errorf("after r2: parts = %q, want %q (c1 was never sent to r2)", got, want)
+	}
+	corrected := append(fresh, Event{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"})
+	if got, want := intentPaths(reviewIntent(dir, corrected, "T1", "brief.txt")), []string{"brief.txt", "c2 d2.txt"}; !slices.Equal(got, want) {
+		t.Errorf("after r2, c2: parts = %q, want %q", got, want)
+	}
+}
+
+// TestReviewIntentClipsOldestFirst checks the deltas' budget: over it, the
+// oldest delta becomes a line naming its path, the latest stays whole, and
+// the base brief is never clipped.
+func TestReviewIntentClipsOldestFirst(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	big := func(c string) string { return strings.Repeat(c, 20*1024) }
+	writeAttemptBrief(t, dir, "brief.txt", strings.Repeat("b", 2*maxReviewIntent))
+	writeAttemptBrief(t, dir, "d1.txt", big("1"))
+	writeAttemptBrief(t, dir, "d2.txt", big("2"))
+	writeAttemptBrief(t, dir, "d3.txt", big("3"))
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "d1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c3", Brief: "d3.txt"},
+	}
+	parts := reviewIntent(dir, events, "T1", "brief.txt")
+	if len(parts) != 4 {
+		t.Fatalf("parts = %q, want 4", intentPaths(parts))
+	}
+	if len(parts[0].text) != 2*maxReviewIntent {
+		t.Errorf("base brief = %d bytes, want it whole (%d)", len(parts[0].text), 2*maxReviewIntent)
+	}
+	if want := "[correction c1 clipped (20 KB); read it at d1.txt]"; parts[1].text != want {
+		t.Errorf("oldest delta = %.80q, want %q", parts[1].text, want)
+	}
+	if parts[2].text != big("2") || parts[3].text != big("3") {
+		t.Errorf("c2/c3 = %d/%d bytes, want both whole", len(parts[2].text), len(parts[3].text))
+	}
+}
+
+// TestBuildReviewPromptIntent checks the prompt carries the brief, then each
+// correction under its own heading, in order, with each file's text.
+func TestBuildReviewPromptIntent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, n := range []string{"brief.txt", "d1.txt", "d2.txt"} {
+		writeAttemptBrief(t, dir, n, "text of "+n)
+	}
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "d1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "d2.txt"},
+	}
+	prompt := buildReviewPrompt("BASE\n", reviewIntent(dir, events, "T1", "brief.txt"), "", "")
+	at := 0
+	for _, want := range []string{"# The brief (brief.txt)", "text of brief.txt", "# Correction c1 (d1.txt)", "text of d1.txt",
+		"# Correction c2 (d2.txt)", "text of d2.txt"} {
+		i := strings.Index(prompt[at:], want)
+		if i < 0 {
+			t.Fatalf("prompt lacks %q after offset %d:\n%s", want, at, prompt)
+		}
+		at += i + len(want)
+	}
+}

@@ -375,22 +375,98 @@ func reviewReadings(events []Event, task string) string {
 	return b.String()
 }
 
-// buildReviewPrompt joins the reviewer's instructions (base: review_prompt.md,
-// plus a persona for a panel member), the unit's brief files (relative paths
-// resolve against dir), the gate readings and the diff.
-func buildReviewPrompt(base, dir string, briefs []string, readings, diff string) string {
-	var b strings.Builder
-	b.WriteString(base)
-	for _, p := range briefs {
-		path := p
+// maxReviewIntent caps the correction deltas' text the reviewer is given
+// together; the base brief is never clipped (issue #458).
+const maxReviewIntent = 48 * 1024
+
+// intentPart is one file of a unit's intent: the base brief (attempt "") or a
+// correction delta, its text, or the error reading it.
+type intentPart struct {
+	attempt, path, text string
+	err                 error
+}
+
+// heading is the part's prompt heading.
+func (p intentPart) heading() string {
+	if p.attempt == "" {
+		return fmt.Sprintf("The brief (%s)", filepath.ToSlash(p.path))
+	}
+	return fmt.Sprintf("Correction %s (%s)", p.attempt, filepath.ToSlash(p.path))
+}
+
+// reviewIntent is the unit's whole intent for a reviewer (issue #458): the
+// base brief at basePath (its current text), then the brief of every
+// dispatched event of a c-attempt recorded after the later of the latest
+// planned/amended event and the latest dispatch of a fresh (r) attempt — a
+// fresh attempt starts from the base brief alone, so corrections sent to
+// earlier attempts are not its intent — in ledger order, whose path differs
+// from basePath, once per path at its first dispatch. The deltas share
+// maxReviewIntent: the latest is always
+// whole (clipped at the budget itself if larger); earlier ones are replaced
+// oldest first by a line naming their path until the total fits. Relative
+// paths resolve against dir.
+func reviewIntent(dir string, events []Event, task, basePath string) []intentPart {
+	read := func(p intentPart) intentPart {
+		path := p.path
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(dir, path)
 		}
-		fmt.Fprintf(&b, "\n# The brief (%s)\n\n", filepath.ToSlash(p))
-		if data, err := os.ReadFile(path); err != nil {
-			fmt.Fprintf(&b, "(unreadable: %v)\n", err)
+		data, err := os.ReadFile(path)
+		p.text, p.err = string(data), err
+		return p
+	}
+	start := 0
+	for i, e := range events {
+		if e.Task == task && ((e.Kind == "planned" || e.Kind == "amended") && e.Brief != "" ||
+			e.Kind == "dispatched" && strings.HasPrefix(e.Attempt, "r")) {
+			start = i + 1
+		}
+	}
+	parts := []intentPart{read(intentPart{path: basePath})}
+	seen := map[string]bool{basePath: true}
+	for _, e := range events[start:] {
+		if e.Task != task || e.Kind != "dispatched" || !strings.HasPrefix(e.Attempt, "c") || e.Brief == "" || seen[e.Brief] {
+			continue
+		}
+		seen[e.Brief] = true
+		parts = append(parts, read(intentPart{attempt: e.Attempt, path: e.Brief}))
+	}
+	if len(parts) == 1 {
+		return parts
+	}
+	last := &parts[len(parts)-1]
+	if n := len(last.text); n > maxReviewIntent {
+		last.text = strings.ToValidUTF8(last.text[:maxReviewIntent], "") + fmt.Sprintf("\n[correction %s clipped at %d KB of %d KB; read the rest at %s]\n",
+			last.attempt, maxReviewIntent/1024, n/1024, filepath.ToSlash(last.path))
+	}
+	total := 0
+	for _, p := range parts[1:] {
+		total += len(p.text)
+	}
+	for i := 1; i < len(parts)-1 && total > maxReviewIntent; i++ {
+		p := &parts[i]
+		if p.err != nil {
+			continue
+		}
+		line := fmt.Sprintf("[correction %s clipped (%d KB); read it at %s]", p.attempt, len(p.text)/1024, filepath.ToSlash(p.path))
+		total += len(line) - len(p.text)
+		p.text = line
+	}
+	return parts
+}
+
+// buildReviewPrompt joins the reviewer's instructions (base: review_prompt.md,
+// plus a persona for a panel member), the unit's intent (reviewIntent: the
+// brief, then each correction), the gate readings and the diff.
+func buildReviewPrompt(base string, intent []intentPart, readings, diff string) string {
+	var b strings.Builder
+	b.WriteString(base)
+	for _, p := range intent {
+		fmt.Fprintf(&b, "\n# %s\n\n", p.heading())
+		if p.err != nil {
+			fmt.Fprintf(&b, "(unreadable: %v)\n", p.err)
 		} else {
-			b.Write(data)
+			b.WriteString(p.text)
 			b.WriteString("\n")
 		}
 	}
@@ -615,7 +691,9 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	}
 	stem := filepath.Join(reviews, name)
 	res.Prompt, res.Transcript = stem+".prompt.md", stem+".jsonl"
-	prompt := buildReviewPrompt(base, dir, briefs, reviewReadings(events, task), diff)
+	// briefs[0] is the base brief; the reviewer gets every correction delta
+	// after it, not only the latest attempt's (issue #458).
+	prompt := buildReviewPrompt(base, reviewIntent(dir, events, task, briefs[0]), reviewReadings(events, task), diff)
 	if err := os.WriteFile(res.Prompt, []byte(prompt), 0o644); err != nil {
 		return ReviewAgentResult{}, fmt.Errorf("write %s: %w", res.Prompt, err)
 	}

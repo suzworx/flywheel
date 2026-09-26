@@ -294,7 +294,10 @@ all.
   unit's own gate commands as `Bash(<program> <first argument>:*)` patterns (a bare program such as
   `node` never), and any `review.allowed_tools` patterns (issue #469); `Edit`, `Write` and
   `NotebookEdit` refused),
-  on a prompt holding its instructions, the unit's effective brief, the attempt's gate readings and
+  on a prompt holding its instructions, the unit's brief followed by every correction delta
+  dispatched since the unit's latest fresh attempt (or its latest planned/amended brief, when
+  later), in order (issue #458; the deltas share 48 KB, the latest always whole and
+  earlier ones replaced oldest first by a line naming their path), the attempt's gate readings and
   the diff from the dispatch base (capped at 200 KB), kept at `.flywheel/reviews/<task>.<round>.prompt.md`
   beside its stream `.flywheel/reviews/<task>.<round>.jsonl`. The findings contract is checked,
   not trusted: an answer whose file does not exist (and is not a changed path), whose `line` is not
