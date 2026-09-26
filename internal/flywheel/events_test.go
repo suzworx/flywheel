@@ -1386,3 +1386,22 @@ func TestAcknowledgeRequiresNote(t *testing.T) {
 		t.Errorf("Validate(acknowledgement of c2 with a note) = %v, want nil", err)
 	}
 }
+
+// TestHealthEventValidate: a health event needs a snapshot and no task, and
+// no other kind may carry a snapshot (issue #528).
+func TestHealthEventValidate(t *testing.T) {
+	t.Parallel()
+	snap := &HealthSnapshot{Running: 1}
+	if err := Validate(Event{Kind: "health", Health: snap}); err != nil {
+		t.Errorf("Validate(health with a snapshot) = %v, want nil", err)
+	}
+	for name, e := range map[string]Event{
+		"no snapshot":        {Kind: "health"},
+		"a task":             {Kind: "health", Task: "T1", Health: snap},
+		"snapshot elsewhere": {Kind: "note", Note: "n", Health: snap},
+	} {
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate(%+v) = nil, want an error", name, e)
+		}
+	}
+}

@@ -15,7 +15,7 @@ import (
 
 func init() {
 	register("controller", "run the controller loop: lock, reconcile, mark lost and blocked, resume rate-limited units", runController)
-	registerHelp("controller", "flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]", func() *flag.FlagSet { fs, _ := controllerFlags(); return fs })
+	registerHelp("controller", "flywheel controller [--once] [--interval D] [--health-every D] [--dir DIR] [--now RFC3339]", func() *flag.FlagSet { fs, _ := controllerFlags(); return fs })
 }
 
 // controllerOptions holds the parsed controller flags.
@@ -24,6 +24,8 @@ type controllerOptions struct {
 	once     bool
 	interval time.Duration
 	now      string
+	// healthEvery is how often a tick records a health event; 0 disables.
+	healthEvery time.Duration
 }
 
 // controllerFlags defines controller's flags once, so help and run share
@@ -37,12 +39,13 @@ func controllerFlags() (*flag.FlagSet, *controllerOptions) {
 	fs.BoolVar(&o.once, "once", false, "run one tick and release the lock")
 	fs.DurationVar(&o.interval, "interval", 0, "tick interval in live mode; default from config")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to tick at; makes a run reproducible")
+	fs.DurationVar(&o.healthEvery, "health-every", 5*time.Minute, "record a health event at most this often; 0 disables")
 	return fs, o
 }
 
 // controllerUsage prints the flywheel controller usage line.
 func controllerUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel controller [--once] [--interval D] [--dir DIR] [--now RFC3339]")
+	fmt.Fprintln(w, "usage: flywheel controller [--once] [--interval D] [--health-every D] [--dir DIR] [--now RFC3339]")
 }
 
 // runController implements `flywheel controller`: it acquires the controller
@@ -82,6 +85,11 @@ func runController(args []string) {
 		controllerUsage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.healthEvery < 0 {
+		fmt.Fprintf(os.Stderr, "flywheel controller: --health-every must be 0 or positive, got %v\n", o.healthEvery)
+		controllerUsage(os.Stderr)
+		os.Exit(2)
+	}
 	lock, lerr := flywheel.AcquireLock(o.dir, clock(), ttl)
 	if lerr != nil {
 		fmt.Fprintf(os.Stderr, "flywheel controller: %v\n", lerr)
@@ -91,7 +99,7 @@ func runController(args []string) {
 		os.Exit(1)
 	}
 	if o.once {
-		res, terr := flywheel.TickWith(o.dir, clock(), controllerTickOptions(o.dir, false))
+		res, terr := flywheel.TickWith(o.dir, clock(), controllerTickOptions(o.dir, false, o.healthEvery))
 		relErr := flywheel.ReleaseLock(o.dir, lock)
 		if terr != nil {
 			fmt.Fprintf(os.Stderr, "flywheel controller: %v\n", terr)
@@ -107,7 +115,7 @@ func runController(args []string) {
 		printTick(res)
 		return
 	}
-	code := controllerLoop(o.dir, clock, interval)
+	code := controllerLoop(o.dir, clock, interval, o.healthEvery)
 	if relErr := flywheel.ReleaseLock(o.dir, lock); relErr != nil {
 		fmt.Fprintf(os.Stderr, "flywheel controller: %v\n", relErr)
 	}
@@ -115,14 +123,14 @@ func runController(args []string) {
 }
 
 // controllerLoop ticks every interval until Ctrl-C; each tick renews the
-// lock. It returns the exit code: 0 on Ctrl-C, 6 on a rule refusal, 1 on
-// error.
-func controllerLoop(dir string, clock func() time.Time, interval time.Duration) int {
+// lock and records a health event at most every healthEvery. It returns the
+// exit code: 0 on Ctrl-C, 6 on a rule refusal, 1 on error.
+func controllerLoop(dir string, clock func() time.Time, interval, healthEvery time.Duration) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	opts := controllerTickOptions(dir, true)
+	opts := controllerTickOptions(dir, true, healthEvery)
 	for {
 		res, terr := flywheel.TickWith(dir, clock(), opts)
 		if terr != nil {
@@ -145,13 +153,15 @@ func controllerLoop(dir string, clock func() time.Time, interval time.Duration) 
 // resumes rate-limited units through the same starter supervise
 // --resume-limited uses, recording session $FLYWHEEL_SESSION, else
 // controller. With reap (live mode) each child is waited for; with --once it
-// outlives the tick.
-func controllerTickOptions(dir string, reap bool) flywheel.TickOptions {
+// outlives the tick. healthEvery (--health-every) paces the health events,
+// which record this binary's version.
+func controllerTickOptions(dir string, reap bool, healthEvery time.Duration) flywheel.TickOptions {
 	session := os.Getenv("FLYWHEEL_SESSION")
 	if session == "" {
 		session = "controller"
 	}
-	return flywheel.TickOptions{Start: superviseStarter(dir, session, reap), Session: session}
+	return flywheel.TickOptions{Start: superviseStarter(dir, session, reap), Session: session,
+		HealthEvery: healthEvery, Version: version}
 }
 
 // printTick writes the one-line tick summary, then one line per unit the
@@ -165,6 +175,9 @@ func printTick(res flywheel.TickResult) {
 		} else {
 			fmt.Printf("not resumed %s: %s\n", r.Task, r.Reason)
 		}
+	}
+	if res.Health {
+		fmt.Println("health recorded")
 	}
 	if res.ResumeSkipped != "" {
 		fmt.Fprintf(os.Stderr, "flywheel controller: auto-resume skipped this tick: %s\n", res.ResumeSkipped)

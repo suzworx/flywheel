@@ -201,6 +201,9 @@ type Event struct {
 	// inconclusive) and Note (the one-line summary).
 	Version string   `json:"version,omitempty"`
 	Checks  []string `json:"checks,omitempty"`
+	// Health is a health event's snapshot of the factory (issue #528); only the
+	// health kind may carry it.
+	Health *HealthSnapshot `json:"health,omitempty"`
 	// Route is a dispatched event's routing choice (issue #474); omitted when
 	// the worker has no routing block, when --model was given, and on older events.
 	Route *RouteChoice `json:"route,omitempty"`
@@ -270,6 +273,31 @@ var kinds = map[string]bool{
 	// release_audited closes one `flywheel audit --release` (issue #420):
 	// Version, Checks, Session, Verdict and Note.
 	"release_audited": true,
+	// health is the controller's periodic record of the factory (issue
+	// #528): no task, Health the snapshot (counts, paused models, the
+	// oldest in-flight unit, the controller generation and flywheel version).
+	"health": true,
+}
+
+// HealthSnapshot is a health event's record of the factory at its ts (issue
+// #528): the unit counts, the models a rate limit pauses, the oldest in-flight
+// unit, the controller lock generation and the flywheel version.
+type HealthSnapshot struct {
+	Running              int           `json:"running"`
+	Stalled              int           `json:"stalled"`
+	RateLimited          int           `json:"rate_limited"`
+	Finished             int           `json:"finished"`
+	Andon                int           `json:"andon"`
+	PausedModels         []PausedModel `json:"paused_models,omitempty"`
+	OldestInFlight       string        `json:"oldest_in_flight,omitempty"` // "T3 42m"; "" when none
+	ControllerGeneration int           `json:"controller_generation"`
+	Version              string        `json:"version,omitempty"`
+}
+
+// PausedModel is one model a rate limit pauses and its reset, RFC 3339.
+type PausedModel struct {
+	Model   string `json:"model"`
+	ResetAt string `json:"reset_at"`
 }
 
 // learningScopeOK reports whether s is a learning scope (issue #409): empty
@@ -360,7 +388,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited", "health":
 		return true
 	default:
 		return false
@@ -421,7 +449,13 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health", e.Kind)
+	}
+	if e.Kind == "health" && (e.Health == nil || e.Task != "") {
+		return fmt.Errorf("health event must carry a health snapshot and no task")
+	}
+	if e.Health != nil && e.Kind != "health" {
+		return fmt.Errorf("event kind %q cannot carry a health snapshot", e.Kind)
 	}
 	if e.Kind == "release_audited" {
 		if e.Task != "" || e.Session == "" || e.Version == "" || len(e.Checks) == 0 {

@@ -492,3 +492,98 @@ func TestControllerNotifyFailureWarns(t *testing.T) {
 		t.Errorf("notify ran %d, Warnings = %q; want one warning naming T", ran, res.Warnings)
 	}
 }
+
+// healthFixture is a factory with one running unit R (dispatched 42 minutes
+// before recoverNow, a live lease) and one unit L rate-limited on model n
+// until an hour after recoverNow.
+func healthFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	at := func(d time.Duration) string { return recoverNow.Add(d).Format(time.RFC3339) }
+	recoverLedger(t, dir,
+		Event{TS: at(-60 * time.Minute), Task: "L", Kind: "planned", Brief: "brief.txt"},
+		Event{TS: at(-59 * time.Minute), Task: "L", Kind: "dispatched", Attempt: "r1", Model: "n"},
+		Event{TS: at(-50 * time.Minute), Task: "L", Kind: "finished", Attempt: "r1", Model: "n", Reason: "rate-limited", ResetAt: at(time.Hour)},
+		Event{TS: at(-45 * time.Minute), Task: "R", Kind: "planned", Brief: "brief.txt"},
+		Event{TS: at(-42 * time.Minute), Task: "R", Kind: "dispatched", Attempt: "r1", Model: "m"},
+		Event{TS: at(-41 * time.Minute), Task: "R", Kind: "started"})
+	if err := WriteLease(dir, Lease{Task: "R", Attempt: "r1", PID: 1, Host: "h",
+		StartedAt: at(-42 * time.Minute), RenewedAt: at(-time.Minute), ExpiresAt: at(2 * time.Hour),
+		RunFile: ".flywheel/runs/R.r1.jsonl"}); err != nil {
+		t.Fatalf("write lease: %v", err)
+	}
+	return dir
+}
+
+// healthEvents returns the ledger's health events.
+func healthEvents(t *testing.T, dir string) []Event {
+	t.Helper()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents: %v", err)
+	}
+	var out []Event
+	for _, e := range events {
+		if e.Kind == "health" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestHealthEventRecordedOnInterval: a tick with HealthEvery 5m appends one
+// health event with the fixture's counts; a tick a minute later appends none,
+// one six minutes later appends another; the events round-trip and leave the
+// log chain and verify --all as they were.
+func TestHealthEventRecordedOnInterval(t *testing.T) {
+	t.Parallel()
+	dir := healthFixture(t)
+	before, err := VerifyTasks(dir, VerifyOptions{Dir: dir, All: true})
+	if err != nil {
+		t.Fatalf("VerifyTasks before: %v", err)
+	}
+	o := TickOptions{HealthEvery: 5 * time.Minute, Version: "v9.9.9"}
+	for _, step := range []struct {
+		after time.Duration
+		want  int
+	}{{0, 1}, {time.Minute, 1}, {6 * time.Minute, 2}} {
+		res, err := TickWith(dir, recoverNow.Add(step.after), o)
+		if err != nil {
+			t.Fatalf("TickWith +%v: %v", step.after, err)
+		}
+		if got := len(healthEvents(t, dir)); got != step.want || res.Health != (step.after != time.Minute) {
+			t.Fatalf("after tick +%v: %d health events (res.Health %v), want %d", step.after, got, res.Health, step.want)
+		}
+	}
+	h := healthEvents(t, dir)[0]
+	if h.Task != "" || h.TS != recoverNow.Format(time.RFC3339Nano) || h.Health == nil {
+		t.Fatalf("health event = %+v, want no task, ts %s and a snapshot", h, recoverNow.Format(time.RFC3339Nano))
+	}
+	s := *h.Health
+	if s.Running != 1 || s.RateLimited != 1 || s.Stalled != 0 || s.OldestInFlight != "R 42m" ||
+		s.ControllerGeneration != 1 || s.Version != "v9.9.9" || s.Andon < 1 {
+		t.Errorf("snapshot = %+v, want running 1, rate-limited 1, oldest R 42m, gen 1, v9.9.9, andon >= 1 (paused n)", s)
+	}
+	if len(s.PausedModels) != 1 || s.PausedModels[0].Model != "n" || s.PausedModels[0].ResetAt != recoverNow.Add(time.Hour).Format(time.RFC3339) {
+		t.Errorf("paused = %+v, want n until %s", s.PausedModels, recoverNow.Add(time.Hour).Format(time.RFC3339))
+	}
+	if chain, err := VerifyLogChain(dir); err != nil || !chain.OK() {
+		t.Errorf("VerifyLogChain = %+v, %v; want an intact chain", chain, err)
+	}
+	after, err := VerifyTasks(dir, VerifyOptions{Dir: dir, All: true})
+	if err != nil || after.Passed != before.Passed || len(after.Items) != len(before.Items) {
+		t.Errorf("verify --all after health = %+v, %v; want it unchanged from %+v", after, err, before)
+	}
+}
+
+// TestHealthEventOff: HealthEvery 0 appends no health event.
+func TestHealthEventOff(t *testing.T) {
+	t.Parallel()
+	dir := healthFixture(t)
+	if _, err := TickWith(dir, recoverNow, TickOptions{}); err != nil {
+		t.Fatalf("TickWith: %v", err)
+	}
+	if got := healthEvents(t, dir); len(got) != 0 {
+		t.Errorf("health events = %+v, want none with HealthEvery 0", got)
+	}
+}

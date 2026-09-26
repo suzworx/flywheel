@@ -225,6 +225,8 @@ type TickResult struct {
 	ResumeSkipped string `json:"resume_skipped,omitempty"`
 	// Warnings are controller.notify failures; they never fail the tick.
 	Warnings []string `json:"warnings,omitempty"`
+	// Health is true when the tick appended a health event.
+	Health bool `json:"health,omitempty"`
 }
 
 // TickOptions configures TickWith. The zero value only reconciles.
@@ -237,6 +239,11 @@ type TickOptions struct {
 	// Notify runs controller.notify with FLYWHEEL_RESUMED=resumed; nil runs
 	// it through ShellArgv.
 	Notify func(command, resumed string) error
+	// HealthEvery is how often the tick appends a health event (issue #528):
+	// one when none exists or the latest is at least this old; 0 is off.
+	HealthEvery time.Duration
+	// Version is the flywheel version the health event records.
+	Version string
 }
 
 // resumeLockWait bounds how long a tick waits for supervise's lock: a
@@ -320,14 +327,16 @@ func runResumeNotify(command, resumed string) error {
 // WAIT and DISPATCH are reported in the result only and append nothing. The
 // tick is idempotent: the same inputs append nothing the second time. With
 // o.Start set and controller.auto_resume on, it then resumes the rate-limited
-// units whose model's reset has passed (autoResume).
+// units whose model's reset has passed (autoResume). With o.HealthEvery set it
+// last appends a health event (HealthAt) when none is at most that old.
 func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return TickResult{}, fmt.Errorf("read config %s: %w", dir, err)
 	}
 	_, ttl, _ := cfg.controllerTimings()
-	if _, err := AcquireLock(dir, now, ttl); err != nil {
+	lock, err := AcquireLock(dir, now, ttl)
+	if err != nil {
 		return TickResult{}, err
 	}
 	events, err := ReadEvents(dir)
@@ -365,5 +374,102 @@ func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 			return res, err
 		}
 	}
+	if o.HealthEvery > 0 && healthDue(events, now, o.HealthEvery) {
+		snap, err := HealthAt(dir, now, lock.Generation, o.Version)
+		if err != nil {
+			return res, err
+		}
+		if err := AppendEvent(dir, Event{TS: res.TS, Kind: "health", Health: &snap}); err != nil {
+			return res, fmt.Errorf("append health: %w", err)
+		}
+		res.Health = true
+	}
 	return res, nil
+}
+
+// LatestHealth is the newest health event in events, or false when none.
+func LatestHealth(events []Event) (Event, time.Time, bool) {
+	var best Event
+	var at time.Time
+	have := false
+	for _, e := range events {
+		if e.Kind != "health" || e.Health == nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, e.TS)
+		if err != nil {
+			continue
+		}
+		if !have || t.After(at) {
+			best, at, have = e, t, true
+		}
+	}
+	return best, at, have
+}
+
+// healthDue reports whether a health event is due at now: none recorded yet,
+// or the latest is at least every old. Within the interval a tick appends
+// nothing, so the recorder is idempotent.
+func healthDue(events []Event, now time.Time, every time.Duration) bool {
+	_, at, ok := LatestHealth(events)
+	return !ok || now.Sub(at) >= every
+}
+
+// HealthAt computes the factory's health snapshot at now from the same views
+// the factory floor draws: Derive's statuses (running, finished), the units'
+// run states (stalled, rate-limited), the floor's andon count and the models
+// a rate limit pauses (pausedModels).
+func HealthAt(dir string, now time.Time, generation int, version string) (HealthSnapshot, error) {
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return HealthSnapshot{}, fmt.Errorf("read config %s: %w", dir, err)
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		return HealthSnapshot{}, fmt.Errorf("health %s: %w", dir, err)
+	}
+	snap := HealthSnapshot{Andon: len(fl.Andon), ControllerGeneration: generation, Version: version}
+	for _, u := range fl.Units {
+		switch u.RunState {
+		case "stalled":
+			snap.Stalled++
+		case "rate-limited":
+			snap.RateLimited++
+		}
+	}
+	oldest, oldestAge := "", -1
+	for _, ts := range Derive(w.events).Tasks {
+		switch ts.Status {
+		case "dispatched", "running":
+			snap.Running++
+			if age := dispatchAge(w.events, ts.ID, ts.Attempt, now); age > oldestAge || age == oldestAge && ts.ID < oldest {
+				oldest, oldestAge = ts.ID, age
+			}
+		case "finished":
+			snap.Finished++
+		}
+	}
+	if oldest != "" {
+		snap.OldestInFlight = oldest + " " + HumanAge(oldestAge)
+	}
+	models, pauses := pausedModels(w.events, now, cfg.Limits.RateLimitPauseThreshold())
+	for _, m := range models {
+		snap.PausedModels = append(snap.PausedModels, PausedModel{Model: m, ResetAt: pauses[m].Until.UTC().Format(time.RFC3339)})
+	}
+	return snap, nil
+}
+
+// dispatchAge is the whole seconds since task's attempt was dispatched, 0
+// when no dispatched event for it parses.
+func dispatchAge(events []Event, task, attempt string, now time.Time) int {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind == "dispatched" && e.Task == task && e.Attempt == attempt {
+			if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil {
+				return ageOfTime(t, now)
+			}
+		}
+	}
+	return 0
 }
