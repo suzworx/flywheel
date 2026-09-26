@@ -532,12 +532,27 @@ const (
 // rate-limited units whose model's reset has passed, as supervise
 // --resume-limited does; Notify is a shell command run once per unit a tick
 // started, with FLYWHEEL_RESUMED="<task> <attempt> model=<model>".
+//
+// HealthStale is the age past which a health event is stale (issue #552), a
+// Go duration; empty means twice the recorder's --health-every.
 type ControllerConfig struct {
 	Interval      string `json:"interval,omitempty"`
 	LockTTL       string `json:"lock_ttl,omitempty"`
 	IntentTimeout string `json:"intent_timeout,omitempty"`
 	AutoResume    *bool  `json:"auto_resume,omitempty"`
 	Notify        string `json:"notify,omitempty"`
+	HealthStale   string `json:"health_stale,omitempty"`
+}
+
+// controllerHealthStale returns controller.health_stale, else 2*every (an
+// unparseable or non-positive value, which Validate rejects, also means 2*every).
+func (c Config) controllerHealthStale(every time.Duration) time.Duration {
+	if c.Controller != nil {
+		if d, err := time.ParseDuration(c.Controller.HealthStale); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 2 * every
 }
 
 // controllerAutoResume reports whether the controller resumes rate-limited
@@ -997,6 +1012,13 @@ func (c Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("controller.intent_timeout %q is not a valid duration", cc.IntentTimeout))
 		} else if intent <= 0 {
 			problems = append(problems, fmt.Sprintf("controller.intent_timeout %s must be positive", cc.IntentTimeout))
+		}
+		if cc.HealthStale != "" {
+			if hs, herr := time.ParseDuration(cc.HealthStale); herr != nil {
+				problems = append(problems, fmt.Sprintf("controller.health_stale %q is not a valid duration", cc.HealthStale))
+			} else if hs <= 0 {
+				problems = append(problems, fmt.Sprintf("controller.health_stale %s must be positive", cc.HealthStale))
+			}
 		}
 		if ierr == nil && terr == nil && lockTTL <= interval {
 			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", cc.LockTTL, cc.Interval))

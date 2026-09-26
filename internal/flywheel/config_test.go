@@ -742,6 +742,34 @@ func TestControllerConfigAutoResume(t *testing.T) {
 	}
 }
 
+// TestControllerConfigHealthStale: controller.health_stale round-trips through
+// the config file and overrides 2x every; "abc" and "-1m" are problems (#552).
+func TestControllerConfigHealthStale(t *testing.T) {
+	t.Parallel()
+	if got := DefaultConfig().controllerHealthStale(5 * time.Minute); got != 10*time.Minute {
+		t.Errorf("absent health_stale: controllerHealthStale(5m) = %s, want 10m", got)
+	}
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.Controller = &ControllerConfig{HealthStale: "3m"}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	got, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got.Controller == nil || got.Controller.HealthStale != "3m" || got.controllerHealthStale(5*time.Minute) != 3*time.Minute {
+		t.Errorf("reloaded controller = %+v, want health_stale 3m", got.Controller)
+	}
+	for _, v := range []string{"abc", "-1m"} {
+		bad := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "sim", Model: "m"}}, Controller: &ControllerConfig{HealthStale: v}}
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "controller.health_stale") {
+			t.Errorf("health_stale %q: Validate() = %v, want a controller.health_stale problem", v, err)
+		}
+	}
+}
+
 func TestConfigControllerValidation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

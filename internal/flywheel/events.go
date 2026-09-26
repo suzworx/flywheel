@@ -298,12 +298,16 @@ var shipResults = map[string]bool{"ok": true, "skip": true, "fail": true}
 
 // HealthSnapshot is a health event's record of the factory at its ts (issue
 // #528): the unit counts, the models a rate limit pauses, the oldest in-flight
-// unit, the controller lock generation and the flywheel version.
+// unit, the controller lock generation and the flywheel version. Finished
+// excludes the rate-limited units, which RateLimited counts once (issue #552).
+// StaleAfter is the age past which the record is stale, a Go duration such as
+// "10m0s" the writer records so every reader agrees; "" from an older writer.
 type HealthSnapshot struct {
 	Running              int           `json:"running"`
 	Stalled              int           `json:"stalled"`
 	RateLimited          int           `json:"rate_limited"`
 	Finished             int           `json:"finished"`
+	StaleAfter           string        `json:"stale_after,omitempty"`
 	Andon                int           `json:"andon"`
 	PausedModels         []PausedModel `json:"paused_models,omitempty"`
 	OldestInFlight       string        `json:"oldest_in_flight,omitempty"` // "T3 42m"; "" when none
