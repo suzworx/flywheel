@@ -50,6 +50,10 @@ type reviewOptions struct {
 	base      string
 }
 
+// panelReviewerOrder is where a panel member's reviewer comes from, in order
+// (flywheel.PanelReviewerSource).
+const panelReviewerOrder = "a member's adapter/model in review.panel, else its worker, else staffing.reviewer, else the default worker"
+
 // reviewFlags defines review's flags once, so help and run share them.
 func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs := flag.NewFlagSet("review", flag.ContinueOnError)
@@ -65,10 +69,10 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.BoolVar(&o.agent, "agent", false, "run the review agent: it reads the unit's diff and records findings and a verdict")
 	fs.StringVar(&o.worker, "worker", "", "with --agent: the worker that reviews (default: the staffing reviewer role, else the default worker)")
 	fs.IntVar(&o.round, "round", 0, "with --agent: the review round (default: the task's next round)")
-	fs.BoolVar(&o.panel, "panel", false, "with --agent: run the review panel (review.panel), one persona per dimension, and print the verdict matrix")
+	fs.BoolVar(&o.panel, "panel", false, "with --agent: run the review panel (review.panel), one persona per dimension, and print the verdict matrix; each member's reviewer is "+panelReviewerOrder)
 	fs.BoolVar(&o.fix, "fix", false, "with --agent: loop review, send open blocking findings back to the worker, review again")
 	fs.IntVar(&o.rounds, "rounds", 3, "with --fix: review rounds at most")
-	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the default worker)")
+	fs.StringVar(&o.fixWorker, "fix-worker", "", "with --fix: the worker that corrects (default: the worker that built the unit)")
 	fs.BoolVar(&o.worktree, "worktree", false, "with --fix: run the correction in the task's own git worktree")
 	fs.BoolVar(&o.overlap, "allow-overlap", false, "with --fix: skip the owns-collision refusal for the correction dispatch; the dispatched note records the overlap")
 	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
@@ -222,18 +226,20 @@ func runReviewFix(task string, o *reviewOptions) {
 		reviewUsage(os.Stderr)
 		os.Exit(2)
 	}
+	worker, err := fixWorker(o.dir, task, o.fixWorker, os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+		os.Exit(1)
+	}
 	res, err := flywheel.ReviewLoop(o.dir, task, flywheel.ReviewLoopOptions{
-		Rounds: o.rounds, ReviewSession: o.session, Worker: o.fixWorker, ReviewWorker: o.worker, Progress: os.Stderr,
+		Rounds: o.rounds, ReviewSession: o.session, Worker: worker, ReviewWorker: o.worker, Progress: os.Stderr,
 		Review: func(round int) (flywheel.ReviewAgentResult, error) {
 			return flywheel.ReviewAgent(o.dir, task, flywheel.ReviewAgentOptions{
 				Worker: o.worker, Session: o.session, Workdir: o.workdir, Round: round, Progress: os.Stderr,
 			})
 		},
 		Correct: func(delta string) (flywheel.Result, error) {
-			return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
-				Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree, AllowOverlap: o.overlap,
-				Progress: os.Stderr, Stderr: os.Stderr,
-			}, time.Sleep, time.Now)
+			return correctFix(task, worker, delta, o)
 		},
 	})
 	if err != nil {
@@ -250,6 +256,87 @@ func runReviewFix(task string, o *reviewOptions) {
 	fmt.Printf("review loop: %s after %d review(s), %d correction(s)\n", res.Verdict, res.Reviews, res.Corrections)
 	if res.Verdict != "pass" {
 		os.Exit(1)
+	}
+}
+
+// fixWorker resolves who corrects in a --fix loop (issue #469): --fix-worker
+// when given, else the worker that built the unit (BuilderWorker). When the
+// builder is not a configured worker it returns "" (Run's default worker, or
+// the unit's line) and says so on w.
+func fixWorker(dir, task, named string, w io.Writer) (string, error) {
+	if named != "" {
+		return named, nil
+	}
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil {
+		return "", err
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return "", err
+	}
+	if name, ok := flywheel.BuilderWorker(cfg, events, task); ok {
+		return name, nil
+	}
+	if last, ok := flywheel.LastDispatched(events, task); ok {
+		fmt.Fprintf(w, "review: the unit's builder (%s/%s) is not a configured worker; corrections use the default worker %s\n", last.Adapter, last.Model, cfg.DefaultWorker().Name)
+	}
+	return "", nil
+}
+
+// fixResumes reports whether a correction by worker (resolved as Run would,
+// "" being the default worker) resumes the last attempt's session: only when
+// both ran on the same adapter, since a session does not carry across
+// adapters. Otherwise the correction is a fresh session reading the delta,
+// and w says so.
+func fixResumes(dir, task, worker string, w io.Writer) (bool, error) {
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil {
+		return false, err
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return false, err
+	}
+	fw := cfg.DefaultWorker()
+	if worker != "" {
+		var ok bool
+		if fw, ok = cfg.Worker(worker); !ok {
+			return false, fmt.Errorf("no worker named %q in .flywheel/config.json", worker)
+		}
+	}
+	last, ok := flywheel.LastDispatched(events, task)
+	if !ok || last.Adapter == "" || last.Adapter == fw.Adapter {
+		return true, nil
+	}
+	fmt.Fprintf(w, "review: attempt %s ran on adapter %s and fix worker %s is adapter %s; the correction starts a fresh session that reads the delta\n", last.Attempt, last.Adapter, fw.Name, fw.Adapter)
+	return false, nil
+}
+
+// correctFix dispatches one --fix correction on worker with delta, resuming
+// the worker's session only when fixResumes allows it.
+func correctFix(task, worker, delta string, o *reviewOptions) (flywheel.Result, error) {
+	resume, err := fixResumes(o.dir, task, worker, os.Stderr)
+	if err != nil {
+		return flywheel.Result{}, err
+	}
+	return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
+		Task: task, Worker: worker, Resume: resume, DeltaPath: delta, Worktree: o.worktree, AllowOverlap: o.overlap,
+		Progress: os.Stderr, Stderr: os.Stderr,
+	}, time.Sleep, time.Now)
+}
+
+// printPanelSources prints who runs each panel member's review and where
+// that came from, before the panel runs (issue #469).
+func printPanelSources(dir string, w io.Writer) {
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil {
+		return
+	}
+	for _, m := range cfg.ReviewPanel() {
+		if rw, source, err := flywheel.PanelReviewerSource(cfg, m); err == nil {
+			fmt.Fprintf(w, "panel %s: %s/%s (from %s)\n", m.Persona, rw.Adapter, rw.Model, source)
+		}
 	}
 }
 
@@ -414,7 +501,7 @@ func runReviewPanel(task string, o *reviewOptions) {
 	case o.verdict != "" || o.note != "" || o.model != "" || len(o.checklist) > 0:
 		fmt.Fprintf(os.Stderr, "flywheel review: --panel records its own verdicts; drop --verdict, --note, --model and --check\n")
 	case o.worker != "":
-		fmt.Fprintf(os.Stderr, "flywheel review: --panel members name their own reviewer (review.panel in .flywheel/config.json); drop --worker\n")
+		fmt.Fprintf(os.Stderr, "flywheel review: --panel members name their own reviewer: %s; drop --worker\n", panelReviewerOrder)
 	case o.round < 0:
 		fmt.Fprintf(os.Stderr, "flywheel review: --round %d must be >= 1\n", o.round)
 	case o.fix && o.round != 0:
@@ -433,6 +520,7 @@ func runReviewPanel(task string, o *reviewOptions) {
 
 // runReviewPanelChecked runs the panel once its flags are checked.
 func runReviewPanelChecked(task string, o *reviewOptions) {
+	printPanelSources(o.dir, os.Stderr)
 	var last flywheel.PanelResult
 	panel := func(round int) error {
 		res, err := flywheel.ReviewPanel(o.dir, task, flywheel.ReviewPanelOptions{
@@ -458,17 +546,18 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 			}
 		}
 	} else {
+		worker, err := fixWorker(o.dir, task, o.fixWorker, os.Stderr)
+		if err != nil {
+			fail(err)
+		}
 		res, err := flywheel.ReviewLoop(o.dir, task, flywheel.ReviewLoopOptions{
-			Rounds: o.rounds, ReviewSession: o.session, Worker: o.fixWorker, Progress: os.Stderr,
+			Rounds: o.rounds, ReviewSession: o.session, Worker: worker, Progress: os.Stderr,
 			Review: func(round int) (flywheel.ReviewAgentResult, error) {
 				err := panel(round)
 				return flywheel.ReviewAgentResult{Round: round, Tree: last.Tree, Crashed: last.Crashed}, err
 			},
 			Correct: func(delta string) (flywheel.Result, error) {
-				return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
-					Task: task, Worker: o.fixWorker, Resume: true, DeltaPath: delta, Worktree: o.worktree, AllowOverlap: o.overlap,
-					Progress: os.Stderr, Stderr: os.Stderr,
-				}, time.Sleep, time.Now)
+				return correctFix(task, worker, delta, o)
 			},
 		})
 		if err != nil {

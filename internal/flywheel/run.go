@@ -136,6 +136,41 @@ func IsNoWorkerSession(err error) bool {
 	return errors.As(err, &e)
 }
 
+// LastDispatched returns the task's last dispatched event, and false when the
+// task was never dispatched.
+func LastDispatched(events []Event, task string) (Event, bool) {
+	var last Event
+	found := false
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" {
+			last, found = e, true
+		}
+	}
+	return last, found
+}
+
+// BuilderWorker names the worker of the task's last dispatched attempt (issue
+// #469): its recorded worker when that name is still configured, else the
+// first configured worker whose adapter and model equal the attempt's. ok is
+// false when neither is found, or the task was never dispatched.
+func BuilderWorker(cfg Config, events []Event, task string) (name string, ok bool) {
+	last, found := LastDispatched(events, task)
+	if !found {
+		return "", false
+	}
+	if last.Worker != "" {
+		if _, ok := cfg.Worker(last.Worker); ok {
+			return last.Worker, true
+		}
+	}
+	for _, w := range cfg.Workers {
+		if w.Adapter == last.Adapter && w.Model == last.Model {
+			return w.Name, true
+		}
+	}
+	return "", false
+}
+
 // commandHook, when set, receives the dispatch RunRequest before the command
 // is built. It is a test seam only; production code never sets it.
 var commandHook func(RunRequest)
@@ -438,6 +473,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if o.Resume && lastSession == "" {
 			return Result{}, &NoWorkerSession{Task: o.Task}
 		}
+		// A session id belongs to the adapter that produced it (issue #469):
+		// a resume onto a worker of another adapter is refused before any
+		// event is appended, instead of handing a claude session to opencode.
+		if last, ok := LastDispatched(events, o.Task); o.Resume && ok && last.Adapter != "" && last.Adapter != worker.Adapter {
+			return Result{}, &RuleRefusal{
+				Rule: "resume",
+				Fix:  fmt.Sprintf("attempt %s ran on adapter %s; worker %s is adapter %s, and a session does not carry across adapters: dispatch the delta without --resume, or pass --worker <a worker on %s>", last.Attempt, last.Adapter, worker.Name, worker.Adapter, last.Adapter),
+			}
+		}
 		attempt = fmt.Sprintf("c%d", corrN+1)
 	}
 
@@ -630,7 +674,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
-		Adapter: worker.Adapter, Model: model, Path: runRel, SHA256: promptSHA,
+		Adapter: worker.Adapter, Worker: worker.Name, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
 		Line: usedLine,

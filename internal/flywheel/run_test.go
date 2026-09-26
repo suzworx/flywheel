@@ -271,6 +271,118 @@ func TestRunResumeModelGateForceModelBypasses(t *testing.T) {
 	}
 }
 
+// TestRunResumeAdapterRefusesAcrossAdapters checks a resume whose worker is
+// on another adapter than the last attempt is refused under rule resume
+// before any event is appended (issue #469).
+func TestRunResumeAdapterRefusesAcrossAdapters(t *testing.T) {
+	// not parallel: t.Setenv PATH, so main's behaviour (launching opencode)
+	// fails fast instead of finding a real binary
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "oc", Adapter: "opencode", Model: fixturePath("clean.jsonl", t)}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	before, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	_, err = Run(dir, RunOptions{Task: "T1", Resume: true})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "resume" {
+		t.Fatalf("Run() error = %v, want a RuleRefusal resume", err)
+	}
+	if !strings.Contains(r.Fix, "adapter sim") || !strings.Contains(r.Fix, "worker oc is adapter opencode") {
+		t.Errorf("refusal fix = %q, want it naming both adapters", r.Fix)
+	}
+	after, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("events after refusal = %d, want %d (none appended)", len(after), len(before))
+	}
+}
+
+// TestRunResumeAdapterSameAdapterResumes checks a resume on the adapter that
+// produced the session is not refused by the resume rule.
+func TestRunResumeAdapterSameAdapterResumes(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	if _, err := Run(dir, RunOptions{Task: "T1", Resume: true}); err != nil {
+		t.Fatalf("resume Run() error = %v, want the same-adapter resume to dispatch", err)
+	}
+}
+
+// TestDispatchedRecordsWorkerName checks a dispatched event records the
+// resolved worker's name (issue #469).
+func TestDispatchedRecordsWorkerName(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	d, ok := LastDispatched(evs, "T1")
+	if !ok || d.Worker != "sim" {
+		t.Errorf("dispatched event = %+v, want worker sim", d)
+	}
+}
+
+// TestBuilderWorker checks the worker of the last dispatched attempt resolves
+// by its recorded name, else by adapter and model, else not at all (#469).
+func TestBuilderWorker(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{
+		{Name: "cheap", Adapter: "opencode", Model: "small"},
+		{Name: "strong", Adapter: "claude", Model: "big"},
+		{Name: "strong2", Adapter: "claude", Model: "big"},
+	}}
+	d := func(worker, adapter, model string) Event {
+		return Event{Task: "T1", Kind: "dispatched", Worker: worker, Adapter: adapter, Model: model}
+	}
+	cases := []struct {
+		name   string
+		events []Event
+		want   string
+		ok     bool
+	}{
+		{"recorded name", []Event{d("strong2", "claude", "big")}, "strong2", true},
+		{"name gone, adapter+model match", []Event{d("retired", "claude", "big")}, "strong", true},
+		{"old event without worker", []Event{d("", "opencode", "small")}, "cheap", true},
+		{"no match", []Event{d("retired", "codex", "x")}, "", false},
+		{"last attempt wins", []Event{d("cheap", "opencode", "small"), d("strong2", "claude", "big")}, "strong2", true},
+		{"never dispatched", []Event{{Task: "T1", Kind: "planned"}}, "", false},
+		{"other task ignored", []Event{d("strong", "claude", "big"), {Task: "T2", Kind: "dispatched", Worker: "cheap"}}, "strong", true},
+	}
+	for _, c := range cases {
+		got, ok := BuilderWorker(cfg, c.events, "T1")
+		if got != c.want || ok != c.ok {
+			t.Errorf("%s: BuilderWorker() = %q, %v; want %q, %v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 func TestRunSimClean(t *testing.T) {
 	t.Parallel()
 	dir := setupTask(t)

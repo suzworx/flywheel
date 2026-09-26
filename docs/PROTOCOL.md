@@ -57,7 +57,8 @@ all.
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
-  `adapter`, `model`, `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
+  `adapter`, `worker` (the resolved worker's name, issue #469; omitted on events recorded before
+  it), `model`, `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
   correction attempt: `.flywheel/briefs/<task>.<attempt>.delta.txt`, the per-attempt snapshot of
   the delta taken atomically at dispatch; the operator's `--delta` file is left untouched and may be
   edited or reused for the next correction without breaking this one's T1, issue #452; a failed
@@ -328,6 +329,12 @@ all.
   with one line per finding, `FINDING <id>: fixed <evidence>` or `FINDING <id>: disputed <reason>`
   — resumes the worker's session on it, records the answers and reviews again. After `--rounds`
   reviews (default 3) the open blocking findings are printed and the command exits 1.
+  Without `--fix-worker` the corrections go to the worker that built the unit: the last
+  `dispatched` attempt's `worker` while it is still configured, else the first configured worker
+  with its `adapter` and `model`, else the default worker with one stderr line saying so (issue
+  #469). A session never crosses adapters: `flywheel run --resume` onto a worker whose adapter
+  differs from the last attempt's is refused (exit 6, rule `resume`) before any event is appended,
+  and the fix loop instead dispatches such a correction as a fresh session that reads the delta.
 - The thread (issue #389): `.flywheel/reviews/<task>.md` is GENERATED from the event log
   (`RenderReviewThread`) after every agent review round, every recorded `finding_response` and
   every dismissal — never on GitHub. It holds one `## Round <n> — <verdict>, <reviewer session>,
@@ -342,7 +349,10 @@ all.
   andon, and `flywheel stats` reports a review block.
 - The review panel (issue #420): `flywheel review <task> --agent --panel --session S [--round N]
   [--fix [--rounds N] [--fix-worker NAME] [--worktree]]` runs the review agent once per member of
-  `review.panel`, sequentially, each a persona owning one dimension. The personas are embedded
+  `review.panel`, sequentially, each a persona owning one dimension. A member's reviewer is its
+  adapter/model in `review.panel`, else its worker, else `staffing.reviewer`, else the default
+  worker; `--worker` is refused, and before the panel runs one stderr line per member names it,
+  `panel <dimension>: <adapter>/<model> (from <source>)` (issue #469). The personas are embedded
   (`internal/flywheel/review_personas/<dimension>.md`): `correctness`, `security`, `tests`, `errors`
   (error handling and resources), `cross-os`, `contract` (flags, event kinds, exit codes, config keys,
   backwards compatibility) and `docs`. A member's prompt is `review_prompt.md` plus its persona file,
