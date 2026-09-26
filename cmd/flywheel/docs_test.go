@@ -1,9 +1,13 @@
 package main
 
 import (
+	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // TestDocsCommandTable checks every registered command appears in the
@@ -77,4 +81,81 @@ func TestDocsProtocolCitations(t *testing.T) {
 			t.Errorf("%s does not cite %q; add a link to docs/PROTOCOL.md", f, "protocol v1")
 		}
 	}
+}
+
+// TestDocsSkillAnchors checks every `(path.md#anchor)` and `(#anchor)` link in
+// the markdown files under skills/ resolves to a heading in the target file
+// under GitHub's slug rule, so a renamed heading cannot silently break a link.
+func TestDocsSkillAnchors(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..", "skills")
+	link := regexp.MustCompile(`\]\(([^)\s#]*\.md)?#([^)\s]+)\)`)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range link.FindAllStringSubmatch(string(data), -1) {
+			target := path
+			if m[1] != "" {
+				target = filepath.Join(filepath.Dir(path), filepath.FromSlash(m[1]))
+			}
+			slugs, err := headingSlugs(target)
+			if err != nil {
+				t.Errorf("%s: link %q: %v", path, m[0], err)
+				continue
+			}
+			if !slugs[m[2]] {
+				t.Errorf("%s: link %q: no heading in %s has slug %q", path, m[0], target, m[2])
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk skills/: %v", err)
+	}
+}
+
+// headingSlugs returns the GitHub anchor slugs of the headings in a markdown
+// file, skipping fenced code blocks.
+func headingSlugs(path string) (map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	slugs := map[string]bool{}
+	fenced := false
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced || !strings.HasPrefix(line, "#") {
+			continue
+		}
+		text := strings.TrimLeft(line, "#")
+		if !strings.HasPrefix(text, " ") {
+			continue
+		}
+		slugs[githubSlug(strings.TrimSpace(text))] = true
+	}
+	return slugs, nil
+}
+
+// githubSlug lowercases a heading, drops every character that is not a
+// letter, digit, space, hyphen or underscore, and turns spaces into hyphens.
+func githubSlug(heading string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(heading) {
+		switch {
+		case r == ' ':
+			b.WriteRune('-')
+		case r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

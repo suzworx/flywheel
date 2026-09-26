@@ -13,7 +13,7 @@ import (
 
 func init() {
 	register("run", "dispatch a worker for a task", runRun)
-	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--workdir PATH] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
+	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--workdir PATH] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
 }
 
 // runOptions holds the parsed `flywheel run` flags.
