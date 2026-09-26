@@ -88,9 +88,11 @@ flowchart LR
   `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
   records the run automatically. For parallel units `flywheel run --worktree` is the default: each
   unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
-  `--worktree --base REF` branches a new `fw/<task>` from REF (say the `integration.branch`) instead
-  of the main checkout's HEAD, without checking REF out; the `dispatched` event's `base` records the
-  commit the unit branched from.
+  `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
+  `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
+  `integration.branch` is set, and is refused when neither resolves; otherwise from the main
+  checkout's HEAD, with a warning when HEAD carries commits `origin/main` lacks (#550). The
+  `dispatched` event's `base` records the commit the unit branched from.
   `flywheel run --session ID` (default `$FLYWHEEL_SESSION`) records the dispatching lead session as
   the dispatched event's `lead`, so leads sharing one ledger can tell their units apart.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` opens an interactive, k9s-style view of the floor (`:units` `:workers` `:andon` `:events` `:lines` to switch, `/` to filter, enter to explain a unit, `l` for its log, `?` for help, `q` to quit; `--plain` keeps the plain redraw), and `flywheel watch` streams every event as one readable line.

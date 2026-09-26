@@ -13,7 +13,8 @@ import (
 //
 // TaskWorktree returns the absolute path of task's worktree under dir,
 // <dir>/.flywheel/worktrees/<task>, creating it when missing with
-// `git -C <dir> worktree add -b fw/<task> <path> HEAD` (or, when branch
+// `git -C <dir> worktree add -b fw/<task> <path> <start>`, start as
+// defaultTaskStart picks it (issue #550) (or, when branch
 // fw/<task> already exists, `git -C <dir> worktree add <path> fw/<task>`).
 // An existing directory that is a git worktree is reused as is. Errors name
 // the git command and its output.
@@ -21,30 +22,37 @@ func TaskWorktree(dir, task string) (string, error) {
 	return TaskWorktreeFrom(dir, task, "")
 }
 
-// TaskWorktreeFrom is TaskWorktree branching a new fw/<task> from base
-// instead of HEAD (issue #456); base "" keeps HEAD. A non-empty base is
-// resolved to its commit first and must be an ancestor of an existing
-// fw/<task>: a branch that does not contain it is refused with the rebase
-// hint rather than silently running the unit on the wrong base.
+// TaskWorktreeFrom is TaskWorktreeFromNote without the note.
 func TaskWorktreeFrom(dir, task, base string) (string, error) {
+	path, _, err := TaskWorktreeFromNote(dir, task, base)
+	return path, err
+}
+
+// TaskWorktreeFromNote is TaskWorktree branching a new fw/<task> from base
+// (issue #456). A non-empty base is resolved to its commit first and must be
+// an ancestor of an existing fw/<task>: a branch that does not contain it is
+// refused with the rebase hint rather than silently running the unit on the
+// wrong base. Base "" picks the start of a new fw/<task> with
+// defaultTaskStart (issue #550) and returns its note for the operator.
+func TaskWorktreeFromNote(dir, task, base string) (path, note string, err error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return "", fmt.Errorf("resolve %q: %w", dir, err)
+		return "", "", fmt.Errorf("resolve %q: %w", dir, err)
 	}
 	worktreesDir := filepath.Join(abs, ".flywheel", "worktrees")
-	path := filepath.Join(worktreesDir, task)
+	path = filepath.Join(worktreesDir, task)
 	branchName := "fw/" + task
 
 	start := "HEAD"
 	if base != "" {
 		out, err := exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", base+"^{commit}").Output()
 		if err != nil {
-			return "", fmt.Errorf("base %q does not resolve to a commit", base)
+			return "", "", fmt.Errorf("base %q does not resolve to a commit", base)
 		}
 		start = strings.TrimSpace(string(out))
 		if exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", "refs/heads/"+branchName).Run() == nil &&
 			exec.Command("git", "-C", abs, "merge-base", "--is-ancestor", start, "refs/heads/"+branchName).Run() != nil {
-			return "", fmt.Errorf("%s already exists and does not contain %s; move it with flywheel rebase %s --onto %s", branchName, base, task, base)
+			return "", "", fmt.Errorf("%s already exists and does not contain %s; move it with flywheel rebase %s --onto %s", branchName, base, task, base)
 		}
 	}
 
@@ -53,19 +61,24 @@ func TaskWorktreeFrom(dir, task, base string) (string, error) {
 	// than silently running a worker in the wrong tree (#333 review).
 	if _, err := os.Stat(path); err == nil {
 		if err := checkTaskWorktree(abs, path, branchName); err != nil {
-			return "", err
+			return "", "", err
 		}
-		return path, nil
-	}
-
-	// Create the worktrees directory if it doesn't exist
-	if err := os.MkdirAll(worktreesDir, 0o755); err != nil {
-		return "", fmt.Errorf("create %s: %w", worktreesDir, err)
+		return path, "", nil
 	}
 
 	// Check if branch fw/<task> already exists
 	checkBranchCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "-q", "refs/heads/"+branchName)
 	branchExists := checkBranchCmd.Run() == nil
+	if !branchExists && base == "" {
+		if start, note, err = defaultTaskStart(abs, task); err != nil {
+			return "", "", err
+		}
+	}
+
+	// Create the worktrees directory if it doesn't exist
+	if err := os.MkdirAll(worktreesDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create %s: %w", worktreesDir, err)
+	}
 
 	// Build the worktree add command
 	var args []string
@@ -88,13 +101,62 @@ func TaskWorktreeFrom(dir, task, base string) (string, error) {
 		// git reported it in.
 		if branchExists {
 			if _, other := TaskBranch(abs, task); other != "" && !samePath(other, path) {
-				return "", fmt.Errorf("%s is checked out in another worktree (%s): another flywheel root may own task %s; plan under a new id or withdraw it there: %w", branchName, other, task, gitErr)
+				return "", "", fmt.Errorf("%s is checked out in another worktree (%s): another flywheel root may own task %s; plan under a new id or withdraw it there: %w", branchName, other, task, gitErr)
 			}
 		}
-		return "", gitErr
+		return "", "", gitErr
 	}
 
-	return path, nil
+	return path, note, nil
+}
+
+// defaultTaskStart picks the start of a new fw/<task> when no base is given
+// (issue #550). With integration.branch B configured it is origin/B when
+// that resolves, else B, else an error. Otherwise it is HEAD, with a warning
+// note when HEAD carries commits that origin/main (else origin/master, else
+// the local main or master) does not contain. The start is a commit, so a
+// remote-tracking start sets no upstream.
+func defaultTaskStart(abs, task string) (start, note string, err error) {
+	commit := func(ref string) string {
+		out, err := exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", ref+"^{commit}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	b, configured := IntegrationBranch(abs)
+	if configured {
+		ref, c := "origin/"+b, commit("refs/remotes/origin/"+b)
+		if c == "" {
+			ref, c = b, commit("refs/heads/"+b)
+		}
+		if c == "" {
+			return "", "", fmt.Errorf("integration.branch %s resolves neither as origin/%s nor as a local branch: fetch it, or pass --base", b, b)
+		}
+		return c, fmt.Sprintf("new task branch fw/%s starts from %s (integration.branch)", task, ref), nil
+	}
+	refs := []string{"origin/main", "origin/master"}
+	if b != "" {
+		refs = append(refs, b)
+	}
+	for _, ref := range refs {
+		full := "refs/heads/" + ref
+		if strings.HasPrefix(ref, "origin/") {
+			full = "refs/remotes/" + ref
+		}
+		if commit(full) == "" {
+			continue
+		}
+		out, err := exec.Command("git", "-C", abs, "rev-list", "--count", full+"..HEAD").Output()
+		if err != nil {
+			return "", "", fmt.Errorf("git rev-list --count %s..HEAD: %w", full, err)
+		}
+		if n := strings.TrimSpace(string(out)); n != "0" {
+			note = fmt.Sprintf("warning: HEAD carries %s commit(s) not on %s; fw/%s will include them (pass --base %s to start clean)", n, ref, task, ref)
+		}
+		return "HEAD", note, nil
+	}
+	return "HEAD", "", nil
 }
 
 // TaskBranch reports whether branch fw/<task> exists in the repository dir
