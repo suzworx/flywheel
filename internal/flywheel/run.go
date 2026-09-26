@@ -44,6 +44,8 @@ type RunOptions struct {
 	Stderr       io.Writer     // notices (e.g. the long-step warning); nil discards them
 	SimDelay     time.Duration // unexported test hook: sim waits before its first line
 	SimLineDelay time.Duration // unexported test hook: sim waits between lines
+
+	checkpointTicks *atomic.Int64 // test hook: counts finished timed checkpoint ticks
 }
 
 // Result reports what the dispatch observed.
@@ -769,6 +771,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var leaseTicker *time.Ticker
 	var renewDone chan struct{}
 	var renewerExited chan struct{}
+	// The timed checkpointer (issue #528) stops with the renewer, so neither
+	// outlives the child or runs past the finished event.
+	var checkpointTicker *time.Ticker
+	var checkpointDone chan struct{}
+	var checkpointerExited chan struct{}
 	var stopOnce sync.Once
 	stopRenewer := func() {
 		stopOnce.Do(func() {
@@ -779,7 +786,39 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				close(renewDone)
 				<-renewerExited
 			}
+			if checkpointTicker != nil {
+				checkpointTicker.Stop()
+			}
+			if checkpointDone != nil {
+				close(checkpointDone)
+				<-checkpointerExited
+			}
 		})
+	}
+	// A worktree attempt's changed owned files are checkpointed every
+	// limits.checkpoint_every, so a snapshot survives the worker later
+	// overwriting or deleting them. A failed tick is ignored: the finish-time
+	// checkpoint reports its own failure, and no tick records an event.
+	if every, cerr := cfg.Limits.CheckpointEveryDuration(); o.Worktree && cerr == nil && every > 0 {
+		checkpointDone = make(chan struct{})
+		checkpointerExited = make(chan struct{})
+		checkpointTicker = time.NewTicker(every)
+		go func() {
+			defer close(checkpointerExited)
+			for {
+				select {
+				case <-checkpointTicker.C:
+					if paths, err := ownedChanged(wt, attemptOwns); err == nil && len(paths) > 0 {
+						_, _, _ = checkpointTree(wt, o.Task, attempt, paths)
+					}
+					if o.checkpointTicks != nil {
+						o.checkpointTicks.Add(1)
+					}
+				case <-checkpointDone:
+					return
+				}
+			}
+		}()
 	}
 	if renewInterval > 0 {
 		renewDone = make(chan struct{})

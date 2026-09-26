@@ -563,6 +563,70 @@ func TestConfigSetUnknownKeyListsSettableKeys(t *testing.T) {
 	}
 }
 
+// TestConfigSetPermissionMode pins permission_mode as a worker key for Set and
+// Get, with Validate refusing a bad value and leaving config.json unchanged
+// (issue #543).
+func TestConfigSetPermissionMode(t *testing.T) {
+	t.Parallel()
+	base := Config{Version: 1, Workers: []Worker{
+		{Name: "c", Adapter: "claude", Model: "m"},
+		{Name: "o", Adapter: "opencode", Model: "m"},
+	}}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("base config invalid: %v", err)
+	}
+	for _, key := range []string{"permission_mode", "workers.c.permission_mode"} {
+		cfg := base
+		cfg.Workers = slices.Clone(base.Workers)
+		if err := cfg.Set(key, "bypassPermissions"); err != nil {
+			t.Fatalf("Set(%s) error = %v", key, err)
+		}
+		if got, err := cfg.Get(key); err != nil || got != "bypassPermissions" {
+			t.Errorf("Get(%s) = %q, %v; want bypassPermissions", key, got, err)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate after Set(%s) = %v", key, err)
+		}
+		if err := cfg.Set(key, ""); err != nil {
+			t.Fatalf("Set(%s, \"\") error = %v", key, err)
+		}
+		if cfg.Workers[0].PermissionMode != "" || cfg.Workers[0].permissionMode() != defaultPermissionMode {
+			t.Errorf("Set(%s, \"\") left %q, want cleared", key, cfg.Workers[0].PermissionMode)
+		}
+	}
+	if !slices.Contains(base.settableKeys(), "workers.c.permission_mode") {
+		t.Error("settableKeys missing workers.c.permission_mode")
+	}
+
+	for _, tc := range []struct{ key, value string }{
+		{"workers.c.permission_mode", "nonsense"},
+		{"workers.o.permission_mode", "bypassPermissions"},
+	} {
+		dir := t.TempDir()
+		if err := WriteConfig(dir, base); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		path := filepath.Join(dir, ".flywheel", "config.json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Set(tc.key, tc.value); err != nil {
+			t.Fatalf("Set(%s, %s) error = %v (validation is WriteConfig's job)", tc.key, tc.value, err)
+		}
+		if err := WriteConfig(dir, cfg); err == nil {
+			t.Errorf("WriteConfig after Set(%s, %s) = nil, want refusal", tc.key, tc.value)
+		}
+		if after, _ := os.ReadFile(path); !reflect.DeepEqual(after, before) {
+			t.Errorf("config.json changed after refused Set(%s, %s)", tc.key, tc.value)
+		}
+	}
+}
+
 func TestConfigSetFallbacksUnsupported(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
@@ -1093,6 +1157,33 @@ func TestQuietWaitConfig(t *testing.T) {
 		}
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Validate() with quiet_wait %q = %v, want error containing %q", tc.value, err, tc.want)
+		}
+	}
+}
+
+// TestCheckpointEveryConfig covers limits.checkpoint_every (issue #528): ""
+// means 10m, "0" disables timed checkpoints, and validation refuses a
+// negative or unparseable duration by the key's name.
+func TestCheckpointEveryConfig(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 10 * time.Minute}, {"0", 0}, {"90s", 90 * time.Second}} {
+		cfg := DefaultConfig()
+		cfg.Limits.CheckpointEvery = tc.value
+		if d, err := cfg.Limits.CheckpointEveryDuration(); err != nil || d != tc.want {
+			t.Errorf("CheckpointEveryDuration(%q) = %v, %v; want %v", tc.value, d, err, tc.want)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() with checkpoint_every %q = %v, want nil", tc.value, err)
+		}
+	}
+	for _, value := range []string{"-1m", "soon"} {
+		cfg := DefaultConfig()
+		cfg.Limits.CheckpointEvery = value
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "limits.checkpoint_every") {
+			t.Errorf("Validate() with checkpoint_every %q = %v, want an error naming limits.checkpoint_every", value, err)
 		}
 	}
 }

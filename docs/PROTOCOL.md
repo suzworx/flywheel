@@ -311,7 +311,8 @@ all.
   object with an `mcpServers` object.
 - A claude worker's `permission_mode` (issue #526) is its `--permission-mode`: `acceptEdits`
   (the default when unset), `bypassPermissions`, `default`, `plan` or `dontAsk`; any other value,
-  or the key on a non-claude worker, is a config error. `--disallowedTools` is passed under every
+  or the key on a non-claude worker, is a config error; set it with
+  `flywheel config set workers.<name>.permission_mode bypassPermissions`. `--disallowedTools` is passed under every
   mode, `bypassPermissions` included (Claude Code enforces deny rules even when bypassing), so
   the git-write deny list still holds. `flywheel lint` warns when a brief asks for web research
   (WebSearch, WebFetch, "web search", "search the web", "web fetch") and the default worker is a

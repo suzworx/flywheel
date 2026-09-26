@@ -226,7 +226,8 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean
 "allowed_tools"?`, issue #463).
 A claude worker's `permission_mode` sets its `--permission-mode`: `acceptEdits` (the default),
-`bypassPermissions`, `default`, `plan` or `dontAsk`; `disallowed_tools` is still enforced under
+`bypassPermissions`, `default`, `plan` or `dontAsk`
+(`flywheel config set workers.<name>.permission_mode bypassPermissions`); `disallowed_tools` is still enforced under
 every mode, `bypassPermissions` included. A tool the worker is denied raises the
 `permission-denied` andon live, while the run is still going (`andon: <task> <attempt>
 permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks for web research

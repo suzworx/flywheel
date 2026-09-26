@@ -422,6 +422,19 @@ type Limits struct {
 	// an ordinary gate waits for a running quiet gate to end), a Go
 	// duration; "" means 30m (issue #411).
 	QuietWait string `json:"quiet_wait,omitempty"`
+	// CheckpointEvery is how often an attempt running in its task worktree
+	// has its changed owned files checkpointed, a Go duration; "" means 10m,
+	// "0" disables it (issue #528).
+	CheckpointEvery string `json:"checkpoint_every,omitempty"`
+}
+
+// CheckpointEveryDuration parses CheckpointEvery ("" means 10 minutes, 0
+// means no timed checkpoints).
+func (l Limits) CheckpointEveryDuration() (time.Duration, error) {
+	if l.CheckpointEvery == "" {
+		return 10 * time.Minute, nil
+	}
+	return time.ParseDuration(l.CheckpointEvery)
 }
 
 // QuietWaitDuration parses QuietWait ("" means 30 minutes).
@@ -902,6 +915,11 @@ func (c Config) Validate() error {
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q must be > 0", c.Limits.QuietWait))
 	}
+	if d, err := c.Limits.CheckpointEveryDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q: %v", c.Limits.CheckpointEvery, err))
+	} else if d < 0 {
+		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q must be >= 0", c.Limits.CheckpointEvery))
+	}
 	if c.Limits.Budget != nil && c.Limits.Budget.WaveTokens < 0 {
 		problems = append(problems, fmt.Sprintf("limits.budget.wave_tokens %d must be >= 0", c.Limits.Budget.WaveTokens))
 	}
@@ -1233,6 +1251,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return w.Model, true
 	case "variant":
 		return w.Variant, true
+	case "permission_mode":
+		return w.PermissionMode, true
 	case "adapter":
 		return w.Adapter, true
 	case "max_parallel":
@@ -1265,7 +1285,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"log.shards", "max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1276,7 +1296,7 @@ func (c Config) validKeys() []string {
 		keys = append(keys, "lines."+l.Name+".wip")
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "fallbacks", "fallbacks.all", "max_parallel", "model", "stall_timeout", "variant"} {
+		for _, k := range append([]string{"fallbacks", "fallbacks.all"}, settableWorkerKeys...) {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}
@@ -1286,8 +1306,8 @@ func (c Config) validKeys() []string {
 
 // Set assigns value to the given configuration key. Bare worker keys apply to
 // the default worker; every worker key is also addressable as
-// workers.<name>.<key>. The settable keys are model, variant, adapter,
-// max_parallel, stall_timeout (worker), feedback.upstream, feedback.submit,
+// workers.<name>.<key>. The settable keys are settableWorkerKeys (worker;
+// an empty permission_mode clears it), feedback.upstream, feedback.submit,
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.required (true or false) and
@@ -1349,7 +1369,7 @@ func (c *Config) Set(key, value string) error {
 		}
 	}
 	switch key {
-	case "model", "variant", "adapter", "max_parallel", "stall_timeout":
+	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -1514,6 +1534,10 @@ func (c *Config) Set(key, value string) error {
 	return c.settableErr(key)
 }
 
+// settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
+// default worker or as workers.<name>.<key>.
+var settableWorkerKeys = []string{"adapter", "max_parallel", "model", "permission_mode", "stall_timeout", "variant"}
+
 // setWorkerValue assigns a worker-scoped value, parsing integer keys.
 func setWorkerValue(w *Worker, key, value string) error {
 	switch key {
@@ -1521,6 +1545,8 @@ func setWorkerValue(w *Worker, key, value string) error {
 		w.Model = value
 	case "variant":
 		w.Variant = value
+	case "permission_mode":
+		w.PermissionMode = value
 	case "adapter":
 		w.Adapter = value
 	case "max_parallel":
@@ -1536,7 +1562,7 @@ func setWorkerValue(w *Worker, key, value string) error {
 		}
 		w.StallTimeout = n
 	default:
-		return fmt.Errorf("unknown key %q; valid worker keys: model, variant, adapter, max_parallel, stall_timeout", key)
+		return fmt.Errorf("unknown key %q; valid worker keys: %s", key, strings.Join(settableWorkerKeys, ", "))
 	}
 	return nil
 }
@@ -1551,7 +1577,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1559,7 +1585,7 @@ func (c Config) settableKeys() []string {
 		"staffing.reviewer.adapter", "staffing.reviewer.model", "staffing.reviewer.session",
 	}
 	for _, w := range c.Workers {
-		for _, k := range []string{"adapter", "max_parallel", "model", "stall_timeout", "variant"} {
+		for _, k := range settableWorkerKeys {
 			keys = append(keys, "workers."+w.Name+"."+k)
 		}
 	}
