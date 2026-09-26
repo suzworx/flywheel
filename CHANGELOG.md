@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.0](https://github.com/suzworx/flywheel/compare/v0.27.0...v0.28.0) (2026-09-26)
+
+
+### Features
+
+* flywheel doctor warns when git tracks the ledger ([#511](https://github.com/suzworx/flywheel/issues/511)) ([5e00c72](https://github.com/suzworx/flywheel/commit/5e00c7272bd27151c8c7b22ec86c6a759047471c)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+* flywheel stats --by model scores each adapter, model and variant from the ledger ([#513](https://github.com/suzworx/flywheel/issues/513)) ([acca0a8](https://github.com/suzworx/flywheel/commit/acca0a8cfb9dd8df4a64f53c1e5808a8bb615988)), closes [#473](https://github.com/suzworx/flywheel/issues/473)
+
 ## [0.27.0](https://github.com/suzworx/flywheel/compare/v0.26.0...v0.27.0) (2026-09-26)
 
 
