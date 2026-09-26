@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -204,6 +205,12 @@ type Event struct {
 	// Health is a health event's snapshot of the factory (issue #528); only the
 	// health kind may carry it.
 	Health *HealthSnapshot `json:"health,omitempty"`
+	// Step and Result are a shipped event's ship step (one of ShipSteps) and
+	// its outcome (ok, skip or fail) (issue #457); only the shipped kind may
+	// carry them. The event reuses Attempt, Commit (fw/<task>'s HEAD after the
+	// step) and Note (the reason, conflict paths or failing gates).
+	Step   string `json:"step,omitempty"`
+	Result string `json:"result,omitempty"`
 	// Route is a dispatched event's routing choice (issue #474); omitted when
 	// the worker has no routing block, when --model was given, and on older events.
 	Route *RouteChoice `json:"route,omitempty"`
@@ -277,7 +284,17 @@ var kinds = map[string]bool{
 	// #528): no task, Health the snapshot (counts, paused models, the
 	// oldest in-flight unit, the controller generation and flywheel version).
 	"health": true,
+	// shipped records one step of `flywheel ship` (issue #457): Step, Result,
+	// Attempt, Commit (fw/<task>'s HEAD after the step) and Note.
+	"shipped": true,
 }
+
+// ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
+// shipped event's Step must be one of them. The remote half extends it.
+var ShipSteps = []string{"preflight", "commit", "merge-base", "gates"}
+
+// shipResults are the outcomes a shipped event's Result may carry.
+var shipResults = map[string]bool{"ok": true, "skip": true, "fail": true}
 
 // HealthSnapshot is a health event's record of the factory at its ts (issue
 // #528): the unit counts, the models a rate limit pauses, the oldest in-flight
@@ -449,7 +466,17 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped", e.Kind)
+	}
+	if e.Kind == "shipped" {
+		if !slices.Contains(ShipSteps, e.Step) {
+			return fmt.Errorf("shipped step %q is not one of %s", e.Step, strings.Join(ShipSteps, ", "))
+		}
+		if !shipResults[e.Result] {
+			return fmt.Errorf("shipped result %q is not one of ok, skip, fail", e.Result)
+		}
+	} else if e.Step != "" || e.Result != "" {
+		return fmt.Errorf("event kind %q cannot carry a step or result", e.Kind)
 	}
 	if e.Kind == "health" && (e.Health == nil || e.Task != "") {
 		return fmt.Errorf("health event must carry a health snapshot and no task")
