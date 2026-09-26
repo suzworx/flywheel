@@ -155,6 +155,7 @@ Read and set it with the CLI:
 flywheel config get model                    # bare keys use the default worker
 flywheel config set variant low              # or model, adapter, max_parallel
 flywheel config set workers.<name>.<key> <v> # any worker by name
+flywheel config set workers.<name>.permission_mode bypassPermissions  # claude workers; empty = acceptEdits
 flywheel config set feedback.upstream <owner/repo>
 flywheel config set feedback.submit ask|never
 flywheel config set limits.per_host <n>
