@@ -168,76 +168,96 @@ func ledgerRepo(t *testing.T, files, commit []string) string {
 	return dir
 }
 
-// TestLedgerTrackedWarningEvents: a committed events.jsonl is named, with the
-// fix (#464).
-func TestLedgerTrackedWarningEvents(t *testing.T) {
+// TestDoctorLedger: the ledger is committed (owner decision 2026-09-26,
+// #464), so doctor warns when it is untracked or ignored, or tracked without
+// merge=union (#436), and is silent when it is tracked with merge=union.
+func TestDoctorLedger(t *testing.T) {
 	t.Parallel()
-	dir := ledgerRepo(t, []string{".flywheel/events.jsonl"}, []string{".flywheel/events.jsonl"})
-	got := DoctorLedgerWarning(dir)
-	for _, want := range []string{"the ledger is tracked by git (.flywheel/events.jsonl)", "git rm --cached -r .flywheel/events.jsonl", ".gitignore", "merge=union", "(#436)"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("DoctorLedgerWarning = %q, want it to contain %q", got, want)
+	const ev = ".flywheel/events.jsonl"
+	wantAll := func(t *testing.T, got string, wants ...string) {
+		t.Helper()
+		for _, want := range wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("DoctorLedgerWarning = %q, want it to contain %q", got, want)
+			}
 		}
 	}
-}
-
-// TestLedgerTrackedWarningShard: a tracked shard file is named; past three
-// paths the rest are counted, and the untrack command names the directory.
-func TestLedgerTrackedWarningShard(t *testing.T) {
-	t.Parallel()
-	dir := ledgerRepo(t, []string{".flywheel/events/T1.jsonl"}, []string{".flywheel/events/T1.jsonl"})
-	got := DoctorLedgerWarning(dir)
-	for _, want := range []string{"(.flywheel/events/T1.jsonl)", "git rm --cached -r .flywheel/events)"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("DoctorLedgerWarning = %q, want it to contain %q", got, want)
+	commitFile := func(t *testing.T, dir, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
 		}
+		git(t, dir, []string{"add", "--", name})
+		git(t, dir, []string{"commit", "-q", "-m", name})
 	}
-	shards := []string{".flywheel/events/T1.jsonl", ".flywheel/events/T2.jsonl", ".flywheel/events/T3.jsonl", ".flywheel/events/T4.jsonl"}
-	dir = ledgerRepo(t, shards, shards)
-	got = DoctorLedgerWarning(dir)
-	for _, want := range []string{"(.flywheel/events/T1.jsonl, .flywheel/events/T2.jsonl, .flywheel/events/T3.jsonl and 1 more)", "git rm --cached -r .flywheel/events)"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("DoctorLedgerWarning = %q, want it to contain %q", got, want)
+	t.Run("untracked", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerRepo(t, []string{ev}, nil)
+		wantAll(t, DoctorLedgerWarning(dir), "not tracked by git (.flywheel/events.jsonl)", "audit", "git add .flywheel/events.jsonl")
+	})
+	t.Run("ignored", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerRepo(t, []string{ev, ".flywheel/events/T1.jsonl"}, nil)
+		commitFile(t, dir, ".gitignore", ".flywheel/\n")
+		wantAll(t, DoctorLedgerWarning(dir), "git-ignored", ".gitignore:1:.flywheel/", "remove that ignore rule", "git add .flywheel/events.jsonl .flywheel/events")
+	})
+	t.Run("tracked without merge=union", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerRepo(t, []string{ev}, []string{ev})
+		wantAll(t, DoctorLedgerWarning(dir), "(.flywheel/events.jsonl)", `".flywheel/events.jsonl merge=union"`, ".gitattributes", "(#436)")
+	})
+	t.Run("shards without merge=union", func(t *testing.T) {
+		t.Parallel()
+		shards := []string{".flywheel/events/T1.jsonl", ".flywheel/events/T2.jsonl", ".flywheel/events/T3.jsonl", ".flywheel/events/T4.jsonl"}
+		dir := ledgerRepo(t, shards, shards)
+		wantAll(t, DoctorLedgerWarning(dir), "(.flywheel/events/T1.jsonl, .flywheel/events/T2.jsonl, .flywheel/events/T3.jsonl and 1 more)", `".flywheel/events/*.jsonl merge=union"`)
+	})
+	t.Run("tracked with merge=union", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerRepo(t, []string{ev}, []string{ev})
+		commitFile(t, dir, ".gitattributes", ev+" merge=union\n")
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(tracked, union) = %q, want empty", got)
 		}
-	}
+	})
+	t.Run("init's flywheel gitattributes", func(t *testing.T) {
+		t.Parallel()
+		files := []string{ev, ".flywheel/events/T1.jsonl"}
+		dir := ledgerRepo(t, files, files)
+		commitFile(t, dir, ".flywheel/.gitattributes", "events.jsonl merge=union\nevents/*.jsonl merge=union\n")
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(.flywheel/.gitattributes) = %q, want empty", got)
+		}
+	})
+	t.Run("no ledger or missing dir", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerRepo(t, nil, nil)
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(no ledger) = %q, want empty", got)
+		}
+		if got := DoctorLedgerWarning(filepath.Join(dir, "missing")); got != "" {
+			t.Errorf("DoctorLedgerWarning(missing dir) = %q, want empty", got)
+		}
+	})
+	t.Run("not a repo", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(not a repo) = %q, want empty", got)
+		}
+	})
+	t.Run("index unchanged", testDoctorLedgerIndexUntouched)
 }
 
-// TestLedgerTrackedWarningUntracked: a ledger that is present but ignored and
-// untracked gives no warning.
-func TestLedgerTrackedWarningUntracked(t *testing.T) {
-	t.Parallel()
-	dir := ledgerRepo(t, []string{".gitignore", ".flywheel/events.jsonl", ".flywheel/events/T1.jsonl"}, nil)
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git(t, dir, []string{"add", ".gitignore"})
-	git(t, dir, []string{"commit", "-q", "-m", "ignore"})
-	if got := DoctorLedgerWarning(dir); got != "" {
-		t.Errorf("DoctorLedgerWarning(untracked) = %q, want empty", got)
-	}
-	if got := DoctorLedgerWarning(filepath.Join(dir, "missing")); got != "" {
-		t.Errorf("DoctorLedgerWarning(missing dir) = %q, want empty", got)
-	}
-}
-
-// TestLedgerTrackedWarningNotRepo: outside a repository there is no warning.
-func TestLedgerTrackedWarningNotRepo(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := DoctorLedgerWarning(dir); got != "" {
-		t.Errorf("DoctorLedgerWarning(not a repo) = %q, want empty", got)
-	}
-}
-
-// TestLedgerTrackedWarningIndexUntouched: the check never writes the index,
-// even with a dirty tracked ledger that a refreshing command would restat.
-func TestLedgerTrackedWarningIndexUntouched(t *testing.T) {
+// testDoctorLedgerIndexUntouched: the check never writes the index, even with
+// a dirty tracked ledger that a refreshing command would restat.
+func testDoctorLedgerIndexUntouched(t *testing.T) {
 	t.Parallel()
 	dir := ledgerRepo(t, []string{".flywheel/events.jsonl"}, []string{".flywheel/events.jsonl"})
 	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), []byte("{}\n{}\n"), 0o644); err != nil {

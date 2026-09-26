@@ -100,8 +100,10 @@ stash, reset, checkout and the rest, and flags any attempt that moved HEAD anywa
 
 ### Commit the factory, then add the guardrails
 
-The event log is the source of truth, so it must be tracked; `.flywheel/runs/` (the agents'
-transcripts) stays ignored. `flywheel init --ci` writes a GitHub job that runs `flywheel verify`
+The event log is the source of truth, so it must be committed, with `merge=union` so parallel
+branches' appends merge cleanly (`flywheel init` writes it into `.flywheel/.gitattributes`; an
+older repository adds `.flywheel/events.jsonl merge=union` to `.gitattributes`, and
+`flywheel doctor` warns until it does); `.flywheel/runs/` (the agents' transcripts) stays ignored. `flywheel init --ci` writes a GitHub job that runs `flywheel verify`
 on every pull request. Commit both before you install the git hooks:
 
 ```sh

@@ -94,7 +94,10 @@ What each piece is for:
 Your `.gitignore` matters: the state files must be **committed** — the log is the only source of
 truth — while `.flywheel/runs/` (the transcripts) stays ignored. `flywheel init` warns you when
 git would hide a state file; it prints the exact `!.flywheel/...` lines to add so the log, state
-and config are tracked again.
+and config are tracked again. Commit the log with `merge=union`, so parallel branches' appends
+merge without conflicts: `flywheel init` writes that into `.flywheel/.gitattributes`, and an
+older repository adds the line `.flywheel/events.jsonl merge=union` to `.gitattributes`.
+`flywheel doctor` warns while the log is untracked or lacks `merge=union`.
 
 ## 2. Write the first work order
 
