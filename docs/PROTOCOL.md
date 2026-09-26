@@ -41,7 +41,12 @@ all.
 - Effect: `Derive` sets status `planned`. Verify's T1 (`plannedBriefOnly`) uses the task's *latest*
   `planned` event's brief path, deliberately ignoring any `amended` events, as the hash a fresh
   dispatch must match. Acceptance criteria belong to the goal (`flywheel goal add --accept CMD`),
-  not to a unit: a planned event links to its goal with `goal_id`.
+  not to a unit: a planned event links to its goal with `goal_id`. Re-planning an id that already
+  has `dispatched` attempts starts a new plan: `flywheel log` warns on stderr (exit 0; `--replan`
+  silences it, and is a usage error with any other kind), and `Derive` resets the row's session,
+  attempt, rc, reason, verdict, model and stale list so the floor shows a clean `planned` row. The
+  attempt count and every earlier event stay, so the next `flywheel run` numbers after the old
+  attempts.
 
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.

@@ -690,3 +690,82 @@ func TestAgentReviewNeverPasses(t *testing.T) {
 		}
 	}
 }
+
+// TestDeriveReplanClearsAttemptFields checks a planned event on a task with
+// attempts resets the floor row (issue #476): no session, attempt or reason
+// survive from the old run, and the Attempts counter stays.
+func TestDeriveReplanClearsAttemptFields(t *testing.T) {
+	t.Parallel()
+	rc := 0
+	events := []Event{
+		{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "a.md"},
+		{TS: "2026-09-25T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Model: "m1"},
+		{TS: "2026-09-25T00:00:02Z", Task: "T1", Kind: "started", Attempt: "r1", Session: "s1"},
+		{TS: "2026-09-25T00:00:03Z", Task: "T1", Kind: "finished", Attempt: "r1", Session: "s1", Reason: "silent", RC: &rc},
+		{TS: "2026-09-25T00:00:04Z", Task: "T1", Kind: "planned", Brief: "b.md"},
+	}
+	ts, ok := findTask(Derive(events), "T1")
+	if !ok {
+		t.Fatal("T1 missing from derived state")
+	}
+	if ts.Status != "planned" || ts.Brief != "b.md" {
+		t.Errorf("status, brief = %q, %q, want planned, b.md", ts.Status, ts.Brief)
+	}
+	if ts.Session != "" || ts.Attempt != "" || ts.Reason != "" || ts.RC != nil || ts.Model != "" || ts.Verdict != "" {
+		t.Errorf("re-planned row keeps attempt fields: %+v", ts)
+	}
+	if ts.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", ts.Attempts)
+	}
+}
+
+// TestDeriveAmendedKeepsAttempt checks amended corrects a live plan and
+// clears nothing (issue #476).
+func TestDeriveAmendedKeepsAttempt(t *testing.T) {
+	t.Parallel()
+	events := []Event{
+		{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "a.md"},
+		{TS: "2026-09-25T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-25T00:00:02Z", Task: "T1", Kind: "started", Attempt: "r1", Session: "s1"},
+		{TS: "2026-09-25T00:00:03Z", Task: "T1", Kind: "amended", Brief: "b.md", Note: "fix"},
+	}
+	ts, ok := findTask(Derive(events), "T1")
+	if !ok {
+		t.Fatal("T1 missing from derived state")
+	}
+	if ts.Attempt != "r1" || ts.Session != "s1" || ts.Status != "running" {
+		t.Errorf("amended row = attempt %q session %q status %q, want r1, s1, running", ts.Attempt, ts.Session, ts.Status)
+	}
+}
+
+// TestReplanNextAttemptFollowsOldOnes checks the first dispatch after a
+// re-plan numbers after the earlier attempts, never reusing r1 (issue #476).
+func TestReplanNextAttemptFollowsOldOnes(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf strings.Builder
+	res1, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() 1 error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{Task: "T1", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts, _ := findTask(Derive(events), "T1"); ts.Status != "planned" || ts.Attempt != "" {
+		t.Fatalf("re-planned row = status %q attempt %q, want planned and no attempt", ts.Status, ts.Attempt)
+	}
+	res2, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() 2 error = %v", err)
+	}
+	if res1.Attempt != "r1" || res2.Attempt != "r2" {
+		t.Errorf("attempts = %q, %q, want r1, r2", res1.Attempt, res2.Attempt)
+	}
+}
