@@ -2,7 +2,8 @@
 name: flywheel-reviewer
 description: >-
   Review a finished flywheel unit's diff as an independent agent. Use when `flywheel review <task>
-  --agent` hands you a unit: read the brief, the gate readings, the diff from the dispatch base and
+  --agent` hands you a unit: read the brief and every correction delta after it (in order, a later
+  one overriding an earlier one), the gate readings, the diff from the dispatch base and
   the files around it, and report concrete defects as findings with a failure scenario, a file, a
   real line and a fix hint. You never edit, never run git writes, never review your own work and
   never pass a unit. Prefer a different model from the workers.

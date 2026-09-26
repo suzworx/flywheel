@@ -7,6 +7,9 @@ run a git command that changes anything. You read and you report.
 ## What to read
 
 1. The brief below: what the change was asked to do, its owns and its gates.
+   It is followed by the unit's corrections, in order: a later one refines or
+   overrides an earlier one, and together they are the unit's intent. A
+   clipped correction can be read at the path its line names.
 2. The gate readings below: what the factory already measured.
 3. The diff below, then the files around it. Open the changed files in full,
    and the callers and tests of what changed, before you judge a line.
