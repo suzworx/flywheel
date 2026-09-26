@@ -136,6 +136,15 @@ permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks f
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
+`limits.unit_cost_usd` caps what one unit's worker attempts spend, corrections included (the sum
+of `cost` over its `finished` events); a worker's `unit_cost_usd` overrides it, and 0 means no
+cap (`flywheel config set limits.unit_cost_usd 5`). A unit already at its cap is refused at
+dispatch (exit 6, rule `unit-cost`; raise the cap or split the unit). A running attempt that
+reaches it is stopped: a claude worker gets `--max-budget-usd` set to what the unit has left, and
+a worker that streams a cost per step (opencode) is stopped at the step that reaches the cap.
+Either way the attempt finishes with reason `capped`, the note
+`unit cost cap $<cap> reached: $<spent> spent on the unit`, a checkpoint and a `capped` signal
+(issue #459).
 A claude worker loads no MCP servers (`--strict-mcp-config`) unless its `mcp` key lists them in
 the `--mcp-config` shape, e.g. `"mcp": {"mcpServers": {"fs": {"command": "mcp-fs"}}}` (issue #425).
 
