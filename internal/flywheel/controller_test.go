@@ -576,6 +576,54 @@ func TestHealthEventRecordedOnInterval(t *testing.T) {
 	}
 }
 
+// TestHealthFinishedExcludesRateLimited: a unit finished clean and one
+// finished rate-limited count Finished 1, RateLimited 1 (issue #552).
+func TestHealthFinishedExcludesRateLimited(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	at := func(d time.Duration) string { return recoverNow.Add(d).Format(time.RFC3339) }
+	recoverLedger(t, dir,
+		Event{TS: at(-60 * time.Minute), Task: "L", Kind: "planned", Brief: "brief.txt"},
+		Event{TS: at(-59 * time.Minute), Task: "L", Kind: "dispatched", Attempt: "r1", Model: "n"},
+		Event{TS: at(-50 * time.Minute), Task: "L", Kind: "finished", Attempt: "r1", Model: "n", Reason: "rate-limited", ResetAt: at(time.Hour)},
+		Event{TS: at(-45 * time.Minute), Task: "C", Kind: "planned", Brief: "brief.txt"},
+		Event{TS: at(-44 * time.Minute), Task: "C", Kind: "dispatched", Attempt: "r1", Model: "m"},
+		Event{TS: at(-40 * time.Minute), Task: "C", Kind: "finished", Attempt: "r1", Model: "m"})
+	s, err := HealthAt(dir, recoverNow, 1, "v")
+	if err != nil {
+		t.Fatalf("HealthAt: %v", err)
+	}
+	if s.Finished != 1 || s.RateLimited != 1 {
+		t.Errorf("snapshot = %+v, want finished 1, rate-limited 1", s)
+	}
+}
+
+// TestHealthStaleAfterRecorded: a tick with HealthEvery 5m records stale_after
+// 10m0s, twice the interval; controller.health_stale 3m records 3m0s (#552).
+func TestHealthStaleAfterRecorded(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ stale, want string }{{"", "10m0s"}, {"3m", "3m0s"}} {
+		dir := healthFixture(t)
+		if tc.stale != "" {
+			cfg, _, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			cfg.Controller = &ControllerConfig{HealthStale: tc.stale}
+			if err := WriteConfig(dir, cfg); err != nil {
+				t.Fatalf("WriteConfig: %v", err)
+			}
+		}
+		if _, err := TickWith(dir, recoverNow, TickOptions{HealthEvery: 5 * time.Minute}); err != nil {
+			t.Fatalf("TickWith: %v", err)
+		}
+		h := healthEvents(t, dir)
+		if len(h) != 1 || h[0].Health.StaleAfter != tc.want {
+			t.Errorf("health_stale %q: health events = %+v, want one with stale_after %s", tc.stale, h, tc.want)
+		}
+	}
+}
+
 // TestHealthEventOff: HealthEvery 0 appends no health event.
 func TestHealthEventOff(t *testing.T) {
 	t.Parallel()

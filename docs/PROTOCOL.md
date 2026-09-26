@@ -695,8 +695,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   until HH:MM), andon N, oldest <task> <age>, controller gen G, flywheel <version>`, or
   `health: none recorded`; `--json` prints `{ts, age, stale, health}` (`null` when none). A record
   older than `--stale-after` (default `10m`) prints `health STALE (<age>): the controller is not
-  recording; run flywheel controller` and exits 1 (exit 0 otherwise). The stale record is not yet an
-  entry in the factory view's andon list.
+  recording; run flywheel controller` and exits 1 (exit 0 otherwise). The recorder also writes the
+  record's `stale_after`: `controller.health_stale` (a Go duration, positive) when set, else twice
+  `--health-every` (issue #552). When the latest record is older than its `stale_after`, the factory
+  floor (`factory`, `watch`, the TUI) shows one andon entry `health  STALE: the controller is not
+  recording <age>`; a record without `stale_after` (an older writer) never does. `status --health`
+  still judges by `--stale-after`.
 - `limits.checkpoint_every` (a Go duration, default `10m`; `"0"` off): an attempt running in its
   task worktree is checkpointed to `refs/flywheel/checkpoints/<task>/<attempt>` on that interval,
   only when its owned files changed.
@@ -839,8 +843,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: `flywheel controller` with `--health-every` above 0 (issue #528), at most once per interval.
 - Floor level: carries no `task`.
 - Carries: `health`, the snapshot: `running` (tasks dispatched or running), `stalled` and
-  `rate_limited` (units in that run state on the floor), `finished`, `andon` (the floor's andon
-  count), `paused_models` (`[{model, reset_at}]`, each model a rate limit pauses and its RFC 3339
+  `rate_limited` (units in that run state on the floor), `finished` (finished tasks less the
+  rate-limited units, so none is counted twice; issue #552), `andon` (the floor's andon
+  count), `stale_after` (the age past which the record is stale, a Go duration such as `10m0s`:
+  `controller.health_stale`, else twice `--health-every`; omitted by older writers; past it the
+  floor shows a `health` STALE andon entry), `paused_models` (`[{model, reset_at}]`, each model a rate limit pauses and its RFC 3339
   reset), `oldest_in_flight` (the longest-dispatched in-flight task and its age, `T3 42m`; omitted
   when none), `controller_generation` (the controller lock's generation) and `version` (the
   flywheel version). `Validate` requires the snapshot and no task; no other kind may carry `health`.
