@@ -38,6 +38,7 @@ type RunOptions struct {
 	Worktree     bool   // run the worker in the task's own worktree (issue #45)
 	Base         string // with Worktree: branch a new fw/<task> from this ref (issue #456); "" = integration.branch when configured, else HEAD (#550)
 	Lead         string // the lead session dispatching; recorded as the dispatched event's lead (issue #472)
+	Workdir      string // run the worker in this existing git working tree of dir's repository; events still go to dir (issue #545)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -248,6 +249,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, &RuleRefusal{
 			Rule: "base",
 			Fix:  "--base needs --worktree: without it the worker runs in the main checkout at its HEAD",
+		}
+	}
+	if o.Workdir != "" {
+		if err := checkRunWorkdir(dir, o); err != nil {
+			return Result{}, err
 		}
 	}
 
@@ -721,6 +727,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err != nil {
 			return Result{}, err
 		}
+	} else if o.Workdir != "" {
+		// --workdir (issue #545): the lead's own tree, used as it is. No
+		// setup, checkpoints or attempt commit: the lead owns its state.
+		wt = absPath(o.Workdir)
+	} else if prev := recordedWorkdir(events, o.Task); (o.Resume || o.DeltaPath != "") && prev != "" && !samePath(prev, dir) {
+		// A resume or delta without --workdir or --worktree continues in the
+		// tree the previous attempt ran in.
+		wt = prev
+		progress(o.Progress, o.Task+" resuming in workdir "+prev)
 	} else {
 		wt = dir
 	}
@@ -2186,6 +2201,30 @@ func otherWorktrees(dir string) map[string]map[string]string {
 		return nil
 	}
 	return snap
+}
+
+// checkRunWorkdir refuses a --workdir (issue #545) that is combined with
+// --worktree, is not an existing directory, or is not a git working tree of
+// dir's own repository (the two trees' git common dirs differ). dir itself is
+// allowed: it is the same as no --workdir.
+func checkRunWorkdir(dir string, o RunOptions) error {
+	refuse := func(fix string) error { return &RuleRefusal{Rule: "workdir", Fix: fix} }
+	if o.Worktree {
+		return refuse("--workdir and --worktree both choose the worker's tree; pick one")
+	}
+	fi, err := os.Stat(o.Workdir)
+	if err != nil || !fi.IsDir() {
+		return refuse(fmt.Sprintf("--workdir %s is not an existing directory", o.Workdir))
+	}
+	if samePath(o.Workdir, dir) {
+		return nil
+	}
+	want, werr := gitCommonDir(dir)
+	got, gerr := gitCommonDir(o.Workdir)
+	if werr != nil || gerr != nil || !samePath(want, got) {
+		return refuse(fmt.Sprintf("--workdir %s is not a git working tree of the repository at %s", o.Workdir, dir))
+	}
+	return nil
 }
 
 // samePath reports whether a and b name the same location. Each is resolved

@@ -205,6 +205,31 @@ flowchart LR
 
 The details (bases, `--notify`, the TREE column, withdrawing a plan) are in
 [docs/features.md](docs/features.md#dispatch-watch-and-wait).
+- **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files
+  (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
+  safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
+- **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
+  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
+  records the run automatically. For parallel units `flywheel run --worktree` is the default: each
+  unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
+  `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
+  `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
+  `integration.branch` is set, and is refused when neither resolves; otherwise from the main
+  checkout's HEAD, with a warning when HEAD carries commits `origin/main` lacks (#550). The
+  `dispatched` event's `base` records the commit the unit branched from.
+  `flywheel run --workdir PATH` runs the worker in an existing tree the lead prepared (a merge in
+  progress, say) while events still go to `--dir`'s ledger; it is refused (exit 6) with `--worktree`
+  or `--base`, or when PATH is not a git working tree of the same repository.
+  `flywheel run --session ID` (default `$FLYWHEEL_SESSION`) records the dispatching lead session as
+  the dispatched event's `lead`, so leads sharing one ledger can tell their units apart.
+- **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` opens an interactive, k9s-style view of the floor (`:units` `:workers` `:andon` `:events` `:lines` to switch, `/` to filter, enter to explain a unit, `l` for its log, `?` for help, `q` to quit; `--plain` keeps the plain redraw), and `flywheel watch` streams every event as one readable line.
+  When any unit runs in a worktree, the plain floor's (`flywheel factory --plain`) units table adds a TREE column with that worktree and its base commit (`CP-A@abcdef1`), and the `--json` view carries `workdir` and `base`.
+- **Know when a unit finishes** — never background a dispatch with a bare `&` and hope to notice:
+  `flywheel wait <task>... [--timeout D]` blocks until each named task finishes its current (or
+  first) attempt, printing `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
+  4 any unclean, 8 timeout), and `flywheel run <task> --notify CMD` runs `CMD` through the shell
+  when the run returns on any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"`
+  in its environment; a failing notify only warns.
 
 Design priorities, in order: **efficiency and consistency**, then **speed, reliability and
 recoverability** — the lead spends tokens only where judgment is needed, gauges and telemetry cost
