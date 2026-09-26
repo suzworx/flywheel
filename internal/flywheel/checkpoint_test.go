@@ -134,7 +134,7 @@ func waitMidRun(t *testing.T, done chan struct{}, what string, cond func() bool)
 // commit, and a later change moves the ref.
 func TestTimedCheckpoint(t *testing.T) {
 	t.Parallel()
-	dir, wt, ticks, done := timedCheckpointRun(t, "20ms", 10*time.Second)
+	dir, wt, ticks, done := timedCheckpointRun(t, "20ms", 45*time.Second) // long enough for every wait on a loaded host; the waits are hang guards
 	ref := checkpointRef("T1", "r1")
 	refSHA := func() string { sha, _ := gitWith(dir, nil, "rev-parse", "--verify", "-q", ref); return sha }
 	waitMidRun(t, done, "a timed checkpoint", func() bool { return refSHA() != "" })

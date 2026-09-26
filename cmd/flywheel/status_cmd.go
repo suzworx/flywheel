@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 func init() {
 	register("status", "print the factory's deterministic summary", runStatus)
-	registerHelp("status", "flywheel status [--dir DIR] [--now RFC3339] [--json]", func() *flag.FlagSet { fs, _ := statusFlags(); return fs })
+	registerHelp("status", "flywheel status [--dir DIR] [--now RFC3339] [--json] [--health [--stale-after D]]", func() *flag.FlagSet { fs, _ := statusFlags(); return fs })
 }
 
 // statusOptions holds the parsed status flags.
@@ -20,6 +21,10 @@ type statusOptions struct {
 	dir     string
 	now     string
 	jsonOut bool
+	// health prints the latest health event instead of the summary; a record
+	// older than staleAfter is an andon (exit 1).
+	health     bool
+	staleAfter time.Duration
 }
 
 // statusFlags defines status's flags once, so help and run share them.
@@ -30,12 +35,35 @@ func statusFlags() (*flag.FlagSet, *statusOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to measure at; makes output reproducible")
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
+	fs.BoolVar(&o.health, "health", false, "print the latest health event the controller recorded")
+	fs.DurationVar(&o.staleAfter, "stale-after", 10*time.Minute, "with --health, a record older than this is stale (exit 1)")
 	return fs, o
 }
 
 // statusUsage prints the flywheel status usage line.
 func statusUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel status [--dir DIR] [--now RFC3339] [--json]")
+	fmt.Fprintln(w, "usage: flywheel status [--dir DIR] [--now RFC3339] [--json] [--health [--stale-after D]]")
+}
+
+// statusHealth implements status --health: it writes the latest health event
+// as one line (or, with --json, the HealthReport; null when none) to w and
+// returns the exit code: 1 when the record is stale or unreadable, else 0.
+func statusHealth(o *statusOptions, now time.Time, w io.Writer) int {
+	rep, err := flywheel.LatestHealthReport(o.dir, now, o.staleAfter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel status: %v\n", err)
+		return 1
+	}
+	if o.jsonOut {
+		b, _ := json.Marshal(rep)
+		fmt.Fprintln(w, string(b))
+	} else {
+		fmt.Fprintln(w, flywheel.HealthLine(rep))
+	}
+	if rep != nil && rep.Stale {
+		return 1
+	}
+	return 0
 }
 
 // runStatus implements `flywheel status`: a read-only summary of the factory.
@@ -59,6 +87,9 @@ func runStatus(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel status: --now %q is not RFC3339: %v\n", o.now, err)
 		statusUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.health {
+		os.Exit(statusHealth(o, clock(), os.Stdout))
 	}
 	rep, err := flywheel.Status(o.dir, clock())
 	if err != nil {
