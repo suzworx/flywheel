@@ -555,6 +555,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read prompt %s: %w", promptSrc, err)
 	}
+	// Needs-env (issue #534): a variable the prompt about to be sent names in
+	// needs-env: (a correction's unioned with the base brief's, so it cannot
+	// drop one) that is unset or empty refuses before anything is recorded or
+	// written, so no paid attempt is spent finding out. Values are never read
+	// into a message or an event.
+	if ph, perr := ParseBriefHeaderBytes(promptB); perr == nil {
+		needs := ph.NeedsEnv
+		if o.Resume || o.DeltaPath != "" {
+			needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
+		}
+		if r := needsEnvRefusal(needs); r != nil {
+			return Result{}, r
+		}
+	}
 	// A correction's delta is snapshotted per attempt at dispatch (issue
 	// #452): promptB is written atomically to
 	// .flywheel/briefs/<task>.<attempt>.delta.txt and that path is recorded

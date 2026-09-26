@@ -86,7 +86,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
-  needs, needs-state, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
+  needs, needs-state, needs-env, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
   event was appended; `Kind` is the optional `kind:` line, issue #475, trimmed and lowercased, the
   last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
   checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
@@ -126,6 +126,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
+- Not written when a variable the prompt's `needs-env:` names (a correction's unioned with the
+  base brief's) is unset or empty in flywheel's environment: run refuses with rule `needs-env`
+  (exit 6) naming the variables, never their values, before any event (issue #534);
+  `flywheel validate` refuses the same way (exit 6) before any gate runs.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before

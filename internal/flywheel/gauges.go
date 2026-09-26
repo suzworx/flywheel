@@ -199,6 +199,11 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if err != nil {
 		return GaugeResult{}, err
 	}
+	// Needs-env (issue #534): a variable the effective brief names that is
+	// unset or empty refuses before any gate runs or evidence is written.
+	if r := needsEnvRefusal(header.NeedsEnv); r != nil {
+		return GaugeResult{}, r
+	}
 	if len(header.Gates) == 0 {
 		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])
 	}

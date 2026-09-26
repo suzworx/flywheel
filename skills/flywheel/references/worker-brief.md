@@ -36,6 +36,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   gives files, but for a resource, not a file: files are `owns:`. `--allow-overlap` dispatches
   anyway and records the crossing on the dispatched event's note, so a deliberate overlap stays
   visible in the ledger.
+- **needs-env:** — environment variables the gates or live round read (a secret, say):
+  `needs-env: NAME[, NAME...]`, repeatable, or `needs-env: none`. `flywheel run` and `flywheel
+  validate` refuse (exit 6, rule `needs-env`) before anything is recorded or any gate runs while
+  one is unset or empty in flywheel's environment, so no paid attempt is spent finding out; the
+  message names the variables, never their values. Export each as its own statement in the
+  dispatching shell, not chained into a backgrounded command, whose subshell loses it (issue #534).
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before
@@ -75,7 +81,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
   for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
-  `flywheel lint` warns on a `git diff --check` gate with no revision.
+  `flywheel lint` warns on a `git diff --check` gate with no revision. Run `flywheel lint <brief>
+  --probe` in the base checkout before `log --kind planned`: it runs each gate once there, so a
+  wrong runner, path or missing tool is caught before a paid attempt (#544).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
   provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
