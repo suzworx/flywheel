@@ -117,7 +117,7 @@ func nextAction(f recoverFacts) Next {
 	}
 	unclean := f.Status == "finished" && f.FinishReason != "stop" || f.Status == "lost"
 	if unclean && f.PausedUntil != "" {
-		return Next{Action: "wait-reset", Reason: "model paused by a rate limit until " + f.PausedUntil, Command: "flywheel wait " + t}
+		return Next{Action: "wait-reset", Reason: "model paused by a rate limit until " + f.PausedUntil + "; flywheel run --resume waits for the reset", Command: "flywheel run " + t + " --resume"}
 	}
 	switch {
 	case f.Status == "finished" && (f.FinishReason == "rate-limited" || f.FinishReason == "abandoned-job"):
