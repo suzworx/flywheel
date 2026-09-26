@@ -716,6 +716,25 @@ func TestPlanDriftWarning(t *testing.T) {
 	})
 }
 
+// TestPlannedIssueRecordedAndReadBack checks RecordPlannedBy copies
+// PlanMeta.Issue onto the planned event and it round-trips through ReadEvents
+// (issue #457).
+func TestPlannedIssueRecordedAndReadBack(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	brief := writeLogBrief(t, dir, "b.txt", "owns: a.go\ngate: go build ./...\n\n# TASK: t\n")
+	if err := RecordPlannedBy(dir, "t", brief, PlanMeta{Issue: 12}); err != nil {
+		t.Fatalf("RecordPlannedBy() error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != "planned" || events[0].Issue != 12 {
+		t.Errorf("events = %+v, want one planned event with issue 12", events)
+	}
+}
+
 // TestCoversNegatedNarrowing checks a new negated owns entry that stops
 // covering a path the attempt covered is a narrowing (issue #388), while
 // dropping a negation widens.

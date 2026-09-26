@@ -1133,6 +1133,21 @@ func TestValidateIncrement(t *testing.T) {
 	}
 }
 
+// TestPlannedIssueOnlyOnPlanned checks only a planned event may carry a
+// tracker issue, and it must be positive (issue #457).
+func TestPlannedIssueOnlyOnPlanned(t *testing.T) {
+	t.Parallel()
+	if err := Validate(Event{Task: "T1", Kind: "planned", Issue: 12}); err != nil {
+		t.Errorf("Validate(planned issue 12) = %v, want nil", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "planned", Issue: -1}); err == nil {
+		t.Error("Validate(planned issue -1) = nil, want an error")
+	}
+	if err := Validate(Event{Task: "T1", Kind: "landed", Issue: 12}); err == nil {
+		t.Error("Validate(landed issue 12) = nil, want an error")
+	}
+}
+
 // TestReviewFindingEvent checks the review_finding kind (issue #389): a sound
 // finding validates and round-trips through the log with its line, category
 // and id; each missing field and an unknown severity are refused.
