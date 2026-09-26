@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.33.0](https://github.com/suzworx/flywheel/compare/v0.32.0...v0.33.0) (2026-09-26)
+
+
+### Features
+
+* a brief's needs-env: names env vars; run and validate refuse while one is unset ([#559](https://github.com/suzworx/flywheel/issues/559)) ([1bbb67f](https://github.com/suzworx/flywheel/commit/1bbb67f8f780ab61108653371c0600f7f3f61692)), closes [#534](https://github.com/suzworx/flywheel/issues/534)
+* an attempt in its task worktree is checkpointed every limits.checkpoint_every while it runs ([#549](https://github.com/suzworx/flywheel/issues/549)) ([ad01906](https://github.com/suzworx/flywheel/commit/ad019066ee1142896a2d38213f13ea735ebb58e7))
+* flywheel ship runs a unit's local shipping steps, preflight, commit, merge of the integration branch and gates, one shipped event each, resumable ([#558](https://github.com/suzworx/flywheel/issues/558)) ([dabb9c5](https://github.com/suzworx/flywheel/commit/dabb9c5b97acf683522f4f6d9f6d083362893994))
+* flywheel ship takes a passed unit all the way to landed: push, PR, CI, squash merge, landed and closing the issue ([#562](https://github.com/suzworx/flywheel/issues/562)) ([dfff92c](https://github.com/suzworx/flywheel/commit/dfff92cec11df144d120e96efac02e58551c71b0)), closes [#457](https://github.com/suzworx/flywheel/issues/457)
+* lint --probe runs each gate once on the base tree before dispatch ([#557](https://github.com/suzworx/flywheel/issues/557)) ([d4544e9](https://github.com/suzworx/flywheel/commit/d4544e98647b1d22d4c146b6dab082e5144cdde7))
+* run --workdir dispatches into a lead-prepared worktree while logging to the main ledger ([#565](https://github.com/suzworx/flywheel/issues/565)) ([c79ac1f](https://github.com/suzworx/flywheel/commit/c79ac1f0c8dbc2de377ade05778ad1ae95d23b3c)), closes [#545](https://github.com/suzworx/flywheel/issues/545)
+* the controller records a health event on an interval, and status --health prints it or reports it stale ([#553](https://github.com/suzworx/flywheel/issues/553)) ([6fa0444](https://github.com/suzworx/flywheel/commit/6fa0444a7e4e0232344b256f354b6fd2fc72ce20)), closes [#528](https://github.com/suzworx/flywheel/issues/528)
+* the controller resumes rate-limited units once their model's limit resets, and runs controller.notify for each ([#546](https://github.com/suzworx/flywheel/issues/546)) ([d60baac](https://github.com/suzworx/flywheel/commit/d60baacee0e2059a1f6fb0e927d33a6c55849269))
+
+
+### Bug Fixes
+
+* a new task worktree branches from integration.branch, not the checkout's HEAD ([#556](https://github.com/suzworx/flywheel/issues/556)) ([e593ec5](https://github.com/suzworx/flywheel/commit/e593ec5fa466e7804ef0b6f9fcee3cdfcbcdfa32)), closes [#550](https://github.com/suzworx/flywheel/issues/550)
+* a stale health record is an andon on the floor, and health's finished count excludes rate-limited units ([#563](https://github.com/suzworx/flywheel/issues/563)) ([da5abe7](https://github.com/suzworx/flywheel/commit/da5abe73332e37352fbdc9e3cf889171583e27f7)), closes [#552](https://github.com/suzworx/flywheel/issues/552)
+* an attempt that finishes before step 20 with no PLAN check-in records no-plan at finish ([#551](https://github.com/suzworx/flywheel/issues/551)) ([a477784](https://github.com/suzworx/flywheel/commit/a47778484fefd3b6a9e0486828ba6fede54906dd)), closes [#533](https://github.com/suzworx/flywheel/issues/533)
+* config set and get know a worker's permission_mode, -- ends config's flags, and the help drops its stale key list ([#547](https://github.com/suzworx/flywheel/issues/547)) ([616a088](https://github.com/suzworx/flywheel/commit/616a0886b10154d3643819af1ce438fafb18d53e)), closes [#543](https://github.com/suzworx/flywheel/issues/543)
+
+
+### Documentation
+
+* PROTOCOL.md says what the code does, and has a table of contents ([#555](https://github.com/suzworx/flywheel/issues/555)) ([d711cdf](https://github.com/suzworx/flywheel/commit/d711cdf7b12b5cecc362a3fdf3ff4c21314cd487))
+* quickstart and concepts match today's CLI: latest release, four adapters, every exit code, real messages and links ([#560](https://github.com/suzworx/flywheel/issues/560)) ([cb25a5a](https://github.com/suzworx/flywheel/commit/cb25a5adbc67150c01cc6e1bf1ef4634e21c66c6))
+* the Pages site renders every docs page with one layout and nav, and the landing page is accurate and shareable ([#561](https://github.com/suzworx/flywheel/issues/561)) ([b6b3f06](https://github.com/suzworx/flywheel/commit/b6b3f06761fe8fa5526154e504f9a8f0f8f0abd7))
+
 ## [0.32.0](https://github.com/suzworx/flywheel/compare/v0.31.0...v0.32.0) (2026-09-26)
 
 
