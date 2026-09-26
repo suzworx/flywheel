@@ -194,7 +194,7 @@ func TestLogFlagsBindEveryOption(t *testing.T) {
 		"--dir", "X", "--task", "T1", "--kind", "planned", "--brief", "b.txt",
 		"--session", "s", "--model", "m", "--attempt", "r1", "--rc", "0",
 		"--reason", "stop", "--verdict", "pass", "--commit", "c", "--note", "n",
-		"--goal", "g1", "--json", "f", "--no-state", "--replan",
+		"--goal", "g1", "--base", "b1", "--json", "f", "--no-state", "--replan",
 	}
 	fs, o := logFlags()
 	if err := fs.Parse(args); err != nil {
@@ -202,7 +202,7 @@ func TestLogFlagsBindEveryOption(t *testing.T) {
 	}
 	want := logOptions{dir: "X", jsonIn: "f", task: "T1", kind: "planned",
 		session: "s", model: "m", attempt: "r1", rc: "0", reason: "stop",
-		verdict: "pass", brief: "b.txt", commit: "c", note: "n", goal: "g1", noState: true, replan: true}
+		verdict: "pass", brief: "b.txt", commit: "c", note: "n", goal: "g1", base: "b1", noState: true, replan: true}
 	if *o != want {
 		t.Errorf("logFlags parsed = %#v, want %#v", *o, want)
 	}

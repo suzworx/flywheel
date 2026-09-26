@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -35,6 +36,7 @@ type logOptions struct {
 	commit  string
 	note    string
 	goal    string
+	base    string
 	noState bool
 	shard   bool
 	// replan silences the re-plan warning on --kind planned (issue #476).
@@ -63,6 +65,7 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	fs.StringVar(&o.commit, "commit", "", "commit id")
 	fs.StringVar(&o.note, "note", "", "free-form note")
 	fs.StringVar(&o.goal, "goal", "", "goal id a planned event links to")
+	fs.StringVar(&o.base, "base", "", "with --kind rebased: the new base commit or ref (resolved to a full commit in --dir)")
 	fs.BoolVar(&o.noState, "no-state", false, "skip state derivation after appending")
 	fs.BoolVar(&o.replan, "replan", false, "with --kind planned: silence the warnings that the task already has attempts or its fw/<task> branch exists")
 	fs.BoolVar(&o.shard, "shard", false, "switch this repository's event log to per-task shards under .flywheel/events/ (one-way)")
@@ -88,6 +91,7 @@ func logShardConflicts(o *logOptions) error {
 		{"--rc", o.rc},
 		{"--reason", o.reason},
 		{"--goal", o.goal},
+		{"--base", o.base},
 		{"--verdict", o.verdict},
 		{"--attempt", o.attempt},
 	}
@@ -381,6 +385,23 @@ func runLog(args []string) {
 	case o.kind == "note" && o.note == "":
 		// A note is a journal line (issue #409): the text is the whole event.
 		logFlagError(fs, args, "--kind note requires --note <text>", logWithout("note"), `--note "<text>"`)
+	case o.base != "" && o.kind != "rebased":
+		logFlagError(fs, args, "--base applies to --kind rebased only", logWithout("base"), "")
+	case o.kind == "rebased" && o.task == "":
+		logFlagError(fs, args, "--kind rebased requires --task <id>", nil, "--task <id>")
+	case o.kind == "rebased" && o.base == "":
+		// A hand rebase records its new base like flywheel rebase does (issue #498).
+		logFlagError(fs, args, "--kind rebased requires --base <ref>", nil, "--base <ref>")
+	case o.kind == "rebased" && strings.TrimSpace(o.note) == "":
+		logFlagError(fs, args, "--kind rebased requires --note <old base> onto <ref>", logWithout("note"), `--note "<old base> onto <ref>"`)
+	}
+	if o.base != "" {
+		sha, err := resolveLogBase(o.dir, o.base)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+			os.Exit(1)
+		}
+		o.base = sha
 	}
 	if o.goal != "" {
 		if _, ok := findGoal(o.dir, o.goal); !ok {
@@ -448,6 +469,7 @@ func runLog(args []string) {
 	e.Commit = o.commit
 	e.Note = o.note
 	e.GoalID = o.goal
+	e.Base = o.base
 	if o.rc != "" {
 		v, err := strconv.ParseInt(o.rc, 10, strconv.IntSize)
 		if err != nil {
@@ -461,6 +483,22 @@ func runLog(args []string) {
 	if rw != "" {
 		fmt.Fprintf(os.Stderr, "flywheel log: %s\n", rw)
 	}
+}
+
+// fullSHA matches a full 40-hex commit id, which --base passes through as is.
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// resolveLogBase returns --base as a full commit id: a full sha as given, any
+// other ref resolved read-only with git rev-parse --verify in dir (issue #498).
+func resolveLogBase(dir, ref string) (string, error) {
+	if fullSHA.MatchString(ref) {
+		return ref, nil
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("--base %q does not resolve to a commit in %s", ref, dir)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // replanWarning returns the warning for a planned event on a task that

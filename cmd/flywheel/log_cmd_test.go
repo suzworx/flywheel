@@ -618,3 +618,75 @@ func TestLogPlannedBranchWarning(t *testing.T) {
 		t.Errorf("--replan: exit %d, want 0 and no warning; stderr:\n%s", code, stderr)
 	}
 }
+
+// logRebasedRepo returns a temp git repo with one commit and HEAD's full sha.
+func logRebasedRepo(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	gitInitRepo(t, dir)
+	commit := exec.Command("git", "-C", dir, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=test@example.com",
+		"commit", "-q", "--allow-empty", "-m", "init")
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	return dir, strings.TrimSpace(string(out))
+}
+
+// TestLogRebasedBase checks flywheel log --kind rebased --base records a hand
+// rebase (issue #498): a ref is stored as the full sha it resolves to in --dir,
+// a full 40-hex sha passes through as given.
+func TestLogRebasedBase(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct{ name, base, want string }{
+		{"ref", "HEAD", ""},
+		{"full sha", strings.Repeat("ab", 20), strings.Repeat("ab", 20)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir, head := logRebasedRepo(t)
+			want := tt.want
+			if want == "" {
+				want = head
+			}
+			if stderr, code := runLogProcess(t, "--task", "T", "--kind", "rebased", "--base", tt.base, "--note", "x", "--no-state", "--dir", dir); code != 0 {
+				t.Fatalf("exit %d, want 0; stderr:\n%s", code, stderr)
+			}
+			events, err := flywheel.ReadEvents(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 || events[0].Kind != "rebased" || events[0].Task != "T" || events[0].Base != want || events[0].Note != "x" {
+				t.Errorf("events = %+v, want one rebased event on T with base %s", events, want)
+			}
+		})
+	}
+}
+
+// TestLogRebasedRefusesWithoutBase checks --kind rebased without --base and
+// --base with another kind are usage refusals (exit 2), and a ref that does
+// not resolve is an error (exit 1) naming the ref (issue #498).
+func TestLogRebasedRefusesWithoutBase(t *testing.T) {
+	t.Parallel()
+	dir, _ := logRebasedRepo(t)
+	for _, tt := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"--task", "T", "--kind", "rebased", "--note", "x"}, 2, "--kind rebased requires --base <ref>"},
+		{[]string{"--task", "T", "--kind", "note", "--base", "HEAD", "--note", "x"}, 2, "--base applies to --kind rebased only"},
+		{[]string{"--task", "T", "--kind", "rebased", "--base", "no-such-ref", "--note", "x"}, 1, `--base "no-such-ref" does not resolve`},
+	} {
+		stderr, code := runLogProcess(t, append(tt.args, "--no-state", "--dir", dir)...)
+		if code != tt.code || !strings.Contains(stderr, tt.want) {
+			t.Errorf("flywheel log %v = %d %q, want %d and %q", tt.args, code, stderr, tt.code, tt.want)
+		}
+	}
+	if events, err := flywheel.ReadEvents(dir); err != nil || len(events) != 0 {
+		t.Errorf("events = %+v (err %v), want none written", events, err)
+	}
+}

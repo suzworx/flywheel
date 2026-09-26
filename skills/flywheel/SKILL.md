@@ -156,7 +156,9 @@ flywheel commands run there use the main ledger. The floor's TREE column shows e
 worktree and base commit. If you dispatch a unit on another unit's unmerged branch (`fw/<A>`),
 run `flywheel rebase <task> [--onto REF]` once A lands as a squash: until then the unit shows
 `stacked` on the andon, `flywheel validate` notes it, and `flywheel land` refuses it (rule
-`stacked`); a conflicting rebase is aborted and lists the paths (#414). The
+`stacked`); a conflicting rebase is aborted and lists the paths (#414). A rebase done by hand
+is recorded with `flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"`
+(#498). The
 hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
 or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
 hand-built **fresh run** below is the OpenCode-specific fallback.

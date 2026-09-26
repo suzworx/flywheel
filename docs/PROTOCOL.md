@@ -482,11 +482,14 @@ all.
 - Verify: rule `W1` (section 2).
 
 ### `rebased`
-- Written by: the CLI only, via `flywheel rebase <task> [--onto REF]` (issue #414), after
+- Written by: the CLI only: `flywheel rebase <task> [--onto REF]` (issue #414), or `flywheel log --kind rebased` for a hand rebase (below). The rebase command writes it after
   `git rebase --onto <onto> <base> fw/<task>` succeeded in the unit's task worktree
   (`.flywheel/worktrees/<task>`; anywhere else the command refuses). `onto` defaults to `main`, else
   `master`. On a conflict the rebase is aborted, the branch is left as it was, the conflicting paths
-  are listed (exit 1) and nothing is recorded.
+  are listed (exit 1) and nothing is recorded. A rebase done by hand is recorded with
+  `flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"` (issue #498):
+  `--base` is resolved to a full commit in `--dir`, and a missing `--task`, `--base` or `--note` is a
+  usage error (exit 2).
 - Carries: `task`, optionally `attempt`, `base` (the new base: `git rev-parse <onto>`), `note`
   (`was <old base>, onto <onto>`). `Validate` requires the base and the note.
 - Effect: no status change. The unit's base (`dispatchBase`) becomes the latest `rebased` event's
