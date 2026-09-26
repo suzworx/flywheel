@@ -305,6 +305,33 @@ func TestCalibratePerPersonaFlags(t *testing.T) {
 	}
 }
 
+// TestRunBaseFlag parses run's --base (issue #456) next to --worktree, in
+// either order around the task id, and checks the usage line names it.
+func TestRunBaseFlag(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"T1", "--worktree", "--base", "main2"},
+		{"--base", "main2", "--worktree", "T1"},
+	} {
+		fs, o := runFlags()
+		pos, err := parseArgs(fs, args)
+		if err != nil {
+			t.Fatalf("runFlags parseArgs(%v): %v", args, err)
+		}
+		if len(pos) != 1 || pos[0] != "T1" || !o.worktree || o.base != "main2" {
+			t.Errorf("parseArgs(%v) = %v, worktree=%v base=%q", args, pos, o.worktree, o.base)
+		}
+	}
+	if fs, o := runFlags(); fs.Parse(nil) != nil || o.base != "" {
+		t.Errorf("default --base = %q, want empty", o.base)
+	}
+	var b strings.Builder
+	runUsage(&b)
+	if !strings.Contains(b.String(), "[--base REF]") {
+		t.Errorf("run usage lacks --base: %s", b.String())
+	}
+}
+
 // TestReviewLoopFlags parses the review loop's flags (issue #389): --fix with
 // its rounds, correcting worker and worktree, and a lead's --dismiss.
 func TestReviewLoopFlags(t *testing.T) {

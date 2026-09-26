@@ -244,6 +244,68 @@ func worktreeRepo(t *testing.T) string {
 	return dir
 }
 
+// baseRepo adds branch main2, one commit ahead of HEAD, to a worktreeRepo
+// without checking it out, and returns the dir, HEAD's and main2's commits.
+func baseRepo(t *testing.T) (dir, head, main2 string) {
+	t.Helper()
+	dir = worktreeRepo(t)
+	head = git(t, dir, []string{"rev-parse", "HEAD"})
+	main2 = git(t, dir, []string{"commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "ahead"})
+	git(t, dir, []string{"branch", "main2", main2})
+	return dir, head, main2
+}
+
+// TestTaskWorktreeBase checks that TaskWorktreeFrom branches a new fw/<task>
+// from base, keeps HEAD for base "", names an unresolvable base, refuses an
+// existing branch that does not contain base and reuses one that does (#456).
+func TestTaskWorktreeBase(t *testing.T) {
+	t.Parallel()
+	dir, head, main2 := baseRepo(t)
+
+	wt, err := TaskWorktreeFrom(dir, "B1", "main2")
+	if err != nil {
+		t.Fatalf("TaskWorktreeFrom(main2) error = %v", err)
+	}
+	if got := git(t, wt, []string{"rev-parse", "HEAD"}); got != main2 {
+		t.Errorf("fw/B1 at %s, want main2 %s", got, main2)
+	}
+
+	wt, err = TaskWorktreeFrom(dir, "B2", "")
+	if err != nil {
+		t.Fatalf("TaskWorktreeFrom(\"\") error = %v", err)
+	}
+	if got := git(t, wt, []string{"rev-parse", "HEAD"}); got != head {
+		t.Errorf("fw/B2 at %s, want HEAD %s", got, head)
+	}
+
+	if _, err := TaskWorktreeFrom(dir, "B3", "no-such-ref"); err == nil || !strings.Contains(err.Error(), "no-such-ref") {
+		t.Errorf("unresolvable base: error = %v, want one naming no-such-ref", err)
+	}
+	if ok, _ := TaskBranch(dir, "B3"); ok {
+		t.Errorf("an unresolvable base created fw/B3")
+	}
+
+	git(t, dir, []string{"branch", "fw/B4", head})
+	_, err = TaskWorktreeFrom(dir, "B4", "main2")
+	if err == nil || !strings.Contains(err.Error(), "fw/B4 already exists and does not contain main2") ||
+		!strings.Contains(err.Error(), "flywheel rebase B4 --onto main2") {
+		t.Errorf("branch without base: error = %v, want the rebase refusal", err)
+	}
+
+	git(t, dir, []string{"branch", "fw/B5", main2})
+	wt, err = TaskWorktreeFrom(dir, "B5", "main2")
+	if err != nil {
+		t.Fatalf("branch containing base: error = %v", err)
+	}
+	if got := git(t, wt, []string{"rev-parse", "HEAD"}); got != main2 {
+		t.Errorf("reused fw/B5 at %s, want %s", got, main2)
+	}
+	// The worktree now exists: a rerun with the same base reuses it.
+	if again, err := TaskWorktreeFrom(dir, "B5", "main2"); err != nil || again != wt {
+		t.Errorf("rerun = %q, %v; want %q reused", again, err, wt)
+	}
+}
+
 // TestWorktreeCleanRunNoFalseGitWrite checks that a --worktree run that
 // touched no git history records no git-write signal: the before and after
 // snapshots both read the task's worktree (#333 review).
