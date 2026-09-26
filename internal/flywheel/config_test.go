@@ -1161,6 +1161,33 @@ func TestQuietWaitConfig(t *testing.T) {
 	}
 }
 
+// TestCheckpointEveryConfig covers limits.checkpoint_every (issue #528): ""
+// means 10m, "0" disables timed checkpoints, and validation refuses a
+// negative or unparseable duration by the key's name.
+func TestCheckpointEveryConfig(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{{"", 10 * time.Minute}, {"0", 0}, {"90s", 90 * time.Second}} {
+		cfg := DefaultConfig()
+		cfg.Limits.CheckpointEvery = tc.value
+		if d, err := cfg.Limits.CheckpointEveryDuration(); err != nil || d != tc.want {
+			t.Errorf("CheckpointEveryDuration(%q) = %v, %v; want %v", tc.value, d, err, tc.want)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() with checkpoint_every %q = %v, want nil", tc.value, err)
+		}
+	}
+	for _, value := range []string{"-1m", "soon"} {
+		cfg := DefaultConfig()
+		cfg.Limits.CheckpointEvery = value
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "limits.checkpoint_every") {
+			t.Errorf("Validate() with checkpoint_every %q = %v, want an error naming limits.checkpoint_every", value, err)
+		}
+	}
+}
+
 // TestRateLimitPauseAtConfig checks limits.rate_limit_pause_at: default 0.95,
 // Get/Set, a negative value disabling the pause (threshold 0), and Validate
 // refusing a value above 1 (issue #417).
