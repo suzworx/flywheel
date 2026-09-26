@@ -1177,6 +1177,11 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.FormatBool(c.StrictLinks()), nil
 	case "worktree.carry":
 		return strings.Join(c.WorktreeCarry(), ","), nil
+	case "integration.branch":
+		if c.Integration == nil {
+			return "", nil
+		}
+		return c.Integration.Branch, nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -1229,7 +1234,7 @@ func (c Config) validKeys() []string {
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1256,7 +1261,7 @@ func (c Config) validKeys() []string {
 // (a comma-separated persona list), review.required (true or false) and
 // review.group_gates (commands separated by ";;" or newlines) and
 // review.allowed_tools (claude patterns, separated the same way; an empty
-// entry is refused).
+// entry is refused) and integration.branch (an empty value clears it).
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json; a
 // worker's routing block (issue #474) is edited there too and is no key here.
@@ -1461,6 +1466,18 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Worktree.Carry = carry
 		return nil
+	case "integration.branch":
+		// An empty value clears the key (back to main, else master); a bad
+		// name is Validate's to refuse.
+		if value = strings.TrimSpace(value); value == "" {
+			c.Integration = nil
+			return nil
+		}
+		if c.Integration == nil {
+			c.Integration = &IntegrationConfig{}
+		}
+		c.Integration.Branch = value
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -1503,7 +1520,7 @@ func (c Config) settableKeys() []string {
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
