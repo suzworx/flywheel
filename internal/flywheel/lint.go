@@ -215,6 +215,14 @@ func lintStructure(dir, path string) (LintResult, error) {
 			res.Problems = append(res.Problems, "exclusive: entry is empty")
 		}
 	}
+	// needs-env: (issue #534) is checked for shape only; lint never reads the
+	// environment.
+	for _, n := range header.needsEnvInvalid {
+		res.Problems = append(res.Problems, fmt.Sprintf("needs-env name %q is not a valid environment variable name", n))
+	}
+	if header.needsEnvEmpty {
+		res.Problems = append(res.Problems, "needs-env: line is empty; name variables or write needs-env: none")
+	}
 	for i, g := range header.Gates {
 		if gateBacktickInDoubleQuotes(g) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))

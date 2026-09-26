@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{%- assign page_title = page.title | default: page.name | default: site.title -%}
+<title>{% if page_title == site.title %}{{ site.title }}{% else %}{{ page_title }} · {{ site.title }}{% endif %}</title>
+<meta name="description" content="{{ page.description | default: site.description | strip_newlines | escape }}">
+<link rel="icon" href="{{ '/assets/favicon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="canonical" href="{{ page.url | absolute_url }}">
+<meta name="theme-color" content="#faf8f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e141a" media="(prefers-color-scheme: dark)">
+<style>
+/* tokens: the same as index.html */
+:root{
+  --ink:#16202b; --body:#4a5a68; --soft:#78868f; --line:#e3ded5; --hair:#efebe3;
+  --bg:#faf8f5; --panel:#fff; --code:#f2eee7;
+  --accent:#c2650f; --accent-ink:#fff; --term:#16202b;
+  --r:14px; --r-sm:9px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ink:#f0f4f8; --body:#a9b6c2; --soft:#7d8b98; --line:#26313c; --hair:#1d262f;
+    --bg:#0e141a; --panel:#141c24; --code:#111920;
+    --accent:#e8933f; --accent-ink:#16202b; --term:#0b1015;
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#f0f4f8; --body:#a9b6c2; --soft:#7d8b98; --line:#26313c; --hair:#1d262f;
+  --bg:#0e141a; --panel:#141c24; --code:#111920;
+  --accent:#e8933f; --accent-ink:#16202b; --term:#0b1015;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--body);
+  font:400 16.5px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+code,kbd,pre{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+.wrap{max-width:1140px; margin-inline:auto; padding-inline:24px}
+
+/* nav */
+nav{position:sticky; top:0; z-index:20; background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:saturate(180%) blur(12px); border-bottom:1px solid var(--hair)}
+.nav{display:flex; align-items:center; justify-content:space-between; min-height:68px; gap:24px; flex-wrap:wrap}
+.nav a{text-decoration:none}
+.brand{display:flex; align-items:center; gap:10px; font-weight:650; color:var(--ink); letter-spacing:-.02em; font-size:17px}
+.brand svg{width:26px; height:26px; flex:none}
+.navlinks{display:flex; align-items:center; gap:22px; font-size:14.5px; color:var(--body); flex-wrap:wrap}
+.navlinks a:hover,.navlinks a[aria-current]{color:var(--ink)}
+
+/* prose */
+.prose{max-width:78ch; margin-inline:auto; padding:clamp(40px,6vw,72px) 24px 64px; overflow-wrap:break-word}
+.prose h1,.prose h2,.prose h3,.prose h4{color:var(--ink); line-height:1.18; letter-spacing:-.022em; font-weight:640; scroll-margin-top:84px}
+.prose h1{font-size:clamp(32px,4.4vw,46px); letter-spacing:-.032em; margin:0 0 22px}
+.prose h2{font-size:clamp(23px,2.6vw,29px); margin:52px 0 14px; padding-top:22px; border-top:1px solid var(--hair)}
+.prose h3{font-size:19px; margin:34px 0 10px}
+.prose h4{font-size:16.5px; margin:26px 0 8px}
+.prose p,.prose ul,.prose ol,.prose blockquote,.prose table,.prose pre{margin:0 0 18px}
+.prose li{margin:4px 0}
+.prose a{color:var(--accent); text-underline-offset:2px}
+.prose blockquote{padding:4px 18px; border-left:3px solid var(--accent); color:var(--soft)}
+.prose hr{height:1px; background:var(--hair); border:0; margin:40px 0}
+.prose img{max-width:100%; height:auto}
+.prose code{font-size:.87em; background:var(--code); padding:.14em .4em; border-radius:5px; color:var(--ink)}
+.prose pre{background:var(--code); border:1px solid var(--line); border-radius:var(--r);
+  padding:18px 20px; overflow-x:auto; font-size:14px; line-height:1.65}
+.prose pre code{background:none; padding:0; font-size:14px; border-radius:0}
+.prose .highlight{background:none}
+.prose table{display:block; width:100%; overflow-x:auto; border-collapse:collapse; font-size:15px;
+  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--panel)}
+.prose th,.prose td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--hair); vertical-align:top}
+.prose tr:last-child td{border-bottom:0}
+.prose th{color:var(--soft); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.09em}
+
+footer{border-top:1px solid var(--hair); padding-block:36px 52px; font-size:14.5px; color:var(--soft)}
+.foot{display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap}
+.foot a{text-decoration:none} .foot a:hover{color:var(--ink)}
+.foot-links{display:flex; gap:20px; flex-wrap:wrap}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap nav">
+  <a class="brand" href="{{ '/' | relative_url }}">
+    <svg viewBox="0 0 256 256" aria-hidden="true">
+      <circle cx="128" cy="128" r="94" fill="none" stroke="currentColor" stroke-width="20"/>
+      <g transform="rotate(14 128 128)"><circle cx="128" cy="128" r="54" fill="none" stroke="#c2650f" stroke-width="20" stroke-dasharray="34 22.55"/></g>
+      <circle cx="128" cy="128" r="16" fill="currentColor"/>
+    </svg>
+    flywheel
+  </a>
+  <div class="navlinks">
+    <a href="{{ '/' | relative_url }}">Home</a>
+    <a href="{{ '/quickstart.html' | relative_url }}"{% if page.url == '/quickstart.html' %} aria-current="page"{% endif %}>Quickstart</a>
+    <a href="{{ '/concepts.html' | relative_url }}"{% if page.url == '/concepts.html' %} aria-current="page"{% endif %}>Concepts</a>
+    <a href="{{ '/PROTOCOL.html' | relative_url }}"{% if page.url == '/PROTOCOL.html' %} aria-current="page"{% endif %}>Protocol</a>
+    <a href="{{ '/design/autonomous-shipping.html' | relative_url }}"{% if page.url contains '/design/' %} aria-current="page"{% endif %}>Design</a>
+    <a href="https://github.com/suzworx/flywheel">GitHub</a>
+  </div>
+</div></nav>
+
+<main class="prose">
+{{ content }}
+</main>
+
+<footer><div class="wrap foot">
+  <span>Built by flywheel, by Sujeet.</span>
+  <span class="foot-links">
+    <a href="https://github.com/suzworx/flywheel/blob/main/docs/{{ page.path }}">View source</a>
+    <a href="https://github.com/suzworx/flywheel/releases">Releases</a>
+    <a href="https://github.com/suzworx/flywheel">GitHub</a>
+  </span>
+</div></footer>
+
+</body>
+</html>

@@ -15,7 +15,8 @@ command that fixes it.
 
 Download the release for your platform from the [Releases page](https://github.com/suzworx/flywheel/releases):
 a zip named `flywheel-v<version>-<os>-<arch>.zip` (Windows binaries ship as
-`flywheel-v<version>-windows-amd64.exe.zip`), plus the `checksums.txt` beside it.
+`flywheel-v<version>-windows-amd64.exe.zip`), plus the `checksums.txt` beside it. Already
+have flywheel installed? Run `flywheel upgrade` instead.
 
 Verify the download before trusting it: the printed hash must match the matching line in
 `checksums.txt` exactly. If it does not, the download is corrupt or tampered with — re-download,
@@ -26,8 +27,8 @@ On Linux or macOS, the release publishes four assets — `linux-amd64`, `linux-a
 and uses it for both the checksum and the install:
 
 ```sh
-# set V to the release you are installing
-V=v0.14.0
+# V is the latest release tag (or set it to the release you want)
+V=$(gh release view --repo suzworx/flywheel --json tagName -q .tagName)
 case "$(uname -s)" in Linux) OS=linux;; Darwin) OS=darwin;; *) exit 1;; esac
 case "$(uname -m)" in x86_64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) exit 1;; esac
 BIN=flywheel-$V-$OS-$ARCH
@@ -42,8 +43,8 @@ On Windows (PowerShell), the zip holds `flywheel-$V-windows-amd64.exe`. Extract 
 from any directory:
 
 ```powershell
-# set $V to the release you are installing
-$V = 'v0.14.0'
+# $V is the latest release tag (or set it to the release you want)
+$V = gh release view --repo suzworx/flywheel --json tagName -q .tagName
 Get-FileHash "flywheel-$V-windows-amd64.exe.zip" -Algorithm SHA256
 New-Item -ItemType Directory -Force "$env:USERPROFILE\flywheel" | Out-Null
 Expand-Archive "flywheel-$V-windows-amd64.exe.zip" -DestinationPath "$env:USERPROFILE\flywheel"
@@ -77,8 +78,19 @@ added: .flywheel/config.json
 added: .flywheel/.gitignore
 added: .flywheel/.gitattributes
 added: .flywheel/briefs/
+
+factory: <your repo>
+  workers: default (opencode openrouter/deepseek/deepseek-v4-flash-0731, max_parallel 4)
+  limits: per_host none · budget none · tokens none · breaker none · rate none
+  audit: first-article gate off
+  enforcement: agent hooks missing — flywheel init --hooks · git hooks: missing — flywheel init --git-hooks · CI audit missing — flywheel init --ci
+  view: flywheel (the live floor) · flywheel watch · flywheel next
 next: flywheel log --task <id> --kind planned --brief <path>
 ```
+
+The `factory:` summary is what the repository is set up with: the workers, the limits, the
+first-article audit gate, which enforcement hooks are installed (each missing one names the
+`flywheel init` flag that adds it), and the commands that show the floor.
 
 What each piece is for:
 
@@ -161,11 +173,13 @@ config names the worker, its adapter and its model:
 }
 ```
 
-There are three adapters: `opencode`, `claude`, and `sim`. The first two call a real provider.
+There are four adapters: `opencode`, `claude`, `codex`, and `sim`. The first three call a real
+provider. A `claude` worker may set `permission_mode` (`acceptEdits`, the default,
+`bypassPermissions`, `default`, `plan` or `dontAsk`); it is refused on any other adapter.
 `sim` needs **no provider at all** — it replays a recorded run — so if you have no API key you
 can still drive every command in this guide. What a simulated worker produces is a replay, not
 real work: it writes no files, so a `sim` unit's own gates fail on purpose. Use `opencode` (or
-`claude`) with a reachable model for the file to actually be written; confirm the model first
+`claude` or `codex`) with a reachable model for the file to actually be written; confirm the model first
 with `flywheel doctor`.
 
 Dispatch the unit:
@@ -266,6 +280,15 @@ Exit codes follow one convention across the CLI:
 | 2 | usage | a flag or argument was wrong; run `flywheel help <command>` |
 | 5 | gauges failed | a gate failed or a change sits outside `owns:` |
 | 6 | rule refusal | a poka-yoke rule refused the action; the message names the rule and the fix |
+| 8 | inconclusive | a check could not be established (no violation either) — e.g. `flywheel verify` on a pass whose tree no repository it can see resolves; run it where that tree exists |
+
+`flywheel run` adds its own outcome codes for the dispatch it measured:
+
+| Exit | Meaning | What to do |
+| --- | --- | --- |
+| 3 | silent | no output within the start timeout; check the model with `flywheel doctor` |
+| 4 | failed | any other non-clean outcome; read the run's transcript and event |
+| 7 | stalled | the run file stopped growing for the stall timeout |
 
 Three refusals a beginner actually hits, and the exact command that fixes each:
 
@@ -288,7 +311,7 @@ flywheel lint .flywheel/briefs/hello.txt
 clean `owns_checked` on the same tree hash.
 
 ```text
-flywheel inspect: T3: no passing validated reading for tree <hash> after the latest finished event; run: flywheel validate hello
+flywheel inspect: T3: no passing supervisor validated reading for gate 1 on tree <hash> after the latest finished event; run: flywheel validate hello
 ```
 
 Fix: run the gauges, then inspect again:
@@ -321,7 +344,11 @@ unmeasured or out-of-bounds unit pass. Read the message — it names the rule an
   poka-yoke rules, and who does what.
 - `skills/` — the persona skills the loop drives: `flywheel` (the lead), `flywheel-planner`,
   `flywheel-worker`, `flywheel-inspector`, and the rest.
-- `docs/design/` — the factory model and the rules behind it (`autonomous-shipping.md`,
-  `flywheel-at-scale.md`), and `docs/PROTOCOL.md` for exactly what the code enforces today.
+- [Driving the loop by hand](../HUMAN.md) — every step above as a human lead runs it, without
+  an agent.
+- [docs/design/](design/) — the factory model and the rules behind it
+  ([autonomous-shipping.md](design/autonomous-shipping.md),
+  [flywheel-at-scale.md](design/flywheel-at-scale.md)), and [PROTOCOL.md](PROTOCOL.md) for
+  exactly what the code enforces today.
 - The [issue tracker](https://github.com/suzworx/flywheel/issues) — what is built, what is
   planned, and what is still design-only.

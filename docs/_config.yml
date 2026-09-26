@@ -1,0 +1,38 @@
+# GitHub Pages builds /docs from main with the legacy Jekyll build. index.html has no front
+# matter, so it is copied as-is; every markdown page renders through _layouts/default.html.
+title: flywheel
+description: >-
+  A dark factory for AI coding work. Cheap agents build, deterministic gauges re-run every
+  claim, and nothing lands without a reading bound to the exact tree that produced it.
+url: https://suzworx.github.io
+baseurl: /flywheel
+repository: suzworx/flywheel
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  auto_ids: true
+  hard_wrap: false
+
+plugins:
+  - jekyll-relative-links
+  # a markdown page's title is its first heading (supported on GitHub Pages)
+  - jekyll-titles-from-headings
+relative_links:
+  enabled: true
+  collections: false
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+# Nothing under docs/ is private: calibration/external-review-bugs.json is the data the
+# calibration page documents and links, so it publishes as a plain file. Only build
+# leftovers are kept out.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .jekyll-cache
