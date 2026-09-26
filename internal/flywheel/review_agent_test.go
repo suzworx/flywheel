@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -182,7 +183,7 @@ func TestReviewAgent(t *testing.T) {
 		t.Errorf("garbage answer recorded %d findings and %d reviewed", len(f), len(r))
 	}
 
-	_, args := claudeAdapter{}.Command(reviewRunRequest("T1", 1, res.Prompt, "m"))
+	_, args := claudeAdapter{}.Command(reviewRunRequest("T1", 1, res.Prompt, "m", nil))
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--disallowedTools Edit Write NotebookEdit") || strings.Contains(joined, "--allowedTools Bash ") {
 		t.Errorf("claude args = %q, want a read-only tool policy", joined)
@@ -314,13 +315,79 @@ func TestReviewAgentLargePrompt(t *testing.T) {
 // rules; a normal worker request still does (issue #389).
 func TestReviewerNoWorkerRules(t *testing.T) {
 	t.Parallel()
-	_, args := claudeAdapter{}.Command(reviewRunRequest("T1", 1, "missing.md", "m"))
+	_, args := claudeAdapter{}.Command(reviewRunRequest("T1", 1, "missing.md", "m", nil))
 	if strings.Contains(strings.Join(args, " "), "--append-system-prompt") {
 		t.Errorf("reviewer args carry --append-system-prompt: %q", args)
 	}
 	_, args = claudeAdapter{}.Command(RunRequest{Task: "T1", PromptFile: "missing.md", Model: "m"})
 	if !strings.Contains(strings.Join(args, " "), "--append-system-prompt") {
 		t.Errorf("worker args lack --append-system-prompt: %q", args)
+	}
+}
+
+// TestGateToolPatterns checks the Bash patterns a reviewer gets from gate
+// lines (issue #469): program and first argument per unquoted segment, shell
+// syntax and bare programs skipped, duplicates collapsed.
+func TestGateToolPatterns(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		gates []string
+		want  []string
+	}{
+		"go chain":      {[]string{"go build ./... && go vet ./..."}, []string{"Bash(go build:*)", "Bash(go vet:*)"}},
+		"npm flag":      {[]string{"npm test --silent"}, []string{"Bash(npm test:*)"}},
+		"echo after ;":  {[]string{`node scripts/check.mjs a b; echo "exit=$?"`}, []string{"Bash(node scripts/check.mjs:*)"}},
+		"bare program":  {[]string{`node -e "x"`}, nil},
+		"quoted &&":     {[]string{`echo "a && rm -rf x"`}, nil},
+		"duplicates":    {[]string{"npm test", "npm test || npm run lint | tee x", "x=1; npm run lint"}, []string{"Bash(npm test:*)", "Bash(npm run:*)", "Bash(tee x:*)"}},
+		"loop and test": {[]string{`for f in a; do [ -z "$f" ] || { echo "no"; exit 1; }; done`}, nil},
+	} {
+		if got := gateToolPatterns(c.gates); strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Errorf("%s: gateToolPatterns(%q) = %q, want %q", name, c.gates, got, c.want)
+		}
+	}
+}
+
+// TestReviewerAllowedTools: a review of a unit whose brief has gate: npm test
+// dispatches a claude reviewer allowed npm test, gh issue/pr view and a
+// review.allowed_tools entry, still refused Edit, Write and NotebookEdit
+// (issue #469).
+func TestReviewerAllowedTools(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH; sets the package-level commandHook
+	dir, err := initTask(t, []string{"npm test"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := cfg.Set("review.allowed_tools", "Bash(make lint:*)"); err != nil {
+		t.Fatalf("Set(review.allowed_tools) error = %v", err)
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package x\n\nfunc Changed() {}\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	fakeClaudeAnswer(t, "Nothing wrong.\n```json\n{\"findings\": []}\n```")
+	var reqs []RunRequest
+	commandHook = func(r RunRequest) { reqs = append(reqs, r) }
+	defer func() { commandHook = nil }()
+	if _, err := ReviewAgent(dir, "T1", ReviewAgentOptions{Session: "rev-1"}); err != nil {
+		t.Fatalf("ReviewAgent() error = %v", err)
+	}
+	commandHook = nil
+	if len(reqs) != 1 {
+		t.Fatalf("reviewer runs = %d, want 1", len(reqs))
+	}
+	_, args := claudeAdapter{}.Command(reqs[0])
+	allowed, disallowed := flagValues(args, "--allowedTools"), flagValues(args, "--disallowedTools")
+	for _, want := range []string{"Read", "Bash(npm test:*)", "Bash(gh issue view:*)", "Bash(gh pr view:*)", "Bash(make lint:*)"} {
+		if !slices.Contains(allowed, want) {
+			t.Errorf("--allowedTools = %q, want %s", allowed, want)
+		}
+	}
+	if strings.Join(disallowed, " ") != "Edit Write NotebookEdit" {
+		t.Errorf("--disallowedTools = %q, want Edit Write NotebookEdit", disallowed)
 	}
 }
 

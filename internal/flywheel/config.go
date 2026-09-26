@@ -123,10 +123,14 @@ type ReviewConfig struct {
 	// flywheel review --group (issue #420); each is recorded as a validated
 	// event of the group, gate g<n>. Default none.
 	GroupGates []string `json:"group_gates,omitempty"`
+	// AllowedTools are claude --allowedTools patterns a review agent may use
+	// beyond its read-only base, gh issue/pr view and the unit's gate
+	// commands (issue #469), e.g. Bash(make lint:*). Default none.
+	AllowedTools []string `json:"allowed_tools,omitempty"`
 }
 
-// groupGatesSep separates review.group_gates on config get and set; set also
-// splits on newlines.
+// groupGatesSep separates review.group_gates and review.allowed_tools on
+// config get and set; set also splits on newlines.
 const groupGatesSep = ";;"
 
 // ReviewGroupGates is review.group_gates.
@@ -135,6 +139,14 @@ func (c Config) ReviewGroupGates() []string {
 		return nil
 	}
 	return c.Review.GroupGates
+}
+
+// ReviewAllowedTools is review.allowed_tools.
+func (c Config) ReviewAllowedTools() []string {
+	if c.Review == nil {
+		return nil
+	}
+	return c.Review.AllowedTools
 }
 
 // PanelMember is one reviewer on the panel: its persona (the dimension) and
@@ -878,6 +890,11 @@ func (c Config) Validate() error {
 				problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"claude\", \"opencode\" or \"codex\" (a review agent)", where, m.Adapter))
 			}
 		}
+		for i, p := range c.Review.AllowedTools {
+			if strings.TrimSpace(p) == "" {
+				problems = append(problems, fmt.Sprintf("review.allowed_tools[%d]: empty pattern", i))
+			}
+		}
 	}
 	if len(problems) == 0 {
 		return nil
@@ -1001,6 +1018,8 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.FormatBool(c.ReviewRequired()), nil
 	case "review.group_gates":
 		return strings.Join(c.ReviewGroupGates(), groupGatesSep), nil
+	case "review.allowed_tools":
+		return strings.Join(c.ReviewAllowedTools(), groupGatesSep), nil
 	case "worktree.setup":
 		return c.SetupCommand(), nil
 	case "worktree.setup_timeout":
@@ -1061,7 +1080,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"log.shards", "max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1087,7 +1106,9 @@ func (c Config) validKeys() []string {
 // limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.required (true or false) and
-// review.group_gates (commands separated by ";;" or newlines).
+// review.group_gates (commands separated by ";;" or newlines) and
+// review.allowed_tools (claude patterns, separated the same way; an empty
+// entry is refused).
 // Integer keys parse with strconv.Atoi. fallbacks is not
 // settable here and directs the caller to edit .flywheel/config.json.
 // Validation is left to WriteConfig.
@@ -1240,6 +1261,25 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Review.GroupGates = gates
 		return nil
+	case "review.allowed_tools":
+		// Patterns separated by ";;" or newlines; an empty value clears them,
+		// an empty entry among others is refused.
+		var tools []string
+		if value = strings.TrimSpace(value); value != "" {
+			for _, line := range strings.Split(value, "\n") {
+				for _, p := range strings.Split(line, groupGatesSep) {
+					if p = strings.TrimSpace(p); p == "" {
+						return fmt.Errorf("review.allowed_tools: value %q has an empty entry; separate patterns with %q or newlines", value, groupGatesSep)
+					}
+					tools = append(tools, p)
+				}
+			}
+		}
+		if c.Review == nil {
+			c.Review = &ReviewConfig{}
+		}
+		c.Review.AllowedTools = tools
+		return nil
 	case "worktree.setup", "worktree.setup_timeout":
 		if c.Worktree == nil {
 			c.Worktree = &WorktreeConfig{}
@@ -1301,7 +1341,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
