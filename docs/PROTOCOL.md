@@ -61,6 +61,9 @@ all.
   it), `lead` (the lead session that dispatched it: `flywheel run --session ID`, default
   `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required),
   `variant` (the worker's reasoning variant, issue #473; omitted when unset and on older events),
+  `route` (the routing choice, issue #474: `{model, pick, objective, draw, scores[{model, attempts,
+  score}]}`, `pick` `exploit` or `explore`; omitted when the worker has no `routing` block, when
+  `--model` was given, on a resume, and on older events),
   `model` (`flywheel cost` charges each `finished` event to the model on its own attempt's
   `dispatched` event, falling back to the task's latest preceding one when the attempt has none;
   `flywheel stats --by model` scores every adapter, model and variant from these events, and a rate

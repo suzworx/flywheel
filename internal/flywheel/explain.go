@@ -59,6 +59,9 @@ func explainLine(e Event) string {
 		return line
 
 	case "dispatched":
+		if r := e.Route; r != nil {
+			return words("dispatched", e.Attempt, "to", e.Adapter, e.Model, "routed", r.Pick, "by", r.Objective)
+		}
 		return words("dispatched", e.Attempt, "to", e.Adapter, e.Model)
 
 	case "started":
