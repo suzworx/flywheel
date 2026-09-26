@@ -1125,6 +1125,10 @@ Readers merge events in this order: legacy file first, then stable by each shard
 
 Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard, named `<task>.lock`); they are git-ignored. The locks enforce per-shard write order and are consulted by readers to detect in-flight appends, but readers never wait — a slow reader may observe partial state, and consistency is per-file, not cross-shard. Deletions and trimmed tails in a shard are not detected by the chain (the seal block lives at insertion time, not at mutation time); only appends are tracked.
 
+### Backups
+
+`flywheel ledger backup <path>` ([#464](https://github.com/suzworx/flywheel/issues/464)) is the supported way to keep a copy of the ledger instead of committing it to git. It copies `.flywheel/` to `<path>/.flywheel/` but leaves out the top-level `worktrees/` and `locks/` (live process state, not records), every `*.tmp` file, and symlinks or junctions (it lists them instead of following them). `events.jsonl` and every shard under `events/` are copied by complete lines only: a trailing partial line still being appended is left out and counted. The copy is built in a temp directory next to `<path>`, then renamed onto it. `<path>/flywheel-backup.json` records the creation time, the source, each file's path, size and sha256, the skipped paths, the partial-tail bytes, and the result of `VerifyLogChain` on the copy. A broken chain is recorded, not fatal. To restore, copy `<path>/.flywheel` back.
+
 ## 5. `flywheel verify` and exit codes
 
 `flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1 for the requested
