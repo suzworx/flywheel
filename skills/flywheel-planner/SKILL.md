@@ -7,7 +7,7 @@ description: >-
   stays OpenCode.
 license: MIT
 metadata:
-  version: 0.33.0 # x-release-please-version
+  version: 0.34.0 # x-release-please-version
 ---
 
 # Flywheel Planner
