@@ -222,6 +222,18 @@ func TestValidateRejectsReviewedWithoutVerdict(t *testing.T) {
 	}
 }
 
+// TestValidateReviewedCrashed checks the crashed verdict (issue #469): valid
+// only for a panel dimension.
+func TestValidateReviewedCrashed(t *testing.T) {
+	t.Parallel()
+	if err := Validate(Event{Task: "T1", Kind: "reviewed", Verdict: "crashed", Persona: "reviewer", Category: "tests"}); err != nil {
+		t.Errorf("Validate() rejected reviewed/crashed with a category: %v", err)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "reviewed", Verdict: "crashed", Persona: "reviewer"}); err == nil || !strings.Contains(err.Error(), "category") {
+		t.Errorf("Validate() crashed without a category = %v, want refused naming the category", err)
+	}
+}
+
 func TestAppendTornLastLineGetsNewlinePrefix(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

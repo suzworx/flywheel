@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -57,14 +58,15 @@ func personaPrompt(dimension string) (string, error) {
 }
 
 // VerdictMatrix is the panel's verdict per dimension on one tree (issue
-// #420): for each dimension of panel, the verdict of the latest agent reviewed
-// event of task with that dimension (Category) on tree — pass, or correct —
-// else missing. A correct whose blocking findings of that dimension are all
-// closed (a lead's dismissal) counts as pass: the lead has ruled on them.
+// #420): for each dimension of panel, the verdict of the latest agent or
+// crashed reviewed event of task with that dimension (Category) on tree —
+// pass, correct, or crashed (issue #469; never pass) — else missing. A
+// correct whose blocking findings of that dimension are all closed (a lead's
+// dismissal) counts as pass: the lead has ruled on them.
 func VerdictMatrix(events []Event, task, tree string, panel []string) map[string]string {
 	latest := map[string]string{}
 	for _, e := range events {
-		if e.Task == task && agentReviewed(e) && e.Category != "" && e.Tree == tree {
+		if e.Task == task && (agentReviewed(e) || crashedReview(e)) && e.Category != "" && e.Tree == tree {
 			latest[e.Category] = e.Verdict
 		}
 	}
@@ -81,7 +83,7 @@ func VerdictMatrix(events []Event, task, tree string, panel []string) map[string
 			out[d] = "missing"
 		case v == "correct" && !blocking[d]:
 			out[d] = "pass"
-		case v == "pass" || v == "correct":
+		case v == "pass" || v == "correct" || v == "crashed":
 			out[d] = v
 		default:
 			out[d] = "correct"
@@ -103,10 +105,10 @@ func panelIncomplete(m map[string]string, panel []string) []string {
 }
 
 // panelReviewed reports whether task was ever reviewed by a panel member: an
-// agent reviewed event carrying a dimension.
+// agent reviewed event carrying a dimension, or a crashed one (issue #469).
 func panelReviewed(events []Event, task string) bool {
 	for _, e := range events {
-		if e.Task == task && agentReviewed(e) && e.Category != "" {
+		if e.Task == task && (agentReviewed(e) || crashedReview(e)) && e.Category != "" {
 			return true
 		}
 	}
@@ -122,25 +124,62 @@ type ReviewPanelOptions struct {
 	Progress io.Writer
 	Stdout   io.Writer
 	Stderr   io.Writer
+
+	// review runs one member; nil means ReviewAgent (a test seam).
+	review func(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, error)
 }
 
 // PanelResult is what one panel review recorded: each member's run, in panel
-// order, and the verdict matrix on the tree the last member reviewed.
+// order, the dimensions whose run crashed (issue #469), in panel order, and
+// the verdict matrix on the tree the members reviewed.
 type PanelResult struct {
 	Round   int
 	Panel   []string
 	Members []ReviewAgentResult
+	Crashed []string
 	Tree    string
 	Matrix  map[string]string
+}
+
+// crashedReview reports whether e records a panel member whose run crashed
+// (issue #469). It names no adapter, so it is never an agent review: it
+// closes no finding and counts as no round.
+func crashedReview(e Event) bool {
+	return e.Kind == "reviewed" && e.Verdict == "crashed" && e.Category != ""
+}
+
+// recordCrashed appends the reviewed crashed event of dimension, on the tree
+// the other members reviewed (else the workdir's tree), noted with cause.
+func recordCrashed(dir, task, dimension string, o ReviewPanelOptions, res *PanelResult, cause error) error {
+	if res.Tree == "" {
+		events, err := ReadEvents(dir)
+		if err != nil {
+			return err
+		}
+		if res.Tree, err = treeHash(wd(o.Workdir, dir, events, task)); err != nil {
+			return err
+		}
+	}
+	note := clipLine(cause.Error(), maxFailureCause)
+	if err := AppendEvent(dir, Event{Task: task, Kind: "reviewed", Verdict: "crashed", Persona: "reviewer",
+		Session: o.Session, Category: dimension, Tree: res.Tree, Note: note}); err != nil {
+		return err
+	}
+	_, _ = WriteState(dir)
+	res.Crashed = append(res.Crashed, dimension)
+	progress(o.Progress, fmt.Sprintf("%s review panel %s: crashed twice; recorded, the panel continues: %s", task, dimension, note))
+	return nil
 }
 
 // ReviewPanel runs the review panel over a unit (issue #420): ReviewAgent
 // once per member, sequentially (the host is memory-constrained), each with
 // its persona prompt, its worker or adapter and model, and one shared round,
-// so every member's findings must carry its dimension as category. The first
-// member that fails stops the panel: the members before it stay recorded and
-// the error names the dimension. The result's matrix is VerdictMatrix over
-// the ledger after the last member, on the tree it reviewed.
+// so every member's findings must carry its dimension as category. A member
+// whose run fails (a reviewRunError) runs once more; failing again, its
+// dimension is recorded crashed and the panel continues (issue #469). Any
+// other error stops the panel: the members before it stay recorded and the
+// error names the dimension. The result's matrix is VerdictMatrix over the
+// ledger after the last member, on the tree they reviewed.
 func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 	panel := o.Panel
 	if len(panel) == 0 {
@@ -164,12 +203,28 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 		}
 		res.Round = nextReviewRound(events, task)
 	}
+	review := o.review
+	if review == nil {
+		review = ReviewAgent
+	}
 	for _, m := range panel {
-		r, err := ReviewAgent(dir, task, ReviewAgentOptions{
+		ao := ReviewAgentOptions{
 			Worker: m.Worker, Adapter: m.Adapter, Model: m.Model, Dimension: m.Persona,
 			Session: o.Session, Workdir: o.Workdir, Round: res.Round,
 			Progress: o.Progress, Stdout: o.Stdout, Stderr: o.Stderr,
-		})
+		}
+		r, err := review(dir, task, ao)
+		var run *reviewRunError
+		if errors.As(err, &run) {
+			progress(o.Progress, fmt.Sprintf("%s review panel %s: run failed; retrying once: %s", task, m.Persona, clipLine(err.Error(), maxFailureCause)))
+			r, err = review(dir, task, ao)
+		}
+		if errors.As(err, &run) {
+			if err := recordCrashed(dir, task, m.Persona, o, &res, err); err != nil {
+				return res, fmt.Errorf("review panel %s: %w", m.Persona, err)
+			}
+			continue
+		}
 		if err != nil {
 			return res, fmt.Errorf("review panel %s: %w", m.Persona, err)
 		}

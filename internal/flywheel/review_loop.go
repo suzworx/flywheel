@@ -273,8 +273,9 @@ type ReviewLoopOptions struct {
 }
 
 // ReviewLoopResult is how the loop ended: Verdict pass when no blocking
-// finding is open, needs-owner when every open one is outside owns, else open
-// with Open listing them.
+// finding is open and no dimension crashed, incomplete when none is open but
+// the last round had a crashed dimension (issue #469), needs-owner when every
+// open one is outside owns, else open with Open listing them.
 type ReviewLoopResult struct {
 	Reviews     int
 	Corrections int
@@ -282,6 +283,7 @@ type ReviewLoopResult struct {
 	Open        []Event
 	NeedsOwner  []Event  // open blocking findings outside owns, as of the last review (issue #458)
 	Missing     []string // finding ids a correction left unanswered, every round
+	Crashed     []string // the dimensions that crashed in the last review round (issue #469)
 }
 
 // ReviewLoop closes the review loop of a unit (issue #389), deterministically:
@@ -294,7 +296,10 @@ type ReviewLoopResult struct {
 // are open the loop stops with verdict needs-owner and no correction. The
 // agents never decide a finding is closed: only a later review round or a
 // lead's dismissal does. After Rounds reviews the open blocking findings are
-// returned with verdict open; NeedsOwner lists the outside ones either way.
+// returned with verdict open; NeedsOwner lists the outside ones either way. A
+// round with a crashed panel dimension (issue #469) still corrects its open
+// findings but never passes: with none open it reviews again, and out of
+// rounds the verdict is incomplete with Crashed naming the dimensions.
 func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error) {
 	if o.Review == nil || o.Correct == nil {
 		return ReviewLoopResult{}, fmt.Errorf("review loop: the review and correction actions are required")
@@ -309,10 +314,12 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 		if err != nil {
 			return res, err
 		}
-		if _, err := o.Review(nextReviewRound(events, task)); err != nil {
+		rv, err := o.Review(nextReviewRound(events, task))
+		if err != nil {
 			return res, err
 		}
 		res.Reviews++
+		res.Crashed = rv.Crashed
 		if events, err = ReadEvents(dir); err != nil {
 			return res, err
 		}
@@ -327,6 +334,18 @@ func ReviewLoop(dir, task string, o ReviewLoopOptions) (ReviewLoopResult, error)
 			}
 		}
 		res.NeedsOwner = outside
+		if len(res.Open) == 0 && len(res.Crashed) > 0 {
+			// A crashed dimension never passes (issue #469): review again,
+			// with nothing to correct, until the rounds run out.
+			crashed := strings.Join(res.Crashed, ", ")
+			if res.Reviews >= rounds {
+				res.Verdict = "incomplete"
+				progress(o.Progress, fmt.Sprintf("%s review loop: incomplete after %d review(s): crashed %s", task, res.Reviews, crashed))
+				return res, nil
+			}
+			progress(o.Progress, fmt.Sprintf("%s review loop: no blocking finding open but crashed %s; reviewing again", task, crashed))
+			continue
+		}
 		if len(res.Open) == 0 {
 			res.Verdict = "pass"
 			progress(o.Progress, fmt.Sprintf("%s review loop: pass after %d review(s), %d correction(s)", task, res.Reviews, res.Corrections))

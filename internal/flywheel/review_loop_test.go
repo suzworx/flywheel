@@ -302,3 +302,38 @@ func TestReviewLoopDismiss(t *testing.T) {
 		t.Errorf("responses = %+v", r)
 	}
 }
+
+// TestReviewLoopCrash checks a review round with a crashed dimension (issue
+// #469): its open blocking findings are still corrected; with none open the
+// loop reviews again without a correction; out of rounds it is incomplete.
+func TestReviewLoopCrash(t *testing.T) {
+	t.Parallel()
+	crashing := func(review func(int) (ReviewAgentResult, error), crash map[int][]string) func(int) (ReviewAgentResult, error) {
+		return func(round int) (ReviewAgentResult, error) {
+			r, err := review(round)
+			r.Crashed = crash[round]
+			return r, err
+		}
+	}
+
+	dir := loopRepo(t)
+	review, correct, deltas := loopFakes(t, dir, map[int][]ReviewFinding{1: {blockerA}}, "FINDING T1-r1-1: fixed flushed\n")
+	res, err := ReviewLoop(dir, "T1", ReviewLoopOptions{Review: crashing(review, map[int][]string{1: {"tests"}}), Correct: correct})
+	if err != nil || len(*deltas) != 1 || res.Corrections != 1 || res.Verdict != "pass" || res.Reviews != 2 {
+		t.Errorf("crash with a blocking finding = %+v, %v, deltas %v; want corrected, then pass", res, err, *deltas)
+	}
+
+	dir = loopRepo(t)
+	review, correct, deltas = loopFakes(t, dir, nil, "")
+	res, err = ReviewLoop(dir, "T1", ReviewLoopOptions{Rounds: 3, Review: crashing(review, map[int][]string{1: {"tests"}}), Correct: correct})
+	if err != nil || len(*deltas) != 0 || res.Reviews != 2 || res.Verdict != "pass" || len(res.Crashed) != 0 {
+		t.Errorf("crash, nothing open, rounds left = %+v, %v, deltas %v; want reviewed again without a correction, then pass", res, err, *deltas)
+	}
+
+	dir = loopRepo(t)
+	review, correct, deltas = loopFakes(t, dir, nil, "")
+	res, err = ReviewLoop(dir, "T1", ReviewLoopOptions{Rounds: 2, Review: crashing(review, map[int][]string{1: {"tests"}, 2: {"docs", "tests"}}), Correct: correct})
+	if err != nil || len(*deltas) != 0 || res.Reviews != 2 || res.Verdict != "incomplete" || strings.Join(res.Crashed, ",") != "docs,tests" {
+		t.Errorf("crash out of rounds = %+v, %v, deltas %v; want incomplete naming docs,tests", res, err, *deltas)
+	}
+}

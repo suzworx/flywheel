@@ -461,7 +461,8 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 		res, err := flywheel.ReviewLoop(o.dir, task, flywheel.ReviewLoopOptions{
 			Rounds: o.rounds, ReviewSession: o.session, Worker: o.fixWorker, Progress: os.Stderr,
 			Review: func(round int) (flywheel.ReviewAgentResult, error) {
-				return flywheel.ReviewAgentResult{Round: round}, panel(round)
+				err := panel(round)
+				return flywheel.ReviewAgentResult{Round: round, Tree: last.Tree, Crashed: last.Crashed}, err
 			},
 			Correct: func(delta string) (flywheel.Result, error) {
 				return flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{

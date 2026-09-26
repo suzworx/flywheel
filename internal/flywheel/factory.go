@@ -902,7 +902,8 @@ func buildOutput(events []Event, now time.Time) Output {
 			}
 			cost += e.Cost
 		}
-		if e.Kind == "reviewed" || e.Kind == "inspected" {
+		// A crashed panel member (issue #469) judged nothing: never a first verdict.
+		if (e.Kind == "reviewed" && !crashedReview(e)) || e.Kind == "inspected" {
 			if _, ok := firstVerdict[e.Task]; !ok {
 				firstVerdict[e.Task] = e.Verdict
 			}
