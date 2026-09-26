@@ -45,6 +45,25 @@ func TestParseBriefHeaderOwnsContinuationAndAnnotations(t *testing.T) {
 	}
 }
 
+// TestBriefHeaderKind checks the kind: line (issue #475): trimmed and
+// lowercased, the last line winning, "" without one.
+func TestBriefHeaderKind(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ header, want string }{
+		{"kind:  Refactor \n", "refactor"},
+		{"kind: docs\nkind: FIX\n", "fix"},
+		{"", ""},
+	} {
+		h, err := ParseBriefHeaderBytes([]byte("owns: a.go\n" + tc.header + "gate: true\n\n# TASK: x\n"))
+		if err != nil {
+			t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+		}
+		if h.Kind != tc.want {
+			t.Errorf("header %q: Kind = %q, want %q", tc.header, h.Kind, tc.want)
+		}
+	}
+}
+
 func TestParseBriefHeaderIndentedLineAfterNonOwnsKey(t *testing.T) {
 	t.Parallel()
 	// "go test ./..." is indented under a gate line; it must not become an

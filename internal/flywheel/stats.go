@@ -39,6 +39,9 @@ type StatsReport struct {
 	// ByModel is the per-model scoreboard (issue #473), filled only when
 	// StatsOptions.ByModel asks for it.
 	ByModel []StatsModel `json:"by_model,omitempty"`
+	// ByModelKind is the scoreboard per task kind (issue #475), kinds sorted,
+	// filled only when StatsOptions.ByKind asks for it.
+	ByModelKind []StatsModel `json:"by_model_kind,omitempty"`
 }
 
 // StatsBaseline is the frontier-only comparison: the recorded tokens priced
@@ -65,6 +68,7 @@ func Stats(dir string) (StatsReport, error) {
 // StatsOptions selects the optional parts of StatsReport.
 type StatsOptions struct {
 	ByModel bool // fill StatsReport.ByModel (flywheel stats --by model)
+	ByKind  bool // fill StatsReport.ByModelKind (flywheel stats --by model --kind)
 }
 
 // StatsWith is Stats with the optional parts opts selects.
@@ -77,6 +81,9 @@ func StatsWith(dir string, opts StatsOptions) (StatsReport, error) {
 	rep := StatsReport{FinishReasons: map[string]int{}, Review: reviewStats(events)}
 	if opts.ByModel {
 		rep.ByModel = modelStats(events)
+	}
+	if opts.ByKind {
+		rep.ByModelKind = modelStatsByKind(events)
 	}
 
 	st := Derive(events)
@@ -459,6 +466,58 @@ type StatsModel struct {
 	MedianAttemptSeconds float64  `json:"median_attempt_seconds"`
 	Spend                float64  `json:"spend"`             // sum of the attempts' finished cost
 	CostPerAccepted      float64  `json:"cost_per_accepted"` // spend / accepted; 0 when accepted is 0
+	// Kind is the task kind the row is scored over (issue #475), set only on
+	// the per-kind rows of modelStatsKind.
+	Kind string `json:"kind,omitempty"`
+}
+
+// taskKinds maps each task to its kind (issue #475): the Header.Kind of its
+// latest planned or amended event, in log order, that carries a header; ""
+// when none does.
+func taskKinds(events []Event) map[string]string {
+	kinds := map[string]string{}
+	for _, e := range events {
+		if (e.Kind == "planned" || e.Kind == "amended") && e.Header != nil {
+			kinds[e.Task] = e.Header.Kind
+		}
+	}
+	return kinds
+}
+
+// modelStatsKind is modelStats over only the events of the tasks whose kind
+// is kind (issue #475), each row's Kind set to kind.
+func modelStatsKind(events []Event, kind string) []StatsModel {
+	kinds := taskKinds(events)
+	var sub []Event
+	for _, e := range events {
+		if kinds[e.Task] == kind {
+			sub = append(sub, e)
+		}
+	}
+	rows := modelStats(sub)
+	for i := range rows {
+		rows[i].Kind = kind
+	}
+	return rows
+}
+
+// modelStatsByKind is modelStatsKind for every non-empty kind taskKinds
+// finds, kinds sorted.
+func modelStatsByKind(events []Event) []StatsModel {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, k := range taskKinds(events) {
+		if k != "" && !seen[k] {
+			seen[k] = true
+			kinds = append(kinds, k)
+		}
+	}
+	slices.Sort(kinds)
+	var out []StatsModel
+	for _, k := range kinds {
+		out = append(out, modelStatsKind(events, k)...)
+	}
+	return out
 }
 
 // modelStats folds the event log into StatsModel rows, one per (adapter,

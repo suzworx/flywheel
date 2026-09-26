@@ -9,7 +9,7 @@ import (
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
-// live-gate, exclusive, review, line.
+// live-gate, exclusive, review, line, kind.
 type BriefHeader struct {
 	Owns  []string // comma-separated, annotations stripped
 	Needs []string
@@ -45,7 +45,11 @@ type BriefHeader struct {
 	Exclusive      []string
 	Review         []string
 	Line           string `json:",omitempty"`
-	SHA256         string
+	// Kind is the task's kind of work, the `kind:` line trimmed and
+	// lowercased, the last one winning (issue #475): routing scores models per
+	// kind. flywheel lint checks it against lint.kinds.
+	Kind   string `json:",omitempty"`
+	SHA256 string
 }
 
 // ParseBriefHeader reads the file at path and parses its header block; it is
@@ -151,6 +155,8 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Review = append(h.Review, val)
 		case "line":
 			h.Line = val
+		case "kind":
+			h.Kind = strings.ToLower(val)
 		}
 	}
 	for _, part := range owns {

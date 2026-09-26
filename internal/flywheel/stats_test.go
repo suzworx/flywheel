@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -480,6 +481,55 @@ func TestStatsByModel(t *testing.T) {
 	}
 	if j, _ := json.Marshal(b); !strings.Contains(string(j), `"clean_rate":null`) {
 		t.Errorf("B json = %s, want clean_rate null under the minimum sample", j)
+	}
+}
+
+// TestModelStatsKind checks the per-kind scoreboard (issue #475): each kind's
+// rows count only its tasks' attempts, StatsWith fills ByModelKind sorted by
+// kind, and an amended brief's kind moves the task.
+func TestModelStatsKind(t *testing.T) {
+	t.Parallel()
+	events := kindLedger(kindLedger(nil, "refactor", "B", 3, 2), "docs", "A", 2, 1)
+	type row struct {
+		kind, model string
+		attempts    int
+	}
+	rowsOf := func(rows []StatsModel) []row {
+		var out []row
+		for _, r := range rows {
+			out = append(out, row{r.Kind, r.Model, r.Attempts})
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		kind string
+		want []row
+	}{
+		{"docs", []row{{"docs", "A", 2}}},
+		{"refactor", []row{{"refactor", "B", 3}}},
+		{"perf", nil},
+	} {
+		if got := rowsOf(modelStatsKind(events, tc.kind)); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("modelStatsKind(%s) = %+v, want %+v", tc.kind, got, tc.want)
+		}
+	}
+	dir := t.TempDir()
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	if rep, err := StatsWith(dir, StatsOptions{ByModel: true}); err != nil || rep.ByModelKind != nil {
+		t.Fatalf("StatsWith() = %v, %v; want no by_model_kind without ByKind", rep.ByModelKind, err)
+	}
+	rep, err := StatsWith(dir, StatsOptions{ByModel: true, ByKind: true})
+	if err != nil {
+		t.Fatalf("StatsWith() error = %v", err)
+	}
+	if got, want := rowsOf(rep.ByModelKind), []row{{"docs", "A", 2}, {"refactor", "B", 3}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ByModelKind = %+v, want %+v", got, want)
+	}
+	amended := append(events, Event{TS: "2026-09-21T00:00:00Z", Task: "docs-A-0", Kind: "amended", Header: &BriefHeader{Kind: "refactor"}})
+	if got, want := rowsOf(modelStatsByKind(amended)), []row{{"docs", "A", 1}, {"refactor", "A", 1}, {"refactor", "B", 3}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after amend: rows = %+v, want %+v", got, want)
 	}
 }
 

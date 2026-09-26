@@ -87,6 +87,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `flywheel run` refuses new dispatches while it runs; a host that never goes idle records the
   reading `inconclusive` (`host busy: <tasks>`), never a failure. `flywheel lint` warns on any
   other `[marker]`.
+- **kind:** — optional, one line: the kind of work (`feature`, `fix`, `refactor`, `test`, `docs`,
+  `chore` or `perf` by default; config `lint.kinds` replaces the list, and `flywheel lint` refuses
+  any other value or an empty line) so routing scores models on that kind's own record (issue #475).
 - **No long-running or silent commands** — a brief never instructs a worker to run a gate that
   builds an app before crawling, or any command that emits nothing for minutes: the stall
   detector then reads the worker as hung. One unit died twice with `rc=-1 reason=stalled` at 4

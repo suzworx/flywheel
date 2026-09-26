@@ -76,6 +76,21 @@ type LintConfig struct {
 	// Importers turns the Go importer-coverage warning off when false; nil
 	// means on wherever go.mod exists.
 	Importers *bool `json:"importers,omitempty"`
+	// Kinds lists the values a brief's kind: line may take (issue #475);
+	// empty means DefaultKinds.
+	Kinds []string `json:"kinds,omitempty"`
+}
+
+// DefaultKinds is the kind: values flywheel lint allows when lint.kinds is
+// unset (issue #475).
+var DefaultKinds = []string{"feature", "fix", "refactor", "test", "docs", "chore", "perf"}
+
+// LintKinds is lint.kinds, DefaultKinds when unset.
+func (c Config) LintKinds() []string {
+	if c.Lint == nil || len(c.Lint.Kinds) == 0 {
+		return DefaultKinds
+	}
+	return c.Lint.Kinds
 }
 
 // WorktreeConfig configures `flywheel run --worktree` (issue #430): a setup
@@ -750,6 +765,18 @@ func (c Config) Validate() error {
 			if r.MinAttempts < 0 {
 				problems = append(problems, fmt.Sprintf("%s: routing.min_attempts %d must be >= 0", where, r.MinAttempts))
 			}
+		}
+	}
+	if c.Lint != nil {
+		seenKind := map[string]bool{}
+		for j, k := range c.Lint.Kinds {
+			switch {
+			case strings.TrimSpace(k) == "":
+				problems = append(problems, fmt.Sprintf("lint.kinds[%d] must not be empty", j))
+			case seenKind[k]:
+				problems = append(problems, fmt.Sprintf("lint.kinds[%d] duplicates %q", j, k))
+			}
+			seenKind[k] = true
 		}
 	}
 	seenLines := make(map[string]bool)

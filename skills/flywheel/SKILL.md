@@ -120,7 +120,9 @@ that it is explained); recover and `verify --log` then pass and name it (issue #
 
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,
-no secrets): an `owns:`/`needs:` header, goal, exact change, don't-touch list of uncommitted
+no secrets): an `owns:`/`needs:` header (plus an optional `kind:` line, one of `feature`, `fix`,
+`refactor`, `test`, `docs`, `chore`, `perf` unless `lint.kinds` says otherwise, so routing scores
+models per kind of work), goal, exact change, don't-touch list of uncommitted
 in-flight files, task-specific tests, a report contract, and the write rule — at most one write per
 response and at most 120 lines per write; batch read-only calls (read, grep, glob) together in one
 response. The worker auto-loads AGENTS.md/CLAUDE.md, so

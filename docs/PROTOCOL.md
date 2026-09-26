@@ -32,8 +32,12 @@ all.
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
-  needs, needs-state, gates, live-gates, exclusive, review and sha256 — as recorded when the
-  event was appended), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  needs, needs-state, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
+  event was appended; `Kind` is the optional `kind:` line, issue #475, trimmed and lowercased, the
+  last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
+  checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
+  `chore`, `perf`; an empty `kind:` line or another value is a lint problem, and no kind is ever
+  inferred), `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
   nothing is appended), and `note`. `owns`/`needs` are copied from the brief header when the event
   is appended. When `header` is present it is authoritative over the brief file, and `owns`/`needs`
@@ -61,13 +65,19 @@ all.
   it), `lead` (the lead session that dispatched it: `flywheel run --session ID`, default
   `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required),
   `variant` (the worker's reasoning variant, issue #473; omitted when unset and on older events),
-  `route` (the routing choice, issue #474: `{model, pick, objective, draw, scores[{model, attempts,
-  score}]}`, `pick` `exploit` or `explore`; omitted when the worker has no `routing` block, when
-  `--model` was given, on a resume, and on older events),
+  `route` (the routing choice, issue #474: `{model, pick, objective, draw, kind, basis,
+  scores[{model, attempts, score}]}`, `pick` `exploit` or `explore`; `kind` the task's brief
+  `kind:` (issue #475, omitted when it has none) and `basis` the scoreboard the choice used:
+  `kind` when at least one candidate has enough attempts and a score on that kind's own rows,
+  else `model` (the model-wide rows, as for a task without a kind); `scores` are the rows used;
+  omitted when the worker has no `routing` block, when `--model` was given, on a resume, and on
+  older events),
   `model` (`flywheel cost` charges each `finished` event to the model on its own attempt's
   `dispatched` event, falling back to the task's latest preceding one when the attempt has none;
   `flywheel stats --by model` scores every adapter, model and variant from these events, and a rate
-  whose denominator is under 3 is `null` in JSON and `n/a` in text),
+  whose denominator is under 3 is `null` in JSON and `n/a` in text; `--by model --kind` adds the
+  same scoreboard per task kind, `by_model_kind` in `--json`, each row's `kind` the kind of its
+  task's latest `planned` or `amended` header),
   `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
   correction attempt: `.flywheel/briefs/<task>.<attempt>.delta.txt`, the per-attempt snapshot of
   the delta taken atomically at dispatch; the operator's `--delta` file is left untouched and may be

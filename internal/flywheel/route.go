@@ -8,12 +8,16 @@ import (
 
 // RouteChoice is the model flywheel run routed a dispatch to (issue #474),
 // recorded on the dispatched event: the pick ("exploit" or "explore"), the
-// objective, the draw and every candidate's score, in candidate order.
+// objective, the draw and every candidate's score, in candidate order. Kind
+// is the task's kind (issue #475), Basis the scoreboard the choice used:
+// "kind" (that kind's rows) or "model" (the model-wide rows).
 type RouteChoice struct {
 	Model     string       `json:"model"`
 	Pick      string       `json:"pick"`
 	Objective string       `json:"objective"`
 	Draw      float64      `json:"draw"`
+	Kind      string       `json:"kind,omitempty"`
+	Basis     string       `json:"basis"`
 	Scores    []RouteScore `json:"scores"`
 }
 
@@ -34,20 +38,26 @@ type RouteScore struct {
 // the dispatch to another candidate when it falls under Explore; with no
 // eligible candidate every dispatch explores. Exploring prefers the
 // candidates with the fewest attempts, a second draw choosing among them.
+//
+// When the task's brief declares a kind (issue #475) and at least one
+// candidate is eligible on that kind's own scoreboard (modelStatsKind), the
+// whole choice is made on the per-kind rows (Basis "kind"); otherwise on the
+// model-wide rows (Basis "model"). The two are never mixed in one comparison,
+// and the draw key does not involve the kind, so a task without one routes
+// exactly as before.
 func routeModel(events []Event, w Worker, task string) RouteChoice {
 	r := w.Routing
 	minN := r.MinAttempts
 	if minN == 0 {
 		minN = StatsMinSample
 	}
-	rows := modelStats(events)
-	scores := make([]RouteScore, len(r.Candidates))
-	for i, c := range r.Candidates {
-		scores[i] = RouteScore{Model: c}
-		for _, row := range rows {
-			if row.Adapter == w.Adapter && row.Model == c && row.Variant == w.Variant {
-				scores[i].Attempts = row.Attempts
-				scores[i].Score = routeScore(row, r.Objective)
+	kind := taskKinds(events)[task]
+	basis, scores := "model", routeScores(modelStats(events), w)
+	if kind != "" {
+		ks := routeScores(modelStatsKind(events, kind), w)
+		for _, s := range ks {
+			if s.Attempts >= minN && s.Score != nil {
+				basis, scores = "kind", ks
 				break
 			}
 		}
@@ -69,7 +79,7 @@ func routeModel(events []Event, w Worker, task string) RouteChoice {
 			best = i
 		}
 	}
-	choice := RouteChoice{Objective: r.Objective, Draw: round(d, 4), Scores: scores}
+	choice := RouteChoice{Objective: r.Objective, Draw: round(d, 4), Kind: kind, Basis: basis, Scores: scores}
 	var pool []int
 	switch {
 	case best < 0:
@@ -99,6 +109,23 @@ func routeModel(events []Event, w Worker, task string) RouteChoice {
 	idx := int(routeDraw(key+"\x00explore") * float64(len(tied)))
 	choice.Model, choice.Pick = scores[tied[idx]].Model, "explore"
 	return choice
+}
+
+// routeScores is each of w's routing candidates' attempts and score in rows,
+// matched on w's adapter and variant, in candidate order.
+func routeScores(rows []StatsModel, w Worker) []RouteScore {
+	scores := make([]RouteScore, len(w.Routing.Candidates))
+	for i, c := range w.Routing.Candidates {
+		scores[i] = RouteScore{Model: c}
+		for _, row := range rows {
+			if row.Adapter == w.Adapter && row.Model == c && row.Variant == w.Variant {
+				scores[i].Attempts = row.Attempts
+				scores[i].Score = routeScore(row, w.Routing.Objective)
+				break
+			}
+		}
+	}
+	return scores
 }
 
 // routeScore is row's score under objective, or nil when it has none.

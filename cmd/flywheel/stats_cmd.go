@@ -13,13 +13,14 @@ import (
 
 func init() {
 	register("stats", "print the factory's own numbers: rates, corrections, cost", runStats)
-	registerHelp("stats", "flywheel stats [--dir DIR] [--by model] [--json]", func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
+	registerHelp("stats", "flywheel stats [--dir DIR] [--by model [--kind]] [--json]", func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
 }
 
 // statsOptions holds the parsed stats flags.
 type statsOptions struct {
 	dir     string
 	by      string
+	kind    bool
 	jsonOut bool
 }
 
@@ -30,13 +31,14 @@ func statsFlags() (*flag.FlagSet, *statsOptions) {
 	o := &statsOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.by, "by", "", `break the numbers down: "model" adds the per-model scoreboard`)
+	fs.BoolVar(&o.kind, "kind", false, "with --by model, also break the scoreboard down per task kind (a brief's kind: header)")
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
 	return fs, o
 }
 
 // statsUsage prints the flywheel stats usage line.
 func statsUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel stats [--dir DIR] [--by model] [--json]")
+	fmt.Fprintln(w, "usage: flywheel stats [--dir DIR] [--by model [--kind]] [--json]")
 }
 
 // runStats implements `flywheel stats`: the factory's health as numbers that
@@ -60,7 +62,12 @@ func runStats(args []string) {
 		statsUsage(os.Stderr)
 		os.Exit(2)
 	}
-	rep, err := flywheel.StatsWith(o.dir, flywheel.StatsOptions{ByModel: o.by == "model"})
+	if o.kind && o.by != "model" {
+		fmt.Fprintln(os.Stderr, "flywheel stats: --kind needs --by model")
+		statsUsage(os.Stderr)
+		os.Exit(2)
+	}
+	rep, err := flywheel.StatsWith(o.dir, flywheel.StatsOptions{ByModel: o.by == "model", ByKind: o.kind})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", err)
 		os.Exit(1)
@@ -72,15 +79,22 @@ func runStats(args []string) {
 	}
 	printStats(rep)
 	if o.by == "model" {
-		printByModel(rep.ByModel)
+		printByModel("By model:", "", rep.ByModel)
+	}
+	if o.kind {
+		printByModel("By model and kind:", "KIND", rep.ByModelKind)
 	}
 }
 
-// printByModel writes the per-model scoreboard (issue #473): one row per
-// adapter, model and variant, ATTEMPTS the sample size, a rate n/a below
-// flywheel.StatsMinSample.
-func printByModel(rows []flywheel.StatsModel) {
-	fmt.Println("By model:")
+// printByModel writes the per-model scoreboard (issue #473) under title: one
+// row per adapter, model and variant, ATTEMPTS the sample size, a rate n/a
+// below flywheel.StatsMinSample. A non-empty kindCol adds a first column
+// holding each row's task kind (issue #475).
+func printByModel(title, kindCol string, rows []flywheel.StatsModel) {
+	fmt.Println(title)
+	if kindCol != "" {
+		fmt.Printf("  %-10s", kindCol)
+	}
 	fmt.Printf("  %-10s %-24s %-8s %8s %6s %6s %7s %6s %6s %7s %9s %6s %9s %10s\n",
 		"ADAPTER", "MODEL", "VARIANT", "ATTEMPTS", "CLEAN%", "GATE%", "ACCEPT%", "SILENT", "FAILED", "STALLED", "CORR/TASK", "MED-S", "SPEND", "$/ACCEPTED")
 	if len(rows) == 0 {
@@ -93,6 +107,9 @@ func printByModel(rows []flywheel.StatsModel) {
 		}
 		if variant == "" {
 			variant = "-"
+		}
+		if kindCol != "" {
+			fmt.Printf("  %-10s", r.Kind)
 		}
 		fmt.Printf("  %-10s %-24s %-8s %8d %6s %6s %7s %6d %6d %7d %9.2f %6.0f %9.4f %10.4f\n",
 			r.Adapter, model, variant, r.Attempts, ratePct(r.CleanRate), ratePct(r.GatePassRate), ratePct(r.AcceptedRate),
