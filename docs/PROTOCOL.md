@@ -351,7 +351,9 @@ all.
 - Enforced: `flywheel inspect --verdict pass` is refused (rule `review`, exit 6) while the task has
   an open blocking finding, and `flywheel verify` fails rule R1 for an `inspected` pass recorded
   while one was open (§2). `flywheel floor` shows such a unit as `review-open (<count>)` on the
-  andon, and `flywheel stats` reports a review block.
+  andon, and `flywheel stats` reports a review block. Open blocking findings outside the effective
+  brief's owns show as `needs-owner (<count>)` instead, and `review-open` counts only those inside
+  (issue #458).
 - The review panel (issue #420): `flywheel review <task> --agent --panel --session S [--round N]
   [--fix [--rounds N] [--fix-worker NAME] [--worktree]]` runs the review agent once per member of
   `review.panel`, sequentially, each a persona owning one dimension. A member's reviewer is its
@@ -556,6 +558,7 @@ all.
   | `lost`, or any other unclean finish | `none` (dispatch or correct) | |
   | finished `stop` or `passed`, stacked | `rebase` | `flywheel rebase <task>` |
   | `passed` | `land` | `flywheel land <task>` |
+  | open blocking findings outside the effective brief's owns (issue #458) | `assign-owner` (assign them to another unit, amend owns, or dismiss them; the reason names the ids and the thread) | `flywheel review <task> --dismiss <id> ...` |
   | any other status than `finished` | `none` | |
   | no `owns_checked` reading since the finish | `re-validate` | `flywheel validate <task>` |
   | the tree changed since that reading | `re-validate` | `flywheel validate <task>` |
@@ -567,7 +570,7 @@ all.
   changed owned files, since a killed process never reached its `finished` event),
   `re-validate` (a measurement) and `rebase` when the base is certainly squashed and `git rebase`
   reports no conflict (a conflict is aborted and listed). `resume-session`, `wait-reset`, `review`,
-  `inspect`, `land` and `investigate` are never run; they are listed for the lead.
+  `inspect`, `land`, `assign-owner` and `investigate` are never run; they are listed for the lead.
 - **Checkpoints.** An attempt that ends uncleanly (`error`, `rate-limited`, `stalled`, `silent`,
   `abandoned-job`, `length`) after writing files has its changed owned paths snapshotted: a
   temporary index reads HEAD, adds those paths, writes a tree, and `commit-tree` makes

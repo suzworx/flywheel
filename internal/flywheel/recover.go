@@ -72,8 +72,8 @@ type RecoverTask struct {
 }
 
 // Next is a unit's next action: one of mark-lost, wait-reset, resume-session,
-// rebase, re-validate, review, inspect, land, investigate or none, with the
-// reason and the exact command.
+// rebase, assign-owner (issue #458), re-validate, review, inspect, land,
+// investigate or none, with the reason and the exact command.
 type Next struct {
 	Action  string `json:"action"`
 	Reason  string `json:"reason"`
@@ -95,6 +95,7 @@ type recoverFacts struct {
 	TreeChanged           bool // the tree now differs from that reading's
 	InspectReady          bool // inspectionReady
 	PanelPending          []string
+	NeedsOwner            []string // open blocking findings outside owns (issue #458)
 }
 
 // nextAction is the deterministic next-action rule (docs/PROTOCOL.md).
@@ -130,6 +131,10 @@ func nextAction(f recoverFacts) Next {
 		return Next{Action: "rebase", Reason: f.Stacked, Command: "flywheel rebase " + t}
 	case f.Status == "passed":
 		return Next{Action: "land", Reason: "passed", Command: "flywheel land " + t}
+	case len(f.NeedsOwner) > 0:
+		// No command prints the thread: it is the generated file named here.
+		return Next{Action: "assign-owner", Reason: fmt.Sprintf("%d open blocking finding(s) outside owns: %s; assign them to another unit, amend owns (flywheel log --kind amended), or dismiss them (thread %s)",
+			len(f.NeedsOwner), clipNote(strings.Join(f.NeedsOwner, ", ")), ReviewThreadPath(t)), Command: "flywheel review " + t + " --dismiss <id> --session <lead> --note <why>"}
 	case f.Status != "finished":
 		return Next{Action: "none", Reason: f.Status}
 	case !f.HaveReading:
@@ -252,6 +257,9 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 	}
 	if t.Worktree != "" && ts.Status != "landed" {
 		worldChecks(&t, &f, fin, events)
+	}
+	if ts.Status != "landed" {
+		f.NeedsOwner = needsOwnerFindings(dir, events, id)
 	}
 	if fin != nil && fin.Reason == "stop" {
 		oh, ot, tree, _ := latestReading(events, id, "owns_checked", att)
@@ -376,8 +384,8 @@ type RecoverApplied struct {
 // mark-lost (markLost, which also checkpoints the lost attempt's work),
 // re-validate (ValidateTask, a measurement) and rebase when the squashed base
 // is certain (RebaseUnit aborts on a conflict and leaves the branch as it
-// was). resume-session, land, inspect, review, wait-reset and investigate are
-// never run; they are listed in Left. Anything applied is recorded in one
+// was). resume-session, land, inspect, review, assign-owner, wait-reset and
+// investigate are never run; they are listed in Left. Anything applied is recorded in one
 // recovered event (Note the actions, Paths the tasks). A dormant unit is never
 // acted on: it goes to Left as dormant.
 func RecoverApply(dir string, now time.Time, o RecoverOptions) (RecoverApplied, error) {

@@ -87,6 +87,10 @@ type Unit struct {
 	Base     string    // that event's base commit, first 7 characters; "" when none
 	Open     int       // open blocking review findings (issue #389); 0 when none or never reviewed
 	Panel    string    // the verdict matrix, one cell per review.panel dimension (issue #420); "" when no panel is configured
+
+	// NeedsOwner counts the open blocking findings outside the effective
+	// brief's owns (issue #458): the worker cannot fix them; they need an owner.
+	NeedsOwner int
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -647,6 +651,9 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Station = "inspect"
 		}
 		u.Open = len(openBlockingIDs(w.events, t.ID))
+		if u.Open > 0 {
+			u.NeedsOwner = len(needsOwnerFindings(dir, w.events, t.ID))
+		}
 		if !finished && liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
 		}
@@ -766,10 +773,48 @@ func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty", "stacked":
 			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
 		}
-		if u.Open > 0 {
-			out = append(out, Andon{Task: u.Task, State: fmt.Sprintf("review-open (%d)", u.Open), Age: u.LastAge})
+		// Findings outside owns need an owner (issue #458); review-open counts
+		// only those the unit's worker can fix.
+		if u.NeedsOwner > 0 {
+			out = append(out, Andon{Task: u.Task, State: fmt.Sprintf("needs-owner (%d)", u.NeedsOwner), Age: u.LastAge})
+		}
+		if n := u.Open - u.NeedsOwner; n > 0 {
+			out = append(out, Andon{Task: u.Task, State: fmt.Sprintf("review-open (%d)", n), Age: u.LastAge})
 		}
 	}
+	return sortAndon(out, roles, paused)
+}
+
+// needsOwnerFindings lists the ids of the task's open blocking review findings
+// whose path lies outside the effective brief's owns (AttemptBrief), in ledger
+// order (issue #458). A brief that cannot be read, or owns nothing, marks
+// nothing, as the review thread does.
+func needsOwnerFindings(dir string, events []Event, task string) []string {
+	var blocking []Event
+	for _, f := range OpenFindings(events, task) {
+		if blockingFinding(f) {
+			blocking = append(blocking, f)
+		}
+	}
+	if len(blocking) == 0 {
+		return nil
+	}
+	header, _, err := AttemptBrief(dir, events, task)
+	if err != nil || len(header.Owns) == 0 {
+		return nil
+	}
+	var ids []string
+	for _, f := range blocking {
+		if !FindingInOwns(header.Owns, f.Path) {
+			ids = append(ids, f.Finding)
+		}
+	}
+	return ids
+}
+
+// sortAndon adds the mismatching roles and the paused entries to out and
+// sorts newest first.
+func sortAndon(out []Andon, roles []FloorRole, paused []Andon) []Andon {
 	for _, r := range roles {
 		if r.Mismatch {
 			out = append(out, Andon{Task: "staffing/" + r.Name, State: "mismatch", Age: 0})
