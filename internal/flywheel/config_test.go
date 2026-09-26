@@ -1449,3 +1449,32 @@ func TestConfigUnknownKeyHint(t *testing.T) {
 		}
 	}
 }
+
+// TestPermissionModeValidate checks worker permission_mode (issue #526): each
+// valid mode is accepted on a claude worker, a bad value is rejected naming
+// the worker and the allowed values, and any mode on a non-claude worker is
+// rejected.
+func TestPermissionModeValidate(t *testing.T) {
+	t.Parallel()
+	cfg := func(adapter, mode string) Config {
+		c := DefaultConfig()
+		c.Workers = []Worker{{Name: "w1", Adapter: adapter, Model: "m", PermissionMode: mode}}
+		return c
+	}
+	for _, mode := range []string{"", "acceptEdits", "bypassPermissions", "default", "plan", "dontAsk"} {
+		if err := cfg("claude", mode).Validate(); err != nil {
+			t.Errorf("claude permission_mode %q: Validate() = %v, want nil", mode, err)
+		}
+	}
+	err := cfg("claude", "yolo").Validate()
+	if err == nil || !strings.Contains(err.Error(), `worker "w1": permission_mode "yolo" must be one of acceptEdits, bypassPermissions, default, plan, dontAsk`) {
+		t.Errorf("bad mode: Validate() = %v, want the worker and allowed values named", err)
+	}
+	err = cfg("opencode", "bypassPermissions").Validate()
+	if err == nil || !strings.Contains(err.Error(), "permission_mode applies to the claude adapter") {
+		t.Errorf("opencode mode: Validate() = %v, want permission_mode applies to the claude adapter", err)
+	}
+	if err := cfg("opencode", "").Validate(); err != nil {
+		t.Errorf("opencode without mode: Validate() = %v, want nil", err)
+	}
+}

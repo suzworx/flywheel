@@ -249,6 +249,43 @@ type Worker struct {
 	// --mcp-config JSON shape ({"mcpServers": {...}}). When unset the worker
 	// loads no MCP server at all (issue #425).
 	MCP json.RawMessage `json:"mcp,omitempty"`
+	// PermissionMode is the claude adapter's --permission-mode: one of
+	// permissionModes; empty means acceptEdits. disallowed_tools is still
+	// enforced under every mode, bypassPermissions included (issue #526).
+	PermissionMode string `json:"permission_mode,omitempty"`
+}
+
+// permissionModes are the valid Worker.PermissionMode values; "" means
+// defaultPermissionMode (issue #526).
+var permissionModes = []string{"acceptEdits", "bypassPermissions", "default", "plan", "dontAsk"}
+
+// defaultPermissionMode is the claude --permission-mode when a worker sets none.
+const defaultPermissionMode = "acceptEdits"
+
+// validatePermissionMode checks PermissionMode: empty, or one of
+// permissionModes on a claude worker (issue #526).
+func (w Worker) validatePermissionMode() error {
+	if w.PermissionMode == "" {
+		return nil
+	}
+	if w.Adapter != "claude" {
+		return fmt.Errorf("worker %q: permission_mode applies to the claude adapter, not %q", w.Name, w.Adapter)
+	}
+	for _, m := range permissionModes {
+		if w.PermissionMode == m {
+			return nil
+		}
+	}
+	return fmt.Errorf("worker %q: permission_mode %q must be one of %s", w.Name, w.PermissionMode, strings.Join(permissionModes, ", "))
+}
+
+// permissionMode returns the worker's --permission-mode, acceptEdits when
+// unset (issue #526).
+func (w Worker) permissionMode() string {
+	if w.PermissionMode == "" {
+		return defaultPermissionMode
+	}
+	return w.PermissionMode
 }
 
 // validateMCP checks that a set MCP value is a JSON object with an
@@ -737,6 +774,9 @@ func (c Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("%s: stall_timeout %d must be >= 0", where, w.StallTimeout))
 		}
 		if err := w.validateMCP(); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
+		}
+		if err := w.validatePermissionMode(); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 		}
 		for j, f := range w.Fallbacks {

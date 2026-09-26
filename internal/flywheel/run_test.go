@@ -6105,3 +6105,55 @@ func TestEventUncommittedOnlyOnFinished(t *testing.T) {
 		t.Errorf("AppendEvent() dispatched with uncommitted error = %v, want a refusal", err)
 	}
 }
+
+// TestRunDenialSignalLive replays testdata/claude-denied-live.jsonl: the user
+// tool_result denying WebSearch records the attempt's one permission-denied
+// signal while the stream runs, before the finished event, naming the tool,
+// and prints the andon line; the result line's permission_denials adds no
+// second signal at finish (issue #526).
+func TestRunDenialSignalLive(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	model, err := filepath.Abs(filepath.Join("testdata", "claude-denied-live.jsonl"))
+	if err != nil {
+		t.Fatalf("Abs() error = %v", err)
+	}
+	if err := WriteConfig(dir, simConfig(model)); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stop" {
+		t.Fatalf("reason = %q, want stop", res.Reason)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var sigs []Event
+	sigAt, finAt := -1, -1
+	for i, e := range evs {
+		if e.Kind == "signal" {
+			sigs = append(sigs, e)
+			sigAt = i
+		}
+		if e.Kind == "finished" && e.Task == "T1" {
+			finAt = i
+		}
+	}
+	if len(sigs) != 1 || sigs[0].Signal != "permission-denied" || sigs[0].Attempt != res.Attempt {
+		t.Fatalf("signals = %+v, want one permission-denied for %s", sigs, res.Attempt)
+	}
+	if !strings.Contains(sigs[0].Note, "WebSearch") {
+		t.Errorf("signal note = %q, want the tool named", sigs[0].Note)
+	}
+	if finAt < 0 || sigAt > finAt {
+		t.Errorf("signal at %d, finished at %d: want the signal before finished", sigAt, finAt)
+	}
+	if line := "andon: T1 " + res.Attempt + " permission-denied WebSearch (live)\n"; !strings.Contains(buf.String(), line) {
+		t.Errorf("progress missing %q:\n%s", line, buf.String())
+	}
+}
