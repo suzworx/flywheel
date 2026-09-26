@@ -76,6 +76,7 @@ type Event struct {
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`
 	Adapter         string  `json:"adapter,omitempty"`
 	Worker          string  `json:"worker,omitempty"` // a dispatched event's resolved worker name (issue #469); omitted on older events
+	Lead            string  `json:"lead,omitempty"`   // a dispatched event's lead session (flywheel run --session, default $FLYWHEEL_SESSION; issue #472); omitted when unset and on older events, never required
 	Path            string  `json:"path,omitempty"`
 	SHA256          string  `json:"sha256,omitempty"`
 	Tokens          *Tokens `json:"tokens,omitempty"`

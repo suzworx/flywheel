@@ -17,7 +17,7 @@ func init() {
 	registerHelp("recover", recoverUsageLine, func() *flag.FlagSet { fs, _ := recoverFlags(); return fs })
 }
 
-const recoverUsageLine = "flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--dir DIR]"
+const recoverUsageLine = "flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID] [--dir DIR]"
 
 // recoverOptions holds the parsed recover flags.
 type recoverOptions struct {
@@ -26,6 +26,7 @@ type recoverOptions struct {
 	apply        bool
 	all          bool
 	dormantAfter time.Duration
+	session      string
 }
 
 // recoverFlags defines recover's flags once, so help and run share them.
@@ -38,6 +39,7 @@ func recoverFlags() (*flag.FlagSet, *recoverOptions) {
 	fs.BoolVar(&o.apply, "apply", false, "run the safe actions only (mark-lost, re-validate, a conflict-free rebase) on units that are not dormant, and record a recovered event")
 	fs.BoolVar(&o.all, "all", false, "list landed and dormant units and every history item instead of summary lines")
 	fs.DurationVar(&o.dormantAfter, "dormant-after", 168*time.Hour, "a unit not landed with no event for longer than this is dormant: reported, never acted on by --apply (0 disables)")
+	fs.StringVar(&o.session, "session", "", "your lead session: its integrity failures and units are listed first (default $FLYWHEEL_SESSION)")
 	return fs, o
 }
 
@@ -68,7 +70,11 @@ func recoverMain(args []string, stdout, stderr io.Writer, now time.Time) int {
 	root := o.dir // parseArgs already moved a task worktree's --dir to the main ledger
 	var rep flywheel.RecoverReport
 	var out any
-	ro := flywheel.RecoverOptions{DormantAfter: o.dormantAfter, All: o.all}
+	session := o.session
+	if session == "" {
+		session = os.Getenv("FLYWHEEL_SESSION")
+	}
+	ro := flywheel.RecoverOptions{DormantAfter: o.dormantAfter, All: o.all, Session: session}
 	if o.apply {
 		applied, err := flywheel.RecoverApply(root, now, ro)
 		if err != nil {

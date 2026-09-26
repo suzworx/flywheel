@@ -31,11 +31,12 @@ type runOptions struct {
 	startTimeout time.Duration
 	stallTimeout time.Duration
 	notify       string
+	session      string
 }
 
 // runUsage prints the flywheel run usage line.
 func runUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD]")
+	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]")
 }
 
 // runFlags defines run's flags once, so help and run share them.
@@ -56,6 +57,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
 	fs.StringVar(&o.notify, "notify", "", "shell command run after the run returns on any path, with FLYWHEEL_FINISHED=\"<task> <attempt> reason=<r> exit=<code>\"; its failure only warns")
+	fs.StringVar(&o.session, "session", "", "the lead session dispatching; recorded as the dispatched event's lead (default $FLYWHEEL_SESSION)")
 	return fs, o
 }
 
@@ -109,11 +111,15 @@ func runDispatch(fs *flag.FlagSet, o *runOptions, task string) (code int, attemp
 		return 2, "", "usage"
 	}
 
+	lead := o.session
+	if lead == "" {
+		lead = os.Getenv("FLYWHEEL_SESSION")
+	}
 	// A worker cut off by a rate limit is resumed after the reset (issue #380).
 	res, err := flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
 		Task: task, Worker: o.worker, Model: o.model, Resume: o.resume, ForceModel: o.forceModel,
 		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, Increment: o.increment,
-		Worktree: o.worktree, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout,
+		Worktree: o.worktree, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout, Lead: lead,
 		Progress: os.Stdout, Stderr: os.Stderr,
 	}, time.Sleep, time.Now)
 	if err != nil {

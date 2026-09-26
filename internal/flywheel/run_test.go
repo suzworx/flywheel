@@ -349,6 +349,28 @@ func TestDispatchedRecordsWorkerName(t *testing.T) {
 	}
 }
 
+// TestDispatchedRecordsLead checks a dispatched event records the lead
+// session that dispatched it, and none without one (issue #472).
+func TestDispatchedRecordsLead(t *testing.T) {
+	t.Parallel()
+	for _, lead := range []string{"lead-a", ""} {
+		dir := setupTask(t)
+		if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		if _, err := Run(dir, RunOptions{Task: "T1", Lead: lead}); err != nil {
+			t.Fatalf("Run(lead %q) error = %v", lead, err)
+		}
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		if d, ok := LastDispatched(evs, "T1"); !ok || d.Lead != lead {
+			t.Errorf("dispatched event = %+v, want lead %q", d, lead)
+		}
+	}
+}
+
 // TestBuilderWorker checks the worker of the last dispatched attempt resolves
 // by its recorded name, else by adapter and model, else not at all (#469).
 func TestBuilderWorker(t *testing.T) {
