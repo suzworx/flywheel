@@ -60,10 +60,65 @@ func TaskWorktree(dir, task string) (string, error) {
 	cmd.Args = append([]string{"git", "-C", dir}, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		gitErr := fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		// Another worktree holding the branch is usually another flywheel
+		// root that claimed the id (issue #479): say so, whatever language
+		// git reported it in.
+		if branchExists {
+			if _, other := TaskBranch(abs, task); other != "" && !samePath(other, path) {
+				return "", fmt.Errorf("%s is checked out in another worktree (%s): another flywheel root may own task %s; plan under a new id or withdraw it there: %w", branchName, other, task, gitErr)
+			}
+		}
+		return "", gitErr
 	}
 
 	return path, nil
+}
+
+// TaskBranch reports whether branch fw/<task> exists in the repository dir
+// belongs to and, when a worktree of that repository has it checked out, that
+// worktree's path (issue #479). Branches are shared by every worktree of a
+// repository, so another flywheel root that claimed the id shows here. It
+// runs read-only git only (rev-parse --verify, worktree list --porcelain),
+// and none at all when no .git entry sits at or above dir; any git failure
+// reads as no branch.
+func TaskBranch(dir, task string) (exists bool, worktree string) {
+	abs, err := filepath.Abs(dir)
+	if err != nil || !underGit(abs) {
+		return false, ""
+	}
+	ref := "refs/heads/fw/" + task
+	if exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", ref).Run() != nil {
+		return false, ""
+	}
+	out, err := exec.Command("git", "-C", abs, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return true, ""
+	}
+	path := ""
+	for _, line := range strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n") {
+		if p, ok := strings.CutPrefix(line, "worktree "); ok {
+			path = filepath.Clean(filepath.FromSlash(p))
+		} else if line == "branch "+ref {
+			return true, path
+		}
+	}
+	return true, ""
+}
+
+// underGit reports whether a .git entry (a directory, or a worktree's .git
+// file) sits at abs or any of its parents.
+func underGit(abs string) bool {
+	for p := abs; ; {
+		if _, err := os.Stat(filepath.Join(p, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
 }
 
 // recordedWorkdir returns the Workdir of the latest dispatched event of

@@ -542,3 +542,79 @@ func TestLogReplanWarning(t *testing.T) {
 		t.Errorf("--replan with blocked: exit %d, want 2; stderr:\n%s", code, stderr)
 	}
 }
+
+// TestLogWithdrawn checks --kind withdrawn (issue #479): --note is required
+// (exit 2), a noted withdrawal is recorded, and one on a dispatched attempt is
+// refused (exit 6) before anything is written.
+func TestLogWithdrawn(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := flywheel.AppendEvent(dir, flywheel.Event{Task: "T", Kind: "planned", Brief: "b.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if stderr, code := runLogProcess(t, "--task", "T", "--kind", "withdrawn", "--no-state", "--dir", dir); code != 2 || !strings.Contains(stderr, "--kind withdrawn requires --note <why>") {
+		t.Errorf("no --note: exit %d, want 2; stderr:\n%s", code, stderr)
+	}
+	if stderr, code := runLogProcess(t, "--task", "T", "--kind", "withdrawn", "--note", "another root owns T", "--no-state", "--dir", dir); code != 0 {
+		t.Fatalf("withdrawn: exit %d, want 0; stderr:\n%s", code, stderr)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{Task: "U", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	if stderr, code := runLogProcess(t, "--task", "U", "--kind", "withdrawn", "--note", "dup", "--no-state", "--dir", dir); code != 6 || !strings.Contains(stderr, "W1") {
+		t.Errorf("withdrawn on dispatched U: exit %d, want 6 naming W1; stderr:\n%s", code, stderr)
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range events {
+		if e.Kind == "withdrawn" {
+			got = append(got, e.Task+":"+e.Note)
+		}
+	}
+	if len(got) != 1 || got[0] != "T:another root owns T" {
+		t.Errorf("withdrawn events = %v, want [T:another root owns T]", got)
+	}
+}
+
+// TestLogPlannedBranchWarning checks --kind planned warns when branch fw/<id>
+// already exists (issue #479), names the worktree that has it checked out,
+// and --replan silences it.
+func TestLogPlannedBranchWarning(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	gitInitRepo(t, dir)
+	git := func(args ...string) {
+		t.Helper()
+		full := append([]string{"-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)
+		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	if err := os.WriteFile(filepath.Join(dir, "b.md"), []byte("brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planned := func(extra ...string) (string, int) {
+		return runLogProcess(t, append([]string{"--task", "T", "--kind", "planned", "--brief", "b.md", "--no-state", "--dir", dir}, extra...)...)
+	}
+	if stderr, code := planned(); code != 0 || strings.Contains(stderr, "fw/T") {
+		t.Fatalf("no branch: exit %d, want 0 and no warning; stderr:\n%s", code, stderr)
+	}
+	git("branch", "fw/T")
+	const bare = "warning: branch fw/T already exists; another root may own this id (--replan silences this)"
+	if stderr, code := planned(); code != 0 || !strings.Contains(stderr, bare) {
+		t.Errorf("branch: exit %d, want 0 and %q; stderr:\n%s", code, bare, stderr)
+	}
+	sib := filepath.Join(t.TempDir(), "sibling-root")
+	git("worktree", "add", "-q", sib, "fw/T")
+	if stderr, code := planned(); code != 0 || !strings.Contains(stderr, "warning: branch fw/T already exists (checked out in ") ||
+		!strings.Contains(stderr, "sibling-root); another root may own this id (--replan silences this)") {
+		t.Errorf("checked out: exit %d, want 0 and a warning naming %s; stderr:\n%s", code, sib, stderr)
+	}
+	if stderr, code := planned("--replan"); code != 0 || strings.Contains(stderr, "fw/T") {
+		t.Errorf("--replan: exit %d, want 0 and no warning; stderr:\n%s", code, stderr)
+	}
+}

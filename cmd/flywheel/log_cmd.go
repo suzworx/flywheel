@@ -64,7 +64,7 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	fs.StringVar(&o.note, "note", "", "free-form note")
 	fs.StringVar(&o.goal, "goal", "", "goal id a planned event links to")
 	fs.BoolVar(&o.noState, "no-state", false, "skip state derivation after appending")
-	fs.BoolVar(&o.replan, "replan", false, "with --kind planned: silence the warning that the task already has attempts")
+	fs.BoolVar(&o.replan, "replan", false, "with --kind planned: silence the warnings that the task already has attempts or its fw/<task> branch exists")
 	fs.BoolVar(&o.shard, "shard", false, "switch this repository's event log to per-task shards under .flywheel/events/ (one-way)")
 	fs.BoolVar(&o.reanchor, "reanchor", false, "acknowledge the log chain's first unacknowledged break with an appended reanchored event (requires --note)")
 	fs.BoolVar(&o.force, "force", false, "with --reanchor: acknowledge a break that classifies as removed (a possible real edit or deletion)")
@@ -194,8 +194,8 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 	if batchHasLearning(events) {
 		var rest []flywheel.Event
 		for _, e := range events {
-			if e.Kind == "amended" {
-				if err = appendAmended(dir, e); err != nil {
+			if e.Kind == "amended" || e.Kind == "withdrawn" {
+				if err = appendChecked(dir, e); err != nil {
 					break
 				}
 			} else {
@@ -207,17 +207,27 @@ func appendEvents(dir string, events []flywheel.Event, noState bool) {
 		}
 	} else {
 		for _, e := range events {
-			if e.Kind == "amended" {
-				err = appendAmended(dir, e)
-			} else {
-				err = flywheel.AppendEvent(dir, e)
-			}
+			err = appendChecked(dir, e)
 			if err != nil {
 				break
 			}
 		}
 	}
 	finishLog(dir, err, noState)
+}
+
+// appendChecked appends one event through the check its kind carries: an
+// amended event through appendAmended, a withdrawn one through
+// flywheel.AppendWithdrawnEvent's refusal on a live attempt (issue #479), any
+// other as is.
+func appendChecked(dir string, e flywheel.Event) error {
+	switch e.Kind {
+	case "amended":
+		return appendAmended(dir, e)
+	case "withdrawn":
+		return flywheel.AppendWithdrawnEvent(dir, e)
+	}
+	return flywheel.AppendEvent(dir, e)
 }
 
 // appendAmended appends one amended event: an acknowledgement (it names an
@@ -357,7 +367,7 @@ func runLog(args []string) {
 		logFlagError(fs, args, "--kind is required", nil, "--kind <kind>")
 	case o.replan && o.kind != "planned":
 		logFlagError(fs, args, "--replan applies to --kind planned only", logWithout("replan"), "")
-	case (o.kind == "planned" || o.kind == "amended") && o.task == "":
+	case (o.kind == "planned" || o.kind == "amended" || o.kind == "withdrawn") && o.task == "":
 		logFlagError(fs, args, "--kind "+o.kind+" requires --task <id>", nil, "--task <id>")
 	case o.kind == "amended" && o.goal != "":
 		// --goal is legal only for planned: refuse it before asking whether
@@ -365,6 +375,9 @@ func runLog(args []string) {
 		logFlagError(fs, args, "--goal applies to --kind planned only", logWithout("goal"), "")
 	case o.kind == "amended" && o.note == "":
 		logFlagError(fs, args, "--kind amended requires --note <why>", nil, `--note "<why>"`)
+	case o.kind == "withdrawn" && strings.TrimSpace(o.note) == "":
+		// Taking a plan back says why (issue #479).
+		logFlagError(fs, args, "--kind withdrawn requires --note <why>", logWithout("note"), `--note "<why>"`)
 	case o.kind == "note" && o.note == "":
 		// A note is a journal line (issue #409): the text is the whole event.
 		logFlagError(fs, args, "--kind note requires --note <text>", logWithout("note"), `--note "<text>"`)
@@ -396,10 +409,17 @@ func runLog(args []string) {
 	}
 	// Re-planning an id with attempts starts a new plan (issue #476): warn,
 	// unless --replan says it is meant, once the event is recorded.
-	rw := ""
+	// A branch fw/<id> another worktree made means another root may own the
+	// id (issue #479): the same warning, the same --replan.
+	var warns []string
 	if o.kind == "planned" && !o.replan {
-		rw = replanWarning(o.dir, o.task)
+		for _, w := range []string{replanWarning(o.dir, o.task), branchWarning(o.dir, o.task)} {
+			if w != "" {
+				warns = append(warns, w)
+			}
+		}
 	}
+	rw := strings.Join(warns, "\nflywheel log: ")
 	if o.kind == "planned" && o.brief != "" {
 		// A re-plan cannot change a dispatched attempt's gates (issue #366):
 		// compute the warning against the log before this event lands, and
@@ -461,6 +481,26 @@ func replanWarning(dir, task string) string {
 		return ""
 	}
 	return fmt.Sprintf("warning: task %s already has %d attempt(s); this starts a new plan, the old attempts stay in the ledger (--replan silences this)", task, n)
+}
+
+// branchWarning returns the warning for a planned event on a task whose
+// branch fw/<task> already exists in the repository (issue #479), naming the
+// worktree that has it checked out, or "". This root's own task worktree is
+// not another root: replanWarning covers a re-plan here.
+func branchWarning(dir, task string) string {
+	exists, wt := flywheel.TaskBranch(dir, task)
+	if !exists {
+		return ""
+	}
+	if wt != "" {
+		if a, err := os.Stat(wt); err == nil {
+			if b, err := os.Stat(filepath.Join(dir, ".flywheel", "worktrees", task)); err == nil && os.SameFile(a, b) {
+				return ""
+			}
+		}
+		return fmt.Sprintf("warning: branch fw/%s already exists (checked out in %s); another root may own this id (--replan silences this)", task, wt)
+	}
+	return fmt.Sprintf("warning: branch fw/%s already exists; another root may own this id (--replan silences this)", task)
 }
 
 // runLogReanchor implements flywheel log --reanchor (issue #436): it

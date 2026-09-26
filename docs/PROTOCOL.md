@@ -46,7 +46,13 @@ all.
   silences it, and is a usage error with any other kind), and `Derive` resets the row's session,
   attempt, rc, reason, verdict, model and stale list so the floor shows a clean `planned` row. The
   attempt count and every earlier event stay, so the next `flywheel run` numbers after the old
-  attempts.
+  attempts. Branches are shared by every worktree of a repository, so when branch `fw/<task>`
+  already exists `flywheel log` also warns that another flywheel root may own the id (issue #479):
+  `warning: branch fw/<id> already exists (checked out in <path>); another root may own this id
+  (--replan silences this)`, the parenthesised path only when a worktree other than this root's own
+  task worktree has it checked out. It runs read-only git only, and none outside a repository.
+  Take a duplicate plan back with a `withdrawn` event. `flywheel run --worktree` on such an id
+  fails naming that worktree.
 
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
@@ -427,6 +433,18 @@ all.
   `no live lease; no run file; dispatched at <time>`).
 - Effect: a stale-kind event, ignored unless its `attempt` matches the task's current one;
   otherwise `Derive` sets status `lost`.
+
+### `withdrawn`
+- Written by: the lead, via `flywheel log --task <id> --kind withdrawn --note "<why>"` (issue
+  #479), to take a plan back — typically one planned under an id another flywheel root already
+  claimed. `--note` is required (exit 2 without it). `flywheel log` refuses it (exit 6, rule `W1`)
+  while the task's current attempt is `dispatched` or `running`; the same check holds for a
+  `--json` line.
+- Carries: `task`, `note` (why), optionally `session`.
+- Effect: `Derive` sets status `withdrawn` (same-instant rank after `blocked`, before `lost`). It
+  is terminal like `landed` and `lost`: station `scrap`, floor stage `withdrawn`, never offered by
+  `flywheel next`, and it holds no owns or exclusive claims. A later `planned` event revives the id.
+- Verify: rule `W1` (section 2).
 
 ### `rebased`
 - Written by: the CLI only, via `flywheel rebase <task> [--onto REF]` (issue #414), after
@@ -835,8 +853,8 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
 
 ## 2. Transitions the code enforces
 
-`flywheel verify` runs seven rules against every task it is asked about — `VerifyTasks` calls
-`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1`, `ruleP1` in that order — and the same
+`flywheel verify` runs eight rules against every task it is asked about — `VerifyTasks` calls
+`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1`, `ruleW1`, `ruleP1` in that order — and the same
 rules are enforced **live**, before the record is written, inside `InspectTask` (T3, T4, T8, R1 as
 the refusal rule `review`, and P1 as the refusal rule `panel`) and `LandTask` (T5).
 `ValidateTask` produces the readings T3 needs but enforces nothing itself; it can fail its own
@@ -911,6 +929,12 @@ gates (exit 5) without touching the log's legality.
   a pass as rule `panel`, after T3 (the tree it checks is the one T3 measured): `the review panel is
   not complete on tree <tree>: <dimension>=<verdict>, ...; run flywheel review <task> --agent --panel
   --session <reviewer> (add --fix to correct and re-review)`.
+- **W1 — no withdrawal of a live attempt** (issue #479). A `withdrawn` event is legal after a
+  `planned` or `amended` event or after a finished attempt (any status but `dispatched` or
+  `running`); one the task's events derive to `dispatched` or `running` just before it (derivation
+  order) fails with `withdrawn event at <ts> while attempt <attempt> was <status>; stop the run (or
+  wait for it to finish) before withdrawing`. Live, `flywheel log` refuses such a withdrawal as rule
+  `W1` (exit 6) before anything is written.
 
 ## 3. Designed, not enforced
 
@@ -968,8 +992,8 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   hand-crafted `flywheel log --json` line with an explicit `"persona":"lead"` field — the ordinary
   flag form of `flywheel log` has no `--persona` flag at all.
 - Every other kind (`planned`, `dispatched`, `started`, `worker_plan`, `no-plan`, `finished`,
-  `report`, `reviewed`, `blocked`, `lost`, `landed`, `amended`, `staffed`, `goal`) carries no
-  persona restriction in `ruleT8`. In practice most of them are written only by a specific CLI
+  `report`, `reviewed`, `blocked`, `lost`, `withdrawn`, `landed`, `amended`, `staffed`, `goal`)
+  carries no persona restriction in `ruleT8`; `withdrawn` is the lead's, through `flywheel log`. In practice most of them are written only by a specific CLI
   command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report`/`worktree_setup` only by `flywheel
   run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`;
   `review_finding` only by `flywheel review --agent`; `finding_response` only by `flywheel review
@@ -1014,7 +1038,7 @@ Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard,
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/P1 for the requested
+`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1 for the requested
 tasks (`--all` derives the task list from every `task` seen in the log) and prints one
 `PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
 "items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when

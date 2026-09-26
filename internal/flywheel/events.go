@@ -202,6 +202,7 @@ var kinds = map[string]bool{
 	"reviewed":        true,
 	"blocked":         true,
 	"lost":            true,
+	"withdrawn":       true, // a plan taken back (issue #479): task and note required
 	"landed":          true,
 	"amended":         true,
 	"lead_edit":       true,
@@ -398,7 +399,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited", e.Kind)
 	}
 	if e.Kind == "release_audited" {
 		if e.Task != "" || e.Session == "" || e.Version == "" || len(e.Checks) == 0 {
@@ -443,6 +444,9 @@ func Validate(e Event) error {
 		if e.Note == "" {
 			return fmt.Errorf("amended event acknowledging %s must carry a note (why its delta is not retained)", e.Attempt)
 		}
+	}
+	if e.Kind == "withdrawn" && (!taskOK(e.Task) || e.Note == "") {
+		return fmt.Errorf("withdrawn event must carry a task and a note (why the plan is taken back)")
 	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")

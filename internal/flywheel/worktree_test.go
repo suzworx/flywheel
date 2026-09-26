@@ -318,3 +318,50 @@ func TestWorktreeRefusesForeignDir(t *testing.T) {
 		t.Error("TaskWorktree reused a plain directory, want an error")
 	}
 }
+
+// TestWorktreeTaskBranch checks TaskBranch (issue #479): no repository and no
+// branch read as none, a branch reads as existing, and a branch checked out in
+// a second worktree names that worktree.
+func TestWorktreeTaskBranch(t *testing.T) {
+	t.Parallel()
+	if exists, wt := TaskBranch(t.TempDir(), "T1"); exists || wt != "" {
+		t.Errorf("no repository: TaskBranch = %v, %q; want false, \"\"", exists, wt)
+	}
+	dir := t.TempDir()
+	initRepo(t, dir)
+	if exists, wt := TaskBranch(dir, "T1"); exists || wt != "" {
+		t.Errorf("no branch: TaskBranch = %v, %q; want false, \"\"", exists, wt)
+	}
+	git(t, dir, []string{"branch", "fw/T1"})
+	if exists, wt := TaskBranch(dir, "T1"); !exists || wt != "" {
+		t.Errorf("branch: TaskBranch = %v, %q; want true, \"\"", exists, wt)
+	}
+	sib := filepath.Join(t.TempDir(), "sibling-root")
+	git(t, dir, []string{"worktree", "add", sib, "fw/T1"})
+	if exists, wt := TaskBranch(dir, "T1"); !exists || !samePath(wt, sib) {
+		t.Errorf("checked out: TaskBranch = %v, %q; want true, %q", exists, wt, sib)
+	}
+}
+
+// TestWorktreeCheckedOutElsewhere checks that TaskWorktree, when fw/<task> is
+// checked out in another worktree (another flywheel root), names that
+// worktree and says another root may own the task (issue #479).
+func TestWorktreeCheckedOutElsewhere(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	initRepo(t, dir)
+	sib := filepath.Join(t.TempDir(), "sibling-root")
+	git(t, dir, []string{"worktree", "add", "-b", "fw/T1", sib, "HEAD"})
+	_, err := TaskWorktree(dir, "T1")
+	if err == nil {
+		t.Fatal("TaskWorktree succeeded with fw/T1 checked out elsewhere, want an error")
+	}
+	for _, want := range []string{"fw/T1 is checked out in another worktree (", "sibling-root", "another flywheel root may own task T1; plan under a new id or withdraw it there", "git worktree add"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}

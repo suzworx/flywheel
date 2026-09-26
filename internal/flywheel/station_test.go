@@ -26,6 +26,7 @@ func TestStationOfEveryStatus(t *testing.T) {
 		{"needs-correction", "", "build"},
 		{"blocked", "", "blocked"},
 		{"rejected", "", "scrap"},
+		{"withdrawn", "", "scrap"},
 		{"landed", "", "landed"},
 		{"lost", "", "lost"},
 		{"", "", "queue"},

@@ -296,6 +296,9 @@ func stageOf(status, reason string) string {
 		return "blocked"
 	case "landed":
 		return "landed"
+	case "withdrawn":
+		// A plan taken back (issue #479) left the line: never in flight.
+		return "withdrawn"
 	}
 	return "building"
 }

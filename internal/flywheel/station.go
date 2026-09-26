@@ -10,7 +10,8 @@ var Stations = []string{"queue", "build", "measure", "inspect", "land", "landed"
 //
 //	planned → queue; dispatched, running, needs-correction → build;
 //	finished (any reason) → measure; passed → land; landed → landed;
-//	blocked → blocked; rejected → scrap; lost → lost; anything else → queue.
+//	blocked → blocked; rejected, withdrawn → scrap; lost → lost; anything
+//	else → queue.
 func StationOf(status, reason string) string {
 	switch status {
 	case "planned":
@@ -25,7 +26,7 @@ func StationOf(status, reason string) string {
 		return "landed"
 	case "blocked":
 		return "blocked"
-	case "rejected":
+	case "rejected", "withdrawn":
 		return "scrap"
 	case "lost":
 		return "lost"

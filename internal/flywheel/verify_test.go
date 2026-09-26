@@ -1804,3 +1804,44 @@ func TestAcknowledgedLostDelta(t *testing.T) {
 		t.Errorf("T1 failures = %q, want r1's brief mismatch to still fail", got)
 	}
 }
+
+// TestVerifyW1Withdrawn checks rule W1 (issue #479): a withdrawn event after a
+// plan or a finished attempt is clean, one while the attempt is dispatched is
+// a violation.
+func TestVerifyW1Withdrawn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		events []Event
+		fail   bool
+	}{
+		{"after planned", []Event{
+			{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.md"},
+			{TS: "2026-09-25T00:01:00Z", Task: "T1", Kind: "withdrawn", Note: "dup"},
+		}, false},
+		{"after finished", []Event{
+			{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.md"},
+			{TS: "2026-09-25T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+			{TS: "2026-09-25T00:02:00Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop"},
+			{TS: "2026-09-25T00:03:00Z", Task: "T1", Kind: "withdrawn", Note: "dup"},
+		}, false},
+		{"after dispatched", []Event{
+			{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.md"},
+			{TS: "2026-09-25T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+			{TS: "2026-09-25T00:02:00Z", Task: "T1", Kind: "withdrawn", Note: "dup"},
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for _, e := range tc.events {
+				if err := AppendEvent(dir, e); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := verifyAll(t, dir, "T1")["W1"]; got != tc.fail {
+				t.Errorf("W1 failed = %v, want %v", got, tc.fail)
+			}
+		})
+	}
+}

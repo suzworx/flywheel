@@ -769,3 +769,39 @@ func TestReplanNextAttemptFollowsOldOnes(t *testing.T) {
 		t.Errorf("attempts = %q, %q, want r1, r2", res1.Attempt, res2.Attempt)
 	}
 }
+
+// TestWithdrawnDerive checks a withdrawn event (issue #479) derives status
+// withdrawn after a plan, and a later planned event revives the unit.
+func TestWithdrawnDerive(t *testing.T) {
+	t.Parallel()
+	events := []Event{
+		{TS: "2026-09-25T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.md"},
+		{TS: "2026-09-25T00:01:00Z", Task: "T1", Kind: "withdrawn", Note: "another root owns T1"},
+	}
+	st := Derive(events)
+	if len(st.Tasks) != 1 || st.Tasks[0].Status != "withdrawn" {
+		t.Fatalf("planned -> withdrawn: tasks = %+v, want status withdrawn", st.Tasks)
+	}
+	if st.Counts["withdrawn"] != 1 {
+		t.Errorf("withdrawn count = %d, want 1", st.Counts["withdrawn"])
+	}
+	events = append(events, Event{TS: "2026-09-25T00:02:00Z", Task: "T1", Kind: "planned", Brief: "b2.md"})
+	st = Derive(events)
+	if st.Tasks[0].Status != "planned" || st.Tasks[0].Brief != "b2.md" {
+		t.Errorf("withdrawn -> planned: task = %+v, want planned with brief b2.md", st.Tasks[0])
+	}
+	// Same instant: a withdrawn sorts after the planned it takes back.
+	same := []Event{
+		{TS: "2026-09-25T00:00:00Z", Task: "T2", Kind: "withdrawn", Note: "dup"},
+		{TS: "2026-09-25T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.md"},
+	}
+	if got := Derive(same).Tasks[0].Status; got != "withdrawn" {
+		t.Errorf("same-instant planned, withdrawn: status = %q, want withdrawn", got)
+	}
+	if err := Validate(Event{Task: "T1", Kind: "withdrawn"}); err == nil || !strings.Contains(err.Error(), "note") {
+		t.Errorf("Validate(withdrawn without note) = %v, want an error naming the note", err)
+	}
+	if err := Validate(Event{Kind: "withdrawn", Note: "why"}); err == nil {
+		t.Error("Validate(withdrawn without task) = nil, want an error")
+	}
+}

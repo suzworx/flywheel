@@ -184,6 +184,28 @@ func AppendAmendedEvent(dir string, e Event) error {
 	return AppendEvent(dir, e)
 }
 
+// AppendWithdrawnEvent appends one withdrawn event (issue #479) under the
+// dispatch lock, refusing (rule W1, the verify rule it would break) while the
+// task's current attempt is dispatched or running: a worker is still writing,
+// so the plan cannot be taken back until the run stops or finishes.
+func AppendWithdrawnEvent(dir string, e Event) error {
+	release, err := acquireRepoLock(dir, "dispatch.lock", defaultRepoLockTimings())
+	if err != nil {
+		return err
+	}
+	defer release()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return err
+	}
+	for _, ts := range Derive(events).Tasks {
+		if ts.ID == e.Task && (ts.Status == "dispatched" || ts.Status == "running") {
+			return &RuleRefusal{Rule: "W1", Fix: fmt.Sprintf("task %s attempt %s is %s; stop the run (or wait for it to finish) before withdrawing the plan", e.Task, ts.Attempt, ts.Status)}
+		}
+	}
+	return AppendEvent(dir, e)
+}
+
 // amendedHeaderAt returns the header an amendment carries: the event's
 // recorded header when it has one, otherwise the file at path parsed the way
 // RecordAmended parses the brief it amends (issue #259).

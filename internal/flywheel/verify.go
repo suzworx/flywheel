@@ -112,6 +112,7 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 	items = append(items, ruleT5(task, events)...)
 	items = append(items, ruleT8(task, events)...)
 	items = append(items, ruleR1(task, events)...)
+	items = append(items, ruleW1(task, events)...)
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return nil, err
@@ -159,6 +160,37 @@ func ruleR1(task string, events []Event) []VerifyItem {
 	}
 	if len(items) == 0 {
 		return []VerifyItem{{Task: task, Rule: "R1", Pass: true, Reason: "no inspected pass while a blocking review finding was open"}}
+	}
+	return items
+}
+
+// ruleW1 checks that no withdrawn event (issue #479) took back a unit whose
+// current attempt was still dispatched or running: the status the task's
+// events derive to just before it (derivation order) must be anything else.
+func ruleW1(task string, events []Event) []VerifyItem {
+	var mine []Event
+	for _, e := range events {
+		if e.Task == task {
+			mine = append(mine, e)
+		}
+	}
+	evs := derivationOrder(mine)
+	var items []VerifyItem
+	for i, e := range evs {
+		if e.Kind != "withdrawn" {
+			continue
+		}
+		var before TaskState
+		if st := Derive(evs[:i]); len(st.Tasks) > 0 {
+			before = st.Tasks[0]
+		}
+		if before.Status == "dispatched" || before.Status == "running" {
+			items = append(items, VerifyItem{Task: task, Rule: "W1", Pass: false,
+				Reason: fmt.Sprintf("withdrawn event at %s while attempt %s was %s; stop the run (or wait for it to finish) before withdrawing", e.TS, before.Attempt, before.Status)})
+		}
+	}
+	if len(items) == 0 {
+		return []VerifyItem{{Task: task, Rule: "W1", Pass: true, Reason: "no withdrawn event while an attempt was dispatched or running"}}
 	}
 	return items
 }
