@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,8 +43,8 @@ func validateUsage(w io.Writer) {
 
 // runValidate implements `flywheel validate <task>`: run the task's declared
 // gates on the exact tree and check that every changed path sits inside owns.
-// Exit codes: 0 all gates pass and nothing is outside owns, 5 otherwise, 2
-// usage, 1 any other error.
+// Exit codes: 0 all gates pass and nothing is outside owns, 5 otherwise, 6 a
+// rule refusal (needs-env, issue #534), 2 usage, 1 any other error.
 func runValidate(args []string) {
 	fs, o := validateFlags()
 	pos, err := parseArgs(fs, args)
@@ -60,6 +61,12 @@ func runValidate(args []string) {
 	task := pos[0]
 	res, err := flywheel.ValidateTask(o.dir, task, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir, Carry: o.carry, Live: o.live})
 	if err != nil {
+		// A rule refusal (needs-env, issue #534) exits 6, like every command's.
+		var refusal *flywheel.RuleRefusal
+		if errors.As(err, &refusal) {
+			fmt.Fprintf(os.Stderr, "validate: %v\n", refusal)
+			os.Exit(6)
+		}
 		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
 		os.Exit(1)
 	}
