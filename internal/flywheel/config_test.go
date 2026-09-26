@@ -650,6 +650,34 @@ func TestConfigControllerTimingsFromBlock(t *testing.T) {
 	}
 }
 
+// TestControllerConfigAutoResume: controller.auto_resume and controller.notify
+// round-trip through the config file; an absent block or key means on.
+func TestControllerConfigAutoResume(t *testing.T) {
+	t.Parallel()
+	if !DefaultConfig().controllerAutoResume() || DefaultConfig().controllerNotify() != "" {
+		t.Errorf("absent controller block: auto_resume must default on and notify empty")
+	}
+	if !(Config{Controller: &ControllerConfig{Interval: "10s"}}).controllerAutoResume() {
+		t.Errorf("nil controller.auto_resume must mean on")
+	}
+	for _, on := range []bool{false, true} {
+		dir := t.TempDir()
+		cfg := DefaultConfig()
+		// No timings: a block holding only auto_resume and notify is valid.
+		cfg.Controller = &ControllerConfig{AutoResume: &on, Notify: "echo resumed"}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig: %v", err)
+		}
+		got, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if got.controllerAutoResume() != on || got.controllerNotify() != "echo resumed" {
+			t.Errorf("auto_resume %v: loaded auto_resume=%v notify=%q", on, got.controllerAutoResume(), got.controllerNotify())
+		}
+	}
+}
+
 func TestConfigControllerValidation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
