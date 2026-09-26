@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.31.0](https://github.com/suzworx/flywheel/compare/v0.30.0...v0.31.0) (2026-09-26)
+
+
+### Features
+
+* flywheel brief --from-issue writes a linted brief from a tracker issue and records planned with the issue ([#527](https://github.com/suzworx/flywheel/issues/527)) ([5bb46db](https://github.com/suzworx/flywheel/commit/5bb46dba29b37ca74195f9c4c856cb06379cccbe)), closes [#457](https://github.com/suzworx/flywheel/issues/457)
+
+
+### Bug Fixes
+
+* the ledger is committed: doctor warns when it is untracked, git-ignored or lacks merge=union, and every doc agrees ([#531](https://github.com/suzworx/flywheel/issues/531)) ([228fa75](https://github.com/suzworx/flywheel/commit/228fa75a92288023e184c3c4a6fffd8cec90e0ea)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+
 ## [0.30.0](https://github.com/suzworx/flywheel/compare/v0.29.0...v0.30.0) (2026-09-26)
 
 
