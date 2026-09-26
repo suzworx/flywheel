@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.30.0](https://github.com/suzworx/flywheel/compare/v0.29.0...v0.30.0) (2026-09-26)
+
+
+### Features
+
+* flywheel run --worktree --base &lt;ref&gt; branches a unit from a named base without checking it out ([#521](https://github.com/suzworx/flywheel/issues/521)) ([cf79598](https://github.com/suzworx/flywheel/commit/cf79598b912b2b90ba757d3243c5d3c096f997b9)), closes [#456](https://github.com/suzworx/flywheel/issues/456)
+* flywheel supervise --resume-limited re-dispatches a rate-limited unit once its model's reset has passed ([#519](https://github.com/suzworx/flywheel/issues/519)) ([daf126e](https://github.com/suzworx/flywheel/commit/daf126e0e4d63dbef27b307785f79973a729d14a)), closes [#472](https://github.com/suzworx/flywheel/issues/472)
+* integration.branch names the branch units integrate into, read by rebase, stacked detection, review --group, calibrate, init --ci and doctor ([#520](https://github.com/suzworx/flywheel/issues/520)) ([bac9700](https://github.com/suzworx/flywheel/commit/bac97009915d1a450db99544d8b3bef1c08e082f)), closes [#456](https://github.com/suzworx/flywheel/issues/456)
+* route by task kind: a brief kind: header, per-kind scores and per-kind model choice ([#517](https://github.com/suzworx/flywheel/issues/517)) ([e13736a](https://github.com/suzworx/flywheel/commit/e13736af25fb5cc27dc1523b0852f67db3f93bd7)), closes [#475](https://github.com/suzworx/flywheel/issues/475)
+
+
+### Bug Fixes
+
+* flywheel run refuses a second dispatch of a task whose attempt is still in flight ([#524](https://github.com/suzworx/flywheel/issues/524)) ([712268a](https://github.com/suzworx/flywheel/commit/712268a184203cf18a439317b5aaf4c548e8c557)), closes [#522](https://github.com/suzworx/flywheel/issues/522)
+
 ## [0.29.0](https://github.com/suzworx/flywheel/compare/v0.28.0...v0.29.0) (2026-09-26)
 
 
