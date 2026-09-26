@@ -205,6 +205,10 @@ type Worker struct {
 	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
 	StallTimeout int        `json:"stall_timeout,omitempty"` // whole seconds; 0 means the default 600
 	Fallbacks    []Fallback `json:"fallbacks,omitempty"`
+	// Routing picks the worker's model per dispatch from the per-model
+	// scoreboard (issue #474). Opt-in: no routing block means today's
+	// behaviour exactly. Edited in config.json, like fallbacks.
+	Routing *Routing `json:"routing,omitempty"`
 	// AllowedTools lists the claude adapter's --allowedTools patterns. When
 	// empty, allowedTools() resolves to ["Bash"] so a worker can run its own
 	// gates (issue #192). An explicitly configured list REPLACES that default;
@@ -316,6 +320,22 @@ type Fallback struct {
 	Model    string `json:"model"`
 	Approved bool   `json:"approved,omitempty"` // standing OK to switch without asking
 }
+
+// Routing configures evidence-based model routing (issue #474): flywheel run
+// scores each candidate by Objective from the ledger's per-model scoreboard
+// and dispatches the best, exploring another candidate with probability
+// Explore by a deterministic draw. The worker's own model need not be a
+// candidate; with routing set, a fresh run without --model uses a candidate.
+type Routing struct {
+	Candidates  []string `json:"candidates"`
+	Objective   string   `json:"objective"`              // cost_per_accepted, accepted_rate, gate_pass_rate or clean_rate
+	Explore     float64  `json:"explore,omitempty"`      // 0..1, the chance of trying a non-best candidate
+	MinAttempts int      `json:"min_attempts,omitempty"` // attempts before a candidate is scored; 0 means StatsMinSample
+	Seed        string   `json:"seed,omitempty"`         // mixed into the draw
+}
+
+// routingObjectives lists the Routing.Objective values.
+var routingObjectives = []string{"cost_per_accepted", "accepted_rate", "gate_pass_rate", "clean_rate"}
 
 // Limits caps shared resource use across workers.
 type Limits struct {
@@ -701,6 +721,34 @@ func (c Config) Validate() error {
 				problems = append(problems, fmt.Sprintf("%s: fallbacks[%d] model must not be empty", where, j))
 			case f.Model == w.Model:
 				problems = append(problems, fmt.Sprintf("%s: fallback model %q must differ from the worker's model", where, f.Model))
+			}
+		}
+		if r := w.Routing; r != nil {
+			if len(r.Candidates) == 0 {
+				problems = append(problems, where+": routing.candidates must not be empty")
+			}
+			seenCand := map[string]bool{}
+			for j, m := range r.Candidates {
+				switch {
+				case m == "":
+					problems = append(problems, fmt.Sprintf("%s: routing.candidates[%d] must not be empty", where, j))
+				case seenCand[m]:
+					problems = append(problems, fmt.Sprintf("%s: routing.candidates[%d] duplicates %q", where, j, m))
+				}
+				seenCand[m] = true
+			}
+			known := false
+			for _, o := range routingObjectives {
+				known = known || r.Objective == o
+			}
+			if !known {
+				problems = append(problems, fmt.Sprintf("%s: routing.objective %q must be %s", where, r.Objective, strings.Join(quoted(routingObjectives), ", ")))
+			}
+			if r.Explore < 0 || r.Explore > 1 {
+				problems = append(problems, fmt.Sprintf("%s: routing.explore %g must be between 0 and 1", where, r.Explore))
+			}
+			if r.MinAttempts < 0 {
+				problems = append(problems, fmt.Sprintf("%s: routing.min_attempts %d must be >= 0", where, r.MinAttempts))
 			}
 		}
 	}
@@ -1129,7 +1177,8 @@ func (c Config) validKeys() []string {
 // review.allowed_tools (claude patterns, separated the same way; an empty
 // entry is refused).
 // Integer keys parse with strconv.Atoi. fallbacks is not
-// settable here and directs the caller to edit .flywheel/config.json.
+// settable here and directs the caller to edit .flywheel/config.json; a
+// worker's routing block (issue #474) is edited there too and is no key here.
 // Validation is left to WriteConfig.
 func (c *Config) Set(key, value string) error {
 	if rest, ok := strings.CutPrefix(key, "workers."); ok {

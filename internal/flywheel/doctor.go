@@ -47,8 +47,9 @@ func Doctor(dir string) ([]DoctorProbe, error) {
 // the command can tell a usage error from a broken config.
 var ErrUnknownWorker = errors.New("unknown worker")
 
-// DoctorWorker probes the named worker's model, then its fallbacks, in config
-// order — an exact duplicate model string is probed once, at its first
+// DoctorWorker probes the named worker's model, then its fallbacks, then its
+// routing candidates (issue #474), in config order — an exact duplicate model
+// string is probed once, at its first
 // position — through the worker's own adapter exactly as Run dispatches: the
 // sim adapter replays the fixture named by the model string. No events are
 // recorded. Returns an error if the worker is not found.
@@ -76,6 +77,11 @@ func DoctorWorker(dir, name string) ([]DoctorProbe, error) {
 	add(worker.Model)
 	for _, f := range worker.Fallbacks {
 		add(f.Model)
+	}
+	if worker.Routing != nil {
+		for _, m := range worker.Routing.Candidates {
+			add(m)
+		}
 	}
 	probes := make([]DoctorProbe, len(order))
 	for i, m := range order {

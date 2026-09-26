@@ -410,6 +410,27 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Routing (issue #474): a worker with a routing block picks a fresh run's
+	// model from the ledger's per-model scoreboard. --model overrides it; a
+	// resume without --model continues on the model the task's last attempt
+	// was dispatched to and records no route, so an automatic resume never
+	// switches a routed session's model. The breaker, rate pause and rate
+	// limit below then apply to the routed or resumed model as they do to
+	// worker.Model.
+	var route *RouteChoice
+	if worker.Routing != nil && o.Model == "" {
+		if o.Resume {
+			if last, ok := LastDispatched(events, o.Task); ok && last.Model != "" {
+				model = last.Model
+			}
+		} else {
+			choice := routeModel(events, worker, o.Task)
+			model = choice.Model
+			route = &choice
+			progress(o.Progress, fmt.Sprintf("%s routed to %s (%s, %s)", o.Task, choice.Model, choice.Pick, choice.Objective))
+		}
+	}
+
 	if b := cfg.Limits.Breaker; b != nil {
 		if open, until := breakerOpen(events, model, *b, now()); open {
 			oldModel := model
@@ -691,7 +712,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
-		Line: usedLine, Lead: o.Lead,
+		Line: usedLine, Lead: o.Lead, Route: route,
 	}); err != nil {
 		return Result{}, err
 	}

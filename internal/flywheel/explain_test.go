@@ -111,6 +111,21 @@ func TestExplainIgnoresOtherTasks(t *testing.T) {
 	}
 }
 
+// TestExplainRoute checks a routed dispatched event says how it was routed
+// and an unrouted one does not (issue #474).
+func TestExplainRoute(t *testing.T) {
+	t.Parallel()
+	e := Event{Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "b",
+		Route: &RouteChoice{Model: "b", Pick: "exploit", Objective: "cost_per_accepted"}}
+	if got, want := explainLine(e), "dispatched r1 to claude b routed exploit by cost_per_accepted"; got != want {
+		t.Errorf("explainLine(routed) = %q, want %q", got, want)
+	}
+	e.Route = nil
+	if got := explainLine(e); strings.Contains(got, "routed") {
+		t.Errorf("explainLine(unrouted) = %q, want no routed", got)
+	}
+}
+
 func TestExplainLineFormats(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -395,6 +395,79 @@ func TestDispatchedRecordsVariant(t *testing.T) {
 	}
 }
 
+// TestRunRouting checks a worker with a routing block dispatches the routed
+// model and records the choice, and that --model overrides routing (#474).
+func TestRunRouting(t *testing.T) {
+	t.Parallel()
+	for _, override := range []bool{false, true} {
+		dir := setupTask(t)
+		// The sim adapter replays worker.Model whatever model is dispatched,
+		// so the candidate names only need to be recorded, not replayable.
+		cfg := simConfig(fixturePath("clean.jsonl", t))
+		cfg.Workers[0].Routing = &Routing{Candidates: []string{"routed-a"}, Objective: "accepted_rate"}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		o, want := RunOptions{Task: "T1"}, "routed-a"
+		if override {
+			o.Model, want = "forced-b", "forced-b"
+		}
+		if _, err := Run(dir, o); err != nil {
+			t.Fatalf("Run(override %v) error = %v", override, err)
+		}
+		evs, err := ReadEvents(dir)
+		if err != nil {
+			t.Fatalf("ReadEvents() error = %v", err)
+		}
+		d, ok := LastDispatched(evs, "T1")
+		if !ok || d.Model != want {
+			t.Fatalf("dispatched event = %+v, want model %s", d, want)
+		}
+		switch {
+		case override && d.Route != nil:
+			t.Errorf("--model dispatch recorded route %+v, want none", d.Route)
+		case !override && (d.Route == nil || d.Route.Model != want || d.Route.Pick != "explore" || d.Route.Objective != "accepted_rate"):
+			t.Errorf("routed dispatch route = %+v, want explore to %s by accepted_rate", d.Route, want)
+		}
+	}
+}
+
+// TestRunRoutingResumeKeepsModel checks a resume without --model continues on
+// the model the attempt was routed to, not worker.Model, and records no route
+// (#474).
+func TestRunRoutingResumeKeepsModel(t *testing.T) {
+	t.Parallel()
+	dir := setupTask(t)
+	cfg := simConfig(fixturePath("clean.jsonl", t))
+	cfg.Workers[0].Routing = &Routing{Candidates: []string{"routed-a"}, Objective: "accepted_rate"}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1"}); err != nil {
+		t.Fatalf("fresh Run() error = %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	if _, err := Run(dir, RunOptions{Task: "T1", Resume: true}); err != nil {
+		t.Fatalf("resume Run() error = %v", err)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var dispatched []Event
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			dispatched = append(dispatched, e)
+		}
+	}
+	if len(dispatched) != 2 {
+		t.Fatalf("dispatched events = %d, want 2 (fresh and resume)", len(dispatched))
+	}
+	if d := dispatched[1]; d.Model != "routed-a" || d.Route != nil {
+		t.Errorf("resume dispatched = model %q route %+v, want model routed-a and no route", d.Model, d.Route)
+	}
+}
+
 // TestBuilderWorker checks the worker of the last dispatched attempt resolves
 // by its recorded name, else by adapter and model, else not at all (#469).
 func TestBuilderWorker(t *testing.T) {

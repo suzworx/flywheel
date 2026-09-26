@@ -198,6 +198,9 @@ type Event struct {
 	// inconclusive) and Note (the one-line summary).
 	Version string   `json:"version,omitempty"`
 	Checks  []string `json:"checks,omitempty"`
+	// Route is a dispatched event's routing choice (issue #474); omitted when
+	// the worker has no routing block, when --model was given, and on older events.
+	Route *RouteChoice `json:"route,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.

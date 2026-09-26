@@ -92,6 +92,35 @@ func TestDoctorClassification(t *testing.T) {
 	}
 }
 
+// TestDoctorRoutingCandidates checks the routing candidates are probed after
+// the fallbacks, and a candidate that repeats the model is probed once (#474).
+func TestDoctorRoutingCandidates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeDoctorFixture(t, dir, "ok.jsonl", "")
+	writeDoctorFixture(t, dir, "fb.jsonl", "")
+	writeDoctorFixture(t, dir, "cand.jsonl", "")
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "sim", Adapter: "sim", Model: "ok.jsonl",
+		Fallbacks: []Fallback{{Model: "fb.jsonl", Approved: true}},
+		Routing:   &Routing{Candidates: []string{"ok.jsonl", "cand.jsonl"}, Objective: "accepted_rate"}}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	probes, err := Doctor(dir)
+	if err != nil {
+		t.Fatalf("Doctor() error = %v", err)
+	}
+	want := []string{"ok.jsonl", "fb.jsonl", "cand.jsonl"}
+	if len(probes) != len(want) {
+		t.Fatalf("probes = %+v, want models %v", probes, want)
+	}
+	for i, m := range want {
+		if probes[i].Model != m || probes[i].Class != ClassOK {
+			t.Errorf("probes[%d] = %+v, want {%s ok}", i, probes[i], m)
+		}
+	}
+}
+
 // TestDoctorMissingFixture checks a fallback naming a nonexistent fixture
 // classifies as ClassError instead of panicking, and every other probe still
 // runs.

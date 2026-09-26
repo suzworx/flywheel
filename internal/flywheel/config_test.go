@@ -129,6 +129,42 @@ func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
 	}
 }
 
+// TestConfigRouting checks Validate's routing rules (issue #474).
+func TestConfigRouting(t *testing.T) {
+	t.Parallel()
+	valid := func() *Routing {
+		return &Routing{Candidates: []string{"a", "b"}, Objective: "accepted_rate", Explore: 0.1, MinAttempts: 2, Seed: "s"}
+	}
+	cases := []struct {
+		name string
+		edit func(r *Routing)
+		want string // "" means valid
+	}{
+		{"valid", func(r *Routing) {}, ""},
+		{"unknown objective", func(r *Routing) { r.Objective = "speed" }, `routing.objective "speed"`},
+		{"explore 1.5", func(r *Routing) { r.Explore = 1.5 }, "routing.explore 1.5"},
+		{"empty candidate", func(r *Routing) { r.Candidates = []string{"a", ""} }, "routing.candidates[1] must not be empty"},
+		{"duplicate candidate", func(r *Routing) { r.Candidates = []string{"a", "a"} }, `routing.candidates[1] duplicates "a"`},
+		{"no candidates", func(r *Routing) { r.Candidates = nil }, "routing.candidates must not be empty"},
+		{"negative min_attempts", func(r *Routing) { r.MinAttempts = -1 }, "routing.min_attempts -1"},
+	}
+	for _, tc := range cases {
+		r := valid()
+		tc.edit(r)
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m", Routing: r}}}
+		err := cfg.Validate()
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: Validate() error = %v, want nil", tc.name, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), "workers[0]: "+tc.want)):
+			t.Errorf("%s: Validate() error = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+	if err := (Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m"}}}).Validate(); err != nil {
+		t.Errorf("Validate() without routing error = %v, want nil", err)
+	}
+}
+
 // TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
 // adapter names (issue #275) alongside opencode, sim, and claude.
 func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {
