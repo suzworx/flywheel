@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.1](https://github.com/suzworx/flywheel/compare/v0.25.0...v0.25.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* a correction delta without a brief header warns and still links the base brief's needs-state ([#489](https://github.com/suzworx/flywheel/issues/489)) ([c308656](https://github.com/suzworx/flywheel/commit/c30865648f5e59f87a46ec10360b58b52c9b8d4d)), closes [#472](https://github.com/suzworx/flywheel/issues/472)
+* flywheel run --resume waits out a paused model and resumes with the continue delta, and recover names that command ([#491](https://github.com/suzworx/flywheel/issues/491)) ([79f4e6c](https://github.com/suzworx/flywheel/commit/79f4e6c01cd48b1f248daa638dec6cb8bdad493d)), closes [#472](https://github.com/suzworx/flywheel/issues/472)
+* worktree.setup resolves a root-relative script, and on Windows gates, setup and notify run in Git's bash, never the WSL launcher ([#492](https://github.com/suzworx/flywheel/issues/492)) ([c8260a3](https://github.com/suzworx/flywheel/commit/c8260a3bf159b45e7902c6a362241db721c61b98)), closes [#471](https://github.com/suzworx/flywheel/issues/471)
+
 ## [0.25.0](https://github.com/suzworx/flywheel/compare/v0.24.0...v0.25.0) (2026-09-26)
 
 
