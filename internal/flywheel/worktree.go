@@ -18,18 +18,41 @@ import (
 // An existing directory that is a git worktree is reused as is. Errors name
 // the git command and its output.
 func TaskWorktree(dir, task string) (string, error) {
+	return TaskWorktreeFrom(dir, task, "")
+}
+
+// TaskWorktreeFrom is TaskWorktree branching a new fw/<task> from base
+// instead of HEAD (issue #456); base "" keeps HEAD. A non-empty base is
+// resolved to its commit first and must be an ancestor of an existing
+// fw/<task>: a branch that does not contain it is refused with the rebase
+// hint rather than silently running the unit on the wrong base.
+func TaskWorktreeFrom(dir, task, base string) (string, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", dir, err)
 	}
 	worktreesDir := filepath.Join(abs, ".flywheel", "worktrees")
 	path := filepath.Join(worktreesDir, task)
+	branchName := "fw/" + task
+
+	start := "HEAD"
+	if base != "" {
+		out, err := exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", base+"^{commit}").Output()
+		if err != nil {
+			return "", fmt.Errorf("base %q does not resolve to a commit", base)
+		}
+		start = strings.TrimSpace(string(out))
+		if exec.Command("git", "-C", abs, "rev-parse", "--verify", "-q", "refs/heads/"+branchName).Run() == nil &&
+			exec.Command("git", "-C", abs, "merge-base", "--is-ancestor", start, "refs/heads/"+branchName).Run() != nil {
+			return "", fmt.Errorf("%s already exists and does not contain %s; move it with flywheel rebase %s --onto %s", branchName, base, task, base)
+		}
+	}
 
 	// An existing path is reused only when it is a worktree of this same
 	// repository with fw/<task> checked out; anything else is refused rather
 	// than silently running a worker in the wrong tree (#333 review).
 	if _, err := os.Stat(path); err == nil {
-		if err := checkTaskWorktree(abs, path, "fw/"+task); err != nil {
+		if err := checkTaskWorktree(abs, path, branchName); err != nil {
 			return "", err
 		}
 		return path, nil
@@ -41,7 +64,6 @@ func TaskWorktree(dir, task string) (string, error) {
 	}
 
 	// Check if branch fw/<task> already exists
-	branchName := "fw/" + task
 	checkBranchCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "-q", "refs/heads/"+branchName)
 	branchExists := checkBranchCmd.Run() == nil
 
@@ -52,7 +74,7 @@ func TaskWorktree(dir, task string) (string, error) {
 		args = []string{"worktree", "add", path, branchName}
 	} else {
 		// Branch doesn't exist, create it
-		args = []string{"worktree", "add", "-b", branchName, path, "HEAD"}
+		args = []string{"worktree", "add", "-b", branchName, path, start}
 	}
 
 	// Run git worktree add
