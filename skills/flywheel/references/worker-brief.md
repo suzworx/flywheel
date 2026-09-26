@@ -42,6 +42,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   running any gate, when a declared path is missing from an isolated `--workdir`; give it with
   `--carry <path>` (repeatable) to copy that state from the repo into the workdir first. With no
   `--workdir` the declaration is a no-op — the tree already is the repo.
+  For a single git-ignored file the worker needs, `.env` with an API key say, annotate it `(copy)`
+  — `needs-state: .env (copy)` — and it is copied from the repo into the task's worktree on every
+  `flywheel run --worktree` dispatch, before `worktree.setup` (issue #471; `worktree.carry` does the
+  same for every unit); use `(link)` for dependency directories.
   An entry annotated `(link)` — `needs-state: node_modules/ (link), apps/web/node_modules/ (link)`
   — is also linked from the repo into the task's worktree on every `flywheel run --worktree`
   dispatch (a directory junction on Windows, a symlink elsewhere), before the `worktree.setup`

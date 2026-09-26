@@ -186,7 +186,7 @@ func TestWorktreeSetupEscape(t *testing.T) {
 	for _, strict := range []bool{false, true} {
 		root, wt := escapeFixture(t)
 		cfg := Config{Worktree: &WorktreeConfig{StrictLinks: strict}}
-		warnings, err := prepareWorktree(root, wt, "T1", "r1", cfg, []string{"node_modules/"})
+		warnings, err := prepareWorktree(root, wt, "T1", "r1", cfg, []string{"node_modules/"}, nil)
 		var rr *RuleRefusal
 		if strict && (!errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, "node_modules/@acme/web")) {
 			t.Errorf("strict: prepareWorktree() error = %v, want a setup RuleRefusal naming node_modules/@acme/web", err)
@@ -207,6 +207,92 @@ func TestWorktreeSetupEscape(t *testing.T) {
 		if strict != strings.Contains(evs[0].Note, "refused") {
 			t.Errorf("strict=%v: note = %q, want refused only when strict", strict, evs[0].Note)
 		}
+	}
+}
+
+// copyFixture is a root and a worktree, both git repositories whose
+// .gitignore lists .env; wt has tracked.txt committed.
+func copyFixture(t *testing.T) (root, wt string) {
+	t.Helper()
+	root, wt = t.TempDir(), t.TempDir()
+	for _, d := range []string{root, wt} {
+		initGitRepoAt(t, d)
+		if err := os.WriteFile(filepath.Join(d, ".gitignore"), []byte(".env\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(wt, "tracked.txt"), []byte("committed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, []string{"add", "tracked.txt", ".gitignore"})
+	git(t, wt, []string{"commit", "-q", "-m", "init"})
+	for name, body := range map[string]string{".env": "KEY=one\n", "tracked.txt": "root copy\n", "notes.txt": "n\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, wt
+}
+
+// TestPrepareWorktreeCopies checks prepareWorktree's "(copy)" paths (issue
+// #471): copied with their content and overwritten on the next call, named on
+// the event's Copied; a missing source or a path tracked in the worktree is a
+// setup RuleRefusal with a noted event; a path git does not ignore is copied
+// with a warning.
+func TestPrepareWorktreeCopies(t *testing.T) {
+	t.Parallel()
+	root, wt := copyFixture(t)
+	for _, want := range []string{"KEY=one\n", "KEY=two\n"} {
+		if err := os.WriteFile(filepath.Join(root, ".env"), []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{".env"})
+		if err != nil || len(warnings) != 0 {
+			t.Fatalf("prepareWorktree() = %q, %v, want no warnings and nil", warnings, err)
+		}
+		if got, err := os.ReadFile(filepath.Join(wt, ".env")); err != nil || string(got) != want {
+			t.Errorf("wt .env = %q, %v, want %q", got, err, want)
+		}
+	}
+	evs, err := ReadEvents(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[1].Kind != "worktree_setup" || !slices.Equal(evs[1].Copied, []string{".env"}) {
+		t.Fatalf("events = %+v, want two worktree_setup with Copied [.env]", evs)
+	}
+
+	for _, tc := range []struct{ path, want string }{
+		{"ghost.env", "not found under"},
+		{"tracked.txt", "tracked by git"},
+	} {
+		root, wt := copyFixture(t)
+		_, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{tc.path})
+		var rr *RuleRefusal
+		if !errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, tc.path) || !strings.Contains(rr.Fix, tc.want) {
+			t.Errorf("prepareWorktree(%s) error = %v, want a setup RuleRefusal naming it and %q", tc.path, err, tc.want)
+		}
+		evs, err := ReadEvents(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 || evs[0].Note == "" || len(evs[0].Copied) != 0 {
+			t.Errorf("%s: events = %+v, want one worktree_setup with a Note and no Copied", tc.path, evs)
+		}
+		if tc.path == "tracked.txt" {
+			if got, _ := os.ReadFile(filepath.Join(wt, "tracked.txt")); string(got) != "committed\n" {
+				t.Errorf("tracked.txt overwritten: %q", got)
+			}
+		}
+	}
+
+	root, wt = copyFixture(t)
+	warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{"notes.txt"})
+	if err != nil || len(warnings) != 1 || warnings[0] != "warning: needs-state copy notes.txt is not git-ignored in the worktree; add it to .gitignore so it is never committed" {
+		t.Errorf("prepareWorktree(notes.txt) = %q, %v, want the not-ignored warning", warnings, err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "notes.txt")); err != nil {
+		t.Errorf("notes.txt not copied: %v", err)
 	}
 }
 

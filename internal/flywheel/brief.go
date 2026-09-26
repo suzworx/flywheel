@@ -22,6 +22,10 @@ type BriefHeader struct {
 	// NeedsStateLink is the subset of NeedsState annotated "(link)": paths
 	// run --worktree links from the repo into the task's worktree (issue #430).
 	NeedsStateLink []string `json:",omitempty"`
+	// NeedsStateCopy is the subset of NeedsState annotated "(copy)": files
+	// run --worktree copies from the repo into the task's worktree at every
+	// dispatch, a git-ignored .env say (issue #471).
+	NeedsStateCopy []string `json:",omitempty"`
 	Gates          []string // one shell command per line, order kept
 	// LiveGates are `live-gate:` lines, one shell command per line, order
 	// kept: gates that run only in the lead's verification pass
@@ -105,17 +109,23 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Needs = append(h.Needs, NeedTargets(val)...)
 		case "needs-state":
 			// An entry annotated "(link)" is also linked from the repo into a
-			// run --worktree tree (issue #430); NeedsState keeps the plain path.
+			// run --worktree tree (issue #430), one annotated "(copy)" is copied
+			// there (issue #471); NeedsState keeps the plain path.
 			for _, entry := range strings.Split(val, ",") {
 				e := strings.TrimSpace(entry)
-				linked := false
+				linked, copied := false, false
 				if p, ok := strings.CutSuffix(e, "(link)"); ok {
 					e, linked = strings.TrimSpace(p), true
+				} else if p, ok := strings.CutSuffix(e, "(copy)"); ok {
+					e, copied = strings.TrimSpace(p), true
 				}
 				if e != "" {
 					h.NeedsState = append(h.NeedsState, e)
 					if linked {
 						h.NeedsStateLink = append(h.NeedsStateLink, e)
+					}
+					if copied {
+						h.NeedsStateCopy = append(h.NeedsStateCopy, e)
 					}
 				}
 			}

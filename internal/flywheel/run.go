@@ -575,12 +575,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// #472): a delta that declares none must not drop them on a fresh
 	// worktree. A fresh dispatch links its own brief's, as before.
 	links := promptHeader.NeedsStateLink
+	// The needs-state "(copy)" paths follow the same rule, plus worktree.carry
+	// on every dispatch (issue #471).
+	copies := promptHeader.NeedsStateCopy
 	if o.DeltaPath != "" {
 		links = unionStrings(baseHeader.NeedsStateLink, promptHeader.NeedsStateLink)
+		copies = unionStrings(baseHeader.NeedsStateCopy, promptHeader.NeedsStateCopy)
 		if !hasBriefHeader(promptHeader) {
 			progress(o.Progress, deltaHeaderWarning(o.Task, attempt, o.DeltaPath, baseHeader))
 		}
 	}
+	copies = unionStrings(copies, cfg.WorktreeCarry())
 
 	// Shared gate (issue #223): a gate line this dispatch will run that an
 	// in-flight task's brief declares byte-identically means those units will
@@ -635,8 +640,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		// dispatch (setup must be idempotent). Before the baseline, so what
 		// setup writes is never attributed to the worker. A failure refuses
 		// the dispatch: no dispatched event, no worker. Linked paths holding
-		// links into the main checkout warn here (issue #460).
-		warnings, err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links)
+		// links into the main checkout warn here (issue #460). The "(copy)"
+		// and worktree.carry paths are copied in (issue #471); a run without
+		// --worktree copies nothing, the root already has them.
+		warnings, err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links, copies)
 		for _, w := range warnings {
 			progress(o.Stderr, w)
 		}
