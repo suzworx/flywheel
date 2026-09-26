@@ -1051,6 +1051,31 @@ func TestSetupConfig(t *testing.T) {
 	}
 }
 
+// TestConfigStrictLinks checks worktree.strict_links (issue #460): false by
+// default, a Set/Get round trip, listed as a key, and a non-bool refused.
+func TestConfigStrictLinks(t *testing.T) {
+	t.Parallel()
+	var c Config
+	if got, err := c.Get("worktree.strict_links"); err != nil || got != "false" {
+		t.Errorf("Get(worktree.strict_links) = %q, %v, want false by default", got, err)
+	}
+	if err := c.Set("worktree.strict_links", "true"); err != nil {
+		t.Fatalf("Set(worktree.strict_links) error = %v", err)
+	}
+	if got, _ := c.Get("worktree.strict_links"); got != "true" || !c.StrictLinks() {
+		t.Errorf("Get(worktree.strict_links) = %q, StrictLinks() = %v, want true", got, c.StrictLinks())
+	}
+	if err := c.Set("worktree.strict_links", "yes please"); err == nil || !strings.Contains(err.Error(), "true or false") {
+		t.Errorf("Set(worktree.strict_links, non-bool) error = %v, want a true-or-false refusal", err)
+	}
+	if !c.StrictLinks() {
+		t.Error("a refused Set changed worktree.strict_links")
+	}
+	if !slices.Contains(c.settableKeys(), "worktree.strict_links") || !slices.Contains(c.validKeys(), "worktree.strict_links") {
+		t.Error("worktree.strict_links missing from settableKeys/validKeys")
+	}
+}
+
 // auditorStaffing returns a config whose lead and auditor are both
 // claude/claude-opus-5-5, the auditor with the given independence.
 func auditorStaffing(independence, leadSession, auditSession string) Config {
