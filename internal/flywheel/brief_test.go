@@ -238,6 +238,27 @@ func TestParseBriefNeedsStateCopy(t *testing.T) {
 	}
 }
 
+// TestParseBriefHeaderInstall checks the "(install)" annotation (issue #460):
+// NeedsState keeps every plain path, NeedsStateInstall the installed ones.
+func TestParseBriefHeaderInstall(t *testing.T) {
+	t.Parallel()
+	path := writeBrief(t, "owns: a.go\nneeds: none\n"+
+		"needs-state: node_modules/ (install), .env (copy)\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if want := []string{"node_modules/", ".env"}; !reflect.DeepEqual(h.NeedsState, want) {
+		t.Errorf("NeedsState = %v, want %v", h.NeedsState, want)
+	}
+	if want := []string{"node_modules/"}; !reflect.DeepEqual(h.NeedsStateInstall, want) {
+		t.Errorf("NeedsStateInstall = %v, want %v", h.NeedsStateInstall, want)
+	}
+	if want := []string{".env"}; !reflect.DeepEqual(h.NeedsStateCopy, want) {
+		t.Errorf("NeedsStateCopy = %v, want %v", h.NeedsStateCopy, want)
+	}
+}
+
 func TestParseBriefHeaderMissingHeader(t *testing.T) {
 	t.Parallel()
 	path := writeBrief(t, "# TASK: no header keys here\n\n## Context\nbody\n")

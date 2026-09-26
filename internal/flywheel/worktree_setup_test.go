@@ -186,7 +186,7 @@ func TestWorktreeSetupEscape(t *testing.T) {
 	for _, strict := range []bool{false, true} {
 		root, wt := escapeFixture(t)
 		cfg := Config{Worktree: &WorktreeConfig{StrictLinks: strict}}
-		warnings, err := prepareWorktree(root, wt, "T1", "r1", cfg, []string{"node_modules/"}, nil)
+		warnings, err := prepareWorktree(root, wt, "T1", "r1", cfg, []string{"node_modules/"}, nil, nil)
 		var rr *RuleRefusal
 		if strict && (!errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, "node_modules/@acme/web")) {
 			t.Errorf("strict: prepareWorktree() error = %v, want a setup RuleRefusal naming node_modules/@acme/web", err)
@@ -246,7 +246,7 @@ func TestPrepareWorktreeCopies(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, ".env"), []byte(want), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{".env"})
+		warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{".env"}, nil)
 		if err != nil || len(warnings) != 0 {
 			t.Fatalf("prepareWorktree() = %q, %v, want no warnings and nil", warnings, err)
 		}
@@ -267,7 +267,7 @@ func TestPrepareWorktreeCopies(t *testing.T) {
 		{"tracked.txt", "tracked by git"},
 	} {
 		root, wt := copyFixture(t)
-		_, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{tc.path})
+		_, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{tc.path}, nil)
 		var rr *RuleRefusal
 		if !errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, tc.path) || !strings.Contains(rr.Fix, tc.want) {
 			t.Errorf("prepareWorktree(%s) error = %v, want a setup RuleRefusal naming it and %q", tc.path, err, tc.want)
@@ -287,13 +287,118 @@ func TestPrepareWorktreeCopies(t *testing.T) {
 	}
 
 	root, wt = copyFixture(t)
-	warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{"notes.txt"})
+	warnings, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, []string{"notes.txt"}, nil)
 	if err != nil || len(warnings) != 1 || warnings[0] != "warning: needs-state copy notes.txt is not git-ignored in the worktree; add it to .gitignore so it is never committed" {
 		t.Errorf("prepareWorktree(notes.txt) = %q, %v, want the not-ignored warning", warnings, err)
 	}
 	if _, err := os.Stat(filepath.Join(wt, "notes.txt")); err != nil {
 		t.Errorf("notes.txt not copied: %v", err)
 	}
+}
+
+// TestInstallCommand checks installCommand's lockfile detection (issue #460):
+// each lockfile, Yarn Berry vs Classic, precedence, and no lockfile.
+func TestInstallCommand(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		files         []string
+		manager, want string
+	}{
+		{[]string{"pnpm-lock.yaml"}, "pnpm", "pnpm install --offline --frozen-lockfile"},
+		{[]string{"bun.lock"}, "bun", "bun install --frozen-lockfile"},
+		{[]string{"bun.lockb"}, "bun", "bun install --frozen-lockfile"},
+		{[]string{"yarn.lock", ".yarnrc.yml"}, "yarn", "yarn install --immutable"},
+		{[]string{"yarn.lock"}, "yarn", "yarn install --frozen-lockfile --offline"},
+		{[]string{"package-lock.json"}, "npm", "npm ci --prefer-offline --no-audit"},
+		{[]string{"npm-shrinkwrap.json"}, "npm", "npm ci --prefer-offline --no-audit"},
+		{[]string{"package-lock.json", "pnpm-lock.yaml"}, "pnpm", "pnpm install --offline --frozen-lockfile"},
+	} {
+		exists := func(p string) bool { return slices.Contains(tc.files, filepath.Base(p)) && filepath.Dir(p) == "wt" }
+		m, c, err := installCommand("wt", exists)
+		if err != nil || m != tc.manager || c != tc.want {
+			t.Errorf("installCommand(%v) = %q, %q, %v, want %q, %q", tc.files, m, c, err, tc.manager, tc.want)
+		}
+	}
+	if _, _, err := installCommand("wt", func(string) bool { return false }); err == nil || !strings.Contains(err.Error(), "pnpm-lock.yaml") || !strings.Contains(err.Error(), "package-lock.json") {
+		t.Errorf("installCommand(none) error = %v, want one naming the lockfiles looked for", err)
+	}
+}
+
+// TestPrepareWorktreeInstall checks prepareWorktree's "(install)" paths (issue
+// #460) with a fake installRunner, so it is not parallel: one run for two
+// paths and a marker, a skip when the marker and dirs match, a rerun on a
+// changed lockfile, and setup refusals for a failed install, no lockfile and
+// a path both linked and installed.
+func TestPrepareWorktreeInstall(t *testing.T) {
+	calls, rc := 0, 0
+	paths := []string{"node_modules/", "packages/web/node_modules/"}
+	old := installRunner
+	defer func() { installRunner = old }()
+	installRunner = func(dir, wt, task, command string, timeout time.Duration) (int, string, time.Duration, error) {
+		calls++
+		for _, p := range paths {
+			if err := os.MkdirAll(filepath.Join(wt, filepath.FromSlash(p)), 0o755); err != nil {
+				return -1, "", 0, err
+			}
+		}
+		return rc, "fake tail", 0, nil
+	}
+	root, wt := t.TempDir(), t.TempDir()
+	lock := filepath.Join(wt, "pnpm-lock.yaml")
+	marker := filepath.Join(wt, ".flywheel", "install.sha256")
+	if err := os.WriteFile(lock, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []struct {
+		calls   int
+		install string
+	}{{1, "pnpm install --offline --frozen-lockfile"}, {1, "up to date (pnpm-lock.yaml)"}, {2, "pnpm install --offline --frozen-lockfile"}} {
+		if i == 2 {
+			if err := os.WriteFile(lock, []byte("v2\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := prepareWorktree(root, wt, "T1", "r1", Config{}, nil, nil, paths); err != nil {
+			t.Fatalf("dispatch %d: prepareWorktree() error = %v", i+1, err)
+		}
+		evs, err := ReadEvents(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev := evs[len(evs)-1]
+		if calls != want.calls || ev.Install != want.install || !slices.Equal(ev.Installed, paths) {
+			t.Errorf("dispatch %d: calls = %d, event Install %q Installed %v, want %d, %q, %v", i+1, calls, ev.Install, ev.Installed, want.calls, want.install, paths)
+		}
+		if b, err := os.ReadFile(marker); err != nil || !strings.HasPrefix(string(b), "pnpm-lock.yaml ") {
+			t.Errorf("dispatch %d: marker = %q, %v", i+1, b, err)
+		}
+	}
+
+	var wt2 string
+	refused := func(name string, links, installs []string, want string) {
+		t.Helper()
+		root := t.TempDir()
+		_, err := prepareWorktree(root, wt2, "T1", "r1", Config{}, links, nil, installs)
+		var rr *RuleRefusal
+		if !errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, want) {
+			t.Errorf("%s: error = %v, want a setup RuleRefusal naming %q", name, err, want)
+		}
+		if evs, err := ReadEvents(root); err != nil || len(evs) != 1 || evs[0].Note == "" {
+			t.Errorf("%s: events = %+v, %v, want one worktree_setup with a Note", name, evs, err)
+		}
+	}
+	rc = 1
+	wt2 = t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt2, "package-lock.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused("exit 1", nil, paths, "npm ci --prefer-offline --no-audit")
+	if _, err := os.Stat(filepath.Join(wt2, ".flywheel", "install.sha256")); err == nil {
+		t.Error("exit 1: marker written")
+	}
+	wt2 = t.TempDir()
+	refused("no lockfile", nil, paths, "package-lock.json")
+	refused("link and install", []string{"node_modules"}, paths, "both (link) and (install)")
 }
 
 // TestOutputTailKeepsLastLines checks the tail keeps the last n lines.
