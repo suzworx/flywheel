@@ -253,6 +253,37 @@ type Worker struct {
 	// permissionModes; empty means acceptEdits. disallowed_tools is still
 	// enforced under every mode, bypassPermissions included (issue #526).
 	PermissionMode string `json:"permission_mode,omitempty"`
+	// MaxTurns is the claude adapter's --max-turns; 0 means limits.max_turns
+	// (issue #459).
+	MaxTurns int `json:"max_turns,omitempty"`
+}
+
+// defaultMaxTurns is the claude --max-turns when neither the worker nor
+// limits sets max_turns (issue #459).
+const defaultMaxTurns = 200
+
+// maxTurns returns w's claude turn cap: the worker's max_turns when > 0, else
+// limits.max_turns when > 0, else defaultMaxTurns (issue #459).
+func (c Config) maxTurns(w Worker) int {
+	if w.MaxTurns > 0 {
+		return w.MaxTurns
+	}
+	if c.Limits.MaxTurns > 0 {
+		return c.Limits.MaxTurns
+	}
+	return defaultMaxTurns
+}
+
+// validateMaxTurns checks MaxTurns: not negative, and set only on a claude
+// worker, the one adapter that takes a turn cap (issue #459).
+func (w Worker) validateMaxTurns() error {
+	if w.MaxTurns < 0 {
+		return fmt.Errorf("worker %q: max_turns %d must be >= 0", w.Name, w.MaxTurns)
+	}
+	if w.MaxTurns > 0 && w.Adapter != "claude" {
+		return fmt.Errorf("worker %q: max_turns applies to the claude adapter, not %q", w.Name, w.Adapter)
+	}
+	return nil
 }
 
 // permissionModes are the valid Worker.PermissionMode values; "" means
@@ -426,6 +457,9 @@ type Limits struct {
 	// has its changed owned files checkpointed, a Go duration; "" means 10m,
 	// "0" disables it (issue #528).
 	CheckpointEvery string `json:"checkpoint_every,omitempty"`
+	// MaxTurns is the claude --max-turns for a worker that sets no max_turns;
+	// 0 means 200 (issue #459).
+	MaxTurns int `json:"max_turns,omitempty"`
 }
 
 // CheckpointEveryDuration parses CheckpointEvery ("" means 10 minutes, 0
@@ -828,6 +862,9 @@ func (c Config) Validate() error {
 		if err := w.validatePermissionMode(); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 		}
+		if err := w.validateMaxTurns(); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
+		}
 		for j, f := range w.Fallbacks {
 			switch {
 			case f.Model == "":
@@ -905,6 +942,9 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.PerHost < 0 {
 		problems = append(problems, fmt.Sprintf("limits.per_host %d must be >= 0", c.Limits.PerHost))
+	}
+	if c.Limits.MaxTurns < 0 {
+		problems = append(problems, fmt.Sprintf("limits.max_turns %d must be >= 0", c.Limits.MaxTurns))
 	}
 	if c.Limits.RatePerMinute < 0 {
 		problems = append(problems, fmt.Sprintf("limits.rate_per_minute %d must be >= 0", c.Limits.RatePerMinute))
@@ -1201,6 +1241,11 @@ func (c Config) Get(key string) (string, error) {
 		return c.Feedback.Upstream, nil
 	case "feedback.submit":
 		return c.Feedback.Submit, nil
+	case "limits.max_turns":
+		if c.Limits.MaxTurns <= 0 {
+			return strconv.Itoa(defaultMaxTurns), nil
+		}
+		return strconv.Itoa(c.Limits.MaxTurns), nil
 	case "limits.per_host":
 		return strconv.Itoa(c.Limits.PerHost), nil
 	case "limits.rate_limit_retries":
@@ -1281,6 +1326,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return strconv.Itoa(w.MaxParallel), true
 	case "stall_timeout":
 		return strconv.Itoa(w.StallTimeout), true
+	case "max_turns":
+		return strconv.Itoa(w.MaxTurns), true
 	case "fallbacks":
 		return joinFallbacks(w.Fallbacks, true), true
 	case "fallbacks.all":
@@ -1306,8 +1353,8 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
+		"log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1329,8 +1376,9 @@ func (c Config) validKeys() []string {
 // Set assigns value to the given configuration key. Bare worker keys apply to
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are settableWorkerKeys (worker;
-// an empty permission_mode clears it), feedback.upstream, feedback.submit,
-// limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
+// an empty permission_mode clears it, max_turns takes a non-negative integer
+// and 0 clears it), feedback.upstream, feedback.submit, limits.max_turns (the
+// same), limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.required (true or false) and
 // review.group_gates (commands separated by ";;" or newlines) and
@@ -1391,7 +1439,7 @@ func (c *Config) Set(key, value string) error {
 		}
 	}
 	switch key {
-	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout":
+	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout", "max_turns":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -1401,6 +1449,13 @@ func (c *Config) Set(key, value string) error {
 		return nil
 	case "feedback.submit":
 		c.Feedback.Submit = value
+		return nil
+	case "limits.max_turns":
+		n, err := parseMaxTurns(key, value)
+		if err != nil {
+			return err
+		}
+		c.Limits.MaxTurns = n
 		return nil
 	case "limits.per_host":
 		n, err := strconv.Atoi(value)
@@ -1558,11 +1613,27 @@ func (c *Config) Set(key, value string) error {
 
 // settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
 // default worker or as workers.<name>.<key>.
-var settableWorkerKeys = []string{"adapter", "max_parallel", "model", "permission_mode", "stall_timeout", "variant"}
+var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "permission_mode", "stall_timeout", "variant"}
+
+// parseMaxTurns parses a max_turns value: a non-negative integer, 0 clearing
+// it (issue #459).
+func parseMaxTurns(key, value string) (int, error) {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s: value %q must be a non-negative integer", key, value)
+	}
+	return n, nil
+}
 
 // setWorkerValue assigns a worker-scoped value, parsing integer keys.
 func setWorkerValue(w *Worker, key, value string) error {
 	switch key {
+	case "max_turns":
+		n, err := parseMaxTurns(key, value)
+		if err != nil {
+			return err
+		}
+		w.MaxTurns = n
 	case "model":
 		w.Model = value
 	case "variant":
@@ -1597,9 +1668,9 @@ func (c Config) settableErr(key string) error {
 // settableKeys lists every key Set accepts, including each worker's keys.
 func (c Config) settableKeys() []string {
 	keys := []string{
-		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
+		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",

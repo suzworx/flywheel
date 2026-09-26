@@ -381,6 +381,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (WebSearch, WebFetch, "web search", "search the web", "web fetch") and the default worker is a
   claude worker whose `allowed_tools` lack WebSearch/WebFetch and whose mode is not
   `bypassPermissions`.
+- A claude worker's `--max-turns` (issue #459) is its `max_turns`, else `limits.max_turns`, else
+  200; a negative value, or a worker `max_turns` on a non-claude worker, is a config error; set it
+  with `flywheel config set workers.<name>.max_turns N` (0 clears it).
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.

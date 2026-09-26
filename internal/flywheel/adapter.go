@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +33,10 @@ type RunRequest struct {
 	// (worker.permissionMode(), populated by Run); empty means acceptEdits
 	// (issue #526).
 	PermissionMode string
+	// MaxTurns is the worker's claude --max-turns (cfg.maxTurns(worker),
+	// populated by Run); <= 0 means 200, so the review agent keeps 200
+	// (issue #459).
+	MaxTurns int
 	// NoWorkerRules marks a non-worker dispatch such as the review agent
 	// (issue #389): claude gets no --append-system-prompt workerRules.
 	NoWorkerRules bool
@@ -418,7 +423,8 @@ func (a claudeAdapter) Name() string {
 // (the worker's permission_mode), acceptEdits when empty (issue #526);
 // --disallowedTools is passed under every mode, bypassPermissions included,
 // because Claude Code enforces deny rules even when bypassing permissions.
-// acceptEdits grants
+// --max-turns is r.MaxTurns (the worker's max_turns, else limits.max_turns),
+// 200 when it is <= 0 (issue #459). acceptEdits grants
 // file edits without a prompt and nothing else — notably NOT Bash, so a
 // worker running under it alone
 // could not run its own gates (issue #192). The dispatch therefore also
@@ -450,11 +456,15 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	if mode == "" {
 		mode = defaultPermissionMode
 	}
+	turns := r.MaxTurns
+	if turns <= 0 {
+		turns = defaultMaxTurns
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--max-turns", "200",
+		"--max-turns", strconv.Itoa(turns),
 		"--model", r.Model,
 		"--permission-mode", mode,
 		"--setting-sources", "user",

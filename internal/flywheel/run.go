@@ -961,6 +961,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
 		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
+		MaxTurns: cfg.maxTurns(worker),
 	}
 	if commandHook != nil {
 		commandHook(req)
