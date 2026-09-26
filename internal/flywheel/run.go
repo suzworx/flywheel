@@ -589,8 +589,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		// run worktree.setup in the worktree before the worker starts, every
 		// dispatch (setup must be idempotent). Before the baseline, so what
 		// setup writes is never attributed to the worker. A failure refuses
-		// the dispatch: no dispatched event, no worker.
-		if err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links); err != nil {
+		// the dispatch: no dispatched event, no worker. Linked paths holding
+		// links into the main checkout warn here (issue #460).
+		warnings, err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links)
+		for _, w := range warnings {
+			progress(o.Stderr, w)
+		}
+		if err != nil {
 			return Result{}, err
 		}
 	} else {

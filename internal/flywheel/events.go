@@ -93,6 +93,9 @@ type Event struct {
 	// Linked is a worktree_setup event's needs-state "(link)" paths linked
 	// from the repo into the task's worktree (issue #430).
 	Linked []string `json:"linked,omitempty"`
+	// Escaped is a worktree_setup event's entries inside the linked paths
+	// that are links resolving into the main checkout (issue #460).
+	Escaped []string `json:"escaped,omitempty"`
 	// Commands are the shell commands a worker ran, in order, at most 100,
 	// each clipped to 300 characters (issue #365).
 	Commands []string `json:"commands,omitempty"`
@@ -236,8 +239,8 @@ var kinds = map[string]bool{
 	// conflicts and group gate results.
 	"group_reviewed": true,
 	// worktree_setup records `flywheel run --worktree` preparing the task's
-	// worktree before dispatch (issue #430): Linked, RC, DurationMS and Note
-	// (the setup output tail).
+	// worktree before dispatch (issue #430): Linked, Escaped (issue #460),
+	// RC, DurationMS and Note (the setup output tail).
 	"worktree_setup": true,
 	// recovered records `flywheel recover --apply` (issue #422): Note the
 	// safe actions applied, Paths the tasks they touched.

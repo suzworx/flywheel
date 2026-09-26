@@ -86,6 +86,14 @@ type WorktreeConfig struct {
 	Setup string `json:"setup,omitempty"`
 	// SetupTimeout bounds Setup, a Go duration; "" means 10m.
 	SetupTimeout string `json:"setup_timeout,omitempty"`
+	// StrictLinks refuses a dispatch whose needs-state "(link)" paths hold
+	// links into the main checkout (issue #460); false only warns.
+	StrictLinks bool `json:"strict_links,omitempty"`
+}
+
+// StrictLinks is worktree.strict_links, false when unset.
+func (c Config) StrictLinks() bool {
+	return c.Worktree != nil && c.Worktree.StrictLinks
 }
 
 // SetupCommand is worktree.setup, "" when unset.
@@ -1000,6 +1008,8 @@ func (c Config) Get(key string) (string, error) {
 			return "10m", nil
 		}
 		return c.Worktree.SetupTimeout, nil
+	case "worktree.strict_links":
+		return strconv.FormatBool(c.StrictLinks()), nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -1052,7 +1062,7 @@ func (c Config) validKeys() []string {
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.setup", "worktree.setup_timeout",
+		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1240,6 +1250,16 @@ func (c *Config) Set(key, value string) error {
 			c.Worktree.SetupTimeout = value
 		}
 		return nil
+	case "worktree.strict_links":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("worktree.strict_links: value %q must be true or false", value)
+		}
+		if c.Worktree == nil {
+			c.Worktree = &WorktreeConfig{}
+		}
+		c.Worktree.StrictLinks = b
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -1282,7 +1302,7 @@ func (c Config) settableKeys() []string {
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"max_parallel", "model", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.setup", "worktree.setup_timeout",
+		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

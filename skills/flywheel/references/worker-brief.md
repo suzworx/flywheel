@@ -47,7 +47,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   dispatch (a directory junction on Windows, a symlink elsewhere), before the `worktree.setup`
   command runs there (issue #430). A linked dependency tree is **shared** with the repo and every
   other worktree: never `npm install` (or `pip install`) in it. A unit that changes dependencies
-  runs its own install in `worktree.setup` or a gate, into a tree it does not link.
+  runs its own install in `worktree.setup` or a gate, into a tree it does not link. In a workspace
+  repository (npm/pnpm/yarn workspaces) do not link `node_modules`: its package links resolve into
+  the main checkout (issue #460); use `worktree.setup` with an offline install instead
+  (`pnpm install --offline --frozen-lockfile`, `npm ci --prefer-offline --no-audit`).
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the

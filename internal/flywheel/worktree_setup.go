@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -52,28 +53,174 @@ func linkNeedsState(root, wt string, paths []string) error {
 	return nil
 }
 
+// escapingLinks lists the links inside one needs-state "(link)" path that
+// resolve into the main checkout (issue #460): an npm/pnpm/yarn workspace's
+// node_modules/@acme/web -> packages/web, which makes the unit's gates import
+// the main checkout's copy. It reads <root>/<linked> one level deep, plus one
+// level inside each "@" scope. A link escapes when it resolves inside root but
+// neither inside <root>/<linked> itself (pnpm's .pnpm store) nor inside wt.
+// A broken link is skipped; an unreadable directory is an error naming it.
+// The result is <linked>/<entry> slash paths, sorted.
+func escapingLinks(root, wt, linked string) ([]string, error) {
+	rel := strings.TrimSuffix(linked, "/")
+	if rel == "" {
+		return nil, nil
+	}
+	realRoot, err := resolvedAbs(root)
+	if err != nil {
+		return nil, fmt.Errorf("needs-state %s: %w", linked, err)
+	}
+	realWT, err := resolvedAbs(wt)
+	if err != nil {
+		return nil, fmt.Errorf("needs-state %s: %w", linked, err)
+	}
+	base := filepath.Join(realRoot, filepath.FromSlash(rel))
+	realBase, err := resolvedAbs(base)
+	if err != nil {
+		return nil, fmt.Errorf("needs-state %s: %w", linked, err)
+	}
+	if fi, err := os.Stat(realBase); err == nil && !fi.IsDir() {
+		return nil, nil
+	}
+	var out []string
+	var scan func(dir, prefix string, scopes bool) error
+	scan = func(dir, prefix string, scopes bool) error {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("needs-state %s: read %s: %w", linked, dir, err)
+		}
+		for _, e := range entries {
+			p := filepath.Join(dir, e.Name())
+			name := prefix + "/" + e.Name()
+			fi, err := os.Lstat(p)
+			if err != nil {
+				continue
+			}
+			if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+				target, ok := linkTarget(p)
+				if !ok {
+					continue
+				}
+				if within(target, realRoot) && !within(target, realBase) && !within(target, realWT) {
+					out = append(out, name)
+				}
+				continue
+			}
+			if scopes && fi.IsDir() && strings.HasPrefix(e.Name(), "@") {
+				if err := scan(p, name, false); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := scan(base, rel, true); err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// linkTarget resolves the link or junction at p; false when it is broken.
+// A Windows junction reads as ModeIrregular and EvalSymlinks may leave it
+// unresolved, so when EvalSymlinks returns p itself its Readlink target is
+// resolved instead.
+func linkTarget(p string) (string, bool) {
+	if _, err := os.Stat(p); err != nil {
+		return "", false
+	}
+	target, err := filepath.EvalSymlinks(p)
+	if err == nil && !within(target, p) {
+		return target, true
+	}
+	dest, err := os.Readlink(p)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(dest) {
+		dest = filepath.Join(filepath.Dir(p), dest)
+	}
+	if resolved, err := filepath.EvalSymlinks(dest); err == nil {
+		return resolved, true
+	}
+	return filepath.Clean(dest), true
+}
+
+// resolvedAbs is p absolute with every link resolved.
+func resolvedAbs(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
+// within reports whether p is dir or below it, case-insensitively on Windows.
+func within(p, dir string) bool {
+	p, dir = filepath.Clean(p), filepath.Clean(dir)
+	if runtime.GOOS == "windows" {
+		p, dir = strings.ToLower(p), strings.ToLower(dir)
+	}
+	if p == dir {
+		return true
+	}
+	return strings.HasPrefix(p, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator))
+}
+
+// escapeWarning is the one-line warning for a linked path's escaping entries.
+func escapeWarning(linked string, escaped []string) string {
+	names := escaped
+	more := ""
+	if len(names) > 5 {
+		names, more = names[:5], "..."
+	}
+	return fmt.Sprintf("warning: needs-state link %s holds links into the main checkout (%d: %s%s) — the unit's gates would import the main checkout's copies; set worktree.setup to an offline install instead (see issue #460)", linked, len(escaped), strings.Join(names, ", "), more)
+}
+
 // prepareWorktree is run --worktree's setup step (issue #430): it links the
 // effective brief's needs-state "(link)" paths into wt, runs worktree.setup
 // when configured, and appends one worktree_setup event. A link error or a
 // setup that does not exit 0 is a RuleRefusal with rule "setup"; with no
-// links and no setup command it records nothing.
-func prepareWorktree(dir, wt, task, attempt string, cfg Config, links []string) error {
+// links and no setup command it records nothing. Linked paths holding links
+// into the main checkout (issue #460) are recorded as Escaped and returned as
+// warning lines for the caller to print; with worktree.strict_links they are
+// a RuleRefusal too, and setup does not run.
+func prepareWorktree(dir, wt, task, attempt string, cfg Config, links []string) ([]string, error) {
 	command := cfg.SetupCommand()
 	if len(links) == 0 && command == "" {
-		return nil
+		return nil, nil
 	}
 	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Linked: links, Command: command}
 	if lerr := linkNeedsState(dir, wt, links); lerr != nil {
 		ev.Linked, ev.Note = nil, clipSetupNote(lerr.Error())
 		if err := AppendEvent(dir, ev); err != nil {
-			return err
+			return nil, err
 		}
-		return &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("%v; create it in %s (or drop the (link) annotation) and dispatch again", lerr, dir)}
+		return nil, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("%v; create it in %s (or drop the (link) annotation) and dispatch again", lerr, dir)}
+	}
+	var warnings []string
+	for _, l := range links {
+		esc, err := escapingLinks(dir, wt, l)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("warning: could not check needs-state link %s for links into the main checkout: %v", l, err))
+			continue
+		}
+		if len(esc) > 0 {
+			ev.Escaped = append(ev.Escaped, esc...)
+			warnings = append(warnings, escapeWarning(l, esc))
+		}
+	}
+	if len(ev.Escaped) > 0 && cfg.StrictLinks() {
+		ev.Note = clipSetupNote("refused: worktree.strict_links and needs-state links resolve into the main checkout: " + strings.Join(ev.Escaped, ", "))
+		if err := AppendEvent(dir, ev); err != nil {
+			return warnings, err
+		}
+		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("needs-state links hold links into the main checkout (%s) and worktree.strict_links is true; drop the (link) annotation and set worktree.setup to an offline install (pnpm install --offline --frozen-lockfile, npm ci --prefer-offline --no-audit), then dispatch again (issue #460)", strings.Join(ev.Escaped, ", "))}
 	}
 	if command != "" {
 		timeout, err := cfg.SetupTimeoutDuration()
 		if err != nil {
-			return fmt.Errorf("worktree.setup_timeout: %w", err)
+			return warnings, fmt.Errorf("worktree.setup_timeout: %w", err)
 		}
 		rc, tail, dur, serr := runWorktreeSetup(dir, wt, task, command, timeout)
 		ev.RC, ev.DurationMS, ev.Note = &rc, dur.Milliseconds(), clipSetupNote(tail)
@@ -81,18 +228,18 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links []string) 
 			ev.Note = clipSetupNote(serr.Error() + "\n" + tail)
 		}
 		if err := AppendEvent(dir, ev); err != nil {
-			return err
+			return warnings, err
 		}
 		if serr != nil || rc != 0 {
 			why := fmt.Sprintf("exited %d", rc)
 			if serr != nil {
 				why = serr.Error()
 			}
-			return &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("worktree.setup %q %s in %s; fix it (flywheel config set worktree.setup ...) and dispatch again; output tail:\n%s", command, why, wt, tail)}
+			return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("worktree.setup %q %s in %s; fix it (flywheel config set worktree.setup ...) and dispatch again; output tail:\n%s", command, why, wt, tail)}
 		}
-		return nil
+		return warnings, nil
 	}
-	return AppendEvent(dir, ev)
+	return warnings, AppendEvent(dir, ev)
 }
 
 // clipSetupNote keeps the last 2000 bytes of a setup note.
