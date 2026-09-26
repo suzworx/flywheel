@@ -77,6 +77,10 @@ func runDoctor(args []string) {
 	for _, p := range probes {
 		fmt.Printf("%s: %s\n", p.Model, p.Class)
 	}
+	// A local, non-fatal note; stderr keeps stdout's "<model>: <class>" lines.
+	if w := flywheel.DoctorShellWarning(); w != "" {
+		fmt.Fprintf(os.Stderr, "flywheel doctor: warning: %s\n", w)
+	}
 	if o.record {
 		if err := flywheel.RecordProbes(o.dir, probes); err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel doctor: record probes: %v\n", err)

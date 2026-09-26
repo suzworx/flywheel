@@ -22,6 +22,25 @@ func writeDoctorFixture(t *testing.T, dir, name, errMsg string) {
 	}
 }
 
+// TestDoctorShellWarning checks the WSL-launcher line (issue #471) names both
+// the launcher and the shell used instead, and is empty otherwise.
+func TestDoctorShellWarning(t *testing.T) {
+	t.Parallel()
+	const wsl = `C:\Windows\System32\bash.exe`
+	const git = `C:\Program Files\Git\bin\bash.exe`
+	h := fakeShellHost("windows", map[string]string{"bash": wsl, "git": `C:\Program Files\Git\cmd\git.exe`}, git)
+	want := "bash on PATH is the WSL launcher (" + wsl + "); gates and worktree.setup use " + git
+	if got := shellWarning(h); got != want {
+		t.Errorf("shellWarning = %q, want %q", got, want)
+	}
+	if got := shellWarning(fakeShellHost("windows", map[string]string{"bash": git})); got != "" {
+		t.Errorf("shellWarning(Git bash) = %q, want empty", got)
+	}
+	if got := shellWarning(fakeShellHost("linux", map[string]string{"bash": "/bin/bash"})); got != "" {
+		t.Errorf("shellWarning(linux) = %q, want empty", got)
+	}
+}
+
 func TestDoctorClassification(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

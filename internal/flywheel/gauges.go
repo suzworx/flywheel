@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -939,14 +938,7 @@ func runGateBase(wd, command, base string) (rc int, durMS int64, out []byte, err
 	if base != "" {
 		env = append(os.Environ(), "FLYWHEEL_BASE="+base)
 	}
-	var argv []string
-	if _, berr := exec.LookPath("bash"); berr == nil {
-		argv = []string{"bash", "-c", command}
-	} else if runtime.GOOS == "windows" {
-		argv = []string{"cmd", "/C", command}
-	} else {
-		argv = []string{"sh", "-c", command}
-	}
+	argv := ShellArgv(command)
 	t0 := time.Now()
 	grc, gout, gerr := runCmd(wd, argv, env)
 	dur := time.Since(t0).Milliseconds()

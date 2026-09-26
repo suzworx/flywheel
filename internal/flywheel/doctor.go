@@ -85,6 +85,22 @@ func DoctorWorker(dir, name string) ([]DoctorProbe, error) {
 	return probes, nil
 }
 
+// DoctorShellWarning is the local shell check (issue #471): when PATH's first
+// bash on this Windows host is the WSL launcher, one line naming it and the
+// shell gates and worktree.setup use instead; "" otherwise.
+func DoctorShellWarning() string {
+	return shellWarning(realShellHost())
+}
+
+// shellWarning is DoctorShellWarning for host h.
+func shellWarning(h shellHost) string {
+	wsl, chosen, ok := h.wslOnPath()
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("bash on PATH is the WSL launcher (%s); gates and worktree.setup use %s", wsl, chosen)
+}
+
 // DoctorAllOK reports whether every probe classified as ClassOK.
 func DoctorAllOK(probes []DoctorProbe) bool {
 	for _, p := range probes {
