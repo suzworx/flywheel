@@ -168,9 +168,13 @@ all.
   certifies.
 
 ### `no-plan`
-- Written by: the CLI, at most once per attempt, at the 20th completed step, only if no `PLAN
-  `-prefixed line (as detected above) has appeared yet (issue #65, #284).
-- Carries: `task`, `attempt`.
+- Written by: the CLI, at most once per attempt, at the 20th completed step, or at finish (a
+  normal or stalled end after at least one completed step, before that `finished` event), only if
+  neither a `PLAN `-prefixed line (as detected above) nor an earlier `no-plan` has appeared (issue
+  #65, #284, #533). Ends with no worker output (silent, start failed) write none. Each one is followed by a
+  `no-plan` `signal`.
+- Carries: `task`, `attempt`; the finish-time one also carries `note` ("finished after N steps
+  with no PLAN check-in").
 - Effect: `Derive` ignores it for status exactly like `worker_plan`; it never changes `rc` or
   `reason` — it is a flag, not a verdict.
 
