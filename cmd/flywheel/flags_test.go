@@ -60,6 +60,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"recover":    func() (*flag.FlagSet, any) { fs, o := recoverFlags(); return fs, o },
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
 	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
+	"ship":       func() (*flag.FlagSet, any) { fs, o := shipFlags(); return fs, o },
 }
 
 // TestBriefFlagsBindEveryOption parses non-default values for every brief
@@ -582,5 +583,35 @@ func TestHealthStaleIsAndon(t *testing.T) {
 	want := "health STALE (20m): the controller is not recording; run flywheel controller\n"
 	if code != 1 || out != want {
 		t.Errorf("status --health = %q (exit %d), want %q (exit 1)", out, code, want)
+	}
+}
+
+// TestShipFlagsBindEveryOption parses every ship flag, the task before or
+// after them, checks the defaults, the help names the missing remote half, and
+// a missing task is a usage error (issue #457).
+func TestShipFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
+	if _, o := shipFlags(); *o != (shipOptions{dir: ".", remote: "origin"}) {
+		t.Errorf("shipFlags defaults = %#v", *o)
+	}
+	for _, args := range [][]string{
+		{"T1", "--integration", "main2", "--workdir", "W", "--remote", "up", "--message", "m", "--dir", "D"},
+		{"--integration", "main2", "--workdir", "W", "--remote", "up", "--message", "m", "--dir", "D", "T1"},
+	} {
+		fs, o := shipFlags()
+		pos, err := parseArgs(fs, args)
+		want := shipOptions{dir: "D", integration: "main2", workdir: "W", remote: "up", message: "m"}
+		if err != nil || len(pos) != 1 || pos[0] != "T1" || *o != want {
+			t.Errorf("parseArgs(%v) = %v, %#v, %v; want [T1], %#v", args, pos, *o, err, want)
+		}
+	}
+	var b strings.Builder
+	shipUsage(&b)
+	if !strings.Contains(b.String(), "--integration BRANCH") || !strings.Contains(b.String(), "not in this version yet") {
+		t.Errorf("ship usage = %q", b.String())
+	}
+	var out, errb strings.Builder
+	if code := shipMain([]string{"--dir", t.TempDir()}, &out, &errb); code != 2 {
+		t.Errorf("shipMain without a task = %d, want 2", code)
 	}
 }
