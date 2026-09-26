@@ -47,7 +47,9 @@ already dirty at dispatch.
 
 `owns:` exists so two workers never fight over one file: units run in parallel only when their
 `owns:` sets are disjoint, and the boundary is what makes "you edited a file you were not given"
-a machine failure instead of a conversation.
+a machine failure instead of a conversation. `flywheel run` enforces it at dispatch: a unit whose
+`owns:` collides with an in-flight task's is refused (exit 6, rule `owns`) unless you pass
+`--allow-overlap`, and then the `dispatched` event's note records the overlap.
 
 ## gate: and live-gate:
 
@@ -80,8 +82,11 @@ T1 catches a brief that no longer matches its recorded hash).
 ## The poka-yoke rules
 
 The log is not just a diary; it is checked. `flywheel verify` (and the enforcing commands
-themselves) apply transition rules — T1 through T10 in the design, of which five are implemented
-in code: T1, T3, T4, T5, T8. They are **poka-yoke** — mistake-proofing, devices that make the
+themselves) apply transition rules. `flywheel verify` implements eight in code: T1, T3, T4, T5,
+T8, R1 (no pass while a blocking review finding is open), W1 (no withdrawal of a live attempt)
+and P1 (no pass without a complete review panel). `flywheel land` enforces two more live: T7 (a
+first-article audit, when `audit.first_article` is set) and T9 (no landing while the task has
+untriaged signals). The rest of T1–T10 are still design-only. They are **poka-yoke** — mistake-proofing, devices that make the
 wrong action impossible rather than hoping nobody does it. The two a newcomer meets first:
 
 - **T3 — a pass needs current readings, not old ones.** `inspected pass` requires a passing
@@ -94,6 +99,34 @@ wrong action impossible rather than hoping nobody does it. The two a newcomer me
 
 The full rules, and which are still design-only, are in [PROTOCOL.md](PROTOCOL.md) and
 `docs/design/autonomous-shipping.md`.
+
+## Worktree units
+
+`flywheel run <task> --worktree` runs the worker in the task's own git worktree,
+`.flywheel/worktrees/<task>`, on branch `fw/<task>`, so parallel units never share a checkout.
+`--base REF` branches a new `fw/<task>` from REF instead of HEAD. The **integration branch** is
+`integration.branch` in `.flywheel/config.json` when set, else `main` (else `master`); it is
+where `flywheel rebase` moves a unit by default.
+
+## The review agent
+
+`flywheel review <task> --agent` runs a review agent that reads the unit's diff and records
+findings and a verdict; an open `blocker` or `major` finding refuses a pass (rule R1). `--panel`
+runs one persona per configured `review.panel` dimension and prints the verdict matrix (rule P1).
+`--fix` is the fix loop: it sends the open blocking findings back to the worker and reviews again.
+
+## withdrawn
+
+A `withdrawn` event takes a plan back: `flywheel log --task <id> --kind withdrawn --note "<why>"`.
+It is terminal like `landed` — never offered by `flywheel next`, holding no owns claims — and a
+later `planned` event revives the id. Rule W1 refuses it (exit 6) while an attempt is live.
+
+## Health
+
+`flywheel controller` appends a `health` event at most once per `--health-every` (default `5m`):
+how many units are running, stalled and rate-limited. `flywheel status --health` prints the
+latest, or reports it `STALE` (exit 1) when it is older than `--stale-after` (default `10m`):
+the controller is not recording.
 
 ## Who does what
 
