@@ -484,7 +484,7 @@ func TestClaudeParsePermissionDenials(t *testing.T) {
 	if !ok {
 		t.Fatalf("Parse() rejected a valid result line")
 	}
-	want := []string{"Edit /w/a.go", "Bash"}
+	want := []string{"Edit /w/a.go", "Bash" + bashDenialSep + "git commit"}
 	if !reflect.DeepEqual(obs.Denials, want) {
 		t.Errorf("Denials = %q, want %q", obs.Denials, want)
 	}
@@ -499,6 +499,26 @@ func TestClaudeParsePermissionDenials(t *testing.T) {
 		if obs.Denials != nil {
 			t.Errorf("Parse(%s) Denials = %q, want nil", l, obs.Denials)
 		}
+	}
+}
+
+// TestClaudeDenialsCommand checks a Bash denial carries its command beside
+// the tool name so run.go can attribute it, while a Write denial keeps its
+// "Write <path>" text and a Bash denial without a command stays "Bash"
+// (issue #497).
+func TestClaudeDenialsCommand(t *testing.T) {
+	t.Parallel()
+	line := []byte(`{"type":"result","permission_denials":[` +
+		`{"tool_name":"Bash","tool_input":{"command":"cd \"/w\" && git branch -a --contains HEAD","description":"x"}},` +
+		`{"tool_name":"Write","tool_input":{"file_path":"/w/b.go","content":"y"}},` +
+		`{"tool_name":"Bash","tool_input":{}}]}`)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(line, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := []string{"Bash" + bashDenialSep + `cd "/w" && git branch -a --contains HEAD`, "Write /w/b.go", "Bash"}
+	if got := claudeDenials(m); !reflect.DeepEqual(got, want) {
+		t.Errorf("claudeDenials() = %q, want %q", got, want)
 	}
 }
 

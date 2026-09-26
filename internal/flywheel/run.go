@@ -114,7 +114,8 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
-- Git is read-only for you: never commit, push, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. Never write secrets.
+- Git is read-only for you: never commit, push, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets.
+- Your working directory is already the worktree: never prefix a command with cd.
 - Never end your turn while a background job you started is running: run long commands in the foreground and wait for them.
 - Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `
@@ -1371,11 +1372,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// name the denials in the note and record a permission-denied signal after
 	// the finished event. A clean stop that wrote nothing records no signal
 	// (an untriaged signal blocks landing, and some units legitimately write
-	// nothing); it prints a line, and the floor shows it as no-writes.
+	// nothing); it prints a line, and the floor shows it as no-writes. A Bash
+	// denial names the deny pattern and the segment it matched (issue #497).
 	stopSignal, stopLine := "", ""
 	if reason == "stop" {
 		if len(denials) > 0 {
-			list := clipNote(strings.Join(denials, ", "))
+			named := make([]string, len(denials))
+			for i, d := range denials {
+				named[i] = d
+				if cmd, ok := strings.CutPrefix(d, "Bash"+bashDenialSep); ok {
+					named[i] = attributeDenial(cmd, worker.disallowedTools())
+				}
+			}
+			list := clipNote(strings.Join(named, ", "))
 			note = joinNote(note, clipNote("permission denied: "+list))
 			stopSignal, stopLine = "permission-denied", o.Task+" "+attempt+" permission-denied: "+list
 		} else if len(wrote) == 0 {

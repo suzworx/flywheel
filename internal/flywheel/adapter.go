@@ -78,7 +78,7 @@ type Observation struct {
 	EndsTurn  bool // true when this line completes one model turn; run.go counts turns with it
 	// Denials are the tool names the harness denied, from the claude result
 	// line's permission_denials, each with " <file_path>" when one was given
-	// (issue #364).
+	// (issue #364); a Bash denial carries bashDenialSep + its command (#497).
 	Denials []string
 	// Command is the shell command of a shell tool call (issue #365).
 	Command string
@@ -585,8 +585,13 @@ func claudeToolResultObs(m map[string]json.RawMessage) (Observation, bool) {
 	return Observation{}, false
 }
 
+// bashDenialSep separates "Bash" from its command in a Denials entry, so
+// run.go can attribute the denial to a deny pattern (issue #497).
+const bashDenialSep = "\x00"
+
 // claudeDenials decodes a result line's permission_denials: one entry per
-// denial, the tool name plus " <file_path>" when tool_input carries one.
+// denial, the tool name plus " <file_path>" when tool_input carries one, or
+// for Bash "Bash" + bashDenialSep + tool_input.command when it carries one.
 // A missing or malformed array is nil (issue #364).
 func claudeDenials(m map[string]json.RawMessage) []string {
 	raw, ok := m["permission_denials"]
@@ -608,6 +613,8 @@ func claudeDenials(m map[string]json.RawMessage) []string {
 		d := it.ToolName
 		if p := rawString(it.ToolInput, "file_path"); p != "" {
 			d += " " + p
+		} else if c := rawString(it.ToolInput, "command"); c != "" && d == "Bash" {
+			d += bashDenialSep + c
 		}
 		out = append(out, d)
 	}

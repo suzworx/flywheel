@@ -1840,7 +1840,7 @@ func TestRunStopWithoutWrites(t *testing.T) {
 	}{
 		{"no writes", start + stop, "", "T1 r1 finished without writing a file", ""},
 		{"wrote", fmt.Sprintf(start+`{"type":"tool_use","sessionID":%q,"part":{"type":"tool_use","tool":"write","state":{"input":{"filePath":"a.go"}}}}`+"\n"+stop, session), "", "", ""},
-		{"denied", start + denied, "permission-denied", "T1 r1 permission-denied: Edit /x/a.go, Bash", "permission denied: Edit /x/a.go, Bash"},
+		{"denied", start + denied, "permission-denied", "T1 r1 permission-denied: Edit /x/a.go, Bash: unattributed (ls)", "permission denied: Edit /x/a.go, Bash: unattributed (ls)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1884,6 +1884,49 @@ func TestRunStopWithoutWrites(t *testing.T) {
 				t.Errorf("finished note = %q, want %q", f.Note, c.note)
 			}
 		})
+	}
+}
+
+// TestRunDenialAttributed checks a denied Bash compound names the worker's
+// deny pattern and the segment that matched in the finished note and the
+// permission-denied line, not the whole compound or its cd prefix (issue #497).
+func TestRunDenialAttributed(t *testing.T) {
+	t.Parallel()
+	session := "ses_test_denyattr_001"
+	start := fmt.Sprintf(`{"type":"step_start","sessionID":%q,"part":{"type":"step_start"}}`+"\n", session)
+	denied := `{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","session_id":"` + session +
+		`","permission_denials":[{"tool_name":"Bash","tool_input":{"command":"cd \"D:/x y\" && gh issue view 435; git branch -a --contains HEAD"}}]}` + "\n"
+	dir := setupTask(t)
+	model := filepath.Join(t.TempDir(), "f.jsonl")
+	if err := os.WriteFile(model, []byte(start+denied), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := WriteConfig(dir, simConfig(model)); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	named := "Bash: Bash(git branch:*) (git branch -a --contains HEAD)"
+	if line := "T1 r1 permission-denied: " + named + "\n"; !strings.Contains(buf.String(), line) {
+		t.Errorf("progress missing %q:\n%s", line, buf.String())
+	}
+	if f := lastFinished(t, dir, "T1"); f.Note != "permission denied: "+named {
+		t.Errorf("finished note = %q, want %q", f.Note, "permission denied: "+named)
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var sigs []string
+	for _, e := range evs {
+		if e.Kind == "signal" {
+			sigs = append(sigs, e.Signal)
+		}
+	}
+	if !reflect.DeepEqual(sigs, []string{"permission-denied"}) {
+		t.Errorf("signals = %q, want [permission-denied]", sigs)
 	}
 }
 
