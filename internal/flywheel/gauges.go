@@ -250,6 +250,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		}
 	}
 
+	// every gate sees the unit's base as FLYWHEEL_BASE (issue #470): the
+	// attempt commit has already moved HEAD past the unit's work.
+	base := UnitBase(events, task)
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
 		// HEAD is resolved per reading, not hoisted above the loop: a gate can
@@ -257,7 +260,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		// resolving once per pass would record a history position no reading
 		// was taken at (issue #240).
 		commit := headCommit(wd)
-		out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner)
+		out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner)
 		if err != nil {
 			return GaugeResult{}, err
 		}
@@ -276,7 +279,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			// at the moment it ran, never one hoisted from the pass start
 			// (issue #240).
 			commit := headCommit(wd)
-			out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner)
+			out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner)
 			if err != nil {
 				return GaugeResult{}, err
 			}
@@ -299,8 +302,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // never goes idle nothing runs and the reading is recorded inconclusive with
 // the note "host busy: <tasks>", never a failure. An ordinary gate holds a
 // shared marker while it runs, after waiting the same budget for another
-// process's quiet gate to end (gateTurn).
-func hostGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string) (GateOut, error) {
+// process's quiet gate to end (gateTurn). base is the unit's base commit
+// (UnitBase), exported to the gate as FLYWHEEL_BASE (issue #470).
+func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string) (GateOut, error) {
 	if quiet {
 		release, busy, err := waitQuietGate(dir, task, gateID, wait, now, quietSleep)
 		if err != nil {
@@ -319,14 +323,14 @@ func hostGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID
 			}
 			return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: note, Live: live}, nil
 		}
-		return runAndRecordGate(dir, wd, task, attempt, tree, commit, owns, gateID, logSuffix, gate, live, owner, "")
+		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "")
 	}
 	release, note, err := gateTurn(dir, task, gateID, wait, now, quietSleep)
 	if err != nil {
 		return GateOut{}, err
 	}
 	defer release()
-	return runAndRecordGate(dir, wd, task, attempt, tree, commit, owns, gateID, logSuffix, gate, live, owner, note)
+	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note)
 }
 
 // runAndRecordGate runs one declared gate — ordinary or live — through the
@@ -339,16 +343,16 @@ func hostGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID
 // in-flight unit owning each path an inconclusive note lists (issue #365).
 // hostNote (from hostGate; may be empty) is recorded as the note when the
 // reading carries no other (issue #411).
-func runAndRecordGate(dir, wd, task, attempt, tree, commit string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote string) (GateOut, error) {
+func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote string) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
-	rc, dur, out, err := runGate(wd, gate)
+	rc, dur, out, err := runGateBase(wd, gate, base)
 	if err != nil {
 		return GateOut{}, err
 	}
 	blocked := strings.Contains(string(out), hostBlocked)
 	if blocked {
-		rc2, dur2, out2, err2 := runGate(wd, gate)
+		rc2, dur2, out2, err2 := runGateBase(wd, gate, base)
 		if err2 != nil {
 			return GateOut{}, err2
 		}
@@ -920,8 +924,21 @@ func gitArgs(args []string) []string {
 
 // runGate runs one gate command through bash -c when bash is on PATH, cmd /C
 // on Windows, or sh -c elsewhere. It returns the exit code, elapsed time and
-// combined output; a spawn failure (not an exit) is an error.
+// combined output; a spawn failure (not an exit) is an error. It runs with no
+// FLYWHEEL_BASE; runGateBase is the variant for a gate that has a unit.
 func runGate(wd, command string) (rc int, durMS int64, out []byte, err error) {
+	return runGateBase(wd, command, "")
+}
+
+// runGateBase is runGate with FLYWHEEL_BASE=base added to the inherited
+// environment (issue #470), so a `git diff --check "$FLYWHEEL_BASE"` gate
+// measures the unit's work after the attempt commit moved HEAD. An empty base
+// inherits the environment unchanged.
+func runGateBase(wd, command, base string) (rc int, durMS int64, out []byte, err error) {
+	var env []string
+	if base != "" {
+		env = append(os.Environ(), "FLYWHEEL_BASE="+base)
+	}
 	var argv []string
 	if _, berr := exec.LookPath("bash"); berr == nil {
 		argv = []string{"bash", "-c", command}
@@ -931,7 +948,7 @@ func runGate(wd, command string) (rc int, durMS int64, out []byte, err error) {
 		argv = []string{"sh", "-c", command}
 	}
 	t0 := time.Now()
-	grc, gout, gerr := runCmd(wd, argv, nil)
+	grc, gout, gerr := runCmd(wd, argv, env)
 	dur := time.Since(t0).Milliseconds()
 	if gerr != nil {
 		return 0, dur, nil, gerr
@@ -1070,6 +1087,33 @@ func dispatchBase(events []Event, task, attempt string) string {
 		}
 	}
 	return ""
+}
+
+// UnitBase returns the commit the unit's work is measured against (issue
+// #470), exported to gates and workers as FLYWHEEL_BASE. Only events after the
+// task's latest planned event count: the Base of the latest rebased event
+// there, else the Base of the FIRST dispatched event there (a correction
+// attempt's own base is already past the r1 attempt commit), else "".
+func UnitBase(events []Event, task string) string {
+	start := 0
+	for i, e := range events {
+		if e.Task == task && e.Kind == "planned" {
+			start = i + 1
+		}
+	}
+	base := ""
+	for _, e := range events[start:] {
+		if e.Task != task || e.Base == "" {
+			continue
+		}
+		switch {
+		case e.Kind == "rebased":
+			base = e.Base
+		case e.Kind == "dispatched" && base == "":
+			base = e.Base
+		}
+	}
+	return base
 }
 
 // changedPaths lists every path that differs from HEAD plus untracked files,
