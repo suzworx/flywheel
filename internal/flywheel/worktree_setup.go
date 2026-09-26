@@ -106,21 +106,68 @@ func clipSetupNote(s string) string {
 // setupTailLines is how many trailing output lines a setup run keeps.
 const setupTailLines = 20
 
+// setupInterpreters are the first words whose second word resolveSetupCommand
+// treats as a script path.
+var setupInterpreters = map[string]bool{"node": true, "python": true, "python3": true, "bash": true, "sh": true, "pwsh": true, "powershell": true}
+
+// resolveSetupCommand rewrites a relative script path in command's first word
+// (or its second, after an interpreter from setupInterpreters) to the absolute
+// path under root, forward slashes, quoted when it holds a space, when the
+// path is missing under wt but exists under root (issue #471): a setup script
+// committed to the main checkout after the unit branched. Every other command
+// (flags, absolute paths, paths present in wt, quotes or shell operators in
+// the first two words) is returned unchanged.
+func resolveSetupCommand(command, wt, root string, exists func(string) bool) string {
+	type span struct{ start, end int }
+	var words []span
+	for i := 0; i < len(command) && len(words) < 2; {
+		for i < len(command) && (command[i] == ' ' || command[i] == '\t') {
+			i++
+		}
+		start := i
+		for i < len(command) && command[i] != ' ' && command[i] != '\t' {
+			i++
+		}
+		if i > start {
+			words = append(words, span{start, i})
+		}
+	}
+	for _, w := range words {
+		if strings.ContainsAny(command[w.start:w.end], "\"'`|&;<>$()*?\n") {
+			return command
+		}
+	}
+	var target span
+	switch {
+	case len(words) >= 1 && strings.ContainsAny(command[words[0].start:words[0].end], `/\`):
+		target = words[0]
+	case len(words) == 2 && setupInterpreters[command[words[0].start:words[0].end]]:
+		target = words[1]
+	default:
+		return command
+	}
+	word := command[target.start:target.end]
+	if strings.HasPrefix(word, "-") || strings.HasPrefix(word, "/") || strings.HasPrefix(word, `\`) || filepath.IsAbs(word) || filepath.VolumeName(word) != "" {
+		return command
+	}
+	rel := filepath.FromSlash(word)
+	if exists(filepath.Join(wt, rel)) || !exists(filepath.Join(root, rel)) {
+		return command
+	}
+	abs := filepath.ToSlash(filepath.Join(root, rel))
+	if strings.ContainsAny(abs, " \t") {
+		abs = `"` + abs + `"`
+	}
+	return command[:target.start] + abs + command[target.end:]
+}
+
 // runWorktreeSetup runs the worktree.setup command in the task's worktree wt
-// through the shell gates use (bash -c when bash is on PATH, cmd /C on
-// Windows, sh -c elsewhere), with FLYWHEEL_TASK, FLYWHEEL_WORKTREE and
-// FLYWHEEL_ROOT (both absolute) added to the environment. The command is
-// killed at timeout. It returns the exit code, the last 20 lines of combined
+// through the shell gates use (ShellArgv: Git for Windows' bash on Windows,
+// never the WSL launcher), after resolveSetupCommand, with FLYWHEEL_TASK,
+// FLYWHEEL_WORKTREE and FLYWHEEL_ROOT (both absolute) added to the
+// environment. The command is killed at timeout. It returns the exit code, the last 20 lines of combined
 // output and the elapsed time; a spawn failure or a timeout is an error.
 func runWorktreeSetup(dir, wt, task, command string, timeout time.Duration) (rc int, tail string, dur time.Duration, err error) {
-	var argv []string
-	if _, berr := exec.LookPath("bash"); berr == nil {
-		argv = []string{"bash", "-c", command}
-	} else if runtime.GOOS == "windows" {
-		argv = []string{"cmd", "/C", command}
-	} else {
-		argv = []string{"sh", "-c", command}
-	}
 	absWT, err := filepath.Abs(wt)
 	if err != nil {
 		return 0, "", 0, err
@@ -129,6 +176,11 @@ func runWorktreeSetup(dir, wt, task, command string, timeout time.Duration) (rc 
 	if err != nil {
 		return 0, "", 0, err
 	}
+	command = resolveSetupCommand(command, absWT, absDir, func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	})
+	argv := ShellArgv(command)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -139,18 +138,12 @@ func finishedLine(task, attempt, reason string, code int) string {
 	return fmt.Sprintf("%s %s reason=%s exit=%d", task, attempt, reason, code)
 }
 
-// runNotify runs cmd through bash -c when bash is on PATH (cmd /C on Windows,
-// sh -c elsewhere), as gates do, with FLYWHEEL_FINISHED=finished in its
-// environment. Its output goes to stderr; its failure only warns.
+// runNotify runs cmd through the gates' shell (flywheel.ShellArgv: Git for
+// Windows' bash on Windows, never the WSL launcher), with
+// FLYWHEEL_FINISHED=finished in its environment. Its output goes to stderr;
+// its failure only warns.
 func runNotify(cmd, finished string, stderr io.Writer) {
-	var argv []string
-	if _, err := exec.LookPath("bash"); err == nil {
-		argv = []string{"bash", "-c", cmd}
-	} else if runtime.GOOS == "windows" {
-		argv = []string{"cmd", "/C", cmd}
-	} else {
-		argv = []string{"sh", "-c", cmd}
-	}
+	argv := flywheel.ShellArgv(cmd)
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Env = append(os.Environ(), "FLYWHEEL_FINISHED="+finished)
 	c.Stdout, c.Stderr = stderr, stderr

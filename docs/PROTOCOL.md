@@ -83,6 +83,9 @@ all.
   present is left alone), then the `worktree.setup` command, run with bash (the gates' shell) in the
   worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE` and `FLYWHEEL_ROOT` set and killed at
   `worktree.setup_timeout` (default `10m`). Setup runs on every dispatch, so it must be idempotent.
+  A relative script path (the first word, or the second after `node`/`python`/`bash`/`sh`/`pwsh`)
+  missing from the worktree but present in the root resolves against the root; prefer
+  `"$FLYWHEEL_ROOT/<script>"`. On Windows gates and setup run in Git for Windows' bash, never the WSL launcher.
 - Carries: `task`, `attempt` (the attempt being dispatched), `linked` (the linked paths), `command`,
   `rc`, `duration_ms`, `note` (the last 20 lines of output, or the link error).
 - Effect: no status change. A link error (a `(link)` path missing in the repo) or a setup that does
