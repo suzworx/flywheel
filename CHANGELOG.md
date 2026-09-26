@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.32.0](https://github.com/suzworx/flywheel/compare/v0.31.0...v0.32.0) (2026-09-26)
+
+
+### Features
+
+* claude workers take a per-worker permission_mode, a denied tool raises the andon while the run is live, and lint warns when a brief needs web tools the worker lacks ([#535](https://github.com/suzworx/flywheel/issues/535)) ([a9a2f09](https://github.com/suzworx/flywheel/commit/a9a2f09555ff3da34530e5dab45e5d77dc58c4ba)), closes [#526](https://github.com/suzworx/flywheel/issues/526)
+
+
+### Bug Fixes
+
+* flywheel config set and get know integration.branch ([#539](https://github.com/suzworx/flywheel/issues/539)) ([c0b38b5](https://github.com/suzworx/flywheel/commit/c0b38b5aed8603244d13197004bc6b653ddab632)), closes [#529](https://github.com/suzworx/flywheel/issues/529)
+* flywheel lint labels each line problem: or warning: and ends with a count line ([#540](https://github.com/suzworx/flywheel/issues/540)) ([5464d91](https://github.com/suzworx/flywheel/commit/5464d915c8398c3576dc22f7e2adeedbc3b64bb2)), closes [#532](https://github.com/suzworx/flywheel/issues/532)
+
 ## [0.31.0](https://github.com/suzworx/flywheel/compare/v0.30.0...v0.31.0) (2026-09-26)
 
 
