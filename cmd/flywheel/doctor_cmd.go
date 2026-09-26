@@ -81,6 +81,9 @@ func runDoctor(args []string) {
 	if w := flywheel.DoctorShellWarning(); w != "" {
 		fmt.Fprintf(os.Stderr, "flywheel doctor: warning: %s\n", w)
 	}
+	if w := flywheel.DoctorLedgerWarning(o.dir); w != "" {
+		fmt.Fprintf(os.Stderr, "flywheel doctor: warning: %s\n", w)
+	}
 	if o.record {
 		if err := flywheel.RecordProbes(o.dir, probes); err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel doctor: record probes: %v\n", err)
