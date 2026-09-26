@@ -75,7 +75,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
   for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
-  `flywheel lint` warns on a `git diff --check` gate with no revision.
+  `flywheel lint` warns on a `git diff --check` gate with no revision. Run `flywheel lint <brief>
+  --probe` in the base checkout before `log --kind planned`: it runs each gate once there, so a
+  wrong runner, path or missing tool is caught before a paid attempt (#544).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
   provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
