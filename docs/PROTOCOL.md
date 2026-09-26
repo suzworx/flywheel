@@ -87,10 +87,19 @@ all.
   missing from the worktree but present in the root resolves against the root; prefer
   `"$FLYWHEEL_ROOT/<script>"`. On Windows gates and setup run in Git for Windows' bash, never the WSL launcher.
 - Carries: `task`, `attempt` (the attempt being dispatched), `linked` (the linked paths), `command`,
-  `rc`, `duration_ms`, `note` (the last 20 lines of output, or the link error).
+  `rc`, `duration_ms`, `note` (the last 20 lines of output, or the link error), `escaped` (issue
+  #460: the entries of a linked path, one level deep plus one level inside each `@` scope, that are
+  links or junctions resolving into the main checkout outside the linked path itself and outside
+  the worktree, e.g. a workspace's `node_modules/@acme/web -> packages/web`; the `.pnpm` store and
+  broken links are not).
 - Effect: no status change. A link error (a `(link)` path missing in the repo) or a setup that does
   not exit 0 refuses the dispatch (exit 6, rule `setup`, the fix naming the path or command and the
-  output tail): no `dispatched` event is recorded and no worker starts.
+  output tail): no `dispatched` event is recorded and no worker starts. A non-empty `escaped` prints
+  `warning: needs-state link <path> holds links into the main checkout (<n>: ...)` on the dispatch's
+  stderr, since the unit's gates would import the main checkout's copies (use `worktree.setup` with
+  an offline install instead); with `worktree.strict_links` true (default `false`) it also refuses
+  the dispatch (rule `setup`, the event still recorded with `escaped` and a `note` saying it was
+  refused, and setup does not run).
 
 ### `started`
 - Written by: the CLI, from the run's first parsed `start` observation.

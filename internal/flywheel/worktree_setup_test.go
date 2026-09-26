@@ -1,8 +1,12 @@
 package flywheel
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +119,94 @@ func TestWorktreeSetupRunsRootScript(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(wt, "marker")); err != nil {
 		t.Errorf("marker not written in the worktree: %v", err)
+	}
+}
+
+// testLink links link to target: a symlink, or on Windows without the
+// symlink privilege a junction, the way linkNeedsState does; it skips the
+// test when neither works.
+func testLink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return
+	} else if runtime.GOOS != "windows" {
+		t.Skipf("symlink %s: %v", link, err)
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Skipf("neither a symlink nor a junction for %s: %v: %s", link, err, out)
+	}
+}
+
+// escapeFixture builds a workspace root whose node_modules holds a scoped
+// link into packages/ (escapes), a real directory, a link into the .pnpm
+// store, a broken link and a link into the worktree wt under root.
+func escapeFixture(t *testing.T) (root, wt string) {
+	t.Helper()
+	root = t.TempDir()
+	wt = filepath.Join(root, ".flywheel", "worktrees", "T1")
+	nm := filepath.Join(root, "node_modules")
+	for _, d := range []string{
+		filepath.Join(root, "packages", "web"), filepath.Join(wt, "packages", "own"),
+		filepath.Join(nm, "@acme"), filepath.Join(nm, "left-pad"), filepath.Join(nm, ".pnpm", "x"),
+	} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testLink(t, filepath.Join(root, "packages", "web"), filepath.Join(nm, "@acme", "web"))
+	testLink(t, filepath.Join(wt, "packages", "own"), filepath.Join(nm, "@acme", "own"))
+	testLink(t, filepath.Join(nm, ".pnpm", "x"), filepath.Join(nm, "y"))
+	testLink(t, filepath.Join(root, "nowhere"), filepath.Join(nm, "broken"))
+	return root, wt
+}
+
+// TestEscapingLinks checks escapingLinks (issue #460): only the workspace
+// link into packages/ is reported; the .pnpm store link, the real directory,
+// the broken link and the link into the worktree are not.
+func TestEscapingLinks(t *testing.T) {
+	t.Parallel()
+	root, wt := escapeFixture(t)
+	got, err := escapingLinks(root, wt, "node_modules/")
+	if err != nil {
+		t.Fatalf("escapingLinks() error = %v", err)
+	}
+	if want := []string{"node_modules/@acme/web"}; !slices.Equal(got, want) {
+		t.Errorf("escapingLinks() = %q, want %q", got, want)
+	}
+	if _, err := escapingLinks(root, wt, "ghost/"); err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("escapingLinks(missing) error = %v, want one naming ghost", err)
+	}
+}
+
+// TestWorktreeSetupEscape checks prepareWorktree (issue #460) records the
+// escaping links on the worktree_setup event and warns, and that with
+// worktree.strict_links it refuses with rule "setup" and still records it.
+func TestWorktreeSetupEscape(t *testing.T) {
+	t.Parallel()
+	for _, strict := range []bool{false, true} {
+		root, wt := escapeFixture(t)
+		cfg := Config{Worktree: &WorktreeConfig{StrictLinks: strict}}
+		warnings, err := prepareWorktree(root, wt, "T1", "r1", cfg, []string{"node_modules/"})
+		var rr *RuleRefusal
+		if strict && (!errors.As(err, &rr) || rr.Rule != "setup" || !strings.Contains(rr.Fix, "node_modules/@acme/web")) {
+			t.Errorf("strict: prepareWorktree() error = %v, want a setup RuleRefusal naming node_modules/@acme/web", err)
+		}
+		if !strict && err != nil {
+			t.Errorf("prepareWorktree() error = %v, want nil", err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "warning: needs-state link node_modules/ holds links into the main checkout (1: node_modules/@acme/web)") {
+			t.Errorf("strict=%v: warnings = %q", strict, warnings)
+		}
+		evs, err := ReadEvents(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 || evs[0].Kind != "worktree_setup" || !slices.Equal(evs[0].Escaped, []string{"node_modules/@acme/web"}) {
+			t.Fatalf("strict=%v: events = %+v, want one worktree_setup with Escaped", strict, evs)
+		}
+		if strict != strings.Contains(evs[0].Note, "refused") {
+			t.Errorf("strict=%v: note = %q, want refused only when strict", strict, evs[0].Note)
+		}
 	}
 }
 
