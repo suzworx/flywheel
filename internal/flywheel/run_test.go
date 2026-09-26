@@ -2026,9 +2026,10 @@ func TestRunStopWithoutWrites(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadEvents() error = %v", err)
 			}
+			// no-plan is left out: no fixture has a PLAN line (issue #533).
 			var sigs []string
 			for _, e := range evs {
-				if e.Kind == "signal" {
+				if e.Kind == "signal" && e.Signal != "no-plan" {
 					sigs = append(sigs, e.Signal)
 				}
 			}
@@ -2081,9 +2082,10 @@ func TestRunDenialAttributed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
+	// no-plan is left out: the fixture has no PLAN line (issue #533).
 	var sigs []string
 	for _, e := range evs {
-		if e.Kind == "signal" {
+		if e.Kind == "signal" && e.Signal != "no-plan" {
 			sigs = append(sigs, e.Signal)
 		}
 	}
@@ -2582,26 +2584,92 @@ func TestRunPlanRecordedNoNoPlan(t *testing.T) {
 	}
 }
 
-// TestRunShortRunNoNoPlan checks a run that never reaches step 20 records no
-// no-plan event even without a PLAN line (issue #65).
-func TestRunShortRunNoNoPlan(t *testing.T) {
-	t.Parallel()
+// noPlanRun runs T1 against a noPlanFixture of n steps and returns its result,
+// events, the no-plan events, the no-plan signal count and the index of the
+// finished event (issue #533).
+func noPlanRun(t *testing.T, n int, withPlan bool) (Result, []Event, []Event, int, int) {
+	t.Helper()
 	dir := setupTask(t)
-	if err := WriteConfig(dir, simConfig(noPlanFixture(t, 5, false))); err != nil {
+	if err := WriteConfig(dir, simConfig(noPlanFixture(t, n, withPlan))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
 	var buf bytes.Buffer
-	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	evs, err := ReadEvents(dir)
 	if err != nil {
 		t.Fatalf("ReadEvents() error = %v", err)
 	}
-	for _, e := range evs {
-		if e.Kind == "no-plan" {
-			t.Errorf("events include a no-plan event for a short (5-step) run: %v", e)
+	var noPlans []Event
+	signals, finished := 0, -1
+	for i, e := range evs {
+		switch {
+		case e.Kind == "no-plan":
+			noPlans = append(noPlans, e)
+		case e.Kind == "signal" && e.Signal == "no-plan":
+			signals++
+		case e.Kind == "finished":
+			finished = i
 		}
+	}
+	return res, evs, noPlans, signals, finished
+}
+
+// TestRunNoPlanAtFinishShortRun checks a 5-step run with no PLAN line records
+// exactly one no-plan event, noted with its step count, and one no-plan
+// signal, both before finished, without changing the outcome (issue #533).
+func TestRunNoPlanAtFinishShortRun(t *testing.T) {
+	t.Parallel()
+	res, evs, noPlans, signals, finished := noPlanRun(t, 5, false)
+	if res.RC != 0 || res.Reason != "stop" {
+		t.Errorf("rc/reason = %d/%q, want 0/stop (no-plan must not change the outcome)", res.RC, res.Reason)
+	}
+	if len(noPlans) != 1 {
+		t.Fatalf("no-plan events = %d, want exactly 1", len(noPlans))
+	}
+	np := noPlans[0]
+	if np.Task != "T1" || np.Attempt != "r1" {
+		t.Errorf("no-plan event = %v, want task T1 attempt r1", np)
+	}
+	if !strings.Contains(np.Note, "5 steps") || !strings.Contains(np.Note, "PLAN") {
+		t.Errorf("no-plan note = %q, want it to name 5 steps and PLAN", np.Note)
+	}
+	if signals != 1 {
+		t.Errorf("no-plan signals = %d, want exactly 1", signals)
+	}
+	if finished < 0 {
+		t.Fatal("no finished event")
+	}
+	for i, e := range evs {
+		if (e.Kind == "no-plan" || (e.Kind == "signal" && e.Signal == "no-plan")) && i > finished {
+			t.Errorf("%s event at %d after finished at %d", e.Kind, i, finished)
+		}
+	}
+}
+
+// TestRunNoPlanAtFinishWithPlan checks a 5-step run with a PLAN line records
+// no no-plan event and no no-plan signal (issue #533).
+func TestRunNoPlanAtFinishWithPlan(t *testing.T) {
+	t.Parallel()
+	_, _, noPlans, signals, _ := noPlanRun(t, 5, true)
+	if len(noPlans) != 0 || signals != 0 {
+		t.Errorf("no-plan events/signals = %d/%d, want 0/0 when a PLAN was recorded", len(noPlans), signals)
+	}
+}
+
+// TestRunNoPlanAtFinishAfterStep20 checks a 22-step run with no PLAN line
+// records only the step-20 no-plan (no note), never a second one at finish
+// (issue #533).
+func TestRunNoPlanAtFinishAfterStep20(t *testing.T) {
+	t.Parallel()
+	_, _, noPlans, signals, _ := noPlanRun(t, 22, false)
+	if len(noPlans) != 1 || signals != 1 {
+		t.Fatalf("no-plan events/signals = %d/%d, want 1/1", len(noPlans), signals)
+	}
+	if noPlans[0].Note != "" {
+		t.Errorf("no-plan note = %q, want the step-20 event (no note)", noPlans[0].Note)
 	}
 }
 
@@ -4927,14 +4995,15 @@ func TestResumeAbandonedJob(t *testing.T) {
 	})
 }
 
-// finishedOf returns the finished events, and whether any signal was recorded.
+// finishedOf returns the finished events, and whether any signal other than
+// no-plan (the fixture has no PLAN line, issue #533) was recorded.
 func finishedOf(evs []Event) (fins []Event, signaled bool) {
 	for _, e := range evs {
 		switch e.Kind {
 		case "finished":
 			fins = append(fins, e)
 		case "signal":
-			signaled = true
+			signaled = signaled || e.Signal != "no-plan"
 		}
 	}
 	return fins, signaled
@@ -5074,7 +5143,8 @@ func TestRunAbandonedJob(t *testing.T) {
 				if evs[i].Kind == "finished" {
 					fin = &evs[i]
 				}
-				if tc.reason == "abandoned-job" && evs[i].Kind == "signal" {
+				// no-plan is expected: the stream has no PLAN line (issue #533).
+				if tc.reason == "abandoned-job" && evs[i].Kind == "signal" && evs[i].Signal != "no-plan" {
 					t.Errorf("signal %q recorded, want none", evs[i].Signal)
 				}
 			}
@@ -6156,7 +6226,8 @@ func TestRunDenialSignalLive(t *testing.T) {
 	var sigs []Event
 	sigAt, finAt := -1, -1
 	for i, e := range evs {
-		if e.Kind == "signal" {
+		// no-plan is left out: the fixture has no PLAN line (issue #533).
+		if e.Kind == "signal" && e.Signal != "no-plan" {
 			sigs = append(sigs, e)
 			sigAt = i
 		}

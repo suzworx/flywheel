@@ -122,8 +122,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `PLAN files-to-change: ...`, `PLAN order: ...`, `PLAN checks: ...` (flywheel also recognises the lines
   when markdown-formatted or preceded by prose, but ask for plain text at the start of a message),
   so the orchestrator can check direction without interrupting (a 53-step exploration was otherwise
-  unreadable). A run that reaches step 20 with no `PLAN `-prefixed line is flagged with a `no-plan`
-  event (issue #65, #284).
+  unreadable). A run with no `PLAN `-prefixed line is flagged with a `no-plan` event at step 20,
+  or at finish when it ends sooner (issue #65, #284, #533).
 - **Moves and renames** — when a task moves or renames a file, grant "files that reference it
   (list them with grep first)" in `owns:`. Moves break every test that reads the file by path;
   workers handled it correctly, but had to flag it instead of being allowed.

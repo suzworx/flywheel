@@ -184,7 +184,8 @@ var commandHook func(RunRequest)
 // .flywheel/runs/<task>.<attempt>.jsonl while parsing it, and records
 // dispatched, started, worker_plan, no-plan, off-course, report and finished
 // events. no-plan is appended once, at the 20th completed step, when no PLAN
-// text has been seen yet. off-course is appended once, when a read, grep or
+// text has been seen yet, or else at finish (a normal or stalled end after at
+// least one step) with a note naming the step count. off-course is appended once, when a read, grep or
 // glob tool call names the 5th distinct path outside the worktree (library
 // source), naming the paths in its note. Each of those conditions is also
 // recorded as a signal event (issue #37), as are the finish reasons length
@@ -1075,6 +1076,32 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	peak := 0
 	cost := 0.0
 
+	// recordNoPlan appends the attempt's one no-plan event (with note) and its
+	// signal, then prints line; a PLAN or an earlier no-plan makes it a no-op.
+	recordNoPlan := func(note, line string) error {
+		if planRecorded || noPlanRecorded {
+			return nil
+		}
+		noPlanRecorded = true
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt, Note: note}); err != nil {
+			return err
+		}
+		if err := recordSignal(dir, o.Task, attempt, session, "no-plan", runRel); err != nil {
+			return err
+		}
+		progress(o.Progress, o.Task+" "+attempt+" "+line)
+		return nil
+	}
+	// recordNoPlanAtFinish covers an attempt that ended (normal or stalled)
+	// before step 20 with no PLAN check-in (issue #533).
+	recordNoPlanAtFinish := func() error {
+		if steps == 0 {
+			return nil
+		}
+		return recordNoPlan(fmt.Sprintf("finished after %d steps with no PLAN check-in", steps),
+			fmt.Sprintf("no-plan (finished after %d steps with no PLAN)", steps))
+	}
+
 	// recordPlan records a worker_plan event (and the plan file) when text
 	// holds the PLAN check-in.
 	recordPlan := func(text string) error {
@@ -1152,15 +1179,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		if obs.EndsTurn {
 			steps++
-			if steps == 20 && !planRecorded && !noPlanRecorded {
-				noPlanRecorded = true
-				if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "no-plan", Attempt: attempt}); err != nil {
+			if steps == 20 {
+				if err := recordNoPlan("", "no-plan (no PLAN by step 20)"); err != nil {
 					return Result{}, err
 				}
-				if err := recordSignal(dir, o.Task, attempt, session, "no-plan", runRel); err != nil {
-					return Result{}, err
-				}
-				progress(o.Progress, o.Task+" "+attempt+" no-plan (no PLAN by step 20)")
 			}
 		}
 		// Per-message usage on non-step observations (the claude adapter's
@@ -1374,6 +1396,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "stalled", wrote, attemptOwns)
+		if err := recordNoPlanAtFinish(); err != nil {
+			return Result{}, err
+		}
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
@@ -1572,6 +1597,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, reason, wrote, attemptOwns)
 	note = joinNote(note, cpNote)
 
+	if err := recordNoPlanAtFinish(); err != nil {
+		return Result{}, err
+	}
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
