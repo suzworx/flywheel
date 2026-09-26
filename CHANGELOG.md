@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.25.0](https://github.com/suzworx/flywheel/compare/v0.24.0...v0.25.0) (2026-09-26)
+
+
+### Features
+
+* a withdrawn event takes a planned unit back, and planning an id whose fw/&lt;task&gt; branch another worktree holds warns ([#488](https://github.com/suzworx/flywheel/issues/488)) ([5b6de2b](https://github.com/suzworx/flywheel/commit/5b6de2b31dff1efc92b396066a85f7b8fe69881b)), closes [#479](https://github.com/suzworx/flywheel/issues/479)
+
+
+### Bug Fixes
+
+* gates and workers see the unit's base commit as FLYWHEEL_BASE, and lint warns on a git diff --check gate with no revision ([#487](https://github.com/suzworx/flywheel/issues/487)) ([12b54cb](https://github.com/suzworx/flywheel/commit/12b54cbeeebbae955b52475595a97796598177a3)), closes [#470](https://github.com/suzworx/flywheel/issues/470)
+* re-planning a task id that has attempts warns (--replan silences it) and leaves a clean planned row on the floor ([#485](https://github.com/suzworx/flywheel/issues/485)) ([cfa9940](https://github.com/suzworx/flywheel/commit/cfa9940b1eeb288706fe9ef0d14d46e764508b4f)), closes [#476](https://github.com/suzworx/flywheel/issues/476)
+
 ## [0.24.0](https://github.com/suzworx/flywheel/compare/v0.23.1...v0.24.0) (2026-09-25)
 
 
