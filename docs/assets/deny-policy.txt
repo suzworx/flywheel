@@ -1,9 +1,0 @@
-$ OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json opencode run --pure --auto ...
-worker> git -C . stash list
-  denied: The user has specified a rule which prevents you from using this specific tool call.
-worker> git --git-dir=.git stash list
-  denied: The user has specified a rule which prevents you from using this specific tool call.
-worker> git diff --name-only
-  ok
-worker> git log --oneline -1
-  ok: a448e75 init
