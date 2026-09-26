@@ -36,6 +36,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   gives files, but for a resource, not a file: files are `owns:`. `--allow-overlap` dispatches
   anyway and records the crossing on the dispatched event's note, so a deliberate overlap stays
   visible in the ledger.
+- **needs-env:** — environment variables the gates or live round read (a secret, say):
+  `needs-env: NAME[, NAME...]`, repeatable, or `needs-env: none`. `flywheel run` and `flywheel
+  validate` refuse (exit 6, rule `needs-env`) before anything is recorded or any gate runs while
+  one is unset or empty in flywheel's environment, so no paid attempt is spent finding out; the
+  message names the variables, never their values. Export each as its own statement in the
+  dispatching shell, not chained into a backgrounded command, whose subshell loses it (issue #534).
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before

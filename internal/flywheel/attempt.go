@@ -99,6 +99,8 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 	}
 	merged.Owns = unionStrings(header.Owns, prompt.Owns)
 	merged.Exclusive = unionStrings(header.Exclusive, prompt.Exclusive)
+	// A correction cannot drop an environment requirement (issue #534).
+	merged.NeedsEnv = unionStrings(header.NeedsEnv, prompt.NeedsEnv)
 	return merged, paths, nil
 }
 

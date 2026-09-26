@@ -4,8 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 )
+
+// envNameRE matches a valid environment variable name for needs-env: (#534).
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
@@ -43,8 +48,18 @@ type BriefHeader struct {
 	QuietGates     []int `json:",omitempty"`
 	QuietLiveGates []int `json:",omitempty"`
 	Exclusive      []string
-	Review         []string
-	Line           string `json:",omitempty"`
+	// NeedsEnv lists the environment variables a `needs-env:` line names
+	// (issue #534), accumulated across lines, each kept once, order kept:
+	// run and validate refuse while one is unset or empty. Values are never
+	// read into the header.
+	NeedsEnv []string `json:",omitempty"`
+	// needsEnvInvalid holds needs-env entries that are not valid variable
+	// names and needsEnvEmpty records an empty needs-env: line; flywheel lint
+	// reports both. Neither is recorded in a dispatched event.
+	needsEnvInvalid []string
+	needsEnvEmpty   bool
+	Review          []string
+	Line            string `json:",omitempty"`
 	// Kind is the task's kind of work, the `kind:` line trimmed and
 	// lowercased, the last one winning (issue #475): routing scores models per
 	// kind. flywheel lint checks it against lint.kinds.
@@ -149,6 +164,24 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Gates = append(h.Gates, val)
 		case "live-gate":
 			h.LiveGates = append(h.LiveGates, val)
+		case "needs-env":
+			// Environment variables the gates or live round read (issue #534):
+			// run and validate refuse while one is unset. A name that is not a
+			// valid variable name is kept apart for flywheel lint.
+			if val == "" {
+				h.needsEnvEmpty = true
+			}
+			for _, entry := range strings.Split(val, ",") {
+				e := strings.TrimSpace(entry)
+				if e == "" || strings.EqualFold(e, "none") {
+					continue
+				}
+				if !envNameRE.MatchString(e) {
+					h.needsEnvInvalid = append(h.needsEnvInvalid, e)
+				} else if !slices.Contains(h.NeedsEnv, e) {
+					h.NeedsEnv = append(h.NeedsEnv, e)
+				}
+			}
 		case "exclusive":
 			h.Exclusive = append(h.Exclusive, val)
 		case "review":
