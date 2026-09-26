@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/suzworx/flywheel/compare/v0.26.0...v0.27.0) (2026-09-26)
+
+
+### Features
+
+* dispatched records the lead session, and recover groups integrity failures by it ([#509](https://github.com/suzworx/flywheel/issues/509)) ([6dbce9e](https://github.com/suzworx/flywheel/commit/6dbce9e933f45e61f07c24ef330480698f5dc351)), closes [#472](https://github.com/suzworx/flywheel/issues/472)
+
 ## [0.26.0](https://github.com/suzworx/flywheel/compare/v0.25.3...v0.26.0) (2026-09-26)
 
 
