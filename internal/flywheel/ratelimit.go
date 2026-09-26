@@ -168,9 +168,21 @@ const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed whe
 // 30m; a wait beyond limits.rate_limit_max_wait stops and returns the
 // rate-limited result. An attempt that ends abandoned-job is resumed once,
 // immediately, on the same session with a delta naming the killed job; a
-// second abandoned-job is returned as is (issue #390). sleep and now are
-// injected so tests never sleep.
+// second abandoned-job is returned as is (issue #390). A --resume on a model
+// still paused by a rate limit first waits for the reset (resumeWait, issue
+// #472). sleep and now are injected so tests never sleep.
 func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now func() time.Time) (Result, error) {
+	o, err := resumeDelta(dir, o)
+	if err != nil {
+		return Result{}, err
+	}
+	wait, err := resumeWait(dir, o, now())
+	if err != nil {
+		return Result{}, err
+	}
+	if wait > 0 {
+		sleep(wait)
+	}
 	res, err := resumeLimits(dir, o, sleep, now)
 	if err != nil || res.Reason != "abandoned-job" {
 		return res, err
@@ -183,6 +195,98 @@ func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now 
 	next := o
 	next.Resume, next.DeltaPath, next.Increment = true, delta, 0
 	return resumeLimits(dir, next, sleep, now)
+}
+
+// resumeDelta gives a bare --resume after a rate-limited or abandoned-job
+// finish the continue delta the automatic path uses (issue #472): with no
+// --delta and no .flywheel/briefs/<task>.delta.txt, it writes the next unused
+// <task>.limit-<n>.txt and sets o.DeltaPath to it. The finished event records
+// no jobs, so an abandoned-job gets the limit continue text too. Any other
+// case returns o unchanged.
+func resumeDelta(dir string, o RunOptions) (RunOptions, error) {
+	if !o.Resume || o.DeltaPath != "" {
+		return o, nil
+	}
+	briefs := filepath.Join(dir, ".flywheel", "briefs")
+	if _, err := os.Stat(filepath.Join(briefs, o.Task+".delta.txt")); err == nil {
+		return o, nil
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return o, err
+	}
+	reason := ""
+	for i := len(events) - 1; i >= 0; i-- {
+		if e := events[i]; e.Kind == "finished" && e.Task == o.Task {
+			reason = e.Reason
+			break
+		}
+	}
+	if reason != "rate-limited" && reason != "abandoned-job" {
+		return o, nil
+	}
+	n := 1
+	for {
+		if _, err := os.Stat(filepath.Join(briefs, fmt.Sprintf("%s.limit-%d.txt", o.Task, n))); err != nil {
+			break
+		}
+		n++
+	}
+	delta, err := writeLimitDelta(dir, o.Task, n)
+	if err != nil {
+		return o, err
+	}
+	progress(o.Progress, fmt.Sprintf("%s: no delta given; resuming with %s", o.Task, delta))
+	o.DeltaPath = delta
+	return o, nil
+}
+
+// resumeWait is how long a --resume waits before its first dispatch (issue
+// #472): while the task's model is paused by a rate limit at now, until the
+// pause ends plus a minute. The model is --model, else the one on the task's
+// latest finished event (the session being resumed). A wait beyond
+// limits.rate_limit_max_wait is a rate-limit RuleRefusal naming the reset; no
+// resume, or no pause, is no wait.
+func resumeWait(dir string, o RunOptions, now time.Time) (time.Duration, error) {
+	if !o.Resume {
+		return 0, nil
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return 0, err
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return 0, err
+	}
+	model := o.Model
+	for i := len(events) - 1; i >= 0 && model == ""; i-- {
+		if e := events[i]; e.Kind == "finished" && e.Task == o.Task {
+			model = e.Model
+		}
+	}
+	if model == "" {
+		return 0, nil
+	}
+	p, paused := rateLimitPausedAt(events, model, now, cfg.Limits.RateLimitPauseThreshold())
+	if !paused {
+		return 0, nil
+	}
+	maxWait, err := cfg.Limits.RateLimitMaxWaitDuration()
+	if err != nil {
+		maxWait = 5 * time.Hour
+	}
+	wait := p.Until.Sub(now) + time.Minute
+	if wait > maxWait {
+		return 0, &RuleRefusal{
+			Rule: "rate-limit",
+			Fix: fmt.Sprintf("%s is paused by a rate limit until %s%s; the wait %s is beyond limits.rate_limit_max_wait %s — rerun flywheel run %s --resume after the reset",
+				model, pauseClock(p.Until), p.reason(), wait.Round(time.Second), maxWait, o.Task),
+		}
+	}
+	progress(o.Progress, fmt.Sprintf("%s %s is paused by a rate limit until %s; resuming at %s (in %s)",
+		o.Task, model, pauseClock(p.Until), now.Add(wait).Format("2006-01-02 15:04 MST"), wait.Round(time.Second)))
+	return wait, nil
 }
 
 // resumeLimits is RunResumingLimits' rate-limit loop: Run, then the bounded
