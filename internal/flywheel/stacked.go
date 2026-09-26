@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-// mainBranch returns the repository's integration branch as dir sees it:
-// main when refs/heads/main exists, else master, else "".
+// mainBranch returns the repository's integration branch as dir sees it
+// (IntegrationBranch), "" when there is none or a configured one does not
+// resolve.
 func mainBranch(dir string) string {
-	for _, b := range []string{"main", "master"} {
-		if rc, _, _, err := runCmdSplit(dir, gitArgs([]string{"rev-parse", "--verify", "-q", "refs/heads/" + b}), nil); err == nil && rc == 0 {
-			return b
-		}
+	b, configured := IntegrationBranch(dir)
+	if configured && !branchResolves(dir, b) {
+		return ""
 	}
-	return ""
+	return b
 }
 
 // isAncestor reports whether commit a is an ancestor of b (git merge-base
@@ -97,7 +97,7 @@ func stackedFix(task, base, landedAs, baseTask string) string {
 }
 
 // RebaseUnit moves task's branch fw/<task> off its recorded base onto onto
-// (default: main, else master) with `git rebase --onto <onto> <base>
+// (default: integration.branch, else main, else master) with `git rebase --onto <onto> <base>
 // fw/<task>`, run in the unit's task worktree <dir>/.flywheel/worktrees/<task>
 // only, with flywheel's own git environment (never a worker's guard). On a
 // conflict it lists the unmerged paths, runs `git rebase --abort` so the
@@ -128,9 +128,14 @@ func RebaseUnit(dir, task, onto string) (newBase string, conflicts []string, err
 		return "", nil, fmt.Errorf("unit %s has no recorded base; nothing to rebase from", task)
 	}
 	if onto == "" {
-		if onto = mainBranch(abs); onto == "" {
-			return "", nil, fmt.Errorf("no main or master branch; pass --onto")
+		b, configured := IntegrationBranch(abs)
+		switch {
+		case configured && !branchResolves(abs, b):
+			return "", nil, fmt.Errorf("integration.branch %q does not resolve in %s; fetch it or pass --onto", b, abs)
+		case b == "":
+			return "", nil, fmt.Errorf("no integration.branch, main or master branch; pass --onto")
 		}
+		onto = b
 	}
 	env := append(os.Environ(),
 		"GIT_COMMITTER_NAME="+unitCommitName, "GIT_COMMITTER_EMAIL="+unitCommitEmail)

@@ -77,7 +77,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.BoolVar(&o.overlap, "allow-overlap", false, "with --fix: skip the owns-collision refusal for the correction dispatch; the dispatched note records the overlap")
 	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
 	fs.StringVar(&o.group, "group", "", "with --agent: review a group together, a goal id or tasks:<a>,<b>,... (issue #420)")
-	fs.StringVar(&o.base, "base", "", "with --group: the ref the integration tree starts from (default main)")
+	fs.StringVar(&o.base, "base", "", "with --group: the ref the integration tree starts from (default integration.branch, else main)")
 	return fs, o
 }
 
@@ -376,6 +376,8 @@ func reviewCalibrateFlags() (*flag.FlagSet, *reviewCalibrateOptions) {
 	fs.StringVar(&o.worker, "worker", "", "the worker that reviews (default: the staffing reviewer role, else the default worker)")
 	fs.IntVar(&o.window, "window", 15, "a finding matches a case within this many lines")
 	fs.StringVar(&o.main, "main", "origin/main", "the ref each PR's merge-base is taken against")
+	// Unset, Calibrate takes origin/<integration.branch> (issue #456); help says so.
+	fs.Lookup("main").DefValue = "origin/<integration.branch>"
 	fs.StringVar(&o.out, "out", "", "report file (default .flywheel/reviews/calibration-<UTC date>.md)")
 	fs.Var(&o.panel, "panel", "calibrate each panel persona and the panel as a whole: bare, the configured review.panel; --panel=a,b, those dimensions")
 	return fs, o
@@ -443,8 +445,14 @@ func runReviewCalibrate(args []string) {
 		}
 		panel = cfg.PanelDimensions()
 	}
+	mainRef := ""
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "main" {
+			mainRef = o.main // an explicit --main wins over integration.branch
+		}
+	})
 	rep, err := flywheel.Calibrate(o.dir, o.cases, flywheel.CalibrateOptions{
-		Sample: o.sample, Seed: o.seed, Worker: o.worker, Session: o.session, Window: o.window, Main: o.main,
+		Sample: o.sample, Seed: o.seed, Worker: o.worker, Session: o.session, Window: o.window, Main: mainRef,
 		Panel: panel, Progress: os.Stderr,
 	})
 	if err != nil {

@@ -537,8 +537,9 @@ all.
 ### `rebased`
 - Written by: the CLI only: `flywheel rebase <task> [--onto REF]` (issue #414), or `flywheel log --kind rebased` for a hand rebase (below). The rebase command writes it after
   `git rebase --onto <onto> <base> fw/<task>` succeeded in the unit's task worktree
-  (`.flywheel/worktrees/<task>`; anywhere else the command refuses). `onto` defaults to `main`, else
-  `master`. On a conflict the rebase is aborted, the branch is left as it was, the conflicting paths
+  (`.flywheel/worktrees/<task>`; anywhere else the command refuses). `onto` defaults to the
+  integration branch (below); a configured one that does not resolve is an error naming
+  `integration.branch`. On a conflict the rebase is aborted, the branch is left as it was, the conflicting paths
   are listed (exit 1) and nothing is recorded. A rebase done by hand is recorded with
   `flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"` (issue #498):
   `--base` is resolved to a full commit in `--dir`, and a missing `--task`, `--base` or `--note` is a
@@ -548,13 +549,21 @@ all.
 - Effect: no status change. The unit's base (`dispatchBase`) becomes the latest `rebased` event's
   `base` instead of the first `dispatched` event's, so the owns check and the review ranges measure
   from there.
-- A unit is **stacked** when its base is not an ancestor of `main` (else `master`) and a commit on
-  main after their merge-base carries a `Flywheel-Task: <T>` trailer for another unit `T` whose
+- A unit is **stacked** when its base is not an ancestor of the integration branch and a commit on
+  it after their merge-base carries a `Flywheel-Task: <T>` trailer for another unit `T` whose
   branch `fw/<T>` contains the base (or, with `fw/<T>` gone, `T` is `landed`): `T` landed as a
   squash and the unit still carries `T`'s pre-squash commits. `flywheel validate` then records the
   warning `base <sha7> (unit <T>) was squash-merged as <sha7>; run: flywheel rebase <task>` as the
   `owns_checked` note (the reading still runs), `flywheel land` refuses (rule `stacked`, below), and
   the floor shows the done unit's run state as `stacked` on the andon.
+- The **integration branch** (issue #456) is `.flywheel/config.json` `"integration": {"branch": "<name>"}`
+  when set (validated: non-empty, no whitespace, not starting with `-`), else `main` when
+  `refs/heads/main` exists, else `master`. `flywheel rebase` (default `--onto`), stacked detection
+  (`validate`, `land`'s `stacked` refusal, `recover`, the floor), `flywheel review --group`
+  (default `--base`, `main` when none), `flywheel review calibrate` (default `--main`
+  `origin/<branch>`, `origin/main` when none) and `flywheel init --ci` (the audit workflow's push
+  `branches`) read it; `flywheel doctor` prints `integration branch: <b> (integration.branch)` or
+  `(detected)` on stderr and warns when a configured branch does not resolve.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
