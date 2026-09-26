@@ -290,7 +290,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	myOwns := []string{}
 	myExclusive := []string{}
+	// baseHeader is the effective brief before this dispatch; a correction
+	// delta inherits its owns, gates and needs-state links (issue #472).
+	var baseHeader BriefHeader
 	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+		baseHeader = header
 		myOwns = header.Owns
 		myExclusive = header.Exclusive
 	}
@@ -522,6 +526,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// unioned in, as AttemptBrief does for validate, so the attempt commit and
 	// the checkpoint cover what validate measures.
 	attemptOwns := unionStrings(myOwns, promptHeader.Owns)
+	// A correction delta inherits the base brief's needs-state links (issue
+	// #472): a delta that declares none must not drop them on a fresh
+	// worktree. A fresh dispatch links its own brief's, as before.
+	links := promptHeader.NeedsStateLink
+	if o.DeltaPath != "" {
+		links = unionStrings(baseHeader.NeedsStateLink, promptHeader.NeedsStateLink)
+		if !hasBriefHeader(promptHeader) {
+			progress(o.Progress, deltaHeaderWarning(o.Task, attempt, o.DeltaPath, baseHeader))
+		}
+	}
 
 	// Shared gate (issue #223): a gate line this dispatch will run that an
 	// in-flight task's brief declares byte-identically means those units will
@@ -576,7 +590,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		// dispatch (setup must be idempotent). Before the baseline, so what
 		// setup writes is never attributed to the worker. A failure refuses
 		// the dispatch: no dispatched event, no worker.
-		if err := prepareWorktree(dir, wt, o.Task, attempt, cfg, promptHeader.NeedsStateLink); err != nil {
+		if err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links); err != nil {
 			return Result{}, err
 		}
 	} else {
@@ -1756,6 +1770,21 @@ func progress(w io.Writer, line string) {
 	if w != nil {
 		fmt.Fprintln(w, line)
 	}
+}
+
+// hasBriefHeader reports whether h, a parsed prompt, declares any header
+// line: owns, needs, needs-state, exclusive or gate (issue #472).
+func hasBriefHeader(h BriefHeader) bool {
+	return len(h.Owns) > 0 || len(h.Needs) > 0 || h.NeedsDeclared || len(h.NeedsState) > 0 ||
+		len(h.Exclusive) > 0 || len(h.Gates) > 0
+}
+
+// deltaHeaderWarning is the progress line for a correction delta with no
+// brief header (issue #472): what it inherits from base, as counts, and how
+// to widen owns.
+func deltaHeaderWarning(task, attempt, delta string, base BriefHeader) string {
+	return fmt.Sprintf("warning: %s %s: delta %s has no brief header; it inherits the base brief's owns (%d paths), gates (%d) and needs-state links (%d); add an owns: line to the delta to widen owns",
+		task, attempt, delta, len(base.Owns), len(base.Gates), len(base.NeedsStateLink))
 }
 
 // recordSignal appends one signal event naming a run condition already
