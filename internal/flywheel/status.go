@@ -63,6 +63,7 @@ type StatusTasks struct {
 	Rejected        int `json:"rejected"`
 	Blocked         int `json:"blocked"`
 	Lost            int `json:"lost"`
+	Withdrawn       int `json:"withdrawn,omitempty"`
 	Landed          int `json:"landed"`
 }
 
@@ -136,6 +137,8 @@ func Status(dir string, now time.Time) (StatusReport, error) {
 			rep.Tasks.Blocked++
 		case "lost":
 			rep.Tasks.Lost++
+		case "withdrawn":
+			rep.Tasks.Withdrawn++
 		case "landed":
 			rep.Tasks.Landed++
 		}

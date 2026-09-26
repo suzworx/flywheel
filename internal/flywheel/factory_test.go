@@ -1375,3 +1375,61 @@ func TestFactoryReplannedRowIsWaiting(t *testing.T) {
 		t.Errorf("re-planned unit = run state %q session %q attempt %q, want waiting and no session or attempt", u.RunState, u.Session, u.Attempt)
 	}
 }
+
+// TestWithdrawnHoldsNoClaims checks a withdrawn unit (issue #479) left the
+// line: next does not offer it, its owns do not hold back a second unit owning
+// the same path, and the floor never shows it building.
+func TestWithdrawnHoldsNoClaims(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.md"), []byte("owns: a.go\nneeds: none\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
+	ts := func(m int) string { return at.Add(time.Duration(m) * time.Minute).Format(time.RFC3339Nano) }
+	for _, e := range []Event{
+		{TS: ts(0), Task: "A", Kind: "planned", Brief: "b.md", Owns: []string{"a.go"}},
+		{TS: ts(1), Task: "A", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts(2), Task: "A", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{TS: ts(3), Task: "A", Kind: "withdrawn", Note: "another root owns A"},
+		{TS: ts(4), Task: "W", Kind: "planned", Brief: "b.md", Owns: []string{"w.go"}},
+		{TS: ts(5), Task: "W", Kind: "withdrawn", Note: "duplicate plan"},
+		{TS: ts(6), Task: "B", Kind: "planned", Brief: "b.md", Owns: []string{"a.go"}},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent(%s %s) error = %v", e.Task, e.Kind, err)
+		}
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := ownsCollisionWith(dir, events, "B", []string{"a.go"}); c != nil {
+		t.Errorf("ownsCollisionWith(B) = %+v, want nil: withdrawn A holds no owns", c)
+	}
+	if got := inFlightOwners(events, "B"); len(got) != 0 {
+		t.Errorf("inFlightOwners(B) = %v, want none", got)
+	}
+	acts, err := NextActions(dir, at.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("NextActions() error = %v", err)
+	}
+	dispatchB := false
+	for _, a := range acts {
+		if a.Task == "A" || a.Task == "W" {
+			t.Errorf("NextActions offered withdrawn %s: %+v", a.Task, a)
+		}
+		if a.Task == "B" && a.Kind == "DISPATCH" {
+			dispatchB = true
+		}
+	}
+	if !dispatchB {
+		t.Errorf("NextActions() = %+v, want DISPATCH B (withdrawn A holds no claim on a.go)", acts)
+	}
+	if got := stageOf("withdrawn", ""); got != "withdrawn" {
+		t.Errorf("stageOf(withdrawn) = %q, want withdrawn", got)
+	}
+}

@@ -138,7 +138,11 @@ to verify's T1, so validate no longer fails the stale gate. On a dispatched atte
 with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`. Re-planning an
 id that already has attempts (`--kind planned` again) starts a new plan: it warns (add `--replan`
 when that is meant), the floor row resets to a clean `planned` row, and the old attempts stay in
-the ledger; the next run numbers after them.
+the ledger; the next run numbers after them. `--kind planned` also warns when branch `fw/<id>`
+already exists (naming the worktree that has it checked out): another root sharing the repository
+may own that id, so plan under a new one. Take a plan back with
+`flywheel log --task <id> --kind withdrawn --note "<why>"` (refused while its attempt is running;
+a later `--kind planned` revives it).
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
