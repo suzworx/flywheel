@@ -61,6 +61,7 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("config not read, lint defaults apply: %v", err))
 	}
+	res.Problems = append(res.Problems, kindProblems(path, header.Kind, cfg.LintKinds())...)
 	lc := cfg.Lint
 	if lc == nil {
 		lc = &LintConfig{}
@@ -84,6 +85,32 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 		res.Warnings = append(res.Warnings, importerWarnings(dir, header.Owns, ownsEntries(string(b)), list)...)
 	}
 	return res, nil
+}
+
+// kindProblems checks the brief's kind: lines against allowed (issue #475): an
+// empty kind: line is a problem, and so is a kind (the parsed, last one) not
+// in allowed. A brief without kind: has none; nothing infers a kind.
+func kindProblems(path, kind string, allowed []string) []string {
+	var problems []string
+	if b, err := os.ReadFile(path); err == nil {
+		raw := strings.Split(string(b), "\n")
+		for i := 0; i < len(raw) && i < 40; i++ {
+			line := strings.TrimSuffix(raw[i], "\r")
+			if strings.TrimSpace(line) == "" {
+				if j := i + 1; j < len(raw) && strings.HasPrefix(strings.TrimSpace(raw[j]), "#") {
+					break
+				}
+				continue
+			}
+			if key, val, ok := cutKey(line); ok && line[0] != ' ' && line[0] != '\t' && key == "kind" && val == "" {
+				problems = append(problems, fmt.Sprintf("kind: line is empty; use one of: %s", strings.Join(allowed, ", ")))
+			}
+		}
+	}
+	if kind != "" && !slices.ContainsFunc(allowed, func(a string) bool { return strings.ToLower(a) == kind }) {
+		problems = append(problems, fmt.Sprintf("kind %q is not one of: %s", kind, strings.Join(allowed, ", ")))
+	}
+	return problems
 }
 
 // lintStructure is LintBrief's structural checks: the header lines, headings,

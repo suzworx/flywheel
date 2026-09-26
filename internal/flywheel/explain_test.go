@@ -120,6 +120,15 @@ func TestExplainRoute(t *testing.T) {
 	if got, want := explainLine(e), "dispatched r1 to claude b routed exploit by cost_per_accepted"; got != want {
 		t.Errorf("explainLine(routed) = %q, want %q", got, want)
 	}
+	// A choice made on the task kind's rows names the kind (issue #475).
+	e.Route = &RouteChoice{Model: "b", Pick: "exploit", Objective: "cost_per_accepted", Kind: "refactor", Basis: "kind"}
+	if got, want := explainLine(e), "dispatched r1 to claude b routed exploit by cost_per_accepted on refactor"; got != want {
+		t.Errorf("explainLine(routed on kind) = %q, want %q", got, want)
+	}
+	e.Route.Basis = "model"
+	if got := explainLine(e); strings.Contains(got, " on ") {
+		t.Errorf("explainLine(routed on model) = %q, want no kind", got)
+	}
 	e.Route = nil
 	if got := explainLine(e); strings.Contains(got, "routed") {
 		t.Errorf("explainLine(unrouted) = %q, want no routed", got)

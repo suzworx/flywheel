@@ -429,6 +429,36 @@ func TestLintFullSuiteInvalidRegex(t *testing.T) {
 	}
 }
 
+// TestLintKind checks the kind: line against the allowed kinds (issue #475):
+// the default list, a configured lint.kinds replacing it, an empty line, and
+// no kind line at all.
+func TestLintKind(t *testing.T) {
+	t.Parallel()
+	defaults := "feature, fix, refactor, test, docs, chore, perf"
+	custom := lintConfigJSON(`{"kinds":["docs","infra"]}`)
+	for _, tc := range []struct {
+		name, kindLine, config string
+		problems               []string
+	}{
+		{"unknown kind", "kind: Poetry\n", "", []string{`kind "poetry" is not one of: ` + defaults}},
+		{"default kind", "kind: Refactor\n", "", nil},
+		{"configured kind", "kind: infra\n", custom, nil},
+		{"default kind not configured", "kind: refactor\n", custom, []string{`kind "refactor" is not one of: docs, infra`}},
+		{"empty kind", "kind:\n", "", []string{"kind: line is empty; use one of: " + defaults}},
+		{"no kind", "", "", nil},
+	} {
+		files := map[string]string{"README.md": "x\n"}
+		if tc.config != "" {
+			files[".flywheel/config.json"] = tc.config
+		}
+		brief := strings.Replace(suiteBrief("README.md", "true"), "needs: none\n", "needs: none\n"+tc.kindLine, 1)
+		res := lintWith(t, files, brief, noGoList)
+		if !slices.Equal(res.Problems, tc.problems) || len(res.Warnings) != 0 {
+			t.Errorf("%s: problems %q warnings %q, want problems %q and no warnings", tc.name, res.Problems, res.Warnings, tc.problems)
+		}
+	}
+}
+
 // importerFiles is a module where m/b imports m/a and has a test.
 func importerFiles() map[string]string {
 	return map[string]string{

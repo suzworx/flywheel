@@ -165,6 +165,29 @@ func TestConfigRouting(t *testing.T) {
 	}
 }
 
+// TestConfigLintKinds checks Validate's lint.kinds rules and the default list
+// (issue #475).
+func TestConfigLintKinds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kinds []string
+		want  string // "" means valid
+	}{
+		{[]string{"docs", "infra"}, ""},
+		{[]string{"docs", " "}, "lint.kinds[1] must not be empty"},
+		{[]string{"docs", "docs"}, `lint.kinds[1] duplicates "docs"`},
+	} {
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m"}}, Lint: &LintConfig{Kinds: tc.kinds}}
+		err := cfg.Validate()
+		if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("kinds %q: Validate() error = %v, want %q", tc.kinds, err, tc.want)
+		}
+	}
+	if got := (Config{}).LintKinds(); !slices.Equal(got, DefaultKinds) {
+		t.Errorf("LintKinds() unset = %v, want %v", got, DefaultKinds)
+	}
+}
+
 // TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
 // adapter names (issue #275) alongside opencode, sim, and claude.
 func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {
