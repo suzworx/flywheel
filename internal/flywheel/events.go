@@ -75,8 +75,9 @@ type Event struct {
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`
 	Adapter         string  `json:"adapter,omitempty"`
-	Worker          string  `json:"worker,omitempty"` // a dispatched event's resolved worker name (issue #469); omitted on older events
-	Lead            string  `json:"lead,omitempty"`   // a dispatched event's lead session (flywheel run --session, default $FLYWHEEL_SESSION; issue #472); omitted when unset and on older events, never required
+	Worker          string  `json:"worker,omitempty"`  // a dispatched event's resolved worker name (issue #469); omitted on older events
+	Variant         string  `json:"variant,omitempty"` // a dispatched event's worker reasoning variant (issue #473); omitted when unset and on older events
+	Lead            string  `json:"lead,omitempty"`    // a dispatched event's lead session (flywheel run --session, default $FLYWHEEL_SESSION; issue #472); omitted when unset and on older events, never required
 	Path            string  `json:"path,omitempty"`
 	SHA256          string  `json:"sha256,omitempty"`
 	Tokens          *Tokens `json:"tokens,omitempty"`

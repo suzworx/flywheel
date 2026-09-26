@@ -59,7 +59,12 @@ all.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter`, `worker` (the resolved worker's name, issue #469; omitted on events recorded before
   it), `lead` (the lead session that dispatched it: `flywheel run --session ID`, default
-  `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required), `model`,
+  `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required),
+  `variant` (the worker's reasoning variant, issue #473; omitted when unset and on older events),
+  `model` (`flywheel cost` charges each `finished` event to the model on its own attempt's
+  `dispatched` event, falling back to the task's latest preceding one when the attempt has none;
+  `flywheel stats --by model` scores every adapter, model and variant from these events, and a rate
+  whose denominator is under 3 is `null` in JSON and `n/a` in text),
   `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
   correction attempt: `.flywheel/briefs/<task>.<attempt>.delta.txt`, the per-attempt snapshot of
   the delta taken atomically at dispatch; the operator's `--delta` file is left untouched and may be

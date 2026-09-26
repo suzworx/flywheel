@@ -420,3 +420,103 @@ func TestStatsBaselineInvalidConfigErrors(t *testing.T) {
 		t.Fatal("Stats() error = nil, want the invalid baseline reported")
 	}
 }
+
+// TestStatsByModel checks the per-model scoreboard: every count and rate for a
+// model with five attempts, rates nil (n/a) for a model with one, and a task
+// that moved from A (r1) to B (r2) counted per attempt (issue #473).
+func TestStatsByModel(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rc := func(n int) *int { return &n }
+	d := func(ts, task, attempt, model, variant string) Event {
+		return Event{TS: "2026-09-14T10:" + ts + ":00Z", Task: task, Kind: "dispatched", Attempt: attempt, Adapter: "claude", Model: model, Variant: variant}
+	}
+	f := func(ts, task, attempt, reason string, cost float64) Event {
+		return Event{TS: "2026-09-14T10:" + ts + ":00Z", Task: task, Kind: "finished", Attempt: attempt, Reason: reason, Cost: cost}
+	}
+	v := func(ts, task, attempt, gate string, code int) Event {
+		return Event{TS: "2026-09-14T10:" + ts + ":00Z", Task: task, Kind: "validated", Attempt: attempt, Gate: gate, Tree: "t", RC: rc(code)}
+	}
+	in := func(ts, task, verdict string) Event {
+		return Event{TS: "2026-09-14T10:" + ts + ":00Z", Task: task, Kind: "inspected", Verdict: verdict}
+	}
+	events := []Event{
+		d("00", "t1", "r1", "A", ""), f("01", "t1", "r1", "stop", 0.1),
+		v("02", "t1", "r1", "g1", 0), v("03", "t1", "r1", "g2", 0), v("05", "t1", "r1", "g1", 1), in("06", "t1", "pass"),
+		d("00", "t2", "r1", "A", ""), f("02", "t2", "r1", "stalled", 0.2),
+		v("03", "t2", "r1", "g1", 1), v("04", "t2", "r1", "g2", 0), v("05", "t2", "r1", "g1", 0),
+		d("05", "t2", "c1", "A", ""), f("08", "t2", "c1", "stop", 0.3), v("09", "t2", "c1", "g1", 0), in("10", "t2", "pass"),
+		// t3 moved from A to B: r2's dispatch is logged before r1's finish.
+		d("00", "t3", "r1", "A", ""), d("05", "t3", "r2", "B", "high"), f("04", "t3", "r1", "silent", 0.4),
+		f("06", "t3", "r2", "stop", 0.5), v("07", "t3", "r2", "g1", 0), in("08", "t3", "pass"),
+		d("00", "t4", "r1", "A", ""), f("01", "t4", "r1", "start-failed", 0), in("02", "t4", "rework"),
+	}
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	if rep, err := Stats(dir); err != nil || rep.ByModel != nil {
+		t.Fatalf("Stats() = %v, %v; want no by_model without the option", rep.ByModel, err)
+	}
+	rep, err := StatsWith(dir, StatsOptions{ByModel: true})
+	if err != nil {
+		t.Fatalf("StatsWith() error = %v", err)
+	}
+	if len(rep.ByModel) != 2 {
+		t.Fatalf("ByModel = %+v, want rows A and B", rep.ByModel)
+	}
+	r := func(x float64) *float64 { return &x }
+	a, b := rep.ByModel[0], rep.ByModel[1]
+	wantA := StatsModel{Adapter: "claude", Model: "A", Attempts: 5, Finished: 5, Clean: 2, Silent: 1, Failed: 1, Stalled: 1,
+		CleanRate: r(0.4), Validated: 3, GatePass: 2, GatePassRate: r(0.67), Inspected: 3, Accepted: 2, AcceptedRate: r(0.67),
+		CorrectionsPerTask: 0.25, MedianAttemptSeconds: 120, Spend: 1, CostPerAccepted: 0.5}
+	wantB := StatsModel{Adapter: "claude", Model: "B", Variant: "high", Attempts: 1, Finished: 1, Clean: 1,
+		Validated: 1, GatePass: 1, Inspected: 1, Accepted: 1, MedianAttemptSeconds: 60, Spend: 0.5, CostPerAccepted: 0.5}
+	for _, c := range []struct{ got, want StatsModel }{{a, wantA}, {b, wantB}} {
+		got, _ := json.Marshal(c.got)
+		want, _ := json.Marshal(c.want)
+		if string(got) != string(want) {
+			t.Errorf("row =\n%s\nwant\n%s", got, want)
+		}
+	}
+	if j, _ := json.Marshal(b); !strings.Contains(string(j), `"clean_rate":null`) {
+		t.Errorf("B json = %s, want clean_rate null under the minimum sample", j)
+	}
+}
+
+// TestStatsByModelGateRound checks gate pass reads each gate's first
+// conclusive reading, not the earliest-ts group: real validate stamps every
+// gate with its own time, so a first validate where g1 passes and g2 fails is
+// not a pass, and an inconclusive first g2 reading is skipped (issue #473).
+func TestStatsByModelGateRound(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rc := func(n int) *int { return &n }
+	v := func(ts, task, gate string, code *int, reason string) Event {
+		return Event{TS: "2026-09-14T10:" + ts + ":00Z", Task: task, Kind: "validated", Attempt: "r1", Gate: gate, Tree: "t", RC: code, Reason: reason}
+	}
+	events := []Event{
+		{TS: "2026-09-14T10:00:00Z", Task: "t1", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "A"},
+		v("02", "t1", "g1", rc(0), ""), v("03", "t1", "g2", rc(1), ""),
+		v("04", "t1", "g1", rc(0), ""), v("05", "t1", "g2", rc(0), ""),
+		{TS: "2026-09-14T10:00:00Z", Task: "t2", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "B"},
+		v("02", "t2", "g1", rc(0), ""), v("03", "t2", "g2", nil, "inconclusive"),
+		v("04", "t2", "g2", rc(1), "host-blocked"), v("05", "t2", "g2", rc(0), ""),
+		{TS: "2026-09-14T10:00:00Z", Task: "t3", Kind: "dispatched", Attempt: "r1", Adapter: "claude", Model: "C"},
+		v("02", "t3", "g1", nil, "inconclusive"),
+	}
+	if err := AppendEvents(dir, events); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	rep, err := StatsWith(dir, StatsOptions{ByModel: true})
+	if err != nil {
+		t.Fatalf("StatsWith() error = %v", err)
+	}
+	if len(rep.ByModel) != 3 {
+		t.Fatalf("ByModel = %+v, want rows A, B and C", rep.ByModel)
+	}
+	for i, want := range []struct{ validated, pass int }{{1, 0}, {1, 1}, {0, 0}} {
+		if got := rep.ByModel[i]; got.Validated != want.validated || got.GatePass != want.pass {
+			t.Errorf("%s: validated %d gate_pass %d, want %d %d", got.Model, got.Validated, got.GatePass, want.validated, want.pass)
+		}
+	}
+}

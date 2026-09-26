@@ -36,6 +36,9 @@ type StatsReport struct {
 	Spend              float64        `json:"spend"`
 	Baseline           *StatsBaseline `json:"baseline,omitempty"`
 	Review             StatsReview    `json:"review"`
+	// ByModel is the per-model scoreboard (issue #473), filled only when
+	// StatsOptions.ByModel asks for it.
+	ByModel []StatsModel `json:"by_model,omitempty"`
 }
 
 // StatsBaseline is the frontier-only comparison: the recorded tokens priced
@@ -56,12 +59,25 @@ type attemptKey struct {
 // Stats reads the event log and computes StatsReport: the factory's health as
 // numbers that trend. An empty log yields zeroed fields, not an error.
 func Stats(dir string) (StatsReport, error) {
+	return StatsWith(dir, StatsOptions{})
+}
+
+// StatsOptions selects the optional parts of StatsReport.
+type StatsOptions struct {
+	ByModel bool // fill StatsReport.ByModel (flywheel stats --by model)
+}
+
+// StatsWith is Stats with the optional parts opts selects.
+func StatsWith(dir string, opts StatsOptions) (StatsReport, error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return StatsReport{}, fmt.Errorf("stats %s: %w", dir, err)
 	}
 
 	rep := StatsReport{FinishReasons: map[string]int{}, Review: reviewStats(events)}
+	if opts.ByModel {
+		rep.ByModel = modelStats(events)
+	}
 
 	st := Derive(events)
 	for _, ts := range st.Tasks {
@@ -404,6 +420,179 @@ func personaStats(events []Event) ([]StatsPersona, []StatsLevel) {
 		}
 	}
 	return out, lv
+}
+
+// StatsMinSample is the smallest denominator a per-model rate is computed over
+// (issue #473): below it the rate is null in JSON and n/a in text, never a 0%
+// or 100% read off one or two attempts.
+const StatsMinSample = 3
+
+// StatsModel is one (adapter, model, variant) row of the per-model scoreboard
+// (issue #473), every number attributed to the attempt's own dispatched event.
+type StatsModel struct {
+	Adapter  string `json:"adapter"`
+	Model    string `json:"model"`
+	Variant  string `json:"variant"`
+	Attempts int    `json:"attempts"` // dispatched attempts
+	Finished int    `json:"finished"` // of those, the ones with a finished event
+	Clean    int    `json:"clean"`    // finished with reason stop
+	// Silent and Stalled count finishes with reason silent and stalled; Failed
+	// counts the other finishes classifyRun maps to failed or failed-dirty
+	// (every unclean reason except length, error, rate-limited and
+	// abandoned-job, which it maps to their own states).
+	Silent    int      `json:"silent"`
+	Failed    int      `json:"failed"`
+	Stalled   int      `json:"stalled"`
+	CleanRate *float64 `json:"clean_rate"` // clean / finished
+	// Validated counts attempts with at least one conclusive validated event
+	// (an rc, reason neither inconclusive nor host-blocked); GatePass those
+	// whose every gate's first conclusive reading in log order had rc 0.
+	Validated    int      `json:"validated"`
+	GatePass     int      `json:"gate_pass"`
+	GatePassRate *float64 `json:"gate_pass_rate"` // gate_pass / validated
+	// Inspected counts tasks whose first inspected verdict followed an attempt
+	// of this row; Accepted those whose verdict was pass.
+	Inspected            int      `json:"inspected"`
+	Accepted             int      `json:"accepted"`
+	AcceptedRate         *float64 `json:"accepted_rate"`        // accepted / inspected
+	CorrectionsPerTask   float64  `json:"corrections_per_task"` // (attempts - tasks) / tasks
+	MedianAttemptSeconds float64  `json:"median_attempt_seconds"`
+	Spend                float64  `json:"spend"`             // sum of the attempts' finished cost
+	CostPerAccepted      float64  `json:"cost_per_accepted"` // spend / accepted; 0 when accepted is 0
+}
+
+// modelStats folds the event log into StatsModel rows, one per (adapter,
+// model, variant) of dispatched attempts, sorted by adapter, model, variant.
+// Finished and validated events count under their own attempt's dispatched
+// event; a task's first inspected verdict counts under the task's latest
+// dispatched attempt before it in time order.
+func modelStats(events []Event) []StatsModel {
+	type rowKey struct{ adapter, model, variant string }
+	rowOf := map[attemptKey]rowKey{}
+	dispatchTS := map[attemptKey]string{}
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Attempt != "" {
+			k := attemptKey{task: e.Task, attempt: e.Attempt}
+			rowOf[k] = rowKey{e.Adapter, e.Model, e.Variant}
+			dispatchTS[k] = e.TS
+		}
+	}
+	rows := map[rowKey]*StatsModel{}
+	tasks := map[rowKey]map[string]bool{}
+	secs := map[rowKey][]int{}
+	for k, rk := range rowOf {
+		if rows[rk] == nil {
+			rows[rk] = &StatsModel{Adapter: rk.adapter, Model: rk.model, Variant: rk.variant}
+			tasks[rk] = map[string]bool{}
+		}
+		rows[rk].Attempts++
+		tasks[rk][k.task] = true
+	}
+	// first holds each attempt's first conclusive reading per gate id, in log
+	// order: real validate stamps every gate with its own time, so a round is
+	// not one ts.
+	first := map[attemptKey]map[string]bool{}
+	for _, e := range events {
+		k := attemptKey{task: e.Task, attempt: e.Attempt}
+		rk, ok := rowOf[k]
+		if !ok {
+			continue
+		}
+		r := rows[rk]
+		switch e.Kind {
+		case "finished":
+			r.Finished++
+			r.Spend += e.Cost
+			switch e.Reason {
+			case "stop":
+				r.Clean++
+			case "silent":
+				r.Silent++
+			case "stalled":
+				r.Stalled++
+			default:
+				if s := classifyRun(true, 0, 0, 0, false, e.Reason, 0, 0, 0, false, len(e.Wrote) > 0, ""); s == "failed" || s == "failed-dirty" {
+					r.Failed++
+				}
+			}
+			dt, derr := time.Parse(time.RFC3339Nano, dispatchTS[k])
+			ft, ferr := time.Parse(time.RFC3339Nano, e.TS)
+			if derr == nil && ferr == nil {
+				secs[rk] = append(secs[rk], int(math.Round(ft.Sub(dt).Seconds())))
+			}
+		case "validated":
+			if e.RC == nil || e.Reason == "inconclusive" || e.Reason == "host-blocked" {
+				continue
+			}
+			if first[k] == nil {
+				first[k] = map[string]bool{}
+			}
+			if _, seen := first[k][e.Gate]; !seen {
+				first[k][e.Gate] = *e.RC == 0
+			}
+		}
+	}
+	for k, gates := range first {
+		r := rows[rowOf[k]]
+		r.Validated++
+		pass := true
+		for _, ok := range gates {
+			pass = pass && ok
+		}
+		if pass {
+			r.GatePass++
+		}
+	}
+	latest := map[string]attemptKey{}
+	inspected := map[string]bool{}
+	for _, e := range sortByTS(events) {
+		switch {
+		case e.Kind == "dispatched" && e.Attempt != "":
+			latest[e.Task] = attemptKey{task: e.Task, attempt: e.Attempt}
+		case e.Kind == "inspected" && e.Task != "" && !inspected[e.Task]:
+			inspected[e.Task] = true
+			if k, ok := latest[e.Task]; ok {
+				r := rows[rowOf[k]]
+				r.Inspected++
+				if e.Verdict == "pass" {
+					r.Accepted++
+				}
+			}
+		}
+	}
+	out := make([]StatsModel, 0, len(rows))
+	for rk, r := range rows {
+		n := len(tasks[rk])
+		r.CleanRate = minRate(r.Clean, r.Finished)
+		r.GatePassRate = minRate(r.GatePass, r.Validated)
+		r.AcceptedRate = minRate(r.Accepted, r.Inspected)
+		r.CorrectionsPerTask = round(float64(r.Attempts-n)/float64(n), 2)
+		r.MedianAttemptSeconds = median(secs[rk])
+		r.Spend = round(r.Spend, 4)
+		if r.Accepted > 0 {
+			r.CostPerAccepted = round(r.Spend/float64(r.Accepted), 4)
+		}
+		out = append(out, *r)
+	}
+	slices.SortFunc(out, func(a, b StatsModel) int {
+		if c := strings.Compare(a.Adapter, b.Adapter); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Model, b.Model); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Variant, b.Variant)
+	})
+	return out
+}
+
+// minRate is n/d rounded to 2 places, or nil when d < StatsMinSample.
+func minRate(n, d int) *float64 {
+	if d < StatsMinSample {
+		return nil
+	}
+	r := round(float64(n)/float64(d), 2)
+	return &r
 }
 
 // mapValues lists m's values in no particular order.

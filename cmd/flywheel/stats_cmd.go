@@ -13,12 +13,13 @@ import (
 
 func init() {
 	register("stats", "print the factory's own numbers: rates, corrections, cost", runStats)
-	registerHelp("stats", "flywheel stats [--dir DIR] [--json]", func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
+	registerHelp("stats", "flywheel stats [--dir DIR] [--by model] [--json]", func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
 }
 
 // statsOptions holds the parsed stats flags.
 type statsOptions struct {
 	dir     string
+	by      string
 	jsonOut bool
 }
 
@@ -28,13 +29,14 @@ func statsFlags() (*flag.FlagSet, *statsOptions) {
 	fs.SetOutput(io.Discard)
 	o := &statsOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
+	fs.StringVar(&o.by, "by", "", `break the numbers down: "model" adds the per-model scoreboard`)
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
 	return fs, o
 }
 
 // statsUsage prints the flywheel stats usage line.
 func statsUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel stats [--dir DIR] [--json]")
+	fmt.Fprintln(w, "usage: flywheel stats [--dir DIR] [--by model] [--json]")
 }
 
 // runStats implements `flywheel stats`: the factory's health as numbers that
@@ -53,7 +55,12 @@ func runStats(args []string) {
 		statsUsage(os.Stderr)
 		os.Exit(2)
 	}
-	rep, err := flywheel.Stats(o.dir)
+	if o.by != "" && o.by != "model" {
+		fmt.Fprintln(os.Stderr, `flywheel stats: --by must be "model"`)
+		statsUsage(os.Stderr)
+		os.Exit(2)
+	}
+	rep, err := flywheel.StatsWith(o.dir, flywheel.StatsOptions{ByModel: o.by == "model"})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", err)
 		os.Exit(1)
@@ -64,6 +71,42 @@ func runStats(args []string) {
 		return
 	}
 	printStats(rep)
+	if o.by == "model" {
+		printByModel(rep.ByModel)
+	}
+}
+
+// printByModel writes the per-model scoreboard (issue #473): one row per
+// adapter, model and variant, ATTEMPTS the sample size, a rate n/a below
+// flywheel.StatsMinSample.
+func printByModel(rows []flywheel.StatsModel) {
+	fmt.Println("By model:")
+	fmt.Printf("  %-10s %-24s %-8s %8s %6s %6s %7s %6s %6s %7s %9s %6s %9s %10s\n",
+		"ADAPTER", "MODEL", "VARIANT", "ATTEMPTS", "CLEAN%", "GATE%", "ACCEPT%", "SILENT", "FAILED", "STALLED", "CORR/TASK", "MED-S", "SPEND", "$/ACCEPTED")
+	if len(rows) == 0 {
+		fmt.Println("  none")
+	}
+	for _, r := range rows {
+		model, variant := r.Model, r.Variant
+		if model == "" {
+			model = "-"
+		}
+		if variant == "" {
+			variant = "-"
+		}
+		fmt.Printf("  %-10s %-24s %-8s %8d %6s %6s %7s %6d %6d %7d %9.2f %6.0f %9.4f %10.4f\n",
+			r.Adapter, model, variant, r.Attempts, ratePct(r.CleanRate), ratePct(r.GatePassRate), ratePct(r.AcceptedRate),
+			r.Silent, r.Failed, r.Stalled, r.CorrectionsPerTask, r.MedianAttemptSeconds, r.Spend, r.CostPerAccepted)
+	}
+}
+
+// ratePct renders a per-model rate as a whole percentage, or n/a when its
+// sample was under the minimum.
+func ratePct(r *float64) string {
+	if r == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.0f%%", *r*100)
 }
 
 // printStats writes the text summary, one metric per line in the order the

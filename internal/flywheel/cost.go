@@ -28,14 +28,19 @@ func (r CostRow) Count() int {
 }
 
 // Cost reads the event log and sums the Tokens and cost of every finished
-// event, grouped per task and per model. A finished task's model is the model
-// on its latest dispatched event; a finished task without one lands under
-// "unknown". An empty log yields zeroed rows, not an error.
+// event, grouped per task and per model. A finished event is charged to the
+// model on the dispatched event of the same task and attempt (issue #473), so
+// a finish logged after a later attempt's dispatch still counts under its own
+// attempt's model. A finished event without an attempt, or whose attempt has
+// no dispatched event, falls back to the task's latest dispatched model
+// preceding it in log order; with none it lands under "unknown". An empty log
+// yields zeroed rows, not an error.
 func Cost(dir string) (CostReport, error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return CostReport{}, fmt.Errorf("cost %s: %w", dir, err)
 	}
+	attemptModel := dispatchedModels(events)
 	model := map[string]string{}
 	byTask := map[string]*CostRow{}
 	byModel := map[string]*CostRow{}
@@ -51,7 +56,10 @@ func Cost(dir string) (CostReport, error) {
 		if t == nil {
 			t = &Tokens{}
 		}
-		m := model[e.Task]
+		m := attemptModel[attemptKey{task: e.Task, attempt: e.Attempt}]
+		if e.Attempt == "" || m == "" {
+			m = model[e.Task]
+		}
 		if m == "" {
 			m = "unknown"
 		}
@@ -70,6 +78,18 @@ func Cost(dir string) (CostReport, error) {
 		Models: sortedCostRows(byModel),
 		Total:  total,
 	}, nil
+}
+
+// dispatchedModels maps each (task, attempt) to the model on its dispatched
+// event; a later dispatched line for the same attempt wins.
+func dispatchedModels(events []Event) map[attemptKey]string {
+	out := map[attemptKey]string{}
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Attempt != "" && e.Model != "" {
+			out[attemptKey{task: e.Task, attempt: e.Attempt}] = e.Model
+		}
+	}
+	return out
 }
 
 // addCostRow sums t and cost into r.
