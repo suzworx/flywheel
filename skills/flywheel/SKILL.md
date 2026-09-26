@@ -110,7 +110,8 @@ ledger, and prints one next action per unit with its reason and exact command. A
 not on memory of the last session. `flywheel recover --apply` runs only the safe actions
 (mark-lost, re-validate, a conflict-free rebase) and records a `recovered` event. Resume, review,
 inspect and land stay yours. `investigate` means the world disagrees with the log: look before
-you act. An interrupted attempt's written files are kept under
+you act. `assign-owner` (the floor's `needs-owner (N)` andon) names open blocking findings outside
+the unit's owns: assign them to another unit, amend owns, or dismiss them. An interrupted attempt's written files are kept under
 `refs/flywheel/checkpoints/<task>/<attempt>`; `flywheel checkpoint diff|restore <task>` brings
 them back (issue #422). A chain break a git merge explains (`reordered`) is acknowledged, never edited
 away: `flywheel log --reanchor --note "<why>"` (a `removed` break also needs `--force`, your decision

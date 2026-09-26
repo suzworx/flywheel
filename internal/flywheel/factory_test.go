@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1039,6 +1040,75 @@ func TestFloorOpenFindings(t *testing.T) {
 		if a.Task == "T1" && strings.HasPrefix(a.State, "review-open") {
 			t.Errorf("review-open andon after the dismissals: %+v", a)
 		}
+	}
+}
+
+// TestFactoryNeedsOwner checks the floor splits open blocking findings by the
+// brief's owns (issue #458): one outside owns raises needs-owner, review-open
+// counts only those inside, and a dismissed or closed outside finding is not
+// counted.
+func TestFactoryNeedsOwner(t *testing.T) {
+	t.Parallel()
+	blockerB := blockerA
+	blockerB.File, blockerB.Claim = "b.go", "Loses the header"
+	floor := func(t *testing.T, extra ...Event) (Unit, []string) {
+		t.Helper()
+		dir := t.TempDir()
+		writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+		events := []Event{
+			{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"},
+			{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+			{TS: "2026-09-15T00:00:00Z", Task: "T1", Kind: "started", Attempt: "r1", Session: "w-1"},
+			{TS: "2026-09-15T00:00:01Z", Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop", Wrote: []string{"a.go"}},
+		}
+		if err := AppendEvents(dir, append(events, extra...)); err != nil {
+			t.Fatal(err)
+		}
+		run := filepath.Join(dir, ".flywheel", "runs", "T1.r1.jsonl")
+		if err := os.MkdirAll(filepath.Dir(run), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(run, []byte(`{"type":"step_finish","sessionID":"w-1","part":{"type":"step_finish","reason":"stop"}}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		w := NewWatcher()
+		fl, err := w.Refresh(dir, time.Date(2026, 9, 15, 0, 1, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatalf("Refresh() error = %v", err)
+		}
+		u, ok := unitBy(fl.Units, "T1")
+		if !ok {
+			t.Fatal("unit T1 missing")
+		}
+		var states []string
+		for _, a := range fl.Andon {
+			if a.Task == "T1" {
+				states = append(states, a.State)
+			}
+		}
+		slices.Sort(states)
+		return u, states
+	}
+	dismissB := Event{Task: "T1", Kind: "finding_response", Session: "lead-1", Finding: "T1-r1-2", Verdict: "disputed", Note: "dismissed: not ours"}
+	cases := []struct {
+		name             string
+		evs              []Event
+		open, needsOwner int
+		andon            []string
+	}{
+		{"inside-and-outside", roundEvents(1, blockerA, blockerB), 2, 1, []string{"needs-owner (1)", "review-open (1)"}},
+		{"outside-only", roundEvents(1, blockerB), 1, 1, []string{"needs-owner (1)"}},
+		{"outside-dismissed", append(roundEvents(1, blockerA, blockerB), dismissB), 1, 0, []string{"review-open (1)"}},
+		{"outside-closed", append(roundEvents(1, blockerA, blockerB), roundEvents(2, blockerA)...), 1, 0, []string{"review-open (1)"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			u, states := floor(t, c.evs...)
+			if u.Open != c.open || u.NeedsOwner != c.needsOwner || !slices.Equal(states, c.andon) {
+				t.Errorf("open %d needs-owner %d andon %q, want %d %d %q", u.Open, u.NeedsOwner, states, c.open, c.needsOwner, c.andon)
+			}
+		})
 	}
 }
 

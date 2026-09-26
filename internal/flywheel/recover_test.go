@@ -81,6 +81,52 @@ func TestRecoverNextActions(t *testing.T) {
 	}
 }
 
+// TestRecoverNeedsOwner checks a unit whose open blocking findings lie outside
+// owns reads assign-owner naming them (issue #458), only when not in flight,
+// and that --apply lists it and never acts on it.
+func TestRecoverNeedsOwner(t *testing.T) {
+	t.Parallel()
+	ids := []string{"T1-r1-2"}
+	for _, f := range []recoverFacts{
+		{Task: "T1", Status: "finished", FinishReason: "stop", NeedsOwner: ids},
+		{Task: "T1", Status: "needs-correction", NeedsOwner: ids},
+	} {
+		if n := nextAction(f); n.Action != "assign-owner" || !strings.Contains(n.Reason, "1 open blocking finding(s) outside owns: T1-r1-2;") {
+			t.Errorf("nextAction(%s) = %+v, want assign-owner naming T1-r1-2", f.Status, n)
+		}
+	}
+	for _, f := range []recoverFacts{
+		{Task: "T1", Status: "running", LeaseLive: true, NeedsOwner: ids},
+		{Task: "T1", Status: "dispatched", NeedsOwner: ids},
+		{Task: "T1", Status: "landed", NeedsOwner: ids},
+	} {
+		if n := nextAction(f); n.Action == "assign-owner" {
+			t.Errorf("nextAction(%s) = %+v, want no assign-owner", f.Status, n)
+		}
+	}
+
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	blockerB := blockerA
+	blockerB.File, blockerB.Claim = "b.go", "Loses the header"
+	recoverLedger(t, dir, append([]Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop"},
+	}, roundEvents(1, blockerA, blockerB)...)...)
+	out, err := RecoverApply(dir, recoverNow, RecoverOptions{})
+	if err != nil {
+		t.Fatalf("RecoverApply: %v", err)
+	}
+	n := out.Report.Tasks[0].Next
+	if n.Action != "assign-owner" || !strings.Contains(n.Reason, "outside owns: T1-r1-2;") || strings.Contains(n.Reason, "T1-r1-1") {
+		t.Errorf("next = %+v, want assign-owner naming only T1-r1-2", n)
+	}
+	if len(out.Applied) != 0 || !strings.Contains(strings.Join(out.Left, "\n"), "assign-owner T1") {
+		t.Errorf("applied = %q, left = %q; want nothing applied and assign-owner T1 left", out.Applied, out.Left)
+	}
+}
+
 // TestRecoverApplySafeOnly checks --apply runs only the safe actions (issue
 // #422): the dead attempt is marked lost and one recovered event names it,
 // while land and resume-session are listed, never run.
