@@ -37,6 +37,8 @@ type logOptions struct {
 	goal    string
 	noState bool
 	shard   bool
+	// replan silences the re-plan warning on --kind planned (issue #476).
+	replan bool
 	// reanchor and force drive flywheel log --reanchor (issue #436).
 	reanchor bool
 	force    bool
@@ -62,6 +64,7 @@ func logFlags() (*flag.FlagSet, *logOptions) {
 	fs.StringVar(&o.note, "note", "", "free-form note")
 	fs.StringVar(&o.goal, "goal", "", "goal id a planned event links to")
 	fs.BoolVar(&o.noState, "no-state", false, "skip state derivation after appending")
+	fs.BoolVar(&o.replan, "replan", false, "with --kind planned: silence the warning that the task already has attempts")
 	fs.BoolVar(&o.shard, "shard", false, "switch this repository's event log to per-task shards under .flywheel/events/ (one-way)")
 	fs.BoolVar(&o.reanchor, "reanchor", false, "acknowledge the log chain's first unacknowledged break with an appended reanchored event (requires --note)")
 	fs.BoolVar(&o.force, "force", false, "with --reanchor: acknowledge a break that classifies as removed (a possible real edit or deletion)")
@@ -352,6 +355,8 @@ func runLog(args []string) {
 	switch {
 	case o.kind == "":
 		logFlagError(fs, args, "--kind is required", nil, "--kind <kind>")
+	case o.replan && o.kind != "planned":
+		logFlagError(fs, args, "--replan applies to --kind planned only", logWithout("replan"), "")
 	case (o.kind == "planned" || o.kind == "amended") && o.task == "":
 		logFlagError(fs, args, "--kind "+o.kind+" requires --task <id>", nil, "--task <id>")
 	case o.kind == "amended" && o.goal != "":
@@ -389,6 +394,12 @@ func runLog(args []string) {
 		finishLog(o.dir, flywheel.RecordAmendedBy(o.dir, o.task, o.brief, o.note, flywheel.PlanMeta{Session: o.session, Model: o.model}), o.noState)
 		return
 	}
+	// Re-planning an id with attempts starts a new plan (issue #476): warn,
+	// unless --replan says it is meant, once the event is recorded.
+	rw := ""
+	if o.kind == "planned" && !o.replan {
+		rw = replanWarning(o.dir, o.task)
+	}
 	if o.kind == "planned" && o.brief != "" {
 		// A re-plan cannot change a dispatched attempt's gates (issue #366):
 		// compute the warning against the log before this event lands, and
@@ -397,6 +408,9 @@ func runLog(args []string) {
 		err := flywheel.RecordPlannedBy(o.dir, o.task, o.brief, flywheel.PlanMeta{Session: o.session, Model: o.model, GoalID: o.goal, Note: o.note})
 		if err == nil && w != "" {
 			fmt.Fprintf(os.Stderr, "flywheel log: warning: %s\n", w)
+		}
+		if err == nil && rw != "" {
+			fmt.Fprintf(os.Stderr, "flywheel log: %s\n", rw)
 		}
 		finishLog(o.dir, err, o.noState)
 		return
@@ -424,6 +438,29 @@ func runLog(args []string) {
 		e.RC = p
 	}
 	appendEvents(o.dir, []flywheel.Event{e}, o.noState)
+	if rw != "" {
+		fmt.Fprintf(os.Stderr, "flywheel log: %s\n", rw)
+	}
+}
+
+// replanWarning returns the warning for a planned event on a task that
+// already has dispatched attempts (issue #476), or "" for a fresh id. An
+// unreadable log gives "": the append that follows reports it.
+func replanWarning(dir, task string) string {
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return ""
+	}
+	n := 0
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" {
+			n++
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("warning: task %s already has %d attempt(s); this starts a new plan, the old attempts stay in the ledger (--replan silences this)", task, n)
 }
 
 // runLogReanchor implements flywheel log --reanchor (issue #436): it

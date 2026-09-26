@@ -135,7 +135,10 @@ Template and rules: [references/worker-brief.md](references/worker-brief.md). Wh
 extends a shared file whose size a previous brief's gate bounded, amend that brief with
 `flywheel log --task <id> --kind amended --brief <path> --note "<why>"`; the amended event explains the change
 to verify's T1, so validate no longer fails the stale gate. On a dispatched attempt, owns widen
-with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`.
+with `--kind amended`; gates change only with `flywheel run <task> --delta <file>`. Re-planning an
+id that already has attempts (`--kind planned` again) starts a new plan: it warns (add `--replan`
+when that is meant), the floor row resets to a clean `planned` row, and the old attempts stay in
+the ledger; the next run numbers after them.
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
