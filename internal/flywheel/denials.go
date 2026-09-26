@@ -73,6 +73,7 @@ func isEnvName(s string) bool {
 
 // commandSegments splits a shell command on &&, ||, ;, | and newlines outside
 // single and double quotes, trimming each segment and dropping empty ones.
+// Denial attribution and gateToolPatterns share it.
 func commandSegments(command string) []string {
 	var segs []string
 	var cur strings.Builder
