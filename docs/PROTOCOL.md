@@ -85,7 +85,7 @@ all.
   snapshot fails the dispatch), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
-  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332), `increment` (N when
+  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before any event, issue #456), `increment` (N when
   `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
   attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's

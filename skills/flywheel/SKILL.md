@@ -156,7 +156,9 @@ adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`ope
 or `sim`), and `flywheel run --worker <name>` picks between several configured workers. For
 parallel units, `flywheel run --worktree <task>` is the default: each unit builds in its own
 `.flywheel/worktrees/<task>` on branch `fw/<task>`, so parallel workers never share a tree, and
-flywheel commands run there use the main ledger. The floor's TREE column shows each unit's
+flywheel commands run there use the main ledger. A repository that integrates into another branch
+dispatches with `flywheel run <task> --worktree --base <integration branch>`: the new `fw/<task>`
+starts there without checking it out. The floor's TREE column shows each unit's
 worktree and base commit. If you dispatch a unit on another unit's unmerged branch (`fw/<A>`),
 run `flywheel rebase <task> [--onto REF]` once A lands as a squash: until then the unit shows
 `stacked` on the andon, `flywheel validate` notes it, and `flywheel land` refuses it (rule

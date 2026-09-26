@@ -36,6 +36,7 @@ type RunOptions struct {
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
 	Worktree     bool   // run the worker in the task's own worktree (issue #45)
+	Base         string // with Worktree: branch a new fw/<task> from this ref instead of HEAD (issue #456)
 	Lead         string // the lead session dispatching; recorded as the dispatched event's lead (issue #472)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
@@ -236,6 +237,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// of the brief; it cannot be combined with --resume or --delta.
 	if o.Increment < 0 || (o.Increment > 0 && (o.Resume || o.DeltaPath != "")) {
 		return Result{}, fmt.Errorf("--increment dispatches a fresh session of the brief; it cannot be combined with --resume or --delta")
+	}
+
+	// --base (issue #456) names where a new task branch starts; only a
+	// worktree has a branch of its own to start there.
+	if o.Base != "" && !o.Worktree {
+		return Result{}, &RuleRefusal{
+			Rule: "base",
+			Fix:  "--base needs --worktree: without it the worker runs in the main checkout at its HEAD",
+		}
 	}
 
 	// L-03: a resume that switches the worker's model onto one nobody
@@ -669,7 +679,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var wt string
 	if o.Worktree {
 		var err error
-		wt, err = TaskWorktree(dir, o.Task)
+		wt, err = TaskWorktreeFrom(dir, o.Task, o.Base)
 		if err != nil {
 			return Result{}, err
 		}

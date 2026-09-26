@@ -223,6 +223,49 @@ func TestRunResumeModelGateRefusesUnapproved(t *testing.T) {
 	}
 }
 
+// TestRunBase checks that Run with Worktree and Base branches the unit from
+// the base and records its commit as dispatched.base (so as FLYWHEEL_BASE),
+// and that Base without Worktree is refused before any event (issue #456).
+func TestRunBase(t *testing.T) {
+	t.Parallel()
+	dir, head, main2 := baseRepo(t)
+	before, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Run(dir, RunOptions{Task: "T1", Base: "main2"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "base" || !strings.Contains(r.Fix, "--base needs --worktree") {
+		t.Fatalf("Run(Base, no Worktree) error = %v, want a RuleRefusal base", err)
+	}
+	if after, err := ReadEvents(dir); err != nil || len(after) != len(before) {
+		t.Fatalf("refused Run appended events: %d -> %d (%v)", len(before), len(after), err)
+	}
+
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Base: "main2"}); err != nil {
+		t.Fatalf("Run(Worktree, Base main2) error = %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			found = true
+			if e.Base != main2 {
+				t.Errorf("dispatched.Base = %s, want main2 %s (HEAD is %s)", e.Base, main2, head)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no dispatched event")
+	}
+	if got := UnitBase(events, "T1"); got != main2 {
+		t.Errorf("UnitBase = %s, want %s", got, main2)
+	}
+}
+
 // TestRunResumeModelGateApprovedResumesNormally checks a resume onto an
 // approved fallback dispatches normally.
 func TestRunResumeModelGateApprovedResumesNormally(t *testing.T) {
