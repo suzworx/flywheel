@@ -8,7 +8,7 @@ description: >-
   ambiguous or the environment is broken, report the blocker and halt rather than improvise.
 license: MIT
 metadata:
-  version: 0.27.0 # x-release-please-version
+  version: 0.28.0 # x-release-please-version
 ---
 
 # Flywheel Worker
