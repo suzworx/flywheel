@@ -1405,3 +1405,39 @@ func TestHealthEventValidate(t *testing.T) {
 		}
 	}
 }
+
+// TestShippedEventValidate: a shipped event needs a known step and result,
+// no other kind may carry either, and it round-trips ReadEvents (issue #457).
+func TestShippedEventValidate(t *testing.T) {
+	t.Parallel()
+	ok := Event{Task: "T1", Kind: "shipped", Attempt: "r1", Step: "merge-base", Result: "fail", Commit: "0123456789abcdef", Note: "conflict: a.go"}
+	if err := Validate(ok); err != nil {
+		t.Errorf("Validate(shipped) = %v, want nil", err)
+	}
+	for name, e := range map[string]Event{
+		"unknown step":       {Task: "T1", Kind: "shipped", Step: "deploy", Result: "ok"},
+		"no step":            {Task: "T1", Kind: "shipped", Result: "ok"},
+		"unknown result":     {Task: "T1", Kind: "shipped", Step: "commit", Result: "done"},
+		"no task":            {Kind: "shipped", Step: "commit", Result: "ok"},
+		"step elsewhere":     {Task: "T1", Kind: "note", Note: "n", Step: "commit"},
+		"result elsewhere":   {Task: "T1", Kind: "landed", Commit: "0123456789abcdef", Result: "ok"},
+		"step on validated":  {Task: "T1", Kind: "validated", Gate: "1", Tree: "t", Step: "gates", Result: "ok"},
+		"result on finished": {Task: "T1", Kind: "finished", Attempt: "r1", Result: "fail"},
+	} {
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate(%+v) = nil, want an error", name, e)
+		}
+	}
+	dir := t.TempDir()
+	if err := AppendEvent(dir, ok); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("ReadEvents = %v, %v", events, err)
+	}
+	got := events[0]
+	if got.Kind != "shipped" || got.Step != ok.Step || got.Result != ok.Result || got.Attempt != "r1" || got.Commit != ok.Commit || got.Note != ok.Note {
+		t.Errorf("round-trip = %+v, want %+v", got, ok)
+	}
+}
