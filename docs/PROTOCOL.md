@@ -515,7 +515,9 @@ all.
   running task that is abandoned (issue #402): its lease has expired, or no lease exists and its
   run file `.flywheel/runs/<task>.<attempt>.jsonl` (with no run file, its `dispatched` event) is
   older than `limits.lost_after` (a Go duration, default `24h`). A live lease is never lost, and a
-  lost attempt is not in flight, so it never blocks a dispatch.
+  lost attempt is not in flight, so it never blocks a dispatch. Until then `flywheel run` refuses
+  any dispatch of a task whose attempt is still `dispatched` or `running`, fresh, `--delta`,
+  `--increment` or `--resume` alike (exit 6, rule `in-flight`, issue #522), before recording anything.
 - Carries: `task`, `attempt`, `reason` (`lease-expired` or `idle`), `note` (the evidence:
   `lease expired at <time>`, `no live lease; run file idle since <time>`, or
   `no live lease; no run file; dispatched at <time>`).

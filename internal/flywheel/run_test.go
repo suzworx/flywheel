@@ -3078,6 +3078,22 @@ func planAndDispatch(t *testing.T, dir, task, brief string) {
 	}
 }
 
+// finishForCorrection records a finished r1 and a correct review for task, so
+// its attempt is no longer in flight and a correction delta may dispatch
+// (issue #522).
+func finishForCorrection(t *testing.T, dir, task string) {
+	t.Helper()
+	for _, e := range []Event{
+		{Task: task, Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{Task: task, Kind: "reviewed", Attempt: "r1", Verdict: "correct"},
+	} {
+		e.TS = now().UTC().Format(time.RFC3339Nano)
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent() %s %s: %v", e.Kind, task, err)
+		}
+	}
+}
+
 // planOnly records a planned event for task (brief at path).
 func planOnly(t *testing.T, dir, task, brief string) {
 	t.Helper()
@@ -3610,6 +3626,7 @@ func TestRunCorrectionDeltaGateWarns(t *testing.T) {
 	planAndDispatch(t, dir, "T1", gateBrief(t, dir, "b1.txt", "a.go", "npm run validate"))
 	base := gateBrief(t, dir, "b2.txt", "b.go", "go test ./...")
 	planAndDispatch(t, dir, "T2", base)
+	finishForCorrection(t, dir, "T2")
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
@@ -3661,6 +3678,7 @@ func TestRunCorrectionDeltaGateReplacedSharedNoWarning(t *testing.T) {
 	planAndDispatch(t, dir, "T1", gateBrief(t, dir, "b1.txt", "a.go", "npm run validate"))
 	base := gateBrief(t, dir, "b2.txt", "b.go", "npm run validate")
 	planAndDispatch(t, dir, "T2", base)
+	finishForCorrection(t, dir, "T2")
 	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
@@ -4487,8 +4505,8 @@ func TestRunRefusesPausedModel(t *testing.T) {
 }
 
 // TestRunLimitsPerHostCountsSameTask checks a second fresh run of a task that
-// is already running counts toward limits.per_host: it is another attempt on
-// the host (#293 review).
+// is already running is refused even with limits.per_host at its cap (#293
+// review); since issue #522 the in-flight rule refuses it first.
 func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
 	t.Parallel()
 	dir := setupTask(t)
@@ -4502,8 +4520,8 @@ func TestRunLimitsPerHostCountsSameTask(t *testing.T) {
 	}
 	_, err := Run(dir, RunOptions{Task: "T1"})
 	var rf *RuleRefusal
-	if !errors.As(err, &rf) || rf.Rule != "limits" {
-		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='limits' for a second attempt of a running task", err)
+	if !errors.As(err, &rf) || rf.Rule != "in-flight" {
+		t.Fatalf("Run() error = %v, want RuleRefusal with Rule='in-flight' for a second attempt of a running task", err)
 	}
 }
 
@@ -5315,6 +5333,78 @@ func TestRunIgnoresLostCollision(t *testing.T) {
 		if ts.ID == "T1" && ts.Status != "lost" {
 			t.Errorf("T1 status = %q, want lost", ts.Status)
 		}
+	}
+}
+
+// TestRunRefusesInFlight checks a dispatch of a task whose attempt is still
+// dispatched or running is refused with rule in-flight before any event is
+// recorded, in fresh and --delta mode, while a lost or finished attempt does
+// not block (issue #522).
+func TestRunRefusesInFlight(t *testing.T) {
+	t.Parallel()
+	ev := func(kind, reason string) Event {
+		return Event{TS: now().UTC().Format(time.RFC3339Nano), Task: "T1", Kind: kind, Attempt: "r1", Reason: reason}
+	}
+	cases := []struct {
+		name    string
+		events  []Event
+		correct bool
+		delta   bool
+		refused bool
+	}{
+		{name: "dispatched", events: []Event{ev("dispatched", "")}, refused: true},
+		{name: "running delta", events: []Event{ev("dispatched", ""), ev("started", "")}, delta: true, refused: true},
+		{name: "lost", events: []Event{ev("dispatched", ""), ev("lost", "idle")}},
+		{name: "needs-correction delta", events: []Event{ev("dispatched", "")}, correct: true, delta: true},
+		{name: "needs-correction fresh", events: []Event{ev("dispatched", "")}, correct: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := setupTask(t)
+			if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			for _, e := range c.events {
+				if err := AppendEvent(dir, e); err != nil {
+					t.Fatalf("AppendEvent() %s: %v", e.Kind, err)
+				}
+			}
+			if c.correct {
+				finishForCorrection(t, dir, "T1")
+			}
+			o := RunOptions{Task: "T1"}
+			if c.delta {
+				writeDelta(t, dir, "T1")
+				o.DeltaPath = filepath.Join(dir, ".flywheel", "briefs", "T1.delta.txt")
+			}
+			before, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			_, err = Run(dir, o)
+			var rf *RuleRefusal
+			inFlight := errors.As(err, &rf) && rf.Rule == "in-flight"
+			if !c.refused {
+				if inFlight {
+					t.Fatalf("Run() error = %v, want no in-flight refusal", err)
+				}
+				return
+			}
+			if !inFlight {
+				t.Fatalf("Run() error = %v, want RuleRefusal with Rule='in-flight'", err)
+			}
+			if !strings.Contains(rf.Fix, "T1") || !strings.Contains(rf.Fix, "r1") || !strings.Contains(rf.Fix, "limits.lost_after") {
+				t.Errorf("Fix = %q, want the task, its attempt r1 and limits.lost_after", rf.Fix)
+			}
+			after, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			if len(after) != len(before) {
+				t.Errorf("events = %d after the refusal, want %d (none recorded)", len(after), len(before))
+			}
+		})
 	}
 }
 
