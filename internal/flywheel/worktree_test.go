@@ -306,6 +306,112 @@ func TestTaskWorktreeBase(t *testing.T) {
 	}
 }
 
+// TestTaskWorktreeDefaultBase checks the start of a new fw/<task> when no
+// base is given (issue #550): origin/<integration.branch>, else the local
+// branch, else a refusal; unconfigured, HEAD with a warning when it carries
+// commits origin/main lacks. An explicit base and an existing fw/<task> keep
+// today's behaviour.
+func TestTaskWorktreeDefaultBase(t *testing.T) {
+	t.Parallel()
+	// repo is a baseRepo whose HEAD moved to a feature commit that main2
+	// does not contain, with integration.branch set to branch when not "".
+	repo := func(t *testing.T, branch string) (dir, feature, main2 string) {
+		dir, _, main2 = baseRepo(t)
+		git(t, dir, []string{"commit", "--allow-empty", "-m", "feature"})
+		feature = git(t, dir, []string{"rev-parse", "HEAD"})
+		if branch != "" {
+			cfg := simConfig(fixturePath("clean.jsonl", t))
+			cfg.Integration = &IntegrationConfig{Branch: branch}
+			if err := WriteConfig(dir, cfg); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir, feature, main2
+	}
+	start := func(t *testing.T, dir, task, base string) (commit, note string) {
+		t.Helper()
+		wt, note, err := TaskWorktreeFromNote(dir, task, base)
+		if err != nil {
+			t.Fatalf("TaskWorktreeFromNote(%q) error = %v", base, err)
+		}
+		return git(t, wt, []string{"rev-parse", "HEAD"}), note
+	}
+
+	t.Run("local integration branch", func(t *testing.T) {
+		t.Parallel()
+		dir, _, main2 := repo(t, "main2")
+		got, note := start(t, dir, "D1", "")
+		if got != main2 {
+			t.Errorf("fw/D1 at %s, want main2 %s", got, main2)
+		}
+		if !strings.Contains(note, "starts from main2 (integration.branch)") {
+			t.Errorf("note = %q, want it to name main2", note)
+		}
+	})
+	t.Run("origin integration branch", func(t *testing.T) {
+		t.Parallel()
+		dir, _, main2 := repo(t, "main2")
+		remote := git(t, dir, []string{"commit-tree", "HEAD^{tree}", "-p", main2, "-m", "remote"})
+		git(t, dir, []string{"update-ref", "refs/remotes/origin/main2", remote})
+		got, note := start(t, dir, "D2", "")
+		if got != remote {
+			t.Errorf("fw/D2 at %s, want origin/main2 %s (main2 %s)", got, remote, main2)
+		}
+		if !strings.Contains(note, "origin/main2") {
+			t.Errorf("note = %q, want it to name origin/main2", note)
+		}
+	})
+	t.Run("unresolvable integration branch", func(t *testing.T) {
+		t.Parallel()
+		dir, _, _ := repo(t, "nowhere")
+		_, _, err := TaskWorktreeFromNote(dir, "D3", "")
+		if err == nil || !strings.Contains(err.Error(), "nowhere") || !strings.Contains(err.Error(), "--base") {
+			t.Errorf("error = %v, want one naming nowhere and --base", err)
+		}
+		if ok, _ := TaskBranch(dir, "D3"); ok {
+			t.Errorf("a refused default created fw/D3")
+		}
+	})
+	t.Run("explicit HEAD", func(t *testing.T) {
+		t.Parallel()
+		dir, feature, _ := repo(t, "main2")
+		got, note := start(t, dir, "D4", "HEAD")
+		if got != feature || note != "" {
+			t.Errorf("fw/D4 at %s note %q, want the feature %s and no note", got, note, feature)
+		}
+	})
+	t.Run("unconfigured behind origin/main", func(t *testing.T) {
+		t.Parallel()
+		dir, feature, _ := repo(t, "")
+		git(t, dir, []string{"update-ref", "refs/remotes/origin/main", "HEAD~1"})
+		got, note := start(t, dir, "D5", "")
+		if got != feature {
+			t.Errorf("fw/D5 at %s, want HEAD %s", got, feature)
+		}
+		if !strings.Contains(note, "1 commit") || !strings.Contains(note, "--base origin/main") {
+			t.Errorf("note = %q, want the 1-commit warning with --base", note)
+		}
+	})
+	t.Run("unconfigured at origin/main", func(t *testing.T) {
+		t.Parallel()
+		dir, feature, _ := repo(t, "")
+		git(t, dir, []string{"update-ref", "refs/remotes/origin/main", "HEAD"})
+		got, note := start(t, dir, "D6", "")
+		if got != feature || note != "" {
+			t.Errorf("fw/D6 at %s note %q, want HEAD %s and no note", got, note, feature)
+		}
+	})
+	t.Run("existing task branch", func(t *testing.T) {
+		t.Parallel()
+		dir, feature, _ := repo(t, "nowhere")
+		git(t, dir, []string{"branch", "fw/D7", feature})
+		got, note := start(t, dir, "D7", "")
+		if got != feature || note != "" {
+			t.Errorf("fw/D7 at %s note %q, want it reused at %s with no note", got, note, feature)
+		}
+	})
+}
+
 // TestWorktreeCleanRunNoFalseGitWrite checks that a --worktree run that
 // touched no git history records no git-write signal: the before and after
 // snapshots both read the task's worktree (#333 review).

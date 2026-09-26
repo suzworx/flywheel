@@ -55,7 +55,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.BoolVar(&o.strictBrief, "strict-brief", false, "refuse a dispatch whose brief has drifted from the hash its last dispatch recorded (RuleRefusal T1, exit 6) instead of warning")
 	fs.IntVar(&o.increment, "increment", 0, "dispatch only increment N of the brief as a fresh session (N >= 1); not with --resume or --delta")
 	fs.BoolVar(&o.worktree, "worktree", false, "run the worker in the task's own git worktree (.flywheel/worktrees/<task>, branch fw/<task>)")
-	fs.StringVar(&o.base, "base", "", "with --worktree: branch the unit's worktree from REF instead of HEAD (a new task branch only)")
+	fs.StringVar(&o.base, "base", "", "with --worktree: branch a new task branch from REF (default origin/<integration.branch> when configured, else HEAD)")
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
 	fs.StringVar(&o.notify, "notify", "", "shell command run after the run returns on any path, with FLYWHEEL_FINISHED=\"<task> <attempt> reason=<r> exit=<code>\"; its failure only warns")

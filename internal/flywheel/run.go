@@ -36,7 +36,7 @@ type RunOptions struct {
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
 	Worktree     bool   // run the worker in the task's own worktree (issue #45)
-	Base         string // with Worktree: branch a new fw/<task> from this ref instead of HEAD (issue #456)
+	Base         string // with Worktree: branch a new fw/<task> from this ref (issue #456); "" = integration.branch when configured, else HEAD (#550)
 	Lead         string // the lead session dispatching; recorded as the dispatched event's lead (issue #472)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
@@ -681,9 +681,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var wt string
 	if o.Worktree {
 		var err error
-		wt, err = TaskWorktreeFrom(dir, o.Task, o.Base)
+		var note string
+		wt, note, err = TaskWorktreeFromNote(dir, o.Task, o.Base)
 		if err != nil {
 			return Result{}, err
+		}
+		if note != "" {
+			progress(o.Progress, o.Task+" "+note)
 		}
 		// Setup (issue #430): link the brief's needs-state "(link)" paths and
 		// run worktree.setup in the worktree before the worker starts, every
