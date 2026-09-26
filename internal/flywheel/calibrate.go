@@ -128,7 +128,7 @@ type CalibrateOptions struct {
 	Worker  string // the reviewing worker (ReviewAgentOptions.Worker)
 	Session string // the reviewer session; required
 	Window  int    // the matching window in lines; <= 0 means 15
-	Main    string // the ref the merge-base is taken against; default origin/main
+	Main    string // the ref the merge-base is taken against; default origin/<integration.branch>, else origin/main
 	// Panel calibrates each of these personas (issue #420) over the same
 	// sampled groups instead of the single reviewer; a case counts as hit
 	// by the panel when any persona hit it. Empty: the single reviewer.
@@ -204,6 +204,9 @@ func Calibrate(repo, cases string, o CalibrateOptions) (CalibrationReport, error
 	}
 	if o.Main == "" {
 		o.Main = "origin/main"
+		if b, _ := IntegrationBranch(repo); b != "" {
+			o.Main = "origin/" + b
+		}
 	}
 	for _, d := range o.Panel {
 		if !personaKnown(d) {

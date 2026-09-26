@@ -11,8 +11,9 @@ import (
 
 // ciAuditWorkflow is the .github/workflows/flywheel-audit.yml InitCI writes
 // (issue #56). @FLYWHEEL_DIR@ (a YAML double-quoted scalar, so any path git
-// accepts is safe in YAML and, as "$FLYWHEEL_DIR", in the shell) and
-// @FLYWHEEL_VERSION@ are replaced.
+// accepts is safe in YAML and, as "$FLYWHEEL_DIR", in the shell),
+// @FLYWHEEL_BRANCH@ (the integration branch, "main" when there is none,
+// double-quoted the same way) and @FLYWHEEL_VERSION@ are replaced.
 const ciAuditWorkflow = `# flywheel-audit: verify the factory's records on every pull request (issue #56).
 # Written by "flywheel init --ci"; a rerun never overwrites this file.
 # Make "flywheel-audit" a required status check in the branch ruleset so it cannot be skipped.
@@ -21,7 +22,7 @@ name: flywheel-audit
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [@FLYWHEEL_BRANCH@]
 permissions:
   contents: read
 jobs:
@@ -118,6 +119,11 @@ func InitCI(dir, version string) (string, []ScaffoldPiece, error) {
 		return "", nil, fmt.Errorf("quote %q: %w", flywheelDir, err)
 	}
 	workflow := strings.ReplaceAll(ciAuditWorkflow, "@FLYWHEEL_DIR@", string(quotedDir))
+	quotedBranch, err := json.Marshal(integrationOrMain(abs))
+	if err != nil {
+		return "", nil, fmt.Errorf("quote the integration branch: %w", err)
+	}
+	workflow = strings.ReplaceAll(workflow, "@FLYWHEEL_BRANCH@", string(quotedBranch))
 	workflow = strings.ReplaceAll(workflow, "@FLYWHEEL_VERSION@", releaseVersion)
 
 	// Create .github/workflows directory

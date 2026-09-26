@@ -52,20 +52,29 @@ type StaffingConfig struct {
 
 // Config is the project configuration stored in .flywheel/config.json.
 type Config struct {
-	Version    int               `json:"version"`
-	Workers    []Worker          `json:"workers"`
-	Lines      []Line            `json:"lines,omitempty"`
-	Limits     Limits            `json:"limits,omitempty"`
-	Feedback   Feedback          `json:"feedback,omitempty"`
-	Lease      *LeaseConfig      `json:"lease,omitempty"`
-	Controller *ControllerConfig `json:"controller,omitempty"`
-	Baseline   *Baseline         `json:"baseline,omitempty"`
-	Audit      *AuditPolicy      `json:"audit,omitempty"`
-	Log        *LogConfig        `json:"log,omitempty"`
-	Staffing   *StaffingConfig   `json:"staffing,omitempty"`
-	Review     *ReviewConfig     `json:"review,omitempty"`
-	Worktree   *WorktreeConfig   `json:"worktree,omitempty"`
-	Lint       *LintConfig       `json:"lint,omitempty"`
+	Version     int                `json:"version"`
+	Workers     []Worker           `json:"workers"`
+	Lines       []Line             `json:"lines,omitempty"`
+	Limits      Limits             `json:"limits,omitempty"`
+	Feedback    Feedback           `json:"feedback,omitempty"`
+	Lease       *LeaseConfig       `json:"lease,omitempty"`
+	Controller  *ControllerConfig  `json:"controller,omitempty"`
+	Baseline    *Baseline          `json:"baseline,omitempty"`
+	Audit       *AuditPolicy       `json:"audit,omitempty"`
+	Log         *LogConfig         `json:"log,omitempty"`
+	Staffing    *StaffingConfig    `json:"staffing,omitempty"`
+	Review      *ReviewConfig      `json:"review,omitempty"`
+	Worktree    *WorktreeConfig    `json:"worktree,omitempty"`
+	Lint        *LintConfig        `json:"lint,omitempty"`
+	Integration *IntegrationConfig `json:"integration,omitempty"`
+}
+
+// IntegrationConfig names the branch units integrate into (issue #456):
+// rebase, stacked detection, review --group, review calibrate, init --ci and
+// doctor read it.
+type IntegrationConfig struct {
+	// Branch is the integration branch; "" means main, else master.
+	Branch string `json:"branch,omitempty"`
 }
 
 // LintConfig tunes flywheel lint's warnings (issue #462).
@@ -777,6 +786,11 @@ func (c Config) Validate() error {
 				problems = append(problems, fmt.Sprintf("lint.kinds[%d] duplicates %q", j, k))
 			}
 			seenKind[k] = true
+		}
+	}
+	if c.Integration != nil {
+		if b := c.Integration.Branch; strings.TrimSpace(b) == "" || strings.ContainsAny(b, " \t\r\n") || strings.HasPrefix(b, "-") {
+			problems = append(problems, fmt.Sprintf("integration.branch %q must be a non-empty branch name with no whitespace, not starting with \"-\"", b))
 		}
 	}
 	seenLines := make(map[string]bool)

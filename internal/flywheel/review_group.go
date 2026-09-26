@@ -91,7 +91,7 @@ func memberRef(dir string, events []Event, task string) string {
 }
 
 // IntegrationTree builds the group's combined tree (issue #420): a detached
-// worktree of base (default main) in a temp dir, then each member's work
+// worktree of base (default integration.branch, else main) in a temp dir, then each member's work
 // (memberRef) merged in member order with git merge --no-ff --no-edit as
 // flywheel's identity. A member with nothing to merge is skipped (ReviewGroup
 // reports it); a merge that conflicts is aborted, its unmerged paths recorded
@@ -99,7 +99,7 @@ func memberRef(dir string, events []Event, task string) string {
 // worktree and the temp dir, and is safe to call on every return.
 func IntegrationTree(dir string, events []Event, members []string, base string) (wt string, cleanup func(), conflicts map[string][]string, err error) {
 	if base == "" {
-		base = "main"
+		base = integrationOrMain(dir)
 	}
 	tmp, err := os.MkdirTemp("", "flywheel-group-")
 	if err != nil {
@@ -336,7 +336,7 @@ func ReviewGroup(dir, group string, o ReviewGroupOptions) (GroupResult, error) {
 	}
 	base := o.Base
 	if base == "" {
-		base = "main"
+		base = integrationOrMain(dir)
 	}
 	baseSHA, err := gitRead(dir, []string{"rev-parse", "--verify", base + "^{commit}"})
 	if err != nil {

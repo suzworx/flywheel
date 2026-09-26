@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	register("rebase", "move a unit's branch off a base that landed as a squash, onto main", runRebase)
+	register("rebase", "move a unit's branch off a base that landed as a squash, onto the integration branch", runRebase)
 	registerHelp("rebase", "flywheel rebase <task> [--onto REF] [--dir DIR]", func() *flag.FlagSet { fs, _ := rebaseFlags(); return fs })
 }
 
@@ -26,7 +26,7 @@ func rebaseFlags() (*flag.FlagSet, *rebaseOptions) {
 	fs.SetOutput(io.Discard)
 	o := &rebaseOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
-	fs.StringVar(&o.onto, "onto", "", "the ref to rebase onto (default main, else master)")
+	fs.StringVar(&o.onto, "onto", "", "the ref to rebase onto (default integration.branch, else main, else master)")
 	return fs, o
 }
 

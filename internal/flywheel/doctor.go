@@ -144,6 +144,27 @@ func DoctorLedgerWarning(dir string) string {
 		"or add \".flywheel/events.jsonl merge=union\" to .gitattributes (#436)", named, strings.Join(rm, " "))
 }
 
+// DoctorIntegrationBranch is the integration-branch check (issue #456): line
+// is "integration branch: <b> (integration.branch)" when the config sets it,
+// "(detected)" when main or master was found, and "integration branch: none"
+// otherwise; warning names a configured branch whose refs/heads/<b> does not
+// resolve in dir, "" otherwise.
+func DoctorIntegrationBranch(dir string) (line, warning string) {
+	b, configured := IntegrationBranch(dir)
+	switch {
+	case configured:
+		line = fmt.Sprintf("integration branch: %s (integration.branch)", b)
+		if !branchResolves(dir, b) {
+			warning = fmt.Sprintf("integration.branch %q does not resolve (refs/heads/%s) in %s; fetch or create it, or fix .flywheel/config.json", b, b, dir)
+		}
+	case b != "":
+		line = fmt.Sprintf("integration branch: %s (detected)", b)
+	default:
+		line = "integration branch: none (no integration.branch, main or master)"
+	}
+	return line, warning
+}
+
 // DoctorAllOK reports whether every probe classified as ClassOK.
 func DoctorAllOK(probes []DoctorProbe) bool {
 	for _, p := range probes {
