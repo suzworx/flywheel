@@ -132,7 +132,10 @@ all.
   resumes the same session after the reset (`limits.rate_limit_retries`,
   `limits.rate_limit_max_wait`), issue #380. A rate-limited finish whose reset parses also carries
   `reset_at` (RFC 3339): the limit belongs to the subscription, so until then the model is paused —
-  `flywheel run` refuses a fresh attempt on it (exit 6, rule `rate-limit`; a resume is exempt),
+  `flywheel run` refuses a fresh attempt on it (exit 6, rule `rate-limit`), while a `--resume` waits
+  for the reset plus a minute before dispatching (bounded by `limits.rate_limit_max_wait`; a wait
+  beyond it is refused, exit 6, rule `rate-limit`, naming the reset), and a `--resume` with no delta file after a rate-limited or abandoned-job
+  finish uses the automatic continue delta (the next unused `<task>.limit-<n>.txt`), issue #472,
   `flywheel next` HOLDs with `rate-limit: <model> paused until <time>`, and the floor shows the
   unit `rate-limited until HH:MM` and an andon entry `model/<model>` `paused until HH:MM`; a later
   clean `stop` finish on the model ends the pause early, issue #383. A claude stream's
@@ -507,7 +510,7 @@ all.
   | dispatched/running, lease live | `none` | |
   | dispatched/running, lost by the `lost` rules above | `mark-lost` | `flywheel recover --apply` |
   | dispatched/running, otherwise | `none` | |
-  | unclean finish or `lost`, model paused | `wait-reset` | `flywheel wait <task>` |
+  | unclean finish or `lost`, model paused | `wait-reset` | `flywheel run <task> --resume` (waits for the reset) |
   | finished `rate-limited` or `abandoned-job` | `resume-session` | `flywheel run <task> --resume` |
   | `lost`, or any other unclean finish | `none` (dispatch or correct) | |
   | finished `stop` or `passed`, stacked | `rebase` | `flywheel rebase <task>` |

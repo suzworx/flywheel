@@ -476,6 +476,18 @@ correction with the note as its reason; nothing is waived without it. Large task
 way, as **increments** — one delta per increment, each ending with its checks, a short report and
 STOP — and the next increment resumes the same session with the next delta.
 
+A correction delta inherits the base brief's owns, gates and needs-state links. To widen owns for
+this and later attempts, start the delta with an `owns:` line (its `gate:` lines replace the base
+gates), or record `flywheel log --task <id> --kind amended --brief <file>` before dispatching:
+
+```text
+owns: internal/x.go, internal/x_test.go
+gate: go test ./internal/...
+Correction: <the defect, the evidence, the fix>
+```
+
+`flywheel run` warns when a delta has no header, naming what it inherits.
+
 `--auto` is required here too (same non-interactive permission prompt), and stdin must be closed per
 §2.
 
