@@ -57,7 +57,7 @@ and judge what comes back. The shared model is
 | Production planner | planner | [`flywheel-planner`](../flywheel-planner/SKILL.md) |
 | Line supervisor | foreman | [`flywheel-foreman`](../flywheel-foreman/SKILL.md) |
 | Line worker | worker | [`flywheel-worker`](../flywheel-worker/SKILL.md) |
-| Machine gauges | supervisor (the CLI, no model) | none: `flywheel supervise`, planned (#55) |
+| Machine gauges | supervisor (the CLI, no model) | none: `flywheel supervise` (#55); `--resume-limited` also re-dispatches a rate-limited unit once its model's reset has passed (#472) |
 | QC inspector (internal) | inspector | [`flywheel-inspector`](../flywheel-inspector/SKILL.md) |
 | External auditor | auditor | [`flywheel-auditor`](../flywheel-auditor/SKILL.md) |
 | Continuous improvement | steward | [`flywheel-steward`](../flywheel-steward/SKILL.md) |

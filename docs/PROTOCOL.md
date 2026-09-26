@@ -567,12 +567,25 @@ all.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
-  one safe action.
+  one safe action, and via `flywheel supervise --resume-limited` (issue #472) for each auto-resume.
 - Carries: no `task`; `note` (the actions applied, `; `-separated, e.g. `mark-lost T r1
-  (lease-expired) checkpoint 1a2b3c4`, `re-validate T`, `rebase T onto 5d6e7f8`), `paths` (the
-  tasks they touched, sorted). `Validate` requires the note and refuses a task.
+  (lease-expired) checkpoint 1a2b3c4`, `re-validate T`, `rebase T onto 5d6e7f8`; or one
+  `auto-resume <task> <attempt> after rate limit (<n>/<cap>)`), `paths` (the tasks they touched,
+  sorted), `session` on an auto-resume (`--session`, default `$FLYWHEEL_SESSION`, else
+  `supervise`). `Validate` requires the note and refuses a task.
 - Effect: no status change; the applied actions record their own events (`lost`, `validated`,
-  `owns_checked`, `rebased`).
+  `owns_checked`, `rebased`; a resumed run its `dispatched` and `finished`).
+- `flywheel supervise --resume-limited` acts on the recover next action `resume-session` (below)
+  for a unit that is not dormant and whose latest `finished` is its current attempt's
+  `rate-limited` one (never `abandoned-job`, never any other reason; a `wait-reset` unit, its model
+  still paused, waits until the pause passes). Still under `supervise.lock`, it appends the
+  `auto-resume` event FIRST, then starts `flywheel run <task> --resume --session <session>` in the
+  background, its output appended to `.flywheel/runs/<task>.autoresume.log`; a crash between the two
+  never starts the unit twice. An `auto-resume` event later in the log than the task's latest
+  `finished` means a resume was already started for that finish: a second pass starts nothing.
+  The cap is `limits.rate_limit_retries` auto-resumes since the task's latest `planned` event:
+  past it the pass reports `not resumed: auto-resume cap N reached` and starts nothing. A failed
+  start keeps its event (it counts toward the cap). Exit codes are unchanged.
 - `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID]` (read-only without `--apply`)
   is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
   over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a
