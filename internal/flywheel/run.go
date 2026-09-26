@@ -335,6 +335,19 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return Result{}, err
 		}
 	}
+	// In flight (issue #522): a task whose attempt is still dispatched or
+	// running is refused before any event is recorded, in every dispatch mode,
+	// so two workers never write one checkout. It runs after MarkLost, so an
+	// abandoned attempt already marked lost never blocks.
+	for _, ts := range Derive(events).Tasks {
+		if ts.ID == o.Task && (ts.Status == "dispatched" || ts.Status == "running") {
+			_, attempt, _ := latestBaseBriefAndAttempt(events, o.Task)
+			return Result{}, &RuleRefusal{
+				Rule: "in-flight",
+				Fix:  fmt.Sprintf("task %s attempt %s is %s; wait for it to finish (a dead worker is marked lost after limits.lost_after, then dispatch again)", o.Task, attempt, ts.Status),
+			}
+		}
+	}
 	myOwns := []string{}
 	myExclusive := []string{}
 	// baseHeader is the effective brief before this dispatch; a correction
