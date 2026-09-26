@@ -1,6 +1,9 @@
 package flywheel
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestAttributeDenial checks a denied Bash command names the deny pattern and
 // the segment that matched, never a leading cd or a quoted operator, and
@@ -37,6 +40,30 @@ func TestAttributeDenial(t *testing.T) {
 			t.Parallel()
 			if got := attributeDenial(c.command, c.deny); got != c.want {
 				t.Errorf("attributeDenial(%q) = %q, want %q", c.command, got, c.want)
+			}
+		})
+	}
+}
+
+// TestCommandSegments checks the shell splitter shared by denial attribution
+// and gate tool patterns: quotes and backslash escapes hide operators, ||,
+// | and newlines split, segments are trimmed and empty ones dropped.
+func TestCommandSegments(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, command string
+		want          []string
+	}{
+		{"quotes", `echo 'a; b' && echo "c | d"`, []string{`echo 'a; b'`, `echo "c | d"`}},
+		{"escapes", `echo "a \" && b" && echo x\;y; npm test`, []string{`echo "a \" && b"`, `echo x\;y`, "npm test"}},
+		{"or pipe newline", "go vet ./... || git stash\nls | wc -l", []string{"go vet ./...", "git stash", "ls", "wc -l"}},
+		{"empty dropped", " ; a ;;  b  &&\n\n", []string{"a", "b"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commandSegments(c.command); !slices.Equal(got, c.want) {
+				t.Errorf("commandSegments(%q) = %q, want %q", c.command, got, c.want)
 			}
 		})
 	}
