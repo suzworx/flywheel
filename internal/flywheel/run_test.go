@@ -5499,6 +5499,71 @@ func TestWorktreeSetupFailureRefuses(t *testing.T) {
 	}
 }
 
+// TestRunWorktreeCopiesNeedsState checks run --worktree copies a brief's
+// needs-state "(copy)" file and a worktree.carry file from the root into the
+// task's worktree before the worker starts (issue #471), and records both on
+// the worktree_setup event's Copied.
+func TestRunWorktreeCopiesNeedsState(t *testing.T) {
+	// not parallel: sets the package-level commandHook
+	dir := worktreeRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\n.env\nsecret.json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte("owns: a.go\nneeds: none\nneeds-state: .env (copy)\n\n# TASK: test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "needs-state copy"})
+	want := map[string]string{".env": "API_KEY=k\n", "secret.json": "{}\n"}
+	for name, body := range want {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Worktree = &WorktreeConfig{Carry: []string{"secret.json"}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(dir, ".flywheel", "worktrees", "T1")
+	seen := map[string]string{}
+	commandHook = func(RunRequest) {
+		for name := range want {
+			b, _ := os.ReadFile(filepath.Join(wt, name))
+			seen[name] = string(b)
+		}
+	}
+	t.Cleanup(func() { commandHook = nil })
+	var stderr strings.Builder
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Stderr: &stderr}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for name, body := range want {
+		if seen[name] != body {
+			t.Errorf("worktree %s when the worker ran = %q, want %q", name, seen[name], body)
+		}
+	}
+	if strings.Contains(stderr.String(), "not git-ignored") {
+		t.Errorf("stderr = %q, want no not-ignored warning", stderr.String())
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := false
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "worktree_setup" && strings.Join(e.Copied, ",") == ".env,secret.json" {
+			copied = true
+		}
+	}
+	if !copied {
+		t.Error("no worktree_setup event with Copied [.env secret.json]")
+	}
+}
+
 // correctionDispatch returns task's dispatched event for attempt.
 func correctionDispatch(t *testing.T, dir, task, attempt string) Event {
 	t.Helper()

@@ -1115,6 +1115,40 @@ func TestConfigStrictLinks(t *testing.T) {
 	}
 }
 
+// TestConfigWorktreeCarry checks worktree.carry (issue #471): a
+// comma-separated Set/Get round trip with empty entries trimmed, "" clears,
+// listed as a key, and Validate refuses an absolute path, a .. element and an
+// empty entry, naming the key.
+func TestConfigWorktreeCarry(t *testing.T) {
+	t.Parallel()
+	var c Config
+	if err := c.Set("worktree.carry", " .env, ,config/local.json,"); err != nil {
+		t.Fatalf("Set(worktree.carry) error = %v", err)
+	}
+	if got, err := c.Get("worktree.carry"); err != nil || got != ".env,config/local.json" {
+		t.Errorf("Get(worktree.carry) = %q, %v, want .env,config/local.json", got, err)
+	}
+	if want := []string{".env", "config/local.json"}; !slices.Equal(c.WorktreeCarry(), want) {
+		t.Errorf("WorktreeCarry() = %v, want %v", c.WorktreeCarry(), want)
+	}
+	if err := c.Validate(); err != nil && strings.Contains(err.Error(), "worktree.carry") {
+		t.Errorf("Validate() = %v, want no worktree.carry problem", err)
+	}
+	if err := c.Set("worktree.carry", ""); err != nil || len(c.WorktreeCarry()) != 0 {
+		t.Errorf("Set(worktree.carry, \"\") = %v, WorktreeCarry() = %v, want cleared", err, c.WorktreeCarry())
+	}
+	if !slices.Contains(c.settableKeys(), "worktree.carry") || !slices.Contains(c.validKeys(), "worktree.carry") {
+		t.Error("worktree.carry missing from settableKeys/validKeys")
+	}
+	for _, bad := range []string{"/abs", "a/../b", ""} {
+		c := Config{Worktree: &WorktreeConfig{Carry: []string{".env", bad}}}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "worktree.carry") || !strings.Contains(err.Error(), `entry "`+bad+`"`) {
+			t.Errorf("Validate(carry %q) = %v, want a worktree.carry refusal naming it", bad, err)
+		}
+	}
+}
+
 // auditorStaffing returns a config whose lead and auditor are both
 // claude/claude-opus-5-5, the auditor with the given independence.
 func auditorStaffing(independence, leadSession, auditSession string) Config {

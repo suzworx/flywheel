@@ -89,6 +89,18 @@ type WorktreeConfig struct {
 	// StrictLinks refuses a dispatch whose needs-state "(link)" paths hold
 	// links into the main checkout (issue #460); false only warns.
 	StrictLinks bool `json:"strict_links,omitempty"`
+	// Carry lists repo-relative paths copied from the main checkout into the
+	// task's worktree on every --worktree dispatch, a git-ignored .env say
+	// (issue #471); a brief's needs-state "(copy)" entries are added to it.
+	Carry []string `json:"carry,omitempty"`
+}
+
+// WorktreeCarry is worktree.carry, nil when unset.
+func (c Config) WorktreeCarry() []string {
+	if c.Worktree == nil {
+		return nil
+	}
+	return c.Worktree.Carry
 }
 
 // StrictLinks is worktree.strict_links, false when unset.
@@ -761,6 +773,11 @@ func (c Config) Validate() error {
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("worktree.setup_timeout %q must be > 0", c.Worktree.SetupTimeout))
 	}
+	for _, p := range c.WorktreeCarry() {
+		if unsafeRelPath(p) {
+			problems = append(problems, fmt.Sprintf("worktree.carry entry %q must be a non-empty repo-relative path (no absolute path, no .. element)", p))
+		}
+	}
 	switch c.Feedback.Submit {
 	case "", "ask", "never":
 	default:
@@ -1029,6 +1046,8 @@ func (c Config) Get(key string) (string, error) {
 		return c.Worktree.SetupTimeout, nil
 	case "worktree.strict_links":
 		return strconv.FormatBool(c.StrictLinks()), nil
+	case "worktree.carry":
+		return strings.Join(c.WorktreeCarry(), ","), nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -1081,7 +1100,7 @@ func (c Config) validKeys() []string {
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"log.shards", "max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1300,6 +1319,18 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Worktree.StrictLinks = b
 		return nil
+	case "worktree.carry":
+		var carry []string
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				carry = append(carry, p)
+			}
+		}
+		if c.Worktree == nil {
+			c.Worktree = &WorktreeConfig{}
+		}
+		c.Worktree.Carry = carry
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -1342,7 +1373,7 @@ func (c Config) settableKeys() []string {
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"max_parallel", "model", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
-		"worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

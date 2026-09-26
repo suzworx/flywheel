@@ -216,6 +216,28 @@ func TestParseBriefHeaderNeedsStateLink(t *testing.T) {
 	}
 }
 
+// TestParseBriefNeedsStateCopy checks the "(copy)" annotation (issue #471):
+// NeedsState keeps every plain path, NeedsStateCopy the copied ones and
+// NeedsStateLink the linked ones.
+func TestParseBriefNeedsStateCopy(t *testing.T) {
+	t.Parallel()
+	path := writeBrief(t, "owns: a.go\nneeds: none\n"+
+		"needs-state: .env (copy), node_modules/ (link), db/\n\n# TASK: x\n")
+	h, err := ParseBriefHeader(path)
+	if err != nil {
+		t.Fatalf("ParseBriefHeader() error = %v", err)
+	}
+	if want := []string{".env", "node_modules/", "db/"}; !reflect.DeepEqual(h.NeedsState, want) {
+		t.Errorf("NeedsState = %v, want %v", h.NeedsState, want)
+	}
+	if want := []string{".env"}; !reflect.DeepEqual(h.NeedsStateCopy, want) {
+		t.Errorf("NeedsStateCopy = %v, want %v", h.NeedsStateCopy, want)
+	}
+	if want := []string{"node_modules/"}; !reflect.DeepEqual(h.NeedsStateLink, want) {
+		t.Errorf("NeedsStateLink = %v, want %v", h.NeedsStateLink, want)
+	}
+}
+
 func TestParseBriefHeaderMissingHeader(t *testing.T) {
 	t.Parallel()
 	path := writeBrief(t, "# TASK: no header keys here\n\n## Context\nbody\n")

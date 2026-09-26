@@ -92,8 +92,14 @@ all.
   #460: the entries of a linked path, one level deep plus one level inside each `@` scope, that are
   links or junctions resolving into the main checkout outside the linked path itself and outside
   the worktree, e.g. a workspace's `node_modules/@acme/web -> packages/web`; the `.pnpm` store and
-  broken links are not).
-- Effect: no status change. A link error (a `(link)` path missing in the repo) or a setup that does
+  broken links are not), `copied` (issue #471: the `needs-state: <path> (copy)` entries plus
+  `worktree.carry`, copied from the repo into the worktree after the links and before setup,
+  overwriting on every dispatch; the paths only, never their contents).
+- Effect: no status change. A copy whose source is missing in the repo, or whose path git tracks in
+  the worktree (a copy would overwrite committed content; use `(link)` or commit it), refuses the
+  dispatch with rule `setup` and an event whose `note` names it; a copied path git does not ignore
+  in the worktree prints `warning: needs-state copy <path> is not git-ignored in the worktree ...`.
+  A link error (a `(link)` path missing in the repo) or a setup that does
   not exit 0 refuses the dispatch (exit 6, rule `setup`, the fix naming the path or command and the
   output tail): no `dispatched` event is recorded and no worker starts. A non-empty `escaped` prints
   `warning: needs-state link <path> holds links into the main checkout (<n>: ...)` on the dispatch's

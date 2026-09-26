@@ -53,6 +53,55 @@ func linkNeedsState(root, wt string, paths []string) error {
 	return nil
 }
 
+// unsafeRelPath reports whether p is not a plain repo-relative path: empty,
+// absolute (a volume or a leading slash) or holding a ".." element.
+func unsafeRelPath(p string) bool {
+	p = strings.TrimSpace(p)
+	if p == "" || filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
+	}
+	for _, el := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if el == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// copyNeedsState copies each needs-state "(copy)" and worktree.carry path
+// from root into the task's worktree wt (issue #471), overwriting, so a
+// changed root file reaches the next dispatch. A path that is not plain
+// repo-relative, is missing under root, or is tracked by git in wt (a copy
+// would overwrite committed content) is an error naming it; a copied path git
+// does not ignore in wt is copied and returned as a warning line.
+func copyNeedsState(root, wt string, paths []string) ([]string, error) {
+	var warnings []string
+	for _, p := range paths {
+		rel := strings.TrimSuffix(p, "/")
+		if unsafeRelPath(rel) {
+			return warnings, fmt.Errorf("needs-state copy %s: not a repo-relative path; name it relative to the repo root", p)
+		}
+		src := filepath.Join(root, filepath.FromSlash(rel))
+		if _, err := os.Stat(src); err != nil {
+			return warnings, fmt.Errorf("needs-state copy %s: not found under %s; create it there (or drop the (copy) annotation or the worktree.carry entry)", p, root)
+		}
+		_, untracked, err := gitQuery(wt, "ls-files", "--error-unmatch", "--", rel)
+		if err != nil {
+			return warnings, fmt.Errorf("needs-state copy %s: git ls-files in %s: %v", p, wt, err)
+		}
+		if !untracked {
+			return warnings, fmt.Errorf("needs-state copy %s: tracked by git in %s, so a copy would overwrite committed content; use a (link) or commit it instead", p, wt)
+		}
+		if err := copyPath(src, filepath.Join(wt, filepath.FromSlash(rel))); err != nil {
+			return warnings, fmt.Errorf("needs-state copy %s: %w", p, err)
+		}
+		if _, notIgnored, err := gitQuery(wt, "check-ignore", "-q", "--", rel); err == nil && notIgnored {
+			warnings = append(warnings, fmt.Sprintf("warning: needs-state copy %s is not git-ignored in the worktree; add it to .gitignore so it is never committed", p))
+		}
+	}
+	return warnings, nil
+}
+
 // escapingLinks lists the links inside one needs-state "(link)" path that
 // resolve into the main checkout (issue #460): an npm/pnpm/yarn workspace's
 // node_modules/@acme/web -> packages/web, which makes the unit's gates import
@@ -184,10 +233,12 @@ func escapeWarning(linked string, escaped []string) string {
 // links and no setup command it records nothing. Linked paths holding links
 // into the main checkout (issue #460) are recorded as Escaped and returned as
 // warning lines for the caller to print; with worktree.strict_links they are
-// a RuleRefusal too, and setup does not run.
-func prepareWorktree(dir, wt, task, attempt string, cfg Config, links []string) ([]string, error) {
+// a RuleRefusal too, and setup does not run. After the links and before setup
+// it copies the copies paths (needs-state "(copy)" and worktree.carry, issue
+// #471) into wt, recording the paths as Copied; a copy error is a RuleRefusal.
+func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies []string) ([]string, error) {
 	command := cfg.SetupCommand()
-	if len(links) == 0 && command == "" {
+	if len(links) == 0 && len(copies) == 0 && command == "" {
 		return nil, nil
 	}
 	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Linked: links, Command: command}
@@ -217,6 +268,16 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links []string) 
 		}
 		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("needs-state links hold links into the main checkout (%s) and worktree.strict_links is true; drop the (link) annotation and set worktree.setup to an offline install (pnpm install --offline --frozen-lockfile, npm ci --prefer-offline --no-audit), then dispatch again (issue #460)", strings.Join(ev.Escaped, ", "))}
 	}
+	cw, cerr := copyNeedsState(dir, wt, copies)
+	warnings = append(warnings, cw...)
+	if cerr != nil {
+		ev.Note = clipSetupNote(cerr.Error())
+		if err := AppendEvent(dir, ev); err != nil {
+			return warnings, err
+		}
+		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("%v; then dispatch again", cerr)}
+	}
+	ev.Copied = copies
 	if command != "" {
 		timeout, err := cfg.SetupTimeoutDuration()
 		if err != nil {
