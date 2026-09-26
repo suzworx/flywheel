@@ -578,9 +578,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// The needs-state "(copy)" paths follow the same rule, plus worktree.carry
 	// on every dispatch (issue #471).
 	copies := promptHeader.NeedsStateCopy
+	// The needs-state "(install)" paths follow the same rule (issue #460).
+	installs := promptHeader.NeedsStateInstall
 	if o.DeltaPath != "" {
 		links = unionStrings(baseHeader.NeedsStateLink, promptHeader.NeedsStateLink)
 		copies = unionStrings(baseHeader.NeedsStateCopy, promptHeader.NeedsStateCopy)
+		installs = unionStrings(baseHeader.NeedsStateInstall, promptHeader.NeedsStateInstall)
 		if !hasBriefHeader(promptHeader) {
 			progress(o.Progress, deltaHeaderWarning(o.Task, attempt, o.DeltaPath, baseHeader))
 		}
@@ -641,9 +644,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		// setup writes is never attributed to the worker. A failure refuses
 		// the dispatch: no dispatched event, no worker. Linked paths holding
 		// links into the main checkout warn here (issue #460). The "(copy)"
-		// and worktree.carry paths are copied in (issue #471); a run without
-		// --worktree copies nothing, the root already has them.
-		warnings, err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links, copies)
+		// and worktree.carry paths are copied in (issue #471), and the
+		// "(install)" paths filled by one offline install (issue #460); a run
+		// without --worktree copies and installs nothing, the root already
+		// has them.
+		warnings, err := prepareWorktree(dir, wt, o.Task, attempt, cfg, links, copies, installs)
 		for _, w := range warnings {
 			progress(o.Stderr, w)
 		}

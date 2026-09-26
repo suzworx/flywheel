@@ -53,8 +53,16 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   other worktree: never `npm install` (or `pip install`) in it. A unit that changes dependencies
   runs its own install in `worktree.setup` or a gate, into a tree it does not link. In a workspace
   repository (npm/pnpm/yarn workspaces) do not link `node_modules`: its package links resolve into
-  the main checkout (issue #460); use `worktree.setup` with an offline install instead
-  (`pnpm install --offline --frozen-lockfile`, `npm ci --prefer-offline --no-audit`).
+  the main checkout (issue #460). Annotate it `(install)` instead —
+  `needs-state: node_modules/ (install)` — and flywheel runs the package manager's offline install
+  in the task's worktree, once per dispatch however many `(install)` paths there are, after the
+  copies and before `worktree.setup`: the lockfile at the worktree root picks it (`pnpm-lock.yaml`
+  → `pnpm install --offline --frozen-lockfile`; `bun.lock`/`bun.lockb` → `bun install
+  --frozen-lockfile`; `yarn.lock` → `yarn install --immutable` with `.yarnrc.yml`, else `yarn
+  install --frozen-lockfile --offline`; `package-lock.json`/`npm-shrinkwrap.json` → `npm ci
+  --prefer-offline --no-audit`). It is skipped while the lockfile is unchanged since the last
+  install that exited 0 and every `(install)` path is present. No lockfile, a failed install, or a
+  path both `(link)` and `(install)` refuses the dispatch.
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the

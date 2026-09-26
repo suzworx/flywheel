@@ -3,6 +3,8 @@ package flywheel
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -223,7 +225,105 @@ func escapeWarning(linked string, escaped []string) string {
 	if len(names) > 5 {
 		names, more = names[:5], "..."
 	}
-	return fmt.Sprintf("warning: needs-state link %s holds links into the main checkout (%d: %s%s) — the unit's gates would import the main checkout's copies; set worktree.setup to an offline install instead (see issue #460)", linked, len(escaped), strings.Join(names, ", "), more)
+	return fmt.Sprintf("warning: needs-state link %s holds links into the main checkout (%d: %s%s) — the unit's gates would import the main checkout's copies; use needs-state: %s (install) instead (see issue #460)", linked, len(escaped), strings.Join(names, ", "), more, linked)
+}
+
+// installLockfiles are the lockfiles installCommand looks for at a worktree's
+// root, in precedence order.
+var installLockfiles = []string{"pnpm-lock.yaml", "bun.lock", "bun.lockb", "yarn.lock", "package-lock.json", "npm-shrinkwrap.json"}
+
+// installLockfile is the first of installLockfiles present at wt's root, or ""
+// when none is.
+func installLockfile(wt string, exists func(string) bool) string {
+	for _, l := range installLockfiles {
+		if exists(filepath.Join(wt, l)) {
+			return l
+		}
+	}
+	return ""
+}
+
+// installCommand picks the package manager's offline install for the
+// lockfile at wt's root (issue #460), first match in installLockfiles wins;
+// yarn.lock is Yarn Berry when .yarnrc.yml is present, Yarn Classic
+// otherwise. No lockfile is an error naming the lockfiles looked for.
+func installCommand(wt string, exists func(string) bool) (manager, command string, err error) {
+	switch installLockfile(wt, exists) {
+	case "pnpm-lock.yaml":
+		return "pnpm", "pnpm install --offline --frozen-lockfile", nil
+	case "bun.lock", "bun.lockb":
+		return "bun", "bun install --frozen-lockfile", nil
+	case "yarn.lock":
+		if exists(filepath.Join(wt, ".yarnrc.yml")) {
+			return "yarn", "yarn install --immutable", nil
+		}
+		return "yarn", "yarn install --frozen-lockfile --offline", nil
+	case "package-lock.json", "npm-shrinkwrap.json":
+		return "npm", "npm ci --prefer-offline --no-audit", nil
+	}
+	return "", "", fmt.Errorf("no lockfile at the worktree root (looked for %s)", strings.Join(installLockfiles, ", "))
+}
+
+// installRunner runs a needs-state install command; tests swap it for a fake
+// (those tests are not parallel, since the variable is package-wide).
+var installRunner = runWorktreeSetup
+
+// installMarker is the file, relative to a worktree, holding "<lockfile>
+// <sha256>" of the last install that exited 0.
+const installMarker = ".flywheel/install.sha256"
+
+// installNeedsState runs the package manager's install once in wt for the
+// needs-state "(install)" paths (issue #460): one lockfile install fills every
+// workspace node_modules. It returns the Install value to record (the command,
+// or "up to date (<lockfile>)" when the marker matches the lockfile and every
+// path is a directory in wt), a note for the event on failure, and a setup
+// RuleRefusal when there is no lockfile or the install fails. The marker is
+// written only after the install exits 0.
+func installNeedsState(dir, wt, task string, paths []string, timeout time.Duration) (install, note string, err error) {
+	exists := func(p string) bool {
+		_, err := os.Stat(p)
+		return err == nil
+	}
+	_, command, lerr := installCommand(wt, exists)
+	if lerr != nil {
+		msg := fmt.Sprintf("needs-state install %s: %v", strings.Join(paths, ", "), lerr)
+		return "", msg, &RuleRefusal{Rule: "setup", Fix: msg + "; commit a lockfile or use worktree.setup instead, then dispatch again"}
+	}
+	lock := installLockfile(wt, exists)
+	b, rerr := os.ReadFile(filepath.Join(wt, lock))
+	if rerr != nil {
+		msg := fmt.Sprintf("needs-state install: read %s: %v", lock, rerr)
+		return "", msg, &RuleRefusal{Rule: "setup", Fix: msg + "; then dispatch again"}
+	}
+	sum := sha256.Sum256(b)
+	want := lock + " " + hex.EncodeToString(sum[:])
+	if got, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(installMarker))); err == nil && strings.TrimSpace(string(got)) == want && installedDirs(wt, paths) {
+		return "up to date (" + lock + ")", "", nil
+	}
+	rc, tail, _, serr := installRunner(dir, wt, task, command, timeout)
+	if serr != nil || rc != 0 {
+		why := fmt.Sprintf("exited %d", rc)
+		if serr != nil {
+			why = serr.Error()
+		}
+		return command, fmt.Sprintf("install %q %s\n%s", command, why, tail), &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("needs-state install %q %s in %s; fix the install (or drop the (install) annotation and use worktree.setup) and dispatch again; output tail:\n%s", command, why, wt, tail)}
+	}
+	if err := atomicWrite(filepath.Join(wt, ".flywheel"), "install.sha256", "install.sha256.tmp-*", []byte(want+"\n")); err != nil {
+		msg := fmt.Sprintf("needs-state install: write %s: %v", installMarker, err)
+		return command, msg, &RuleRefusal{Rule: "setup", Fix: msg + "; then dispatch again"}
+	}
+	return command, "", nil
+}
+
+// installedDirs reports whether every path is a directory in wt.
+func installedDirs(wt string, paths []string) bool {
+	for _, p := range paths {
+		fi, err := os.Stat(filepath.Join(wt, filepath.FromSlash(strings.TrimSuffix(p, "/"))))
+		if err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // prepareWorktree is run --worktree's setup step (issue #430): it links the
@@ -236,12 +336,28 @@ func escapeWarning(linked string, escaped []string) string {
 // a RuleRefusal too, and setup does not run. After the links and before setup
 // it copies the copies paths (needs-state "(copy)" and worktree.carry, issue
 // #471) into wt, recording the paths as Copied; a copy error is a RuleRefusal.
-func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies []string) ([]string, error) {
+// After the copies it runs one package-manager install for the installs paths
+// (needs-state "(install)", issue #460), recorded as Installed and Install; an
+// install path that is also linked, a missing lockfile or a failed install is
+// a RuleRefusal, and setup does not run.
+func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies, installs []string) ([]string, error) {
 	command := cfg.SetupCommand()
-	if len(links) == 0 && len(copies) == 0 && command == "" {
+	if len(links) == 0 && len(copies) == 0 && len(installs) == 0 && command == "" {
 		return nil, nil
 	}
-	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Linked: links, Command: command}
+	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Linked: links, Installed: installs, Command: command}
+	for _, in := range installs {
+		for _, l := range links {
+			if strings.TrimSuffix(in, "/") == strings.TrimSuffix(l, "/") {
+				msg := fmt.Sprintf("needs-state %s is both (link) and (install): a linked tree is shared with the main checkout and must never be installed into", in)
+				ev.Note = msg
+				if err := AppendEvent(dir, ev); err != nil {
+					return nil, err
+				}
+				return nil, &RuleRefusal{Rule: "setup", Fix: msg + "; drop one annotation and dispatch again"}
+			}
+		}
+	}
 	if lerr := linkNeedsState(dir, wt, links); lerr != nil {
 		ev.Linked, ev.Note = nil, clipSetupNote(lerr.Error())
 		if err := AppendEvent(dir, ev); err != nil {
@@ -266,7 +382,7 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies []
 		if err := AppendEvent(dir, ev); err != nil {
 			return warnings, err
 		}
-		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("needs-state links hold links into the main checkout (%s) and worktree.strict_links is true; drop the (link) annotation and set worktree.setup to an offline install (pnpm install --offline --frozen-lockfile, npm ci --prefer-offline --no-audit), then dispatch again (issue #460)", strings.Join(ev.Escaped, ", "))}
+		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("needs-state links hold links into the main checkout (%s) and worktree.strict_links is true; replace the (link) annotation: use needs-state: <path> (install), then dispatch again (issue #460)", strings.Join(ev.Escaped, ", "))}
 	}
 	cw, cerr := copyNeedsState(dir, wt, copies)
 	warnings = append(warnings, cw...)
@@ -278,11 +394,25 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies []
 		return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("%v; then dispatch again", cerr)}
 	}
 	ev.Copied = copies
-	if command != "" {
-		timeout, err := cfg.SetupTimeoutDuration()
-		if err != nil {
-			return warnings, fmt.Errorf("worktree.setup_timeout: %w", err)
+	if len(installs) == 0 && command == "" {
+		return warnings, AppendEvent(dir, ev)
+	}
+	timeout, err := cfg.SetupTimeoutDuration()
+	if err != nil {
+		return warnings, fmt.Errorf("worktree.setup_timeout: %w", err)
+	}
+	if len(installs) > 0 {
+		install, note, ierr := installNeedsState(dir, wt, task, installs, timeout)
+		ev.Install = install
+		if ierr != nil {
+			ev.Note = clipSetupNote(note)
+			if err := AppendEvent(dir, ev); err != nil {
+				return warnings, err
+			}
+			return warnings, ierr
 		}
+	}
+	if command != "" {
 		rc, tail, dur, serr := runWorktreeSetup(dir, wt, task, command, timeout)
 		ev.RC, ev.DurationMS, ev.Note = &rc, dur.Milliseconds(), clipSetupNote(tail)
 		if serr != nil {

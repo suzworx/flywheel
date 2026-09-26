@@ -137,7 +137,7 @@ extends a shared file whose size a previous brief's gate bounded, amend that bri
 `flywheel log --task <id> --kind amended --brief <path> --note "<why>"`; the amended event explains the change
 to verify's T1, so validate no longer fails the stale gate. On a dispatched attempt, owns widen
 with `--kind amended` or a delta's own `owns:` line; gates change only with `flywheel run <task> --delta <file>`
-(a delta with no header inherits the base owns, gates and needs-state links, and `run` warns). Re-planning an
+(a delta with no header inherits the base owns, gates and needs-state `(link)`/`(copy)`/`(install)` paths, and `run` warns). Re-planning an
 id that already has attempts (`--kind planned` again) starts a new plan: it warns (add `--replan`
 when that is meant), the floor row resets to a clean `planned` row, and the old attempts stay in
 the ledger; the next run numbers after them. `--kind planned` also warns when branch `fw/<id>`

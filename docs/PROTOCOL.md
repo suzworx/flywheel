@@ -79,7 +79,8 @@ all.
 ### `worktree_setup`
 - Written by: the CLI only, via `flywheel run <task> --worktree` (issue #430), after the task's
   worktree (`.flywheel/worktrees/<task>`) exists and before `dispatched`, on every dispatch that has
-  something to prepare: the effective brief's `needs-state: <path> (link)` entries, each linked from
+  something to prepare (`(link)`, `(copy)` or `(install)` entries, `worktree.carry`, or a setup
+  command): the effective brief's `needs-state: <path> (link)` entries, each linked from
   the repo into the worktree (a directory junction on Windows, a symlink elsewhere; a path already
   present is left alone), then the `worktree.setup` command, run with bash (the gates' shell) in the
   worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE` and `FLYWHEEL_ROOT` set and killed at
@@ -94,8 +95,20 @@ all.
   the worktree, e.g. a workspace's `node_modules/@acme/web -> packages/web`; the `.pnpm` store and
   broken links are not), `copied` (issue #471: the `needs-state: <path> (copy)` entries plus
   `worktree.carry`, copied from the repo into the worktree after the links and before setup,
-  overwriting on every dispatch; the paths only, never their contents).
-- Effect: no status change. A copy whose source is missing in the repo, or whose path git tracks in
+  overwriting on every dispatch; the paths only, never their contents), `installed` (issue #460:
+  the `needs-state: <path> (install)` entries) and `install` (the package manager's offline install
+  run once in the worktree for them, after the copies and before setup, with setup's runner and
+  `worktree.setup_timeout`, picked by the lockfile at the worktree root: `pnpm-lock.yaml` → `pnpm
+  install --offline --frozen-lockfile`, `bun.lock`/`bun.lockb` → `bun install --frozen-lockfile`,
+  `yarn.lock` → `yarn install --immutable` with `.yarnrc.yml` else `yarn install --frozen-lockfile
+  --offline`, `package-lock.json`/`npm-shrinkwrap.json` → `npm ci --prefer-offline --no-audit`; or
+  `up to date (<lockfile>)` when `.flywheel/install.sha256` in the worktree, written after an
+  install exits 0, holds the lockfile's name and SHA-256 and every installed path is a directory).
+  `rc`, `duration_ms` stay the setup command's; an install failure's exit and tail go in `note`.
+- Effect: no status change. An `(install)` path that is also a `(link)` entry (a linked tree is
+  shared and must never be installed into), no lockfile at the worktree root, or an install that
+  does not exit 0 refuses the dispatch with rule `setup` and an event whose `note` says why; setup
+  does not run. A copy whose source is missing in the repo, or whose path git tracks in
   the worktree (a copy would overwrite committed content; use `(link)` or commit it), refuses the
   dispatch with rule `setup` and an event whose `note` names it; a copied path git does not ignore
   in the worktree prints `warning: needs-state copy <path> is not git-ignored in the worktree ...`.
@@ -103,8 +116,8 @@ all.
   not exit 0 refuses the dispatch (exit 6, rule `setup`, the fix naming the path or command and the
   output tail): no `dispatched` event is recorded and no worker starts. A non-empty `escaped` prints
   `warning: needs-state link <path> holds links into the main checkout (<n>: ...)` on the dispatch's
-  stderr, since the unit's gates would import the main checkout's copies (use `worktree.setup` with
-  an offline install instead); with `worktree.strict_links` true (default `false`) it also refuses
+  stderr, since the unit's gates would import the main checkout's copies (use `needs-state: <path>
+  (install)` instead); with `worktree.strict_links` true (default `false`) it also refuses
   the dispatch (rule `setup`, the event still recorded with `escaped` and a `note` saying it was
   refused, and setup does not run).
 

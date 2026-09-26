@@ -26,7 +26,12 @@ type BriefHeader struct {
 	// run --worktree copies from the repo into the task's worktree at every
 	// dispatch, a git-ignored .env say (issue #471).
 	NeedsStateCopy []string `json:",omitempty"`
-	Gates          []string // one shell command per line, order kept
+	// NeedsStateInstall is the subset of NeedsState annotated "(install)":
+	// paths run --worktree fills by running the package manager's offline
+	// install in the task's worktree, a workspace's node_modules/ say (issue
+	// #460).
+	NeedsStateInstall []string `json:",omitempty"`
+	Gates             []string // one shell command per line, order kept
 	// LiveGates are `live-gate:` lines, one shell command per line, order
 	// kept: gates that run only in the lead's verification pass
 	// (`flywheel validate <task> --live`), never on a worker's own mocked
@@ -110,14 +115,18 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 		case "needs-state":
 			// An entry annotated "(link)" is also linked from the repo into a
 			// run --worktree tree (issue #430), one annotated "(copy)" is copied
-			// there (issue #471); NeedsState keeps the plain path.
+			// there (issue #471), one annotated "(install)" is filled by the
+			// package manager's offline install in that tree (issue #460);
+			// NeedsState keeps the plain path.
 			for _, entry := range strings.Split(val, ",") {
 				e := strings.TrimSpace(entry)
-				linked, copied := false, false
+				linked, copied, installed := false, false, false
 				if p, ok := strings.CutSuffix(e, "(link)"); ok {
 					e, linked = strings.TrimSpace(p), true
 				} else if p, ok := strings.CutSuffix(e, "(copy)"); ok {
 					e, copied = strings.TrimSpace(p), true
+				} else if p, ok := strings.CutSuffix(e, "(install)"); ok {
+					e, installed = strings.TrimSpace(p), true
 				}
 				if e != "" {
 					h.NeedsState = append(h.NeedsState, e)
@@ -126,6 +135,9 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 					}
 					if copied {
 						h.NeedsStateCopy = append(h.NeedsStateCopy, e)
+					}
+					if installed {
+						h.NeedsStateInstall = append(h.NeedsStateInstall, e)
 					}
 				}
 			}
