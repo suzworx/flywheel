@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.0](https://github.com/suzworx/flywheel/compare/v0.28.0...v0.29.0) (2026-09-26)
+
+
+### Features
+
+* evidence-based model routing picks each fresh dispatch's model from the scoreboard ([#516](https://github.com/suzworx/flywheel/issues/516)) ([e78f90d](https://github.com/suzworx/flywheel/commit/e78f90d365f7fe0c0b6da80c4e91521ba33137e9)), closes [#474](https://github.com/suzworx/flywheel/issues/474)
+* flywheel ledger backup writes a verified, point-in-time copy of the ledger ([#514](https://github.com/suzworx/flywheel/issues/514)) ([77bd620](https://github.com/suzworx/flywheel/commit/77bd620c695d86b79d3fe843abfe569638dcbe59)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+
 ## [0.28.0](https://github.com/suzworx/flywheel/compare/v0.27.0...v0.28.0) (2026-09-26)
 
 
