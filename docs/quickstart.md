@@ -175,7 +175,8 @@ config names the worker, its adapter and its model:
 
 There are four adapters: `opencode`, `claude`, `codex`, and `sim`. The first three call a real
 provider. A `claude` worker may set `permission_mode` (`acceptEdits`, the default,
-`bypassPermissions`, `default`, `plan` or `dontAsk`); it is refused on any other adapter.
+`bypassPermissions`, `default`, `plan` or `dontAsk`) and `max_turns` (else `limits.max_turns`,
+else 200); both are refused on any other adapter.
 `sim` needs **no provider at all** — it replays a recorded run — so if you have no API key you
 can still drive every command in this guide. What a simulated worker produces is a replay, not
 real work: it writes no files, so a `sim` unit's own gates fail on purpose. Use `opencode` (or

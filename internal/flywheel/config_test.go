@@ -1597,6 +1597,87 @@ func TestConfigUnknownKeyHint(t *testing.T) {
 	}
 }
 
+// TestMaxTurnsConfig checks the max_turns resolver (worker, else limits, else
+// 200), that both values survive write and reload, and that a negative value
+// or a max_turns on a non-claude worker is a validation problem (issue #459).
+func TestMaxTurnsConfig(t *testing.T) {
+	t.Parallel()
+	w := Worker{Name: "c", Adapter: "claude", Model: "m"}
+	cfg := Config{Version: 1, Workers: []Worker{w}}
+	if got := cfg.maxTurns(w); got != 200 {
+		t.Errorf("maxTurns with nothing set = %d, want 200", got)
+	}
+	cfg.Limits.MaxTurns = 120
+	if got := cfg.maxTurns(w); got != 120 {
+		t.Errorf("maxTurns with limits 120 = %d, want 120", got)
+	}
+	cfg.Workers[0].MaxTurns = 450
+	if got := cfg.maxTurns(cfg.Workers[0]); got != 450 {
+		t.Errorf("maxTurns with worker 450 and limits 120 = %d, want 450", got)
+	}
+
+	dir := t.TempDir()
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if loaded.Limits.MaxTurns != 120 || loaded.Workers[0].MaxTurns != 450 {
+		t.Errorf("reloaded limits.max_turns %d, worker max_turns %d; want 120, 450", loaded.Limits.MaxTurns, loaded.Workers[0].MaxTurns)
+	}
+
+	for name, tc := range map[string]struct {
+		mutate func(*Config)
+		want   string
+	}{
+		"negative limits": {func(c *Config) { c.Limits.MaxTurns = -1 }, "limits.max_turns -1 must be >= 0"},
+		"negative worker": {func(c *Config) { c.Workers[0].MaxTurns = -1 }, `worker "c": max_turns -1 must be >= 0`},
+		"opencode worker": {func(c *Config) { c.Workers[0].Adapter = "opencode"; c.Workers[0].MaxTurns = 50 }, `max_turns applies to the claude adapter, not "opencode"`},
+	} {
+		c := Config{Version: 1, Workers: []Worker{w}}
+		tc.mutate(&c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Validate() = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
+// TestConfigSetMaxTurns pins max_turns as a worker key for Set and Get: a
+// non-negative integer sets it, 0 clears it, anything else is refused
+// (issue #459).
+func TestConfigSetMaxTurns(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "c", Adapter: "claude", Model: "m"}}}
+	if err := cfg.Set("workers.c.max_turns", "300"); err != nil {
+		t.Fatalf("Set(workers.c.max_turns, 300) error = %v", err)
+	}
+	if got, err := cfg.Get("workers.c.max_turns"); err != nil || got != "300" {
+		t.Errorf("Get(workers.c.max_turns) = %q, %v; want 300", got, err)
+	}
+	if err := cfg.Set("workers.c.max_turns", "0"); err != nil {
+		t.Fatalf("Set(workers.c.max_turns, 0) error = %v", err)
+	}
+	if cfg.Workers[0].MaxTurns != 0 {
+		t.Errorf("Set(workers.c.max_turns, 0) left %d, want cleared", cfg.Workers[0].MaxTurns)
+	}
+	for _, v := range []string{"abc", "-5"} {
+		if err := cfg.Set("workers.c.max_turns", v); err == nil {
+			t.Errorf("Set(workers.c.max_turns, %q) error = nil, want refused", v)
+		}
+		if err := cfg.Set("limits.max_turns", v); err == nil {
+			t.Errorf("Set(limits.max_turns, %q) error = nil, want refused", v)
+		}
+	}
+	if err := cfg.Set("limits.max_turns", "90"); err != nil || cfg.Limits.MaxTurns != 90 {
+		t.Errorf("Set(limits.max_turns, 90) = %v, left %d; want 90", err, cfg.Limits.MaxTurns)
+	}
+	if !slices.Contains(cfg.settableKeys(), "workers.c.max_turns") {
+		t.Error("settableKeys missing workers.c.max_turns")
+	}
+}
+
 // TestPermissionModeValidate checks worker permission_mode (issue #526): each
 // valid mode is accepted on a claude worker, a bad value is rejected naming
 // the worker and the allowed values, and any mode on a non-claude worker is

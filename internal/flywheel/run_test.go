@@ -65,7 +65,7 @@ func TestClaudeCommandFlags(t *testing.T) {
 func TestRunGeneralizesToNonSimAdapters(t *testing.T) {
 	// not parallel: t.Setenv PATH
 	dir := setupTask(t)
-	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5", MaxTurns: 450}}}
 	if err := WriteConfig(dir, cfg); err != nil {
 		t.Fatalf("WriteConfig() error = %v", err)
 	}
@@ -84,6 +84,10 @@ func TestRunGeneralizesToNonSimAdapters(t *testing.T) {
 	}
 	if got.Model != "claude-sonnet-5" {
 		t.Fatalf("commandHook did not fire before the launch branch; got = %+v", got)
+	}
+	// The worker's max_turns reaches the dispatch (issue #459).
+	if got.MaxTurns != 450 {
+		t.Errorf("RunRequest.MaxTurns = %d, want the worker's max_turns 450", got.MaxTurns)
 	}
 
 	a, aerr := AdapterFor("claude")

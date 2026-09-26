@@ -1161,6 +1161,31 @@ func TestPermissionModeCommand(t *testing.T) {
 	}
 }
 
+// TestClaudeMaxTurns checks the claude dispatch's --max-turns comes from the
+// request, 200 when it is 0, with exactly one --max-turns (issue #459).
+func TestClaudeMaxTurns(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		turns int
+		want  string
+	}{{0, "200"}, {450, "450"}} {
+		_, args := claudeAdapter{}.Command(RunRequest{Task: "T1", Model: "m", MaxTurns: tc.turns})
+		n, at := 0, -1
+		for i, a := range args {
+			if a == "--max-turns" {
+				n, at = n+1, i
+			}
+		}
+		if n != 1 {
+			t.Errorf("MaxTurns %d: %d --max-turns flags in %v, want exactly 1", tc.turns, n, args)
+			continue
+		}
+		if at+1 >= len(args) || args[at+1] != tc.want {
+			t.Errorf("MaxTurns %d: args %v, want --max-turns %s adjacent", tc.turns, args, tc.want)
+		}
+	}
+}
+
 // TestClaudeLiveDenialFixture parses testdata/claude-denied-live.jsonl, a
 // HAND-BUILT fixture: only the user tool_result line reporting "requested
 // permissions to use WebSearch" is a live denial, naming WebSearch and the
