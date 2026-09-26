@@ -157,6 +157,9 @@ func lintStructure(dir, path string) (LintResult, error) {
 		if gateBacktickInDoubleQuotes(g) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
 		}
+		if gateDiffCheckAgainstHead(g) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d runs "git diff" against HEAD; after the attempt commit it sees nothing — diff against "$FLYWHEEL_BASE"`, i+1))
+		}
 	}
 	for i, lg := range header.LiveGates {
 		if gateBacktickInDoubleQuotes(lg) {
@@ -182,6 +185,51 @@ func lintStructure(dir, path string) (LintResult, error) {
 		res.Warnings = append(res.Warnings, `write rule "At most one write per response" is absent`)
 	}
 	return res, nil
+}
+
+// gateDiffCheckAgainstHead reports whether a gate runs `git diff --check`
+// with no revision (issue #470). flywheel run commits the attempt before
+// validate, so such a gate diffs against the new HEAD and sees nothing. The
+// detection is deliberately simple: the gate is split into commands at `&&`,
+// `||`, `;` and `|`, and a command warns when it is `git diff` with --check
+// among its args and no arg that is neither a flag (leading "-") nor after
+// `--` (a pathspec). Any such arg, "$FLYWHEEL_BASE" included, counts as a
+// revision. `git diff --no-index` compares files, not revisions, and never
+// warns; `git diff --exit-code` without --check (a regenerated tree checked
+// against HEAD) never warns either.
+func gateDiffCheckAgainstHead(gate string) bool {
+	s := gate
+	for _, sep := range []string{"&&", "||", "|", ";"} {
+		s = strings.ReplaceAll(s, sep, " ; ")
+	}
+	toks := strings.Fields(s)
+	for i := 0; i+1 < len(toks); i++ {
+		if toks[i] != "git" || toks[i+1] != "diff" {
+			continue
+		}
+		check, rev, noIndex, dashdash := false, false, false, false
+		for _, a := range toks[i+2:] {
+			if a == ";" {
+				break
+			}
+			switch {
+			case dashdash:
+			case a == "--":
+				dashdash = true
+			case a == "--check":
+				check = true
+			case a == "--no-index":
+				noIndex = true
+			case strings.HasPrefix(a, "-"):
+			default:
+				rev = true
+			}
+		}
+		if check && !rev && !noIndex {
+			return true
+		}
+	}
+	return false
 }
 
 // gateBacktickInDoubleQuotes reports whether a gate has an unescaped backtick

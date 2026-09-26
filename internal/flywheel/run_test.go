@@ -4309,6 +4309,63 @@ func TestRunNoResultLineIsError(t *testing.T) {
 	}
 }
 
+// TestWorkerEnvFlywheelBase is issue #470: the worker process sees the unit's
+// base as FLYWHEEL_BASE, on r1 the dispatched event's own base, so a worker
+// running its gate line measures what validate measures.
+func TestWorkerEnvFlywheelBase(t *testing.T) {
+	// not parallel: t.Setenv PATH to a fake claude
+	dir := worktreeRepo(t) // T1 owns a.go
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const session = "ses_base_001"
+	stream := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session) +
+		fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	p := filepath.Join(t.TempDir(), "base.jsonl")
+	if err := os.WriteFile(p, []byte(stream), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	basePath := filepath.Join(t.TempDir(), "base.txt")
+	t.Setenv(fakeClaudeEnv, p)
+	t.Setenv(fakeClaudeBaseEnv, basePath)
+	t.Setenv("FLYWHEEL_BASE", "inherited-must-be-overridden")
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v; progress:\n%s", err, buf.String())
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dispatched Event
+	for _, e := range events {
+		if e.Task == "T1" && e.Kind == "dispatched" {
+			dispatched = e
+		}
+	}
+	got, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatalf("fake claude wrote no FLYWHEEL_BASE: %v", err)
+	}
+	if dispatched.Base == "" || string(got) != dispatched.Base {
+		t.Errorf("worker FLYWHEEL_BASE = %q, want the dispatched base %q", got, dispatched.Base)
+	}
+}
+
 // fakeClaudeEnv names the stream file the test binary replays when it runs
 // as a fake claude (see TestMain and TestRunPlanBeforeTool).
 const fakeClaudeEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STREAM"
@@ -4320,11 +4377,15 @@ const fakeClaudeExitEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_EXIT"
 // fakeClaudeStdinEnv names the file the fake claude saves its stdin to.
 const fakeClaudeStdinEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STDIN"
 
+// fakeClaudeBaseEnv names the file the fake claude saves its FLYWHEEL_BASE to.
+const fakeClaudeBaseEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_BASE"
+
 // TestMain lets the test binary stand in for the claude CLI: copied to a
 // PATH directory as claude and started with fakeClaudeEnv set, it prints that
 // file as its stream-json output and exits 0. It first drains its stdin, where
 // claude reads its prompt (issue #427), so the pipe never blocks, and saves
-// it to the fakeClaudeStdinEnv file when that is set.
+// it to the fakeClaudeStdinEnv file when that is set, and its FLYWHEEL_BASE
+// to the fakeClaudeBaseEnv file when that is set (issue #470).
 func TestMain(m *testing.M) {
 	if stream := os.Getenv(fakeClaudeEnv); stream != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "claude") {
 		prompt, err := io.ReadAll(os.Stdin)
@@ -4334,6 +4395,12 @@ func TestMain(m *testing.M) {
 		}
 		if p := os.Getenv(fakeClaudeStdinEnv); p != "" {
 			if err := os.WriteFile(p, prompt, 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		if p := os.Getenv(fakeClaudeBaseEnv); p != "" {
+			if err := os.WriteFile(p, []byte(os.Getenv("FLYWHEEL_BASE")), 0o644); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}

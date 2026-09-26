@@ -589,6 +589,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(wt)
 	base := headCommit(wt)
+	// The worker sees the unit's base as FLYWHEEL_BASE, the same value validate
+	// gives its gates (issue #470); r1 has none recorded yet, so it is this
+	// dispatch's base.
+	unitBase := UnitBase(events, o.Task)
+	if unitBase == "" {
+		unitBase = base
+	}
 
 	// Snapshot the worktree's git history, index and tags before the worker
 	// runs (issue #314, #423).
@@ -792,6 +799,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		guardBin = gb
 		defer os.RemoveAll(guardBin)
 		cmd.Env = workerEnv(dir)
+		if unitBase != "" {
+			cmd.Env = append(cmd.Env, "FLYWHEEL_BASE="+unitBase)
+		}
 		if len(guardEnv) > 0 {
 			cmd.Env = append(cmd.Env, guardEnv...)
 		}

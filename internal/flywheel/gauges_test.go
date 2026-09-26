@@ -127,6 +127,77 @@ func initTaskLive(t *testing.T, gates, liveGates []string) (string, error) {
 	return dir, nil
 }
 
+// TestUnitBase is issue #470: the unit's base is the first dispatch after the
+// latest plan, a correction's own base is ignored, a later rebase wins, and a
+// re-plan starts over.
+func TestUnitBase(t *testing.T) {
+	t.Parallel()
+	planned := Event{Task: "T1", Kind: "planned", Brief: "b.txt"}
+	d := func(attempt, base string) Event {
+		return Event{Task: "T1", Kind: "dispatched", Attempt: attempt, Base: base}
+	}
+	cases := []struct {
+		name   string
+		events []Event
+		want   string
+	}{
+		{"empty", nil, ""},
+		{"no dispatch", []Event{planned}, ""},
+		{"first dispatch", []Event{planned, d("r1", "aaa")}, "aaa"},
+		{"correction ignored", []Event{planned, d("r1", "aaa"), d("r2", "bbb")}, "aaa"},
+		{"other task ignored", []Event{planned, {Task: "T2", Kind: "dispatched", Attempt: "r1", Base: "zzz"}, d("r1", "aaa")}, "aaa"},
+		{"rebased wins", []Event{planned, d("r1", "aaa"), {Task: "T1", Kind: "rebased", Base: "ccc"}, d("r2", "bbb")}, "ccc"},
+		{"latest rebase", []Event{planned, d("r1", "aaa"), {Task: "T1", Kind: "rebased", Base: "ccc"}, {Task: "T1", Kind: "rebased", Base: "ddd"}}, "ddd"},
+		{"replan resets", []Event{planned, d("r1", "aaa"), {Task: "T1", Kind: "rebased", Base: "ccc"}, planned, d("r2", "eee")}, "eee"},
+		{"replan without dispatch", []Event{planned, d("r1", "aaa"), planned}, ""},
+	}
+	for _, c := range cases {
+		if got := UnitBase(c.events, "T1"); got != c.want {
+			t.Errorf("%s: UnitBase() = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestRunGateBaseEnv checks runGateBase exports FLYWHEEL_BASE to the gate
+// (issue #470), overriding any value inherited from the caller.
+func TestRunGateBaseEnv(t *testing.T) {
+	t.Parallel()
+	rc, _, out, err := runGateBase(t.TempDir(), `test "$FLYWHEEL_BASE" = abc1234`, "abc1234")
+	if err != nil {
+		t.Fatalf("runGateBase() error = %v", err)
+	}
+	if rc != 0 {
+		t.Errorf("rc = %d, want 0 (FLYWHEEL_BASE exported); output %s", rc, out)
+	}
+}
+
+// TestValidateGateSeesFlywheelBase is issue #470 end to end: a gate under
+// validate sees the dispatched event's base as FLYWHEEL_BASE, and a
+// correction's later base does not replace it.
+func TestValidateGateSeesFlywheelBase(t *testing.T) {
+	t.Parallel()
+	const base = "0123456789abcdef0123456789abcdef01234567"
+	dir, err := initTask(t, []string{`test "$FLYWHEEL_BASE" = ` + base})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	for _, ev := range []Event{
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Base: base},
+		{Task: "T1", Kind: "dispatched", Attempt: "r2", Base: "fedcba9876543210fedcba9876543210fedcba98"},
+	} {
+		if err := AppendEvent(dir, ev); err != nil {
+			t.Fatalf("AppendEvent() error = %v", err)
+		}
+	}
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	if len(res.Gates) != 1 || res.Gates[0].RC != 0 {
+		t.Errorf("gates = %+v, want one gate with rc 0: FLYWHEEL_BASE is the first dispatch's base", res.Gates)
+	}
+}
+
 // TestValidateLiveGateNotRunWithoutFlag checks that with Live false a
 // declared live gate does not run and records no event, while LiveDeclared
 // still reports the count and a mocked pass stays a legitimate OK() on its

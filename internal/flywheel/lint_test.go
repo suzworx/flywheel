@@ -277,6 +277,42 @@ func TestLintGateBacktick(t *testing.T) {
 	}
 }
 
+// TestLintGateDiffCheck is issue #470: the attempt commit moves HEAD before
+// validate, so `git diff --check` with no revision sees nothing and lint
+// warns. A revision ("$FLYWHEEL_BASE", HEAD~1), --no-index, or a diff without
+// --check (a regenerated tree checked against HEAD) does not warn; a pathspec
+// after -- is not a revision and still warns.
+func TestLintGateDiffCheck(t *testing.T) {
+	t.Parallel()
+	const warning = `gate 1 runs "git diff" against HEAD; after the attempt commit it sees nothing — diff against "$FLYWHEEL_BASE"`
+	cases := []struct {
+		name, gate string
+		warns      bool
+	}{
+		{"bare", "git diff --check", true},
+		{"pathspec after dashdash", "git diff --check -- a.go", true},
+		{"after another command", "go build ./... && git diff --check", true},
+		{"piped", "git diff --check|cat", true},
+		{"flywheel base", `git diff --check "$FLYWHEEL_BASE"`, false},
+		{"revision", "git diff --check HEAD~1", false},
+		{"no index", "git diff --no-index --check /dev/null x", false},
+		{"exit code regenerated", "node gen.mjs && git diff --exit-code -- a.json", false},
+		{"rev in next command only", "git diff --check; git log HEAD~1", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			res := lintCheck(t, t.TempDir(), []string{"a.go"},
+				"owns: a.go\nneeds: none\ngate: "+c.gate+"\n\n# TASK: x\n## Checks\nAt most one write per response\n")
+			var wantWarnings []string
+			if c.warns {
+				wantWarnings = []string{warning}
+			}
+			want(t, res, nil, wantWarnings)
+		})
+	}
+}
+
 // TestLintNegated checks a negated owns entry (issue #388) is never
 // existence-checked, and one no positive entry covers is a warning.
 func TestLintNegated(t *testing.T) {
