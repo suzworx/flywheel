@@ -30,9 +30,11 @@ func rebaseFlags() (*flag.FlagSet, *rebaseOptions) {
 	return fs, o
 }
 
-// rebaseUsage prints the flywheel rebase usage line.
+// rebaseUsage prints the flywheel rebase usage line and how a hand rebase is
+// recorded instead (issue #498).
 func rebaseUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: flywheel rebase <task> [--onto REF] [--dir DIR]")
+	fmt.Fprintln(w, `a rebase done by hand is recorded with: flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"`)
 }
 
 // runRebase implements `flywheel rebase <task>` (issue #414).
