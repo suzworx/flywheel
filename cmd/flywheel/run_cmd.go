@@ -13,7 +13,7 @@ import (
 
 func init() {
 	register("run", "dispatch a worker for a task", runRun)
-	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
+	registerHelp("run", "flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--workdir PATH] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]", func() *flag.FlagSet { fs, _ := runFlags(); return fs })
 }
 
 // runOptions holds the parsed `flywheel run` flags.
@@ -29,6 +29,7 @@ type runOptions struct {
 	increment    int
 	worktree     bool
 	base         string
+	workdir      string
 	startTimeout time.Duration
 	stallTimeout time.Duration
 	notify       string
@@ -37,7 +38,7 @@ type runOptions struct {
 
 // runUsage prints the flywheel run usage line.
 func runUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]")
+	fmt.Fprintln(w, "usage: flywheel run <task> [--dir DIR] [--worker NAME] [--model MODEL] [--resume] [--force-model] [--delta FILE] [--allow-overlap] [--strict-brief] [--increment N] [--worktree] [--base REF] [--workdir PATH] [--start-timeout DURATION] [--stall-timeout DURATION] [--notify CMD] [--session ID]")
 }
 
 // runFlags defines run's flags once, so help and run share them.
@@ -56,6 +57,7 @@ func runFlags() (*flag.FlagSet, *runOptions) {
 	fs.IntVar(&o.increment, "increment", 0, "dispatch only increment N of the brief as a fresh session (N >= 1); not with --resume or --delta")
 	fs.BoolVar(&o.worktree, "worktree", false, "run the worker in the task's own git worktree (.flywheel/worktrees/<task>, branch fw/<task>)")
 	fs.StringVar(&o.base, "base", "", "with --worktree: branch a new task branch from REF (default origin/<integration.branch> when configured, else HEAD)")
+	fs.StringVar(&o.workdir, "workdir", "", "run the worker in this existing git worktree of the same repository (for example one with a merge in progress); events still go to --dir's ledger")
 	fs.DurationVar(&o.startTimeout, "start-timeout", 60*time.Second, "startup timeout")
 	fs.DurationVar(&o.stallTimeout, "stall-timeout", 0, "stall timeout for a run gone silent mid-stream (0 = the worker's configured stall_timeout, default 600s)")
 	fs.StringVar(&o.notify, "notify", "", "shell command run after the run returns on any path, with FLYWHEEL_FINISHED=\"<task> <attempt> reason=<r> exit=<code>\"; its failure only warns")
@@ -121,7 +123,7 @@ func runDispatch(fs *flag.FlagSet, o *runOptions, task string) (code int, attemp
 	res, err := flywheel.RunResumingLimits(o.dir, flywheel.RunOptions{
 		Task: task, Worker: o.worker, Model: o.model, Resume: o.resume, ForceModel: o.forceModel,
 		DeltaPath: o.delta, AllowOverlap: o.allowOverlap, StrictBrief: o.strictBrief, Increment: o.increment,
-		Worktree: o.worktree, Base: o.base, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout, Lead: lead,
+		Worktree: o.worktree, Base: o.base, Workdir: o.workdir, StartTimeout: o.startTimeout, StallTimeout: o.stallTimeout, Lead: lead,
 		Progress: os.Stdout, Stderr: os.Stderr,
 	}, time.Sleep, time.Now)
 	if err != nil {
