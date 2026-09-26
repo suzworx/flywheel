@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.34.0](https://github.com/suzworx/flywheel/compare/v0.33.0...v0.34.0) (2026-09-26)
+
+
+### Features
+
+* max_turns is configurable per claude worker and in limits, replacing the hard-coded --max-turns 200 ([#567](https://github.com/suzworx/flywheel/issues/567)) ([c64230c](https://github.com/suzworx/flywheel/commit/c64230cab1dc94d7a893609fea41124ca9652052))
+
+
+### Documentation
+
+* links from the docs pages to the README and HUMAN.md work on the site too ([#570](https://github.com/suzworx/flywheel/issues/570)) ([e116d3c](https://github.com/suzworx/flywheel/commit/e116d3c324ef5df06ff0a4c4dce0947af962f54d))
+* README leads with what flywheel is, install and a 60-second offline tour, maps the docs, and lists every command accurately ([#564](https://github.com/suzworx/flywheel/issues/564)) ([dcec478](https://github.com/suzworx/flywheel/commit/dcec4789273a43950aee0c557856f35c216ad609))
+* README's CLI table lists each command once ([#569](https://github.com/suzworx/flywheel/issues/569)) ([d18e887](https://github.com/suzworx/flywheel/commit/d18e88763543b88fb33e072b1d9712299e81c9ae))
+* the lead skill describes today's factory, every anchor in the skills resolves, and run's help lists --session ([#566](https://github.com/suzworx/flywheel/issues/566)) ([d1d4d93](https://github.com/suzworx/flywheel/commit/d1d4d93cd7cf93f5e6ed2d5cbb0bed693713c729))
+
 ## [0.33.0](https://github.com/suzworx/flywheel/compare/v0.32.0...v0.33.0) (2026-09-26)
 
 
