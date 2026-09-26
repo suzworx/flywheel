@@ -238,6 +238,29 @@ func resolveReviewer(cfg Config, worker, adapter, model string) (Worker, Adapter
 	return w, adap, nil
 }
 
+// PanelReviewerSource is who runs a panel member's review and where that
+// came from (issue #469): a member's adapter/model in review.panel, else its
+// worker ("worker <name>"), else staffing.reviewer, else the default worker.
+// The worker is resolveReviewer's for the member.
+func PanelReviewerSource(cfg Config, m PanelMember) (Worker, string, error) {
+	w, _, err := resolveReviewer(cfg, m.Worker, m.Adapter, m.Model)
+	if err != nil {
+		return Worker{}, "", err
+	}
+	switch {
+	case m.Adapter != "":
+		return w, "review.panel", nil
+	case m.Worker != "":
+		return w, "worker " + m.Worker, nil
+	}
+	if r := cfg.Staffing; r != nil && r.Reviewer != nil {
+		if (r.Reviewer.Adapter != "" && r.Reviewer.Adapter != cfg.DefaultWorker().Adapter) || r.Reviewer.Model != "" {
+			return w, "staffing.reviewer", nil
+		}
+	}
+	return w, "default worker", nil
+}
+
 // nextReviewRound is one more than the review-agent rounds already recorded
 // for task: the reviewed events that name an adapter (a verdict passed in by
 // hand names none). One panel round (issue #420) records one reviewed event

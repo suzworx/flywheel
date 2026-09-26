@@ -75,6 +75,7 @@ type Event struct {
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
 	LeadImplemented bool    `json:"lead_implemented,omitempty"`
 	Adapter         string  `json:"adapter,omitempty"`
+	Worker          string  `json:"worker,omitempty"` // a dispatched event's resolved worker name (issue #469); omitted on older events
 	Path            string  `json:"path,omitempty"`
 	SHA256          string  `json:"sha256,omitempty"`
 	Tokens          *Tokens `json:"tokens,omitempty"`

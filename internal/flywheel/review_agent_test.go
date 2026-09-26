@@ -360,3 +360,45 @@ func TestReviewAgentFailureCause(t *testing.T) {
 		}
 	}
 }
+
+// TestPanelReviewerSource checks each panel member's reviewer names where it
+// came from (review.panel, worker <name>, staffing.reviewer, default worker)
+// and agrees with resolveReviewer (issue #469).
+func TestPanelReviewerSource(t *testing.T) {
+	t.Parallel()
+	workers := []Worker{
+		{Name: "cheap", Adapter: "opencode", Model: "small"},
+		{Name: "strong", Adapter: "claude", Model: "big"},
+	}
+	plain := Config{Version: 1, Workers: workers}
+	staffed := Config{Version: 1, Workers: workers, Staffing: &StaffingConfig{Reviewer: &RoleConfig{Adapter: "codex", Model: "gpt"}}}
+	cases := []struct {
+		name    string
+		cfg     Config
+		m       PanelMember
+		adapter string
+		model   string
+		source  string
+	}{
+		{"review.panel", staffed, PanelMember{Persona: "correctness", Adapter: "claude", Model: "m"}, "claude", "m", "review.panel"},
+		{"worker", staffed, PanelMember{Persona: "correctness", Worker: "strong"}, "claude", "big", "worker strong"},
+		{"staffing.reviewer", staffed, PanelMember{Persona: "correctness"}, "codex", "gpt", "staffing.reviewer"},
+		{"default worker", plain, PanelMember{Persona: "correctness"}, "opencode", "small", "default worker"},
+	}
+	for _, c := range cases {
+		w, source, err := PanelReviewerSource(c.cfg, c.m)
+		if err != nil {
+			t.Fatalf("%s: PanelReviewerSource() error = %v", c.name, err)
+		}
+		if w.Adapter != c.adapter || w.Model != c.model || source != c.source {
+			t.Errorf("%s: PanelReviewerSource() = %s/%s from %q; want %s/%s from %q", c.name, w.Adapter, w.Model, source, c.adapter, c.model, c.source)
+		}
+		rw, _, err := resolveReviewer(c.cfg, c.m.Worker, c.m.Adapter, c.m.Model)
+		if err != nil {
+			t.Fatalf("%s: resolveReviewer() error = %v", c.name, err)
+		}
+		if rw.Name != w.Name || rw.Adapter != w.Adapter || rw.Model != w.Model {
+			t.Errorf("%s: PanelReviewerSource worker %+v disagrees with resolveReviewer %+v", c.name, w, rw)
+		}
+	}
+}
