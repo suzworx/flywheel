@@ -459,6 +459,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.Units = units
 	fl.Groups = st.Groups
 	extra := append(pausedAndon(w.events, now, cfg.Limits.RateLimitPauseThreshold()), groupAndon(st.Groups, now)...)
+	extra = append(extra, healthAndon(w.events, now)...)
 	fl.Andon = buildAndon(units, fl.Staffing.Roles, extra)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
@@ -895,6 +896,22 @@ func groupAndon(groups []GroupState, now time.Time) []Andon {
 		}
 	}
 	return out
+}
+
+// healthAndon is one andon entry, task "health", when the latest health event
+// is older than the stale_after it records (issue #552): a dead controller.
+// No health event, or one without a positive stale_after (an older writer),
+// gives none.
+func healthAndon(events []Event, now time.Time) []Andon {
+	e, at, ok := LatestHealth(events)
+	if !ok {
+		return nil
+	}
+	stale, err := time.ParseDuration(e.Health.StaleAfter)
+	if err != nil || stale <= 0 || now.Sub(at) <= stale {
+		return nil
+	}
+	return []Andon{{Task: "health", State: "STALE: the controller is not recording", Age: ageOfTime(at, now)}}
 }
 
 // pausedAndon is one andon entry per model a rate limit pauses at now (issue

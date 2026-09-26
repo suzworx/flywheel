@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,6 +24,17 @@ type ShipOptions struct {
 	Remote      string // default "origin"
 	Now         func() time.Time
 	Progress    io.Writer // one line per step; nil discards
+
+	// The remote half (issue #457 part 3).
+	Forge        Forge                 // nil = GhTracker{Repo: Repo}
+	Repo         string                // OWNER/REPO for the default Forge; empty lets gh resolve it
+	Title        string                // PR title; default the brief's "# TASK:" text, else the task id
+	Body         string                // PR body; default a generated summary (shipBody)
+	NoMerge      bool                  // stop after ci, leaving merge, landed and closed unrun
+	CITimeout    time.Duration         // default 45m
+	Poll         time.Duration         // default 30s
+	IgnoreChecks []string              // check names ci disregards
+	Sleep        func(d time.Duration) // default time.Sleep
 }
 
 // ShipStep is one step's outcome: Result ok, skip or fail, Commit fw/<task>'s
@@ -51,6 +64,8 @@ type shipRun struct {
 	o                      ShipOptions
 	events                 []Event
 	owns                   []string
+	pr                     PullRequest // the unit's PR once pr ran or was looked up
+	issue                  int         // the planned event's issue, 0 without one
 }
 
 // shipStepFuncs runs each of ShipSteps: the outcome (ok or skip), a note, and
@@ -60,14 +75,22 @@ var shipStepFuncs = map[string]func(*shipRun) (result, note string, err error){
 	"commit":     shipCommit,
 	"merge-base": shipMergeBase,
 	"gates":      shipGates,
+	"push":       shipPush,
+	"pr":         shipPR,
+	"ci":         shipCI,
+	"merge":      shipMerge,
+	"landed":     shipLanded,
+	"closed":     shipClosed,
 }
 
-// Ship runs the local half of shipping task (issue #457): preflight, commit,
-// merge-base and gates, in the task worktree only. Each step appends one
-// shipped event and prints one progress line; a step an earlier run already
-// recorded ok or skip (shipTrusted) is not run again. It stops at the first
-// failure: a *RuleRefusal for preflight, an error wrapping ErrShipGates for
-// gates, any other error otherwise.
+// Ship ships task (issue #457): the local half (preflight, commit, merge-base
+// and gates, in the task worktree only), then the remote half (push, pr, ci,
+// merge, landed and closed, through o.Forge; NoMerge stops after ci). Each
+// step appends one shipped event and prints one progress line; a step an
+// earlier run already recorded ok or skip (shipTrusted) is not run again. It
+// stops at the first failure: a *RuleRefusal for preflight or landed, an error
+// wrapping ErrShipGates for gates or ErrShipCI for ci, any other error
+// otherwise.
 func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 	if !taskOK(task) {
 		return ShipResult{}, fmt.Errorf("task %q does not match ^[A-Za-z0-9._-]+$", task)
@@ -112,6 +135,7 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 		}
 	}
 	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events}
+	r.remoteDefaults()
 	res := ShipResult{Task: task, Attempt: attempt, Workdir: wt, Integration: o.Integration}
 	return r.steps(res)
 }
@@ -131,6 +155,9 @@ func (r *shipRun) fwHead() string {
 func (r *shipRun) steps(res ShipResult) (ShipResult, error) {
 	trusted := shipTrusted(r.events, r.task, r.attempt, r.fwHead())
 	for i, name := range ShipSteps {
+		if name == "merge" && r.o.NoMerge {
+			break
+		}
 		if i < len(trusted) {
 			e := trusted[i]
 			res.Steps = append(res.Steps, ShipStep{Step: name, Result: e.Result, Commit: e.Commit, Note: e.Note, Done: true})
@@ -366,4 +393,284 @@ func shipGates(r *shipRun) (string, string, error) {
 	}
 	note := strings.Join(parts, "; ")
 	return "", note, fmt.Errorf("%w on the merged tree: %s", ErrShipGates, note)
+}
+
+// ErrShipCI is wrapped in the error Ship returns when the ci step fails: a
+// failed check, or a timeout with checks still pending or none reported; the
+// CLI exits 5 for it.
+var ErrShipCI = errors.New("CI failed")
+
+// remoteDefaults fills the remote half's options and the planned issue.
+func (r *shipRun) remoteDefaults() {
+	o := &r.o
+	if o.Forge == nil {
+		o.Forge = GhTracker{Repo: o.Repo}
+	}
+	if o.CITimeout <= 0 {
+		o.CITimeout = 45 * time.Minute
+	}
+	if o.Poll <= 0 {
+		o.Poll = 30 * time.Second
+	}
+	if o.Sleep == nil {
+		o.Sleep = time.Sleep
+	}
+	for _, e := range r.events {
+		if e.Task == r.task && e.Kind == "planned" {
+			r.issue = e.Issue
+		}
+	}
+	if o.Title == "" {
+		brief, _, _ := latestBaseBriefAndAttempt(r.events, r.task)
+		o.Title = briefTitle(r.dir, brief, r.task)
+	}
+	if o.Body == "" {
+		o.Body = r.body()
+	}
+}
+
+// briefTitle is the text of the brief's "# TASK:" line, else task.
+func briefTitle(dir, brief, task string) string {
+	if brief != "" {
+		if b, err := os.ReadFile(resolveBriefPath(dir, brief)); err == nil {
+			for _, l := range strings.Split(string(b), "\n") {
+				if t, ok := strings.CutPrefix(strings.TrimSpace(l), "# TASK:"); ok && strings.TrimSpace(t) != "" {
+					return strings.TrimSpace(t)
+				}
+			}
+		}
+	}
+	return task
+}
+
+// body is the generated PR body: the task, its gates, the ship steps and
+// Fixes #N when the planned event carries an issue.
+func (r *shipRun) body() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Task %s: %s\n", r.task, r.o.Title)
+	if h, _, err := AttemptBrief(r.dir, r.events, r.task); err == nil && len(h.Gates) > 0 {
+		b.WriteString("\nGates:\n")
+		for _, g := range h.Gates {
+			fmt.Fprintf(&b, "- `%s`\n", g)
+		}
+	}
+	fmt.Fprintf(&b, "\nShipped by flywheel ship: %s.\n", strings.Join(ShipSteps, ", "))
+	if r.issue > 0 {
+		fmt.Fprintf(&b, "\nFixes #%d\n", r.issue)
+	}
+	return b.String()
+}
+
+// scrubMessage removes every line naming a claude.ai/code/session link or
+// starting with Claude-Session: the squash message is public.
+func scrubMessage(s string) string {
+	var keep []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, "claude.ai/code/session") || strings.HasPrefix(strings.TrimSpace(l), "Claude-Session") {
+			continue
+		}
+		keep = append(keep, l)
+	}
+	return strings.Join(keep, "\n")
+}
+
+// transientErr reports whether err is a network blip worth retrying.
+func transientErr(err error) bool {
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "tls handshake timeout") || strings.Contains(s, "connection reset") || strings.Contains(s, "i/o timeout")
+}
+
+// retry runs f, retrying a transient error after 2s, 4s, 8s and 16s.
+func (r *shipRun) retry(what string, f func() error) error {
+	backoff := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
+	for i := 0; ; i++ {
+		err := f()
+		if err == nil || !transientErr(err) || i == len(backoff) {
+			return err
+		}
+		fmt.Fprintf(r.o.Progress, "ship %s %s: transient error, retrying in %s: %v\n", r.task, what, backoff[i], err)
+		r.o.Sleep(backoff[i])
+	}
+}
+
+// lookupPR finds fw/<task>'s open or merged PR once per ship.
+func (r *shipRun) lookupPR() (bool, error) {
+	if r.pr.Number != 0 {
+		return true, nil
+	}
+	found := false
+	err := r.retry("pr", func() (err error) { r.pr, found, err = r.o.Forge.PR("fw/" + r.task); return err })
+	return found, err
+}
+
+// needPR is lookupPR for the steps after pr, which need a PR to act on.
+func (r *shipRun) needPR() error {
+	found, err := r.lookupPR()
+	if err == nil && !found {
+		err = fmt.Errorf("fw/%s has no open or merged PR; rerun flywheel ship %s so its pr step opens one", r.task, r.task)
+	}
+	return err
+}
+
+// prState re-reads the PR's state and merge commit.
+func (r *shipRun) prState() (string, string, error) {
+	var state, commit string
+	err := r.retry("state", func() (err error) { state, commit, err = r.o.Forge.PRState(r.pr.Number); return err })
+	if err == nil {
+		r.pr.State, r.pr.MergeCommit = state, commit
+	}
+	return state, commit, err
+}
+
+// shipPush pushes fw/<task> to the remote with flywheel's git environment.
+func shipPush(r *shipRun) (string, string, error) {
+	branch := "fw/" + r.task
+	if err := r.retry("push", func() error { _, err := gitWith(r.wt, shipEnv(), "push", "-u", r.o.Remote, branch); return err }); err != nil {
+		return "", "", fmt.Errorf("git push -u %s %s: %w", r.o.Remote, branch, err)
+	}
+	return "ok", fmt.Sprintf("pushed %s at %s to %s", branch, short7(r.fwHead()), r.o.Remote), nil
+}
+
+// shipPR reuses fw/<task>'s open or merged PR (skip) or opens one against the
+// integration branch with Title and Body.
+func shipPR(r *shipRun) (string, string, error) {
+	found, err := r.lookupPR()
+	if err != nil {
+		return "", "", err
+	}
+	if found {
+		return "skip", fmt.Sprintf("reusing #%d %s (%s)", r.pr.Number, r.pr.URL, r.pr.State), nil
+	}
+	if err := r.retry("pr", func() (err error) {
+		r.pr, err = r.o.Forge.CreatePR(r.o.Integration, "fw/"+r.task, r.o.Title, r.o.Body)
+		return err
+	}); err != nil {
+		return "", "", err
+	}
+	return "ok", fmt.Sprintf("opened #%d %s", r.pr.Number, r.pr.URL), nil
+}
+
+// shipCI polls the PR's checks every Poll until none is pending, then passes
+// only when at least one passed and none failed, IgnoreChecks disregarded. No
+// checks at all is never green: it waits, and times out after CITimeout.
+func shipCI(r *shipRun) (string, string, error) {
+	if err := r.needPR(); err != nil {
+		return "", "", err
+	}
+	n := r.pr.Number
+	if r.pr.State == "MERGED" {
+		return "skip", fmt.Sprintf("#%d already merged", n), nil
+	}
+	keep := func(names []string) []string {
+		var out []string
+		for _, c := range names {
+			if !slices.Contains(r.o.IgnoreChecks, c) {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	for waited := time.Duration(0); ; waited += r.o.Poll {
+		var cs ChecksState
+		if err := r.retry("ci", func() (err error) { cs, err = r.o.Forge.Checks(n); return err }); err != nil {
+			return "", "", err
+		}
+		pending, failed, passed := keep(cs.Pending), keep(cs.Failed), keep(cs.Passed)
+		if len(pending) == 0 && len(failed) > 0 {
+			list := strings.Join(failed, ", ")
+			return "", "failed: " + list, fmt.Errorf("%w on #%d: %s", ErrShipCI, n, list)
+		}
+		if len(pending) == 0 && len(passed) > 0 {
+			return "ok", fmt.Sprintf("%d check(s) passed on #%d", len(passed), n), nil
+		}
+		if waited >= r.o.CITimeout {
+			still := "no checks reported"
+			if len(pending) > 0 {
+				still = "still pending: " + strings.Join(pending, ", ")
+			}
+			return "", "timed out, " + still, fmt.Errorf("%w: #%d timed out after %s, %s", ErrShipCI, n, r.o.CITimeout, still)
+		}
+		r.o.Sleep(r.o.Poll)
+	}
+}
+
+// shipMerge squash merges the PR with the title "<Title> (#<n>)" and the
+// scrubbed Body, then re-reads the PR and requires MERGED: a merge call's
+// success is not proof. An already merged PR is skip, with no merge call.
+func shipMerge(r *shipRun) (string, string, error) {
+	if err := r.needPR(); err != nil {
+		return "", "", err
+	}
+	n := r.pr.Number
+	state, commit, err := r.prState()
+	if err != nil {
+		return "", "", err
+	}
+	if state == "MERGED" {
+		return "skip", fmt.Sprintf("#%d already merged as %s", n, short7(commit)), nil
+	}
+	title := fmt.Sprintf("%s (#%d)", r.o.Title, n)
+	merr := r.retry("merge", func() error { return r.o.Forge.Merge(n, title, scrubMessage(r.o.Body)) })
+	state, commit, err = r.prState()
+	if err != nil {
+		return "", "", err
+	}
+	if state == "MERGED" {
+		return "ok", fmt.Sprintf("merged #%d as %s", n, short7(commit)), nil
+	}
+	if merr != nil {
+		return "", "", merr
+	}
+	return "", "state " + state, fmt.Errorf("merging #%d reported success but the PR is %s, not MERGED", n, state)
+}
+
+// shipLanded records the landing with the PR's merge commit through LandTask,
+// the function `flywheel land --commit` uses; already landed with it is skip.
+func shipLanded(r *shipRun) (string, string, error) {
+	if err := r.needPR(); err != nil {
+		return "", "", err
+	}
+	state, commit, err := r.prState()
+	if err != nil {
+		return "", "", err
+	}
+	if state != "MERGED" || !CommitOK(commit) {
+		return "", "", fmt.Errorf("#%d is %s with merge commit %q; land needs a merged PR", r.pr.Number, state, commit)
+	}
+	err = LandTask(r.dir, r.task, commit, fmt.Sprintf("shipped as #%d", r.pr.Number), false, "")
+	if errors.Is(err, ErrAlreadyLanded) {
+		return "skip", "already landed " + short7(commit), nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return "ok", "landed " + commit, nil
+}
+
+// shipClosed comments the PR link on the planned issue and closes it when the
+// Body says Fixes #<issue>; otherwise it only comments that part landed.
+func shipClosed(r *shipRun) (string, string, error) {
+	if r.issue == 0 {
+		return "skip", "no issue", nil
+	}
+	if err := r.needPR(); err != nil {
+		return "", "", err
+	}
+	n, issue := r.pr.Number, r.issue
+	fixes := regexp.MustCompile(fmt.Sprintf(`(?i)\bfixes #%d\b`, issue)).MatchString(r.o.Body)
+	if !fixes {
+		msg := fmt.Sprintf("Part of this issue landed in #%d", n)
+		if err := r.retry("closed", func() error { return r.o.Forge.CommentIssue(issue, msg) }); err != nil {
+			return "", "", err
+		}
+		return "ok", fmt.Sprintf("commented on #%d, left open (the body has no Fixes #%d)", issue, issue), nil
+	}
+	msg := fmt.Sprintf("Landed in #%d %s", n, r.pr.URL)
+	if err := r.retry("closed", func() error { return r.o.Forge.CommentIssue(issue, strings.TrimSpace(msg)) }); err != nil {
+		return "", "", err
+	}
+	if err := r.retry("closed", func() error { return r.o.Forge.CloseIssue(issue, "") }); err != nil {
+		return "", "", err
+	}
+	return "ok", fmt.Sprintf("commented on and closed #%d", issue), nil
 }

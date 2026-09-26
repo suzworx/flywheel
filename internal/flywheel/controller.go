@@ -379,6 +379,7 @@ func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 		if err != nil {
 			return res, err
 		}
+		snap.StaleAfter = cfg.controllerHealthStale(o.HealthEvery).String()
 		if err := AppendEvent(dir, Event{TS: res.TS, Kind: "health", Health: &snap}); err != nil {
 			return res, fmt.Errorf("append health: %w", err)
 		}
@@ -416,7 +417,8 @@ func healthDue(events []Event, now time.Time, every time.Duration) bool {
 }
 
 // HealthAt computes the factory's health snapshot at now from the same views
-// the factory floor draws: Derive's statuses (running, finished), the units'
+// the factory floor draws: Derive's statuses (running, finished less the
+// rate-limited units), the units'
 // run states (stalled, rate-limited), the floor's andon count and the models
 // a rate limit pauses (pausedModels).
 func HealthAt(dir string, now time.Time, generation int, version string) (HealthSnapshot, error) {
@@ -430,7 +432,9 @@ func HealthAt(dir string, now time.Time, generation int, version string) (Health
 		return HealthSnapshot{}, fmt.Errorf("health %s: %w", dir, err)
 	}
 	snap := HealthSnapshot{Andon: len(fl.Andon), ControllerGeneration: generation, Version: version}
+	runState := map[string]string{}
 	for _, u := range fl.Units {
+		runState[u.Task] = u.RunState
 		switch u.RunState {
 		case "stalled":
 			snap.Stalled++
@@ -447,7 +451,11 @@ func HealthAt(dir string, now time.Time, generation int, version string) (Health
 				oldest, oldestAge = ts.ID, age
 			}
 		case "finished":
-			snap.Finished++
+			// A rate-limited attempt also derives to finished; RateLimited
+			// counts it (issue #552).
+			if runState[ts.ID] != "rate-limited" {
+				snap.Finished++
+			}
 		}
 	}
 	if oldest != "" {
