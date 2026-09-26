@@ -52,6 +52,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`release_audited`](#release_audited)
   - [`health`](#health)
   - [`probed`](#probed)
+  - [`gate_probed`](#gate_probed)
   - [`amended`](#amended)
   - [`validated`](#validated)
   - [`owns_checked`](#owns_checked)
@@ -75,7 +76,7 @@ first line stops matching `^# flywheel protocol v`.
 
 ## 1. Required entries per task
 
-Forty-one event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
+Forty-three event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
 `Validate` rejects anything else. Nine of them carry a task's status (`state.go`'s `kindRank`
 orders them, together with some status-neutral kinds, for replay); the rest — `worker_plan`,
 `no-plan`, `off-course`, `report`, `validated`, `owns_checked`, `amended`, `sharded` and the
@@ -860,6 +861,21 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: `flywheel doctor --record`.
 - Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`).
 - Effect: an `ok` probe newer than the model's latest provider error closes its breaker at once instead of waiting for the cooldown to expire (issue #46).
+
+### `gate_probed`
+- Written by: `flywheel lint <brief> --probe --task <id>` (issue #544), one event per gate in a
+  single append, before dispatch; `--probe` without `--task` records nothing, and `--task` without
+  `--probe` is a usage error (exit 2).
+- Carries: `task`, `gate` (the gate's 1-based index as a string), `command` (the gate command
+  text), `rc`, `duration_ms`, `reason` (the probe's first output line, or the spawn error text) and
+  `commit` (the probed HEAD when the dir is a git repo). `Validate` requires `task`, `gate`,
+  `command` and `rc`.
+- Effect: informational; no status change. It may precede the task's `planned` event: `Derive`
+  skips it, so it never creates a task. When a gate fails, `flywheel validate` looks up the
+  task's newest `gate_probed` event with the same `command` (the text, not the index) and, if its
+  `rc` is non-zero, prints `<task> gate <N>: note: this gate already failed on the base tree
+  before dispatch (exit <rc>): <reason>`; `flywheel explain` adds `(also failed on the base tree
+  before dispatch, exit <rc>)` to the failed gate's line. Validate's exit code is unchanged.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a

@@ -220,6 +220,9 @@ func Derive(events []Event) State {
 		if strings.HasPrefix(e.Task, "group:") {
 			continue // a group's own records (issue #420): State.Groups, not a unit
 		}
+		if e.Kind == "gate_probed" {
+			continue // a pre-dispatch probe (issue #544) may precede planned and changes no state
+		}
 		ts, ok := tasks[e.Task]
 		if !ok {
 			ts = TaskState{ID: e.Task}
