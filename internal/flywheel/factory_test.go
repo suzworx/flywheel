@@ -777,6 +777,43 @@ func TestStartFailedFinishIsFailedOnAndon(t *testing.T) {
 	}
 }
 
+// TestHealthStaleAndon: a health event whose stale_after is 10m puts no
+// "health" andon entry on the floor 5m later and exactly one STALE entry 11m
+// later; a health event without stale_after never does (issue #552).
+func TestHealthStaleAndon(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	for _, stale := range []string{"10m0s", ""} {
+		dir := t.TempDir()
+		e := Event{TS: ts.Format(time.RFC3339Nano), Kind: "health", Health: &HealthSnapshot{Running: 1, StaleAfter: stale}}
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+		for _, step := range []struct {
+			after time.Duration
+			want  int
+		}{{5 * time.Minute, 0}, {11 * time.Minute, 1}} {
+			if stale == "" {
+				step.want = 0
+			}
+			w := NewWatcher()
+			fl, err := w.Refresh(dir, ts.Add(step.after))
+			if err != nil {
+				t.Fatalf("Refresh() error = %v", err)
+			}
+			var got []Andon
+			for _, a := range fl.Andon {
+				if a.Task == "health" {
+					got = append(got, a)
+				}
+			}
+			if len(got) != step.want || step.want == 1 && (!strings.Contains(got[0].State, "STALE") || got[0].Age != int((11*time.Minute).Seconds())) {
+				t.Errorf("stale_after %q at +%v: health andon = %+v, want %d STALE entry", stale, step.after, got, step.want)
+			}
+		}
+	}
+}
+
 // TestFloorPausedModel checks a rate-limited unit shows its reset on the
 // floor and its model gets one paused andon entry until then (issue #383).
 func TestFloorPausedModel(t *testing.T) {
