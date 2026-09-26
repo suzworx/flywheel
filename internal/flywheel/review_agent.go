@@ -522,7 +522,7 @@ func gateToolPatterns(gates []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, g := range gates {
-		for _, seg := range gateSegments(g) {
+		for _, seg := range commandSegments(g) {
 			f := strings.Fields(seg)
 			if len(f) < 2 || gateSyntax[f[0]] || isAssignment(f[0]) {
 				continue
@@ -539,33 +539,6 @@ func gateToolPatterns(gates []string) []string {
 		}
 	}
 	return out
-}
-
-// gateSegments splits a shell line on unquoted &&, ||, ;, | and newlines.
-func gateSegments(line string) []string {
-	var segs []string
-	var cur strings.Builder
-	var quote byte
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case c == '\'' || c == '"':
-			quote = c
-		case c == ';' || c == '\n' || c == '|' || (c == '&' && i+1 < len(line) && line[i+1] == '&'):
-			if (c == '|' || c == '&') && i+1 < len(line) && line[i+1] == c {
-				i++
-			}
-			segs = append(segs, cur.String())
-			cur.Reset()
-			continue
-		}
-		cur.WriteByte(c)
-	}
-	return append(segs, cur.String())
 }
 
 // isAssignment reports whether word is a shell name=value assignment.

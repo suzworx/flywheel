@@ -341,6 +341,7 @@ func TestGateToolPatterns(t *testing.T) {
 		"quoted &&":     {[]string{`echo "a && rm -rf x"`}, nil},
 		"duplicates":    {[]string{"npm test", "npm test || npm run lint | tee x", "x=1; npm run lint"}, []string{"Bash(npm test:*)", "Bash(npm run:*)", "Bash(tee x:*)"}},
 		"loop and test": {[]string{`for f in a; do [ -z "$f" ] || { echo "no"; exit 1; }; done`}, nil},
+		"escaped quote": {[]string{`echo "a \" && b" && npm test`}, []string{"Bash(npm test:*)"}},
 	} {
 		if got := gateToolPatterns(c.gates); strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Errorf("%s: gateToolPatterns(%q) = %q, want %q", name, c.gates, got, c.want)
