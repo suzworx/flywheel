@@ -3,7 +3,7 @@
 This page walks through what flywheel does beyond the core loop (plan, brief, dispatch, review,
 correct-or-land): how a dispatch is watched, how the gauges measure a unit, the worker adapters
 and how a model is picked, the limits that keep a wave safe, recovery after a crash, per-task
-worktrees, the review agent and its panel, and shipping. The [README](../README.md) has the short
+worktrees, the review agent and its panel, and shipping. The [README](https://github.com/suzworx/flywheel#readme) has the short
 version and the CLI table; [PROTOCOL.md](PROTOCOL.md) is the normative contract every command
 implements; `flywheel help <command>` prints any command's flags.
 
