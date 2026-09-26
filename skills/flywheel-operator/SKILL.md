@@ -196,7 +196,7 @@ same state files the planned subcommands will automate. `$MODEL` comes from
    ```
    Every dispatch sets `OPENCODE_CONFIG` to the worker permission policy, which denies
    tree-rewriting git commands (ordering and `--auto` behaviour:
-   [../flywheel/references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief](../flywheel/references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief)).
+   [../flywheel/references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback](../flywheel/references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback)).
    Session id (every JSONL event carries it):
    ```bash
    grep -o '"sessionID":"[^"]*"' .flywheel/runs/<id>.r1.jsonl | head -1

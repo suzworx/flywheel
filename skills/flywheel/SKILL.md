@@ -2,12 +2,13 @@
 name: flywheel
 description: >-
   Drive a durable orchestrator-to-worker implementation loop. Codex or Claude Code act as the
-  orchestrator (plan, brief, dispatch, validate); the OpenCode CLI running the approved DeepSeek
-  worker model does code exploration, implementation, tests, and heavy work. Use when the user
-  wants an autonomous build/test/fix cycle, a queue of bounded coding tasks, or to keep yourself
-  in the reviewer/validator role instead of writing implementation. When the worker is unavailable
-  (missing `opencode` CLI, unauthenticated model, or a provider failure), report the blocker and
-  do not take over implementation yourself.
+  orchestrator (plan, brief, dispatch, validate); the worker configured in .flywheel/config.json
+  (a claude, codex or opencode adapter running the approved model) does code exploration,
+  implementation, tests, and heavy work. Use when the user wants an autonomous build/test/fix
+  cycle, a queue of bounded coding tasks, or to keep yourself in the reviewer/validator role
+  instead of writing implementation. When the worker is unavailable (its adapter CLI missing,
+  unauthenticated model, or a provider failure), report the blocker and do not take over
+  implementation yourself.
 license: MIT
 metadata:
   version: 0.32.0 # x-release-please-version
@@ -15,8 +16,9 @@ metadata:
 
 # Flywheel
 
-You are the **orchestrator** (a planner/thinker/validator). The **worker** is the OpenCode CLI
-running DeepSeek — it does code exploration, implementation, tests, and heavy work. You never do
+You are the **orchestrator** (a planner/thinker/validator). The **worker** is whatever
+`.flywheel/config.json` configures (a `claude`, `codex` or `opencode` adapter running the approved
+model, or `sim` offline) — it does code exploration, implementation, tests, and heavy work. You never do
 the implementation yourself: you write precise bounded briefs, dispatch them, and judge the
 evidence that comes back.
 
@@ -89,19 +91,20 @@ When you start a session, register yourself on the floor:
   scope per brief is fine; large single writes are not, so every brief carries the write rule. If
   no approved worker is available, stop and ask — don't guess.
 - **Orchestrator never implements.** You send corrections to the worker; you do not write the fix.
-- **Worker unavailable → report blocker, do not take over.** If the `opencode` CLI is missing, the
-  model is unauthenticated, the session cannot be resumed, or a provider error hits (per-key
+- **Worker unavailable → report blocker, do not take over.** If the worker's adapter CLI
+  (`claude`, `codex` or `opencode`) is missing, the model is unauthenticated, the session cannot be resumed, or a provider error hits (per-key
   limit, out of credits, a consent gate such as China hosting), report the blocker and halt
   ([references/worker-brief.md#8-blocker-protocol-do-not-take-over](references/worker-brief.md#8-blocker-protocol-do-not-take-over)).
 - **No unrequested commits, pushes, or secrets.** Commit and push only when the user asks;
   standing instructions in `CLAUDE.md` or `AGENTS.md` count as asking. Workers never run git write commands; flywheel commits each
   attempt of a `--worktree` unit on `fw/<task>` (the `finished` event's `commit`). Never
   put secrets or keys in a brief.
-- **Workers never rewrite the shared tree or index.** Every dispatch carries the deny policy via
-  `OPENCODE_CONFIG`
-  ([references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief](references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief)).
-- **DRY.** Use the `opencode` CLI directly. Do not copy scripts or scaffold a framework. The
-  `opencode-delegate` skill is an optional integration, never a dependency to clone.
+- **Workers never rewrite the shared tree or index.** Every dispatch carries the adapter's deny
+  policy (for the opencode adapter, via `OPENCODE_CONFIG`)
+  ([references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback](references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback)).
+- **DRY.** Dispatch with `flywheel run`, or the worker adapter's own CLI directly as the fallback.
+  Do not copy scripts or scaffold a framework. The `opencode-delegate` skill is an optional
+  integration, never a dependency to clone.
 
 ## The loop (compact)
 
@@ -155,8 +158,8 @@ a later `--kind planned` revives it).
 Shortcut from a tracker issue: `flywheel brief <t> --from-issue <n> --owns ...` writes the linted brief and records it planned with the issue.
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
 (attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
-adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,
-or `sim`), and `flywheel run --worker <name>` picks between several configured workers. For
+adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`claude`, `codex`,
+`opencode`, or `sim` offline), and `flywheel run --worker <name>` picks between several configured workers. For
 parallel units, `flywheel run --worktree <task>` is the default: each unit builds in its own
 `.flywheel/worktrees/<task>` on branch `fw/<task>`, so parallel workers never share a tree, and
 flywheel commands run there use the main ledger. A repository that integrates into another branch
@@ -168,9 +171,9 @@ run `flywheel rebase <task> [--onto REF]` once A lands as a squash: until then t
 `stacked`); a conflicting rebase is aborted and lists the paths (#414). A rebase done by hand
 is recorded with `flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"`
 (#498). The
-hand-built **fresh run** below is the OpenCode-specific fallback (e.g. one increment of a brief):
-or `sim`), and `flywheel run --worker <name>` picks between several configured workers. The
-hand-built **fresh run** below is the OpenCode-specific fallback.
+hand-built **fresh run** below is the fallback for the opencode adapter (other adapters use their
+own CLI the same way; see
+[references/worker-brief.md §2](references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback)).
 **Never background a dispatch with a bare `&`**: a shell job nobody tracks finishes unseen (issue
 #393). Use the host's tracked background mode (one that re-invokes you when the command exits), or
 block on `flywheel wait <task>... [--timeout D]`: it returns when each named task finishes its current
@@ -179,14 +182,14 @@ block on `flywheel wait <task>... [--timeout D]`: it returns when each named tas
 any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"` in its environment.
 Never run `flywheel run <task>` again while its attempt is dispatched or running: it refuses (exit 6,
 rule `in-flight`) in every mode until that attempt finishes or is marked lost after `limits.lost_after`.
-The OpenCode fallback (e.g. one increment of a brief):
+The opencode-adapter fallback (e.g. one increment of a brief):
 verify flags first
 (`opencode run --help`), label with `--title`, auto-approve with `--auto`, emit JSON so you capture
 the session id, and add `--variant low` (the default reasoning variant spends 17-30 k reasoning
 tokens planning one step and caps with nothing written; `--variant low` keeps ~1 k per step). Every
-dispatch sets `OPENCODE_CONFIG` to the worker permission policy so the worker cannot rewrite the
+opencode dispatch sets `OPENCODE_CONFIG` to the worker permission policy so the worker cannot rewrite the
 shared tree (ordering and `--auto` behaviour:
-[references/worker-brief.md §2](references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief)):
+[references/worker-brief.md §2](references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback)):
 
 ```bash
 mkdir -p .flywheel/runs
@@ -217,10 +220,10 @@ never takes an invented string.
 The worker runs tests itself. You do not run the tests for it; you judge its results afterward.
 Expect the first event within about 30 s. If a run is silent after 60 s or ends early, classify it
 before retrying ([references/worker-brief.md#3-run-states-and-failures](references/worker-brief.md#3-run-states-and-failures));
-check the opencode log for provider errors before calling it a stall. A run reading many distinct
+check the worker adapter's log (for opencode, the opencode log) for provider errors before calling it a stall. A run reading many distinct
 files with no edits is `exploring`, not stuck — check its plan message before acting
 ([references/worker-brief.md#3-run-states-and-failures](references/worker-brief.md#3-run-states-and-failures)).
-Never kill opencode processes by name.
+Never kill worker processes (`claude`, `codex`, `opencode`) by name.
 
 To check on running workers, read the floor with `flywheel factory --once` (or `--json` for
 machine use) instead of asking workers or reading run files by hand; its andon lists the units
@@ -273,8 +276,9 @@ A flywheel command run inside a unit's `flywheel run --worktree` worktree
 
 ### 5. Correct or land
 - Needs changes → send a **correction** to the worker by resuming the **emitted session id** with a
-  delta brief (never implement it yourself, never invent the session id). The resume carries the
-  same `OPENCODE_CONFIG` policy ([references/worker-brief.md §2](references/worker-brief.md#2-dispatch-verify-then-use-the-safe-quoted-file-brief)):
+  delta brief (never implement it yourself, never invent the session id): `flywheel run <task>
+  --resume` for any adapter. The opencode fallback resume carries the same `OPENCODE_CONFIG`
+  policy ([references/worker-brief.md §2](references/worker-brief.md#2-dispatch-canonical-flywheel-run-the-worker-adapters-own-cli-as-fallback)):
 
 ```bash
 OPENCODE_CONFIG=skills/flywheel/references/worker-permissions.json \
