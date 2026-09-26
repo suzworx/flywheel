@@ -512,12 +512,33 @@ const (
 
 // ControllerConfig tunes the controller loop: the tick interval, the lock
 // ttl and the intent timeout (unused until the dispatch phase). All three
-// are Go duration strings; when the block is absent the defaults apply:
+// are Go duration strings; when the block or a value is absent the defaults apply:
 // interval 10s, lock_ttl 30s, intent_timeout 2m.
+//
+// AutoResume (default on when absent) makes every tick resume the
+// rate-limited units whose model's reset has passed, as supervise
+// --resume-limited does; Notify is a shell command run once per unit a tick
+// started, with FLYWHEEL_RESUMED="<task> <attempt> model=<model>".
 type ControllerConfig struct {
 	Interval      string `json:"interval,omitempty"`
 	LockTTL       string `json:"lock_ttl,omitempty"`
 	IntentTimeout string `json:"intent_timeout,omitempty"`
+	AutoResume    *bool  `json:"auto_resume,omitempty"`
+	Notify        string `json:"notify,omitempty"`
+}
+
+// controllerAutoResume reports whether the controller resumes rate-limited
+// units: true unless controller.auto_resume is false.
+func (c Config) controllerAutoResume() bool {
+	return c.Controller == nil || c.Controller.AutoResume == nil || *c.Controller.AutoResume
+}
+
+// controllerNotify returns controller.notify, "" when unset.
+func (c Config) controllerNotify() string {
+	if c.Controller == nil {
+		return ""
+	}
+	return c.Controller.Notify
 }
 
 const (
@@ -930,26 +951,37 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.Controller != nil {
-		interval, ierr := time.ParseDuration(c.Controller.Interval)
+		// An empty duration means its default, so a block may set only
+		// auto_resume or notify.
+		cc := *c.Controller
+		for _, d := range []struct {
+			v   *string
+			def time.Duration
+		}{{&cc.Interval, defaultControllerInterval}, {&cc.LockTTL, defaultControllerLockTTL}, {&cc.IntentTimeout, defaultControllerIntentTimeout}} {
+			if *d.v == "" {
+				*d.v = d.def.String()
+			}
+		}
+		interval, ierr := time.ParseDuration(cc.Interval)
 		if ierr != nil {
-			problems = append(problems, fmt.Sprintf("controller.interval %q is not a valid duration", c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.interval %q is not a valid duration", cc.Interval))
 		} else if interval <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.interval %s must be positive", c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.interval %s must be positive", cc.Interval))
 		}
-		lockTTL, terr := time.ParseDuration(c.Controller.LockTTL)
+		lockTTL, terr := time.ParseDuration(cc.LockTTL)
 		if terr != nil {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %q is not a valid duration", c.Controller.LockTTL))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %q is not a valid duration", cc.LockTTL))
 		} else if lockTTL <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be positive", c.Controller.LockTTL))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be positive", cc.LockTTL))
 		}
-		intent, merr := time.ParseDuration(c.Controller.IntentTimeout)
+		intent, merr := time.ParseDuration(cc.IntentTimeout)
 		if merr != nil {
-			problems = append(problems, fmt.Sprintf("controller.intent_timeout %q is not a valid duration", c.Controller.IntentTimeout))
+			problems = append(problems, fmt.Sprintf("controller.intent_timeout %q is not a valid duration", cc.IntentTimeout))
 		} else if intent <= 0 {
-			problems = append(problems, fmt.Sprintf("controller.intent_timeout %s must be positive", c.Controller.IntentTimeout))
+			problems = append(problems, fmt.Sprintf("controller.intent_timeout %s must be positive", cc.IntentTimeout))
 		}
 		if ierr == nil && terr == nil && lockTTL <= interval {
-			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", c.Controller.LockTTL, c.Controller.Interval))
+			problems = append(problems, fmt.Sprintf("controller.lock_ttl %s must be greater than interval %s", cc.LockTTL, cc.Interval))
 		}
 	}
 	if c.Baseline != nil {
