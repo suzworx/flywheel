@@ -223,6 +223,67 @@ func latestEvent(events []Event, now time.Time, match func(Event) bool) *LastEve
 	return p
 }
 
+// HealthReport is the latest health event as status --health reads it (issue
+// #528): its ts, its age in whole seconds from now, whether that age is past
+// the reader's stale-after, and the snapshot.
+type HealthReport struct {
+	TS     string          `json:"ts"`
+	Age    int             `json:"age"`
+	Stale  bool            `json:"stale"`
+	Health *HealthSnapshot `json:"health"`
+}
+
+// LatestHealthReport reads the newest health event at now; nil when none is
+// recorded. It is stale when older than staleAfter (0 never is).
+func LatestHealthReport(dir string, now time.Time, staleAfter time.Duration) (*HealthReport, error) {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read events %s: %w", dir, err)
+	}
+	e, at, ok := LatestHealth(events)
+	if !ok {
+		return nil, nil
+	}
+	return &HealthReport{TS: e.TS, Age: ageOfTime(at, now), Health: e.Health,
+		Stale: staleAfter > 0 && now.Sub(at) > staleAfter}, nil
+}
+
+// HealthLine renders a health report as the one line status --health prints:
+// "health: none recorded" for nil, the STALE line when stale, otherwise the
+// snapshot's counts, paused models (reset as the viewer's HH:MM), oldest
+// in-flight unit, controller generation and flywheel version.
+func HealthLine(r *HealthReport) string {
+	if r == nil {
+		return "health: none recorded"
+	}
+	if r.Stale {
+		return fmt.Sprintf("health STALE (%s): the controller is not recording; run flywheel controller", HumanAge(r.Age))
+	}
+	h := r.Health
+	var b strings.Builder
+	fmt.Fprintf(&b, "health %s ago: running %d, stalled %d, rate-limited %d", HumanAge(r.Age), h.Running, h.Stalled, h.RateLimited)
+	if len(h.PausedModels) > 0 {
+		var ps []string
+		for _, p := range h.PausedModels {
+			until := p.ResetAt
+			if t, err := time.Parse(time.RFC3339, p.ResetAt); err == nil {
+				until = t.Local().Format("15:04")
+			}
+			ps = append(ps, p.Model+" until "+until)
+		}
+		fmt.Fprintf(&b, " (paused: %s)", strings.Join(ps, ", "))
+	}
+	fmt.Fprintf(&b, ", andon %d", h.Andon)
+	if h.OldestInFlight != "" {
+		fmt.Fprintf(&b, ", oldest %s", h.OldestInFlight)
+	}
+	fmt.Fprintf(&b, ", controller gen %d", h.ControllerGeneration)
+	if h.Version != "" {
+		fmt.Fprintf(&b, ", flywheel %s", h.Version)
+	}
+	return b.String()
+}
+
 // countLeaseFiles counts the lease candidates in .flywheel/leases with the
 // same filter ReadLeases applies, so status can report how many were skipped.
 func countLeaseFiles(dir string) int {

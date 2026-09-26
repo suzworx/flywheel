@@ -624,6 +624,18 @@ all.
   `not resumed <task>: <reason>`. For every unit actually started it runs `controller.notify`, when
   set, through the gates' shell with `FLYWHEEL_RESUMED="<task> <attempt> model=<model>"`; a notify
   failure only warns. `flywheel supervise --resume-limited` is the one-shot form.
+- `flywheel controller --health-every D` (default `5m`; `0` disables) makes each tick end by
+  appending one `health` event when none is recorded or the latest is at least `D` old: at most
+  one per interval, idempotent within it. `flywheel status --health [--stale-after D] [--json]`
+  prints the latest as `health <age> ago: running N, stalled N, rate-limited N (paused: <model>
+  until HH:MM), andon N, oldest <task> <age>, controller gen G, flywheel <version>`, or
+  `health: none recorded`; `--json` prints `{ts, age, stale, health}` (`null` when none). A record
+  older than `--stale-after` (default `10m`) prints `health STALE (<age>): the controller is not
+  recording; run flywheel controller` and exits 1 (exit 0 otherwise). The stale record is not yet an
+  entry in the factory view's andon list.
+- `limits.checkpoint_every` (a Go duration, default `10m`; `"0"` off): an attempt running in its
+  task worktree is checkpointed to `refs/flywheel/checkpoints/<task>/<attempt>` on that interval,
+  only when its owned files changed.
 - `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID]` (read-only without `--apply`)
   is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
   over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a
@@ -758,6 +770,17 @@ all.
   download or a run of the binary failed, or the tag is missing only from this clone or origin could
   not be asked; a tag missing on origin too fails `tag`), else `pass`. It is recorded whatever the verdict; a
   missing session or a usage error records nothing.
+
+### `health`
+- Written by: `flywheel controller` with `--health-every` above 0 (issue #528), at most once per interval.
+- Floor level: carries no `task`.
+- Carries: `health`, the snapshot: `running` (tasks dispatched or running), `stalled` and
+  `rate_limited` (units in that run state on the floor), `finished`, `andon` (the floor's andon
+  count), `paused_models` (`[{model, reset_at}]`, each model a rate limit pauses and its RFC 3339
+  reset), `oldest_in_flight` (the longest-dispatched in-flight task and its age, `T3 42m`; omitted
+  when none), `controller_generation` (the controller lock's generation) and `version` (the
+  flywheel version). `Validate` requires the snapshot and no task; no other kind may carry `health`.
+- Effect: no status change. Read by `flywheel status --health`.
 
 ### `probed`
 - Written by: `flywheel doctor --record`.

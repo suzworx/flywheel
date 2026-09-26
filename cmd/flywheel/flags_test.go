@@ -513,3 +513,74 @@ func TestAcknowledgeRequiresNote(t *testing.T) {
 		t.Errorf("events = %+v, want one acknowledgement of c1 with no brief after the dispatch", evs)
 	}
 }
+
+// healthAt is the instant the status --health tests read at.
+var healthAt = time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+// healthDir is a factory whose ledger holds one health event age before
+// healthAt.
+func healthDir(t *testing.T, age time.Duration) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := flywheel.AppendEvent(dir, flywheel.Event{TS: healthAt.Add(-age).Format(time.RFC3339Nano), Kind: "health",
+		Health: &flywheel.HealthSnapshot{Running: 2, Stalled: 1, RateLimited: 1, Andon: 3, OldestInFlight: "T3 42m",
+			PausedModels:         []flywheel.PausedModel{{Model: "m", ResetAt: "2026-09-25T13:00:00Z"}},
+			ControllerGeneration: 4, Version: "v1.2.3"}}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	return dir
+}
+
+// runStatusHealth parses args as status flags and runs statusHealth at
+// healthAt, returning its output and exit code.
+func runStatusHealth(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+	fs, o := statusFlags()
+	if _, err := parseArgs(fs, args); err != nil {
+		t.Fatalf("parse %q: %v", args, err)
+	}
+	var buf strings.Builder
+	code := statusHealth(o, healthAt, &buf)
+	return buf.String(), code
+}
+
+// TestStatusHealthPrintsLatest: status --health prints the latest health
+// event as one line and exits 0; --json carries the snapshot, ts and age.
+func TestStatusHealthPrintsLatest(t *testing.T) {
+	t.Parallel()
+	dir := healthDir(t, 3*time.Minute)
+	out, code := runStatusHealth(t, "--dir", dir, "--health")
+	paused := time.Date(2026, 9, 25, 13, 0, 0, 0, time.UTC).Local().Format("15:04")
+	want := "health 3m ago: running 2, stalled 1, rate-limited 1 (paused: m until " + paused +
+		"), andon 3, oldest T3 42m, controller gen 4, flywheel v1.2.3\n"
+	if code != 0 || out != want {
+		t.Errorf("status --health = %q (exit %d), want %q (exit 0)", out, code, want)
+	}
+	out, code = runStatusHealth(t, "--dir", dir, "--health", "--json")
+	var rep flywheel.HealthReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil || code != 0 || rep.Age != 180 || rep.Stale ||
+		rep.Health == nil || rep.Health.ControllerGeneration != 4 || rep.TS == "" {
+		t.Errorf("status --health --json = %q (exit %d, err %v), want the snapshot aged 180s", out, code, err)
+	}
+}
+
+// TestStatusHealthNoneRecorded: an empty log prints "health: none recorded".
+func TestStatusHealthNoneRecorded(t *testing.T) {
+	t.Parallel()
+	out, code := runStatusHealth(t, "--dir", t.TempDir(), "--health")
+	if code != 0 || out != "health: none recorded\n" {
+		t.Errorf("status --health = %q (exit %d), want none recorded (exit 0)", out, code)
+	}
+}
+
+// TestHealthStaleIsAndon: a health record 20m old with --stale-after 10m
+// prints the STALE line and exits 1.
+func TestHealthStaleIsAndon(t *testing.T) {
+	t.Parallel()
+	dir := healthDir(t, 20*time.Minute)
+	out, code := runStatusHealth(t, "--dir", dir, "--health", "--stale-after", "10m")
+	want := "health STALE (20m): the controller is not recording; run flywheel controller\n"
+	if code != 1 || out != want {
+		t.Errorf("status --health = %q (exit %d), want %q (exit 1)", out, code, want)
+	}
+}
