@@ -2364,12 +2364,16 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	var buf bytes.Buffer
+	// The lease is written before the sim sleeps and removed after finished,
+	// so SimDelay is how long the lease is visible. 2s spans a wall-clock
+	// second boundary and ~100 renewals, so a loaded host still sees both the
+	// lease and a renewal; the waits below are hang guards only (issue #537).
 	go func() {
-		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: 800 * time.Millisecond, Progress: &buf})
+		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: 2 * time.Second, Progress: &buf})
 		done <- outcome{res, err}
 	}()
 
-	waitFor(t, 2*time.Second, "the lease to be written before the first line", func() bool {
+	waitFor(t, 10*time.Second, "the lease to be written before the first line", func() bool {
 		_, ok := leaseFor(t, dir, "T1", "r1")
 		return ok
 	})
@@ -2384,10 +2388,24 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, l.StartedAt); err != nil {
 		t.Errorf("started_at %q is not RFC3339: %v", l.StartedAt, err)
 	}
-	firstExpires := l.ExpiresAt
-	waitFor(t, 2*time.Second, "a renewal (expires_at moves forward)", func() bool {
+	// Compare parsed times: the stamps are RFC3339Nano, which drops trailing
+	// zeros, so string order is not time order.
+	firstRenewed, err := time.Parse(time.RFC3339, l.RenewedAt)
+	if err != nil {
+		t.Fatalf("renewed_at %q is not RFC3339: %v", l.RenewedAt, err)
+	}
+	firstExpires, err := time.Parse(time.RFC3339, l.ExpiresAt)
+	if err != nil {
+		t.Fatalf("expires_at %q is not RFC3339: %v", l.ExpiresAt, err)
+	}
+	waitFor(t, 10*time.Second, "a renewal (renewed_at and expires_at move forward)", func() bool {
 		l, ok := leaseFor(t, dir, "T1", "r1")
-		return ok && l.ExpiresAt > firstExpires
+		if !ok {
+			t.Fatal("lease removed before a renewal was observed")
+		}
+		renewed, rerr := time.Parse(time.RFC3339, l.RenewedAt)
+		expires, eerr := time.Parse(time.RFC3339, l.ExpiresAt)
+		return rerr == nil && eerr == nil && renewed.After(firstRenewed) && expires.After(firstExpires)
 	})
 
 	select {
@@ -2398,7 +2416,7 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 		if o.res.Attempt != "r1" {
 			t.Errorf("attempt = %q, want r1", o.res.Attempt)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("Run() did not finish in time")
 	}
 	if leases, err := ReadLeases(dir); err != nil || len(leases) != 0 {
@@ -2448,12 +2466,14 @@ func TestLeaseRemainsWhenRunKilled(t *testing.T) {
 		err error
 	}
 	done := make(chan outcome, 1)
+	// SimDelay is how long the lease stays visible; 2s keeps it in place on a
+	// loaded host while the checks below run. The wait is a hang guard only.
 	go func() {
-		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: time.Second})
+		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: 2 * time.Second})
 		done <- outcome{res, err}
 	}()
 
-	waitFor(t, 2*time.Second, "the lease file", func() bool {
+	waitFor(t, 10*time.Second, "the lease file", func() bool {
 		_, ok := leaseFor(t, dir, "T1", "r1")
 		return ok
 	})
