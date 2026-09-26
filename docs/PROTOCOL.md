@@ -212,7 +212,9 @@ all.
   does not (issue #163). `failed-dirty` reaches the andon and is dead, exactly as `failed` is.
 - A `stop` finish is not automatically done (issue #364): when the claude result line carried
   `permission_denials`, `note` adds `permission denied: <tool [path], ...>` and a
-  `permission-denied` signal follows the `finished` event (run state **blocked**). Otherwise, when
+  `permission-denied` signal follows the `finished` event (run state **blocked**). A Bash denial
+  names the deny pattern and the command segment it matched, `Bash: <pattern> (<segment>)`, or
+  `Bash: unattributed (<command>)` when no pattern matches (issue #497). Otherwise, when
   `wrote` is empty, no signal is recorded (an untriaged signal blocks landing, and some units
   legitimately write nothing): the factory view derives the floor state **no-writes** from the
   `finished` event alone. Both states apply only while the unit is awaiting judgement (status
