@@ -594,12 +594,13 @@ all.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
-  one safe action, and via `flywheel supervise --resume-limited` (issue #472) for each auto-resume.
+  one safe action, and via `flywheel supervise --resume-limited` (issue #472) or the controller's
+  auto-resume (issue #528) for each auto-resume.
 - Carries: no `task`; `note` (the actions applied, `; `-separated, e.g. `mark-lost T r1
   (lease-expired) checkpoint 1a2b3c4`, `re-validate T`, `rebase T onto 5d6e7f8`; or one
   `auto-resume <task> <attempt> after rate limit (<n>/<cap>)`), `paths` (the tasks they touched,
   sorted), `session` on an auto-resume (`--session`, default `$FLYWHEEL_SESSION`, else
-  `supervise`). `Validate` requires the note and refuses a task.
+  `supervise`; the controller's, `$FLYWHEEL_SESSION` else `controller`). `Validate` requires the note and refuses a task.
 - Effect: no status change; the applied actions record their own events (`lost`, `validated`,
   `owns_checked`, `rebased`; a resumed run its `dispatched` and `finished`).
 - `flywheel supervise --resume-limited` acts on the recover next action `resume-session` (below)
@@ -613,6 +614,15 @@ all.
   The cap is `limits.rate_limit_retries` auto-resumes since the task's latest `planned` event:
   past it the pass reports `not resumed: auto-resume cap N reached` and starts nothing. A failed
   start keeps its event (it counts toward the cap). Exit codes are unchanged.
+- `flywheel controller` runs the same pass (issue #528) after each tick's reconcile actions while
+  `controller.auto_resume` is on (the default; `false` turns it off): same selection, cap and
+  event-before-start ordering, under `supervise.lock` (a tick waits at most 1s for it; a busy lock
+  skips the pass that tick with a warning on stderr, the next tick retries), its `session`
+  `$FLYWHEEL_SESSION`, else `controller`. Each unit it acted on prints one line after the tick
+  summary: `resumed <task> <attempt> (log .flywheel/runs/<task>.autoresume.log)` or
+  `not resumed <task>: <reason>`. For every unit actually started it runs `controller.notify`, when
+  set, through the gates' shell with `FLYWHEEL_RESUMED="<task> <attempt> model=<model>"`; a notify
+  failure only warns. `flywheel supervise --resume-limited` is the one-shot form.
 - `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID]` (read-only without `--apply`)
   is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
   over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a

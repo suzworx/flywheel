@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -216,16 +218,110 @@ type TickResult struct {
 	Lost     int    `json:"lost"`
 	Blocked  int    `json:"blocked"`
 	Proposed int    `json:"proposed"`
+	// Resumed are the rate-limited units the tick's auto-resume pass acted on.
+	Resumed []SupervisedResume `json:"resumed,omitempty"`
+	// ResumeSkipped says why the auto-resume pass did not run this tick
+	// (supervise's lock was busy); the next tick tries again.
+	ResumeSkipped string `json:"resume_skipped,omitempty"`
+	// Warnings are controller.notify failures; they never fail the tick.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
-// Tick runs one controller tick at now: it acquires (or renews) the
+// TickOptions configures TickWith. The zero value only reconciles.
+type TickOptions struct {
+	// Start starts flywheel run <task> --resume; nil disables auto-resume.
+	// While set, controller.auto_resume (default on) decides.
+	Start func(task string) error
+	// Session is recorded on the auto-resume recovered event.
+	Session string
+	// Notify runs controller.notify with FLYWHEEL_RESUMED=resumed; nil runs
+	// it through ShellArgv.
+	Notify func(command, resumed string) error
+}
+
+// resumeLockWait bounds how long a tick waits for supervise's lock: a
+// supervise pass may validate for minutes, and the tick must not stall.
+const resumeLockWait = time.Second
+
+// Tick is TickWith with the zero options: it only reconciles.
+func Tick(dir string, now time.Time) (TickResult, error) {
+	return TickWith(dir, now, TickOptions{})
+}
+
+// autoResume runs supervise's resume pass (resumeLimited) under supervise's
+// lock, so a concurrent supervise --resume-limited never double-starts a
+// unit, then runs controller.notify once per unit it started.
+func autoResume(dir string, now time.Time, cfg Config, o TickOptions, res *TickResult) error {
+	timings := defaultRepoLockTimings()
+	timings.wait = resumeLockWait
+	release, err := acquireRepoLock(dir, "supervise.lock", timings)
+	if err != nil {
+		res.ResumeSkipped = err.Error()
+		return nil
+	}
+	resumed, err := resumeLimited(dir, SuperviseOptions{ResumeLimited: true, Now: now, Start: o.Start, Session: o.Session})
+	release()
+	res.Resumed = resumed
+	if err != nil {
+		return err
+	}
+	cmd := cfg.controllerNotify()
+	if cmd == "" {
+		return nil
+	}
+	notify := o.Notify
+	if notify == nil {
+		notify = runResumeNotify
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return fmt.Errorf("read events %s: %w", dir, err)
+	}
+	for _, r := range resumed {
+		if !r.Started {
+			continue
+		}
+		line := fmt.Sprintf("%s %s model=%s", r.Task, r.Attempt, finishedModel(events, r.Task, r.Attempt))
+		if nerr := notify(cmd, line); nerr != nil {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("controller.notify failed for %s: %v", r.Task, nerr))
+		}
+	}
+	return nil
+}
+
+// finishedModel is the model of task's latest finish of attempt, "" if none.
+func finishedModel(events []Event, task, attempt string) string {
+	m := ""
+	for _, e := range events {
+		if e.Task == task && e.Kind == "finished" && e.Attempt == attempt {
+			m = e.Model
+		}
+	}
+	return m
+}
+
+// runResumeNotify runs command through the gates' shell (ShellArgv) with
+// FLYWHEEL_RESUMED=resumed; a failure carries the command's output.
+func runResumeNotify(command, resumed string) error {
+	argv := ShellArgv(command)
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Env = append(os.Environ(), "FLYWHEEL_RESUMED="+resumed)
+	if out, err := c.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// TickWith runs one controller tick at now: it acquires (or renews) the
 // controller lock, reads the events, leases, run files and config, calls Reconcile and
 // executes the durable actions — MARK_LOST appends a lost event (reason
 // lease-expired or idle, the note carrying the evidence; see MarkLost) and BLOCK appends a
 // blocked event whose reason names the needs target. REQUEST_INSPECTION,
 // WAIT and DISPATCH are reported in the result only and append nothing. The
-// tick is idempotent: the same inputs append nothing the second time.
-func Tick(dir string, now time.Time) (TickResult, error) {
+// tick is idempotent: the same inputs append nothing the second time. With
+// o.Start set and controller.auto_resume on, it then resumes the rate-limited
+// units whose model's reset has passed (autoResume).
+func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return TickResult{}, fmt.Errorf("read config %s: %w", dir, err)
@@ -262,6 +358,11 @@ func Tick(dir string, now time.Time) (TickResult, error) {
 			res.Actions++
 		default:
 			res.Proposed++
+		}
+	}
+	if o.Start != nil && cfg.controllerAutoResume() {
+		if err := autoResume(dir, now, cfg, o, &res); err != nil {
+			return res, err
 		}
 	}
 	return res, nil
