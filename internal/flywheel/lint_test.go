@@ -511,3 +511,35 @@ func TestLintImportersRealGoList(t *testing.T) {
 	res := lintWith(t, importerFiles(), suiteBrief("a/a.go", "go test ./..."), goList)
 	want(t, res, nil, []string{"owns changes m/a, imported by m/b whose tests are not owned"})
 }
+
+// TestLintWebToolsWarning checks a brief asking for web research warns when
+// the default worker is a claude worker that cannot use WebSearch/WebFetch,
+// and not when its allowed_tools have one, its permission_mode is
+// bypassPermissions, or it is not a claude worker (issue #526).
+func TestLintWebToolsWarning(t *testing.T) {
+	t.Parallel()
+	brief := "owns: a.md\nneeds: none\ngate: true\n\n# TASK: x\nUse WebSearch to find the current release.\n## Checks\nAt most one write per response\nreport\n"
+	warn := `the brief asks for web research but worker "w" (claude, permission_mode acceptEdits) cannot use WebSearch or WebFetch: every call would be denied; add WebSearch/WebFetch to its allowed_tools or set its permission_mode`
+	cases := []struct {
+		name, worker string
+		want         bool
+	}{
+		{"claude lacking web tools", `{"name":"w","adapter":"claude","model":"m"}`, true},
+		{"allowed WebSearch", `{"name":"w","adapter":"claude","model":"m","allowed_tools":["Bash","WebSearch"]}`, false},
+		{"bypassPermissions", `{"name":"w","adapter":"claude","model":"m","permission_mode":"bypassPermissions"}`, false},
+		{"opencode", `{"name":"w","adapter":"opencode","model":"m"}`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := `{"version":1,"workers":[` + c.worker + `]}`
+			res := lintWith(t, map[string]string{"a.md": "x\n", ".flywheel/config.json": cfg}, brief, noGoList)
+			if got := slices.Contains(res.Warnings, warn); got != c.want {
+				t.Errorf("warning present = %v, want %v; warnings = %q", got, c.want, res.Warnings)
+			}
+			if len(res.Problems) != 0 {
+				t.Errorf("problems = %q, want none", res.Problems)
+			}
+		})
+	}
+}

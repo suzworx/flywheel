@@ -887,7 +887,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
 		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
-		MCPConfig: worker.mcpConfig(),
+		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
 	}
 	if commandHook != nil {
 		commandHook(req)
@@ -1006,6 +1006,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	planRecorded := false
 	noPlanRecorded := false
 	offCourseRecorded := false
+	// liveDenied is set when the attempt's first live denial recorded its
+	// permission-denied signal; the finish-time signal is then skipped (#526).
+	liveDenied := false
 	outsideSeen := map[string]bool{}
 	var outsideOrder []string
 	wroteSeen := map[string]bool{}
@@ -1181,6 +1184,20 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				pending[obs.ToolUseID] = obs.Command
 			}
 		case "tool_result":
+			// A tool the harness denied raises the andon now, while the worker
+			// runs, not at finish: one permission-denied signal per attempt,
+			// naming the tool. The worker is not stopped (issue #526).
+			if obs.Denied != "" && !liveDenied {
+				liveDenied = true
+				if err := AppendEvent(dir, Event{
+					TS: "", Task: o.Task, Kind: "signal", Signal: "permission-denied",
+					Attempt: attempt, Session: session, Path: runRel,
+					Note: clipNote("permission denied (live): " + obs.Denied),
+				}); err != nil {
+					return Result{}, err
+				}
+				progress(o.Progress, "andon: "+o.Task+" "+attempt+" permission-denied "+obs.Denied+" (live)")
+			}
 			// A background call's result names its shell id: the call is
 			// tracked from here on under that id (issue #390).
 			if c, ok := pending[obs.ToolUseID]; ok && obs.ShellID != "" {
@@ -1549,7 +1566,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return Result{}, err
 		}
 	case "stop":
-		if stopSignal != "" {
+		// A live denial already recorded this attempt's permission-denied
+		// signal (issue #526); the finish-time one is not repeated.
+		if stopSignal != "" && !(stopSignal == "permission-denied" && liveDenied) {
 			if err := recordSignal(dir, o.Task, attempt, session, stopSignal, runRel); err != nil {
 				return Result{}, err
 			}

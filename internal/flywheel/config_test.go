@@ -345,6 +345,104 @@ func TestConfigSetWritesAndReadsBack(t *testing.T) {
 	}
 }
 
+// TestConfigIntegrationBranch checks integration.branch is settable and
+// readable through config set/get (issue #529): it round-trips in memory and
+// on disk, an empty value clears it, and a bad name is refused by WriteConfig.
+func TestConfigIntegrationBranch(t *testing.T) {
+	t.Parallel()
+	t.Run("set then get", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig()
+		if v, err := cfg.Get("integration.branch"); err != nil || v != "" {
+			t.Errorf("unset Get(integration.branch) = %q, %v; want \"\", nil", v, err)
+		}
+		if err := cfg.Set("integration.branch", " develop "); err != nil {
+			t.Fatalf("Set(integration.branch, develop) error = %v", err)
+		}
+		if v, err := cfg.Get("integration.branch"); err != nil || v != "develop" {
+			t.Errorf("Get(integration.branch) = %q, %v; want develop", v, err)
+		}
+	})
+	t.Run("written and read back", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if err := cfg.Set("integration.branch", "develop"); err != nil {
+			t.Fatalf("Set(integration.branch, develop) error = %v", err)
+		}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatalf("WriteConfig() error = %v", err)
+		}
+		got, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("LoadConfig() after write error = %v", err)
+		}
+		if v, err := got.Get("integration.branch"); err != nil || v != "develop" {
+			t.Errorf("Get(integration.branch) after write = %q, %v; want develop", v, err)
+		}
+	})
+	t.Run("empty clears", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig()
+		if err := cfg.Set("integration.branch", "develop"); err != nil {
+			t.Fatalf("Set(integration.branch, develop) error = %v", err)
+		}
+		if err := cfg.Set("integration.branch", ""); err != nil {
+			t.Fatalf("Set(integration.branch, \"\") error = %v", err)
+		}
+		if cfg.Integration != nil {
+			t.Errorf("Integration = %+v after clearing, want nil", cfg.Integration)
+		}
+	})
+	t.Run("bad name refused", func(t *testing.T) {
+		t.Parallel()
+		for _, bad := range []string{"-x", "a b"} {
+			dir := t.TempDir()
+			if err := WriteConfig(dir, DefaultConfig()); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			path := filepath.Join(dir, ".flywheel", "config.json")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read config.json: %v", err)
+			}
+			cfg, _, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if err := cfg.Set("integration.branch", bad); err != nil {
+				t.Fatalf("Set(integration.branch, %q) error = %v (validation is WriteConfig's job)", bad, err)
+			}
+			if err := WriteConfig(dir, cfg); err == nil {
+				t.Errorf("WriteConfig() with integration.branch %q = nil error, want a rejection", bad)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read config.json after failed write: %v", err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("config.json changed despite a refused integration.branch %q", bad)
+			}
+		}
+	})
+	t.Run("listed", func(t *testing.T) {
+		t.Parallel()
+		cfg := DefaultConfig()
+		if !slices.Contains(cfg.settableKeys(), "integration.branch") {
+			t.Error("integration.branch missing from settableKeys")
+		}
+		if !slices.Contains(cfg.validKeys(), "integration.branch") {
+			t.Error("integration.branch missing from validKeys")
+		}
+		if err := cfg.Set("bogus", "x"); err == nil || !strings.Contains(err.Error(), "integration.branch") {
+			t.Errorf("Set(bogus) error = %v, want integration.branch in the settable list", err)
+		}
+	})
+}
+
 func TestConfigSetIntegerParseError(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
@@ -1349,5 +1447,34 @@ func TestConfigUnknownKeyHint(t *testing.T) {
 		if errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "unknown field") {
 			t.Errorf("LoadConfig(%s) unwraps to %v, want the decoder's error", tc.key, errors.Unwrap(err))
 		}
+	}
+}
+
+// TestPermissionModeValidate checks worker permission_mode (issue #526): each
+// valid mode is accepted on a claude worker, a bad value is rejected naming
+// the worker and the allowed values, and any mode on a non-claude worker is
+// rejected.
+func TestPermissionModeValidate(t *testing.T) {
+	t.Parallel()
+	cfg := func(adapter, mode string) Config {
+		c := DefaultConfig()
+		c.Workers = []Worker{{Name: "w1", Adapter: adapter, Model: "m", PermissionMode: mode}}
+		return c
+	}
+	for _, mode := range []string{"", "acceptEdits", "bypassPermissions", "default", "plan", "dontAsk"} {
+		if err := cfg("claude", mode).Validate(); err != nil {
+			t.Errorf("claude permission_mode %q: Validate() = %v, want nil", mode, err)
+		}
+	}
+	err := cfg("claude", "yolo").Validate()
+	if err == nil || !strings.Contains(err.Error(), `worker "w1": permission_mode "yolo" must be one of acceptEdits, bypassPermissions, default, plan, dontAsk`) {
+		t.Errorf("bad mode: Validate() = %v, want the worker and allowed values named", err)
+	}
+	err = cfg("opencode", "bypassPermissions").Validate()
+	if err == nil || !strings.Contains(err.Error(), "permission_mode applies to the claude adapter") {
+		t.Errorf("opencode mode: Validate() = %v, want permission_mode applies to the claude adapter", err)
+	}
+	if err := cfg("opencode", "").Validate(); err != nil {
+		t.Errorf("opencode without mode: Validate() = %v, want nil", err)
 	}
 }

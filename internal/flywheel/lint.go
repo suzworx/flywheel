@@ -84,7 +84,42 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 		}
 		res.Warnings = append(res.Warnings, importerWarnings(dir, header.Owns, ownsEntries(string(b)), list)...)
 	}
+	if b, err := os.ReadFile(path); err == nil {
+		if w := webToolsWarning(string(b), cfg.DefaultWorker()); w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
+	}
 	return res, nil
+}
+
+// webResearchWords are the brief phrases that ask for web research (issue
+// #526), matched case-insensitively.
+var webResearchWords = []string{"websearch", "webfetch", "web search", "search the web", "web fetch"}
+
+// webToolsWarning warns when the brief's text below its header asks for web
+// research and w, the worker that would run it (a brief names no worker, so
+// the config's default), is a claude worker that cannot use the web tools:
+// its permission_mode is not bypassPermissions and its allowed_tools have no
+// entry starting with WebSearch or WebFetch. The harness would deny every call
+// (issue #526). Empty means no warning.
+func webToolsWarning(brief string, w Worker) string {
+	if w.Adapter != "claude" || w.PermissionMode == "bypassPermissions" {
+		return ""
+	}
+	body := brief
+	if i := strings.Index(brief, "\n#"); i >= 0 {
+		body = brief[i:]
+	}
+	body = strings.ToLower(body)
+	if !slices.ContainsFunc(webResearchWords, func(s string) bool { return strings.Contains(body, s) }) {
+		return ""
+	}
+	for _, t := range w.allowedTools() {
+		if strings.HasPrefix(t, "WebSearch") || strings.HasPrefix(t, "WebFetch") {
+			return ""
+		}
+	}
+	return fmt.Sprintf("the brief asks for web research but worker %q (claude, permission_mode %s) cannot use WebSearch or WebFetch: every call would be denied; add WebSearch/WebFetch to its allowed_tools or set its permission_mode", w.Name, w.permissionMode())
 }
 
 // kindProblems checks the brief's kind: lines against allowed (issue #475): an
