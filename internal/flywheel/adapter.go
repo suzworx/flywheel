@@ -28,6 +28,10 @@ type RunRequest struct {
 	// an empty list appends no flag (issue #192).
 	AllowedTools    []string
 	DisallowedTools []string
+	// PermissionMode is the worker's claude --permission-mode
+	// (worker.permissionMode(), populated by Run); empty means acceptEdits
+	// (issue #526).
+	PermissionMode string
 	// NoWorkerRules marks a non-worker dispatch such as the review agent
 	// (issue #389): claude gets no --append-system-prompt workerRules.
 	NoWorkerRules bool
@@ -80,6 +84,11 @@ type Observation struct {
 	// line's permission_denials, each with " <file_path>" when one was given
 	// (issue #364); a Bash denial carries bashDenialSep + its command (#497).
 	Denials []string
+	// Denied is the tool the harness denied while the run is live: a
+	// "tool_result" observation whose result reports the denial (claude's
+	// "requested permissions to use <tool>"); ToolUseID is the denied call
+	// (issue #526).
+	Denied string
 	// Command is the shell command of a shell tool call (issue #365).
 	Command string
 	// ResetText is a rate-limit message's reset clause, the text after
@@ -405,7 +414,11 @@ func (a claudeAdapter) Name() string {
 // Command builds the dispatch arguments. The prompt is never an argument
 // (issue #427): -p selects print mode with no prompt text, and the documented
 // CLI behaviour of `claude -p` with no prompt argument is to read the prompt
-// from stdin, which Stdin supplies. --permission-mode acceptEdits grants
+// from stdin, which Stdin supplies. --permission-mode is r.PermissionMode
+// (the worker's permission_mode), acceptEdits when empty (issue #526);
+// --disallowedTools is passed under every mode, bypassPermissions included,
+// because Claude Code enforces deny rules even when bypassing permissions.
+// acceptEdits grants
 // file edits without a prompt and nothing else — notably NOT Bash, so a
 // worker running under it alone
 // could not run its own gates (issue #192). The dispatch therefore also
@@ -433,13 +446,17 @@ func (a claudeAdapter) Name() string {
 // sets no MCPConfig and so inherits the empty set.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	resuming := r.Resume && r.Session != ""
+	mode := r.PermissionMode
+	if mode == "" {
+		mode = defaultPermissionMode
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--max-turns", "200",
 		"--model", r.Model,
-		"--permission-mode", "acceptEdits",
+		"--permission-mode", mode,
 		"--setting-sources", "user",
 	}
 	if !r.NoWorkerRules {
@@ -524,6 +541,9 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 		obs.Aggregate = true
 		obs.Denials = claudeDenials(m)
 	case typ == "user":
+		if id, tool, ok := claudeLiveDenial(m); ok {
+			return Observation{Kind: "tool_result", ToolUseID: id, Denied: tool}, true
+		}
 		return claudeToolResultObs(m)
 	case typ == "rate_limit_event":
 		var ok bool
@@ -562,27 +582,73 @@ func claudeToolResultObs(m map[string]json.RawMessage) (Observation, bool) {
 		if block.Type != "tool_result" || block.ToolUseID == "" {
 			continue
 		}
-		// content is a string or an array of {"type":"text","text":...}.
-		var text string
-		if json.Unmarshal(block.Content, &text) != nil {
-			var parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			_ = json.Unmarshal(block.Content, &parts)
-			var texts []string
-			for _, p := range parts {
-				if p.Type == "text" {
-					texts = append(texts, p.Text)
-				}
-			}
-			text = strings.Join(texts, "\n")
-		}
-		if sm := claudeBackgroundID.FindStringSubmatch(text); sm != nil {
+		if sm := claudeBackgroundID.FindStringSubmatch(toolResultText(block.Content)); sm != nil {
 			return Observation{Kind: "tool_result", ToolUseID: block.ToolUseID, ShellID: sm[1]}, true
 		}
 	}
 	return Observation{}, false
+}
+
+// toolResultText is a tool_result block's content as text: content is a
+// string or an array of {"type":"text","text":...}, joined with "\n".
+func toolResultText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(raw, &parts)
+	var texts []string
+	for _, p := range parts {
+		if p.Type == "text" {
+			texts = append(texts, p.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+// claudeDeniedTool matches Claude Code's live denial wording, "Claude
+// requested permissions to use WebSearch, but you haven't granted it yet.",
+// capturing the tool name (issue #526).
+var claudeDeniedTool = regexp.MustCompile(`requested permissions to use ([A-Za-z0-9_.:-]*[A-Za-z0-9_])`)
+
+// claudeLiveDenial decodes a user line whose message.content carries a
+// tool_result with is_error true and text containing "requested permissions
+// to use": the harness denied that tool call while the run is live. It
+// returns the tool_use id and the tool name parsed from the sentence
+// ("unknown" when the sentence names none), or ok false for any other line.
+// The adapter is stateless, so the name comes from the text, not from the
+// earlier tool_use with that id (issue #526).
+func claudeLiveDenial(m map[string]json.RawMessage) (id, tool string, ok bool) {
+	var msg struct {
+		Content []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
+			Content   json.RawMessage `json:"content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(m["message"], &msg); err != nil {
+		return "", "", false
+	}
+	for _, block := range msg.Content {
+		if block.Type != "tool_result" || !block.IsError {
+			continue
+		}
+		text := toolResultText(block.Content)
+		if !strings.Contains(text, "requested permissions to use") {
+			continue
+		}
+		tool = "unknown"
+		if sm := claudeDeniedTool.FindStringSubmatch(text); sm != nil {
+			tool = sm[1]
+		}
+		return block.ToolUseID, tool, true
+	}
+	return "", "", false
 }
 
 // bashDenialSep separates "Bash" from its command in a Denials entry, so
@@ -689,11 +755,15 @@ func (a simAdapter) Parse(line []byte) (Observation, bool) {
 	if obs, ok := oc.Parse(line); ok {
 		return obs, true
 	}
-	// A claude result line replays through the claude parser, so a fixture
-	// can carry permission_denials (issue #364).
+	// A claude line replays through the claude parser, so a fixture can carry
+	// permission_denials (issue #364) and a live denial's user tool_result
+	// (issue #526).
 	var m map[string]json.RawMessage
-	if json.Unmarshal(line, &m) == nil && rawString(m, "type") == "result" {
-		return claudeAdapter{}.Parse(line)
+	if json.Unmarshal(line, &m) == nil {
+		switch rawString(m, "type") {
+		case "result", "user", "system", "assistant":
+			return claudeAdapter{}.Parse(line)
+		}
 	}
 	return Observation{}, false
 }

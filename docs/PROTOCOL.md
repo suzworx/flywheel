@@ -263,7 +263,12 @@ all.
   does not (issue #163). `failed-dirty` reaches the andon and is dead, exactly as `failed` is.
 - A `stop` finish is not automatically done (issue #364): when the claude result line carried
   `permission_denials`, `note` adds `permission denied: <tool [path], ...>` and a
-  `permission-denied` signal follows the `finished` event (run state **blocked**). A Bash denial
+  `permission-denied` signal follows the `finished` event (run state **blocked**). The andon is
+  raised live when the stream reports the denial as it happens (issue #526): claude's `user` line
+  whose `tool_result` has `is_error` true and text containing `requested permissions to use
+  <tool>` appends the attempt's one `permission-denied` signal at once, with `note` `permission
+  denied (live): <tool>`, and prints `andon: <task> <attempt> permission-denied <tool> (live)`;
+  the worker is not stopped, and no second signal is appended at finish. A Bash denial
   names the deny pattern and the command segment it matched, `Bash: <pattern> (<segment>)`, or
   `Bash: unattributed (<command>)` when no pattern matches (issue #497). Otherwise, when
   `wrote` is empty, no signal is recorded (an untriaged signal blocks landing, and some units
@@ -304,6 +309,14 @@ all.
   plugins) that `--setting-sources user` would still load never reach a worker. The review agent
   sets no `mcp` and gets the empty set. `flywheel` rejects a config whose `mcp` is not a JSON
   object with an `mcpServers` object.
+- A claude worker's `permission_mode` (issue #526) is its `--permission-mode`: `acceptEdits`
+  (the default when unset), `bypassPermissions`, `default`, `plan` or `dontAsk`; any other value,
+  or the key on a non-claude worker, is a config error. `--disallowedTools` is passed under every
+  mode, `bypassPermissions` included (Claude Code enforces deny rules even when bypassing), so
+  the git-write deny list still holds. `flywheel lint` warns when a brief asks for web research
+  (WebSearch, WebFetch, "web search", "search the web", "web fetch") and the default worker is a
+  claude worker whose `allowed_tools` lack WebSearch/WebFetch and whose mode is not
+  `bypassPermissions`.
 
 ### `report`
 - Written by: the CLI, only when the attempt's `reason` is `stop` and its last text was non-empty.
