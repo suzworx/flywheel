@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.2](https://github.com/suzworx/flywheel/compare/v0.25.1...v0.25.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* a crashed review-panel dimension is recorded as crashed, retried once, and no longer stops the round or the fix loop ([#495](https://github.com/suzworx/flywheel/issues/495)) ([86ad5b6](https://github.com/suzworx/flywheel/commit/86ad5b6eccb124e421bc8903d1571e2c46461a7e)), closes [#469](https://github.com/suzworx/flywheel/issues/469)
+* review --fix corrects with the worker that built the unit, a resume never crosses adapters, and --panel names where its reviewer comes from ([#496](https://github.com/suzworx/flywheel/issues/496)) ([2af9cab](https://github.com/suzworx/flywheel/commit/2af9cab06689809f5265deb67f27914d00dd0b82)), closes [#469](https://github.com/suzworx/flywheel/issues/469)
+* warn when a linked needs-state directory holds links into the main checkout, and refuse with worktree.strict_links ([#493](https://github.com/suzworx/flywheel/issues/493)) ([2ab8102](https://github.com/suzworx/flywheel/commit/2ab8102f76c62bf81bb840916dfa5ad74b63f703)), closes [#460](https://github.com/suzworx/flywheel/issues/460)
+
 ## [0.25.1](https://github.com/suzworx/flywheel/compare/v0.25.0...v0.25.1) (2026-09-26)
 
 
