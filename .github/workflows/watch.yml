@@ -23,7 +23,7 @@ env:
 
 jobs:
   review-findings:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request_review_comment' || github.event_name == 'pull_request_review'
     steps:
       - name: Add label on comment
@@ -44,7 +44,7 @@ jobs:
           gh pr edit "$PR_NUMBER" --add-label review-findings
 
   ci-failure:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     if: github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'failure'
     concurrency:
       group: watch-ci-incident
@@ -68,7 +68,7 @@ jobs:
           fi
 
   ci-recovery:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     if: github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success'
     concurrency:
       group: watch-ci-incident
@@ -91,7 +91,7 @@ jobs:
           fi
 
   reconcile-labels:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
     steps:
       - name: Reconcile review-findings labels

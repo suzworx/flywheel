@@ -138,7 +138,8 @@ flywheel log --task hello --kind planned --brief .flywheel/briefs/hello.txt
 ```
 
 `flywheel lint` exits 0 only when the header is complete — an `owns:` line, at least one `gate:`
-line, a `# TASK` goal and a `## Checks` section. `flywheel log` appends a `planned` event. The
+line, a `# TASK` goal and a `## Checks` section. Each line it prints is labelled `problem:` or
+`warning:` and a count line ends the output; warnings do not change the exit code. `flywheel log` appends a `planned` event. The
 brief is hashed at dispatch, so editing it afterwards is detectable (rule T1).
 
 ## 3. Dispatch a worker
@@ -272,7 +273,8 @@ Three refusals a beginner actually hits, and the exact command that fixes each:
 refuses to dispatch it.
 
 ```text
-lint: no gate: line
+lint: .flywheel/briefs/hello.txt: problem: no gate: line
+lint: .flywheel/briefs/hello.txt: 1 problem, 0 warnings
 ```
 
 Fix: add at least one `gate:` line to the brief header, then re-lint:

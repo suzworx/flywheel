@@ -5,8 +5,8 @@ on:
     types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
-  # The full 1,000-task scale suite runs nightly and on main; PRs run a smaller
-  # smoke (issue #440).
+  # PRs, pushes to main and the release PR run a 200-task scale smoke; the
+  # nightly schedule and manual dispatches run the full 1,000 (issue #440).
   schedule:
     - cron: '17 9 * * *'
   # release.yml dispatches this workflow on the release-please branch, because
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubicloud-standard-2, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       # Windows runners keep TEMP and the Go cache on C:, which is much slower
@@ -67,7 +67,7 @@ jobs:
         run: go test -race ./...
 
   scale:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -76,22 +76,22 @@ jobs:
           go-version-file: go.mod
           # stdlib only, so there is no go.sum to key the cache on (issue #440)
           cache-dependency-path: go.mod
-      # PRs and the release PR run 200 tasks; main, the nightly schedule and
-      # other dispatches run 1,000.
+      # PRs, pushes to main and the release PR run 200 tasks; the nightly
+      # schedule and manual dispatches run 1,000.
       - name: simulated wave
         run: go test -count=1 -run 'TestScaleWave' -timeout 30m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: ${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release-please--')) && '200' || '1000' }}
+          FLYWHEEL_SCALE: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/release-please--'))) && '1000' || '200' }}
       - name: simulated loop (next, run, validate, inspect, land, watch)
         run: go test -count=1 -run 'TestScaleFactoryLoop' -timeout 50m -v ./internal/flywheel/
         env:
-          FLYWHEEL_SCALE: ${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release-please--')) && '200' || '1000' }}
+          FLYWHEEL_SCALE: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/release-please--'))) && '1000' || '200' }}
 
-  # One job for the quick checks: each Ubicloud job pays a runner start and is
-  # billed by the started minute (issue #440). PR title first, so a bad title
+  # One job for the quick checks: each job pays a runner start (issue #440).
+  # PR title first, so a bad title
   # fails fast.
   checks:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check PR title
@@ -145,7 +145,7 @@ jobs:
   # the run's overall result as a commit status on the head commit, which the PR
   # does show (issue #440).
   release-pr-status:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [test, scale, checks]
     if: always() && github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/release-please--')
