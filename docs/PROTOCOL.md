@@ -282,7 +282,10 @@ all.
 - Written by: the review agent only, `flywheel review <task> --agent --session S` (issue #389). The
   agent (the staffing `reviewer` role's adapter and model, else the default worker, or `--worker`)
   runs in the unit's worktree under the git guard with a read-only tool policy (claude: `Read`,
-  `Grep`, `Glob`, `git diff/log/show`, `go vet/test`; `Edit`, `Write` and `NotebookEdit` refused),
+  `Grep`, `Glob`, `git diff/log/show`, `go vet/test`, read-only `gh issue view`/`gh pr view`, the
+  unit's own gate commands as `Bash(<program> <first argument>:*)` patterns (a bare program such as
+  `node` never), and any `review.allowed_tools` patterns (issue #469); `Edit`, `Write` and
+  `NotebookEdit` refused),
   on a prompt holding its instructions, the unit's effective brief, the attempt's gate readings and
   the diff from the dispatch base (capped at 200 KB), kept at `.flywheel/reviews/<task>.<round>.prompt.md`
   beside its stream `.flywheel/reviews/<task>.<round>.jsonl`. The findings contract is checked,
@@ -440,7 +443,11 @@ all.
   `.flywheel/reviews/group-<id>.md` (same marker rule as a task's thread), and each member a finding
   was routed to has its own thread refreshed.
 - Config: `review.group_gates` (default none); `config get/set review.group_gates` reads and writes
-  the commands separated by `;;` (set also splits on newlines; an empty value clears them).
+  the commands separated by `;;` (set also splits on newlines; an empty value clears them). The
+  integration reviewer may run the members' gate commands and the group gates, as a unit's reviewer
+  runs its unit's. `review.allowed_tools` (default none) adds claude `--allowedTools` patterns to
+  every reviewer's read-only policy; `config get/set review.allowed_tools` uses the same separators,
+  and an empty entry is refused.
 - Enforced: `flywheel land` refuses (rule `group`, below).
 - State: a group task is not a unit. `Derive` leaves `group:<id>` out of `tasks` (and `counts`) and
   lists it under `groups` in `.flywheel/state.json`: `id`, `task`, `members` (from the latest

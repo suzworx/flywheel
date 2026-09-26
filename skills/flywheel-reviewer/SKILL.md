@@ -39,6 +39,10 @@ What you never do is listed under [You never](#you-never), below the contract.
 4. **The files around it**: open each changed file in full, then the callers and the tests of what
    changed, before you judge a line.
 
+Besides reading, searching and git read commands, you may run the unit's own gate commands, read-only
+`gh issue view` and `gh pr view`, and any pattern the operator lists in `review.allowed_tools`
+(issue #469): use them to check a claim that rests on a gate or an issue body.
+
 ## What a finding is
 
 A finding is a **concrete defect** with evidence:

@@ -957,6 +957,45 @@ func TestRateLimitPauseAtConfig(t *testing.T) {
 	}
 }
 
+// TestReviewAllowedToolsConfig covers review.allowed_tools (issue #469): Set
+// and Get round-trip ";;" or newline separated patterns through config.json,
+// the key lists name it, an empty value clears it, and an empty entry is
+// refused by Set and by Validate.
+func TestReviewAllowedToolsConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	if !slices.Contains(cfg.validKeys(), "review.allowed_tools") || !slices.Contains(cfg.settableKeys(), "review.allowed_tools") {
+		t.Error("review.allowed_tools missing from validKeys or settableKeys")
+	}
+	if err := cfg.Set("review.allowed_tools", " Bash(make lint:*) ;;Bash(cargo test:*)\nWebFetch "); err != nil {
+		t.Fatalf("Set(review.allowed_tools) error = %v", err)
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if v, err := loaded.Get("review.allowed_tools"); err != nil || v != "Bash(make lint:*);;Bash(cargo test:*);;WebFetch" {
+		t.Errorf("Get(review.allowed_tools) = %q, %v; want the three patterns", v, err)
+	}
+	if err := loaded.Set("review.allowed_tools", "Read;;;;Grep"); err == nil || !strings.Contains(err.Error(), "empty entry") {
+		t.Errorf("Set with an empty entry = %v, want an empty-entry refusal", err)
+	}
+	if got := loaded.ReviewAllowedTools(); len(got) != 3 {
+		t.Errorf("a refused Set changed the patterns to %q", got)
+	}
+	if err := loaded.Set("review.allowed_tools", ""); err != nil || len(loaded.ReviewAllowedTools()) != 0 {
+		t.Errorf("empty Set = %v, patterns %q; want them cleared", err, loaded.ReviewAllowedTools())
+	}
+	loaded.Review.AllowedTools = []string{"Read", " "}
+	if err := loaded.Validate(); err == nil || !strings.Contains(err.Error(), "review.allowed_tools[1]: empty pattern") {
+		t.Errorf("Validate() = %v, want review.allowed_tools[1] refused", err)
+	}
+}
+
 // TestPanelConfig covers review.panel and review.required (issue #420): the
 // default panel, Get/Set as a comma-separated persona list that keeps a
 // member's worker, the key lists, and validation refusing an unknown or

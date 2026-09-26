@@ -403,16 +403,107 @@ func buildReviewPrompt(base, dir string, briefs []string, readings, diff string)
 
 // reviewRunRequest is the reviewer's dispatch: the prompt file, and for the
 // claude adapter a read-only tool policy — reading, searching, git read
-// commands and go vet/test allowed; Edit, Write and NotebookEdit refused.
-func reviewRunRequest(task string, round int, promptFile, model string) RunRequest {
+// commands and go vet/test allowed, then extra (reviewerExtraTools: read-only
+// gh issue/pr view, the unit's gate commands, review.allowed_tools), without
+// duplicates; Edit, Write and NotebookEdit refused (issue #469).
+func reviewRunRequest(task string, round int, promptFile, model string, extra []string) RunRequest {
 	return RunRequest{
 		Task: task, Attempt: fmt.Sprintf("rv%d", round), PromptFile: promptFile, Model: model,
 		Title: fmt.Sprintf("%s-review-%d", task, round),
-		AllowedTools: []string{"Read", "Grep", "Glob", "Bash(git diff:*)", "Bash(git log:*)",
-			"Bash(git show:*)", "Bash(go vet:*)", "Bash(go test:*)"},
+		AllowedTools: unionStrings([]string{"Read", "Grep", "Glob", "Bash(git diff:*)", "Bash(git log:*)",
+			"Bash(git show:*)", "Bash(go vet:*)", "Bash(go test:*)"}, extra),
 		DisallowedTools: []string{"Edit", "Write", "NotebookEdit"},
 		NoWorkerRules:   true,
 	}
+}
+
+// reviewerExtraTools is what a reviewer may run beyond the base read-only
+// list (issue #469): read-only gh issue view and gh pr view, the command
+// patterns of gates (gateToolPatterns), then cfg's review.allowed_tools.
+func reviewerExtraTools(cfg Config, gates []string) []string {
+	extra := []string{"Bash(gh issue view:*)", "Bash(gh pr view:*)"}
+	extra = append(extra, gateToolPatterns(gates)...)
+	return append(extra, cfg.ReviewAllowedTools()...)
+}
+
+// gateSyntax are the first words of a gate segment that are shell syntax or
+// plumbing, not a command the gate verifies with.
+var gateSyntax = map[string]bool{
+	"for": true, "do": true, "done": true, "if": true, "then": true, "else": true, "fi": true,
+	"[": true, "[[": true, "test": true, "echo": true, "{": true, "}": true, "exit": true,
+}
+
+// gateToolPatterns turns gate lines into claude Bash patterns a reviewer may
+// run (issue #469). Each line splits into command segments on unquoted &&,
+// ||, ;, | and newlines (single and double quotes respected). A segment
+// starting with shell syntax or plumbing (for, do, done, if, then, else, fi,
+// [, [[, test, echo, {, }, exit) or a name= assignment is skipped; any other
+// yields Bash(<program> <first argument>:*), e.g. Bash(npm test:*). A bare
+// program is never allowed (Bash(node:*) would allow node -e): a segment
+// whose first argument is missing or starts with - yields nothing. The
+// result has no duplicates and keeps first-seen order.
+func gateToolPatterns(gates []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, g := range gates {
+		for _, seg := range gateSegments(g) {
+			f := strings.Fields(seg)
+			if len(f) < 2 || gateSyntax[f[0]] || isAssignment(f[0]) {
+				continue
+			}
+			prog, arg := strings.Trim(f[0], `"'`), strings.Trim(f[1], `"'`)
+			if prog == "" || arg == "" || strings.HasPrefix(arg, "-") {
+				continue
+			}
+			p := fmt.Sprintf("Bash(%s %s:*)", prog, arg)
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// gateSegments splits a shell line on unquoted &&, ||, ;, | and newlines.
+func gateSegments(line string) []string {
+	var segs []string
+	var cur strings.Builder
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == ';' || c == '\n' || c == '|' || (c == '&' && i+1 < len(line) && line[i+1] == '&'):
+			if (c == '|' || c == '&') && i+1 < len(line) && line[i+1] == c {
+				i++
+			}
+			segs = append(segs, cur.String())
+			cur.Reset()
+			continue
+		}
+		cur.WriteByte(c)
+	}
+	return append(segs, cur.String())
+}
+
+// isAssignment reports whether word is a shell name=value assignment.
+func isAssignment(word string) bool {
+	name, _, ok := strings.Cut(word, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r != '_' && !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && (i == 0 || r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // reviewEvents builds one review_finding event per finding (id
@@ -497,10 +588,12 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		return ReviewAgentResult{}, err
 	}
 	workdir := wd(o.Workdir, dir, events, task)
-	_, briefs, err := AttemptBrief(dir, events, task)
+	header, briefs, err := AttemptBrief(dir, events, task)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
+	// The reviewer may run the unit's own gate commands (issue #469).
+	extra := reviewerExtraTools(cfg, header.Gates)
 	res := ReviewAgentResult{Round: o.Round, Model: worker.Model}
 	if res.Round <= 0 {
 		res.Round = nextReviewRound(events, task)
@@ -532,7 +625,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		return ReviewAgentResult{}, err
 	}
 	progress(o.Progress, fmt.Sprintf("%s review round %d: %s %s", task, res.Round, worker.Adapter, worker.Model))
-	answer, err := runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model), stem, res.Transcript, o)
+	answer, err := runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem, res.Transcript, o)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
@@ -548,7 +641,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		}
 		res.Transcript = stem + "b.jsonl"
 		progress(o.Progress, fmt.Sprintf("%s review round %d: answer refused (%d violation(s)); asking once more", task, res.Round, len(problems)))
-		answer, err = runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model), stem+"b", res.Transcript, o)
+		answer, err = runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem+"b", res.Transcript, o)
 		if err != nil {
 			return ReviewAgentResult{}, err
 		}

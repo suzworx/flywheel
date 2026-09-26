@@ -319,12 +319,16 @@ func ReviewGroup(dir, group string, o ReviewGroupOptions) (GroupResult, error) {
 	if r.Members, err = GroupMembers(events, group); err != nil {
 		return GroupResult{}, err
 	}
+	// The integration reviewer may run the members' gate commands and the
+	// group gates (issue #469).
+	var gates []string
 	for _, m := range r.Members {
 		if c := sessionClash(m, events, o.Session); c != "" {
 			return GroupResult{}, &RuleRefusal{Rule: "T4", Fix: c}
 		}
 		if h, _, err := AttemptBrief(dir, events, m); err == nil {
 			r.Owns[m] = h.Owns
+			gates = append(gates, h.Gates...)
 		}
 		if memberRef(dir, events, m) == "" {
 			r.Missing = append(r.Missing, m)
@@ -384,7 +388,8 @@ func ReviewGroup(dir, group string, o ReviewGroupOptions) (GroupResult, error) {
 		}
 		stem := filepath.Join(reviews, fmt.Sprintf("group-%s.%d", GroupID(group), r.Round))
 		r.Prompt, r.Transcript = stem+".prompt.md", stem+".jsonl"
-		if findings, err = runGroupReviewer(dir, wt, stem, worker, adap, r, buildGroupPrompt(persona, r, diff), changed, o); err != nil {
+		extra := reviewerExtraTools(cfg, append(gates, cfg.ReviewGroupGates()...))
+		if findings, err = runGroupReviewer(dir, wt, stem, worker, adap, r, buildGroupPrompt(persona, r, diff), changed, extra, o); err != nil {
 			return GroupResult{}, err
 		}
 	}
@@ -491,15 +496,16 @@ func buildGroupPrompt(persona string, r GroupResult, diff string) string {
 // runGroupReviewer runs the integration reviewer in the integration tree wt
 // under the git guard, checks its findings (validateFindings, category
 // integration) and, on a refused answer, runs it once more with the
-// violations appended, as ReviewAgent does.
-func runGroupReviewer(dir, wt, stem string, worker Worker, adap Adapter, r GroupResult, prompt string, changed []string, o ReviewGroupOptions) ([]ReviewFinding, error) {
+// violations appended, as ReviewAgent does. extra is the reviewer's tools
+// beyond the read-only base (reviewRunRequest).
+func runGroupReviewer(dir, wt, stem string, worker Worker, adap Adapter, r GroupResult, prompt string, changed, extra []string, o ReviewGroupOptions) ([]ReviewFinding, error) {
 	guardTask := "group-" + GroupID(r.Group)
 	ro := ReviewAgentOptions{Stdout: o.Stdout, Stderr: o.Stderr}
 	if err := os.WriteFile(r.Prompt, []byte(prompt), 0o644); err != nil {
 		return nil, fmt.Errorf("write %s: %w", r.Prompt, err)
 	}
 	progress(o.Progress, fmt.Sprintf("%s review round %d: %s %s", r.Task, r.Round, worker.Adapter, worker.Model))
-	answer, err := runReviewer(dir, wt, guardTask, adap, reviewRunRequest(guardTask, r.Round, r.Prompt, worker.Model), stem, r.Transcript, ro)
+	answer, err := runReviewer(dir, wt, guardTask, adap, reviewRunRequest(guardTask, r.Round, r.Prompt, worker.Model, extra), stem, r.Transcript, ro)
 	if err != nil {
 		return nil, err
 	}
@@ -513,7 +519,7 @@ func runGroupReviewer(dir, wt, stem string, worker Worker, adap Adapter, r Group
 	}
 	progress(o.Progress, fmt.Sprintf("%s review round %d: answer refused (%d violation(s)); asking once more", r.Task, r.Round, len(problems)))
 	second := stem + "b.jsonl"
-	if answer, err = runReviewer(dir, wt, guardTask, adap, reviewRunRequest(guardTask, r.Round, r.Prompt, worker.Model), stem+"b", second, ro); err != nil {
+	if answer, err = runReviewer(dir, wt, guardTask, adap, reviewRunRequest(guardTask, r.Round, r.Prompt, worker.Model, extra), stem+"b", second, ro); err != nil {
 		return nil, err
 	}
 	if findings, problems = checkReviewAnswer(wt, changed, answer, IntegrationPersona); len(problems) > 0 {
