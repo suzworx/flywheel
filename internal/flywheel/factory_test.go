@@ -1338,3 +1338,40 @@ func TestStackedRunState(t *testing.T) {
 		t.Errorf("unit B still stacked after the rebase")
 	}
 }
+
+// TestFactoryReplannedRowIsWaiting checks a re-planned task whose old attempt
+// left an idle run file shows waiting with no session, not silent or stalled
+// (issue #476).
+func TestFactoryReplannedRowIsWaiting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	events := []Event{
+		{TS: "2026-09-15T00:00:00Z", Task: "again", Kind: "planned", Brief: "a.txt"},
+		{TS: "2026-09-15T00:00:01Z", Task: "again", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-15T00:00:02Z", Task: "again", Kind: "started", Attempt: "r1", Session: "s1"},
+		{TS: "2026-09-15T00:00:03Z", Task: "again", Kind: "finished", Attempt: "r1", Session: "s1", Reason: "silent"},
+		{TS: "2026-09-15T00:00:04Z", Task: "again", Kind: "planned", Brief: "b.txt"},
+	}
+	for _, e := range events {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	noStepsRunFile(t, dir, "again", "r1", 1)
+	now, err := time.Parse(time.RFC3339Nano, "2026-09-15T01:00:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	w := NewWatcher()
+	fl, err := w.Refresh(dir, now)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	u, ok := unitBy(fl.Units, "again")
+	if !ok {
+		t.Fatal("unit again missing")
+	}
+	if u.RunState != "waiting" || u.Session != "" || u.Attempt != "" {
+		t.Errorf("re-planned unit = run state %q session %q attempt %q, want waiting and no session or attempt", u.RunState, u.Session, u.Attempt)
+	}
+}

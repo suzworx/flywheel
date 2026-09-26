@@ -234,6 +234,12 @@ func Derive(events []Event) State {
 			ts.Brief = e.Brief
 			ts.Needs = NeedTargets(e.Needs...)
 			ts.Owns = e.Owns
+			if ts.Attempts > 0 {
+				// A re-plan starts a new plan (issue #476): the floor row is a
+				// clean planned row, not the old attempt's idle run. Attempts
+				// stays, and the log keeps every earlier event.
+				ts.Session, ts.Attempt, ts.RC, ts.Reason, ts.Verdict, ts.Model, ts.Stale = "", "", nil, "", "", "", nil
+			}
 		case "dispatched":
 			ts.Status = "dispatched"
 			ts.Attempts++

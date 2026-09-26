@@ -498,3 +498,47 @@ func TestNoteEventLogged(t *testing.T) {
 		t.Error("a note became a learning")
 	}
 }
+
+// TestLogReplanWarning checks --kind planned on an id with a dispatched
+// attempt warns and still records the event, --replan silences it, a fresh id
+// gets no warning, and --replan with another kind is a usage error (issue #476).
+func TestLogReplanWarning(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b.md"), []byte("brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const warn = "warning: task T already has 1 attempt(s); this starts a new plan, the old attempts stay in the ledger (--replan silences this)"
+	planned := func(extra ...string) (string, int) {
+		return runLogProcess(t, append([]string{"--task", "T", "--kind", "planned", "--brief", "b.md", "--no-state", "--dir", dir}, extra...)...)
+	}
+	if stderr, code := planned(); code != 0 || strings.Contains(stderr, "already has") {
+		t.Fatalf("fresh id: exit %d; stderr:\n%s", code, stderr)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{Task: "T", Kind: "dispatched", Attempt: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	if stderr, code := planned(); code != 0 || !strings.Contains(stderr, warn) {
+		t.Errorf("re-plan: exit %d, want 0 and %q; stderr:\n%s", code, warn, stderr)
+	}
+	if stderr, code := planned("--replan"); code != 0 || strings.Contains(stderr, "already has") {
+		t.Errorf("--replan: exit %d, want 0 and no warning; stderr:\n%s", code, stderr)
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Kind == "planned" {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("planned events = %d, want 3 (the warning never refuses)", n)
+	}
+	stderr, code := runLogProcess(t, "--task", "T", "--kind", "blocked", "--replan", "--no-state", "--dir", dir)
+	if code != 2 || !strings.Contains(stderr, "--replan applies to --kind planned only") {
+		t.Errorf("--replan with blocked: exit %d, want 2; stderr:\n%s", code, stderr)
+	}
+}
