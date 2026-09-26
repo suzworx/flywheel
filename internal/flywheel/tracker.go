@@ -63,6 +63,222 @@ func (g GhTracker) Issue(n int) (TrackerIssue, error) {
 	return TrackerIssue{Number: v.Number, Title: v.Title, Body: v.Body, URL: v.URL}, nil
 }
 
+// PullRequest is one pull request on a forge (issue #457): State is OPEN,
+// MERGED or CLOSED, MergeCommit the squash commit once merged.
+type PullRequest struct {
+	Number      int
+	URL         string
+	State       string
+	MergeCommit string
+}
+
+// ChecksState is a pull request's checks, check runs and commit statuses
+// together, by name; all three empty means none were reported.
+type ChecksState struct {
+	Pending []string
+	Failed  []string
+	Passed  []string
+}
+
+// Forge is the pull-request half of a tracker that `flywheel ship` drives
+// (issue #457). PR returns the open or merged PR whose head is branch.
+type Forge interface {
+	PR(branch string) (PullRequest, bool, error)
+	CreatePR(base, head, title, body string) (PullRequest, error)
+	Checks(n int) (ChecksState, error)
+	Merge(n int, title, message string) error
+	PRState(n int) (state, mergeCommit string, err error)
+	CommentIssue(n int, body string) error
+	CloseIssue(n int, comment string) error
+}
+
+// gh runs gh with args, --repo Repo appended when repo is set, and returns
+// its stdout, or an error naming the command.
+func (g GhTracker) gh(repo bool, args ...string) ([]byte, error) {
+	if repo && g.Repo != "" {
+		args = append(args, "--repo", g.Repo)
+	}
+	run := g.Run
+	if run == nil {
+		run = runGhOutput
+	}
+	out, err := run(args...)
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w", strings.Join(args, " "), err)
+	}
+	return out, nil
+}
+
+// ghPR is the JSON gh pr view prints for number,url,state,mergeCommit.
+type ghPR struct {
+	Number      int    `json:"number"`
+	URL         string `json:"url"`
+	State       string `json:"state"`
+	MergeCommit *struct {
+		OID string `json:"oid"`
+	} `json:"mergeCommit"`
+}
+
+func (p ghPR) pullRequest() PullRequest {
+	pr := PullRequest{Number: p.Number, URL: p.URL, State: p.State}
+	if p.MergeCommit != nil {
+		pr.MergeCommit = p.MergeCommit.OID
+	}
+	return pr
+}
+
+// PR runs `gh pr view <branch> --json number,url,state,mergeCommit`; no PR,
+// or only a closed one, is (_, false, nil).
+func (g GhTracker) PR(branch string) (PullRequest, bool, error) {
+	out, err := g.gh(true, "pr", "view", branch, "--json", "number,url,state,mergeCommit")
+	if err != nil {
+		if strings.Contains(err.Error(), "no pull requests found") {
+			return PullRequest{}, false, nil
+		}
+		return PullRequest{}, false, err
+	}
+	var v ghPR
+	if err := json.Unmarshal(out, &v); err != nil || v.Number == 0 {
+		return PullRequest{}, false, fmt.Errorf("gh pr view %s: parse output: %v: %s", branch, err, strings.TrimSpace(string(out)))
+	}
+	if v.State == "CLOSED" {
+		return PullRequest{}, false, nil
+	}
+	return v.pullRequest(), true, nil
+}
+
+// CreatePR runs `gh pr create --base --head --title --body` and reads the
+// new PR's number from the URL gh prints.
+func (g GhTracker) CreatePR(base, head, title, body string) (PullRequest, error) {
+	out, err := g.gh(true, "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	url := ""
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); strings.Contains(l, "/pull/") {
+			url = l
+		}
+	}
+	n, cerr := strconv.Atoi(url[strings.LastIndex(url, "/")+1:])
+	if url == "" || cerr != nil {
+		return PullRequest{}, fmt.Errorf("gh pr create: no PR URL in output: %s", strings.TrimSpace(string(out)))
+	}
+	return PullRequest{Number: n, URL: url, State: "OPEN"}, nil
+}
+
+// PRState runs `gh pr view <n> --json number,url,state,mergeCommit`.
+func (g GhTracker) PRState(n int) (string, string, error) {
+	out, err := g.gh(true, "pr", "view", strconv.Itoa(n), "--json", "number,url,state,mergeCommit")
+	if err != nil {
+		return "", "", err
+	}
+	var v ghPR
+	if err := json.Unmarshal(out, &v); err != nil || v.State == "" {
+		return "", "", fmt.Errorf("gh pr view %d: parse output: %v: %s", n, err, strings.TrimSpace(string(out)))
+	}
+	pr := v.pullRequest()
+	return pr.State, pr.MergeCommit, nil
+}
+
+// Checks runs `gh pr view <n> --json statusCheckRollup`, which carries both
+// the head commit's check runs (CheckRun: status, conclusion) and its commit
+// statuses (StatusContext: state), and sorts them by name. gh pr checks is not
+// used: it exits non-zero while a check is pending or failed, which a Run that
+// returns only stdout on success cannot tell from gh failing. A check run not
+// completed, or a status PENDING or EXPECTED, is pending; SUCCESS passes;
+// NEUTRAL and SKIPPED neither pass nor fail; anything else (FAILURE, ERROR,
+// CANCELLED, TIMED_OUT, ...) fails.
+func (g GhTracker) Checks(n int) (ChecksState, error) {
+	out, err := g.gh(true, "pr", "view", strconv.Itoa(n), "--json", "statusCheckRollup")
+	if err != nil {
+		return ChecksState{}, err
+	}
+	var v struct {
+		Rollup []struct {
+			Type       string `json:"__typename"`
+			Name       string `json:"name"`
+			Context    string `json:"context"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			State      string `json:"state"`
+		} `json:"statusCheckRollup"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil {
+		return ChecksState{}, fmt.Errorf("gh pr view %d: parse output: %v: %s", n, err, strings.TrimSpace(string(out)))
+	}
+	var cs ChecksState
+	for _, c := range v.Rollup {
+		name, outcome := c.Name, c.Conclusion
+		if c.Type == "StatusContext" || c.Context != "" {
+			name, outcome = c.Context, c.State
+			if outcome == "PENDING" || outcome == "EXPECTED" {
+				outcome = ""
+			}
+		} else if c.Status != "COMPLETED" {
+			outcome = ""
+		}
+		switch outcome {
+		case "":
+			cs.Pending = append(cs.Pending, name)
+		case "SUCCESS":
+			cs.Passed = append(cs.Passed, name)
+		case "NEUTRAL", "SKIPPED":
+		default:
+			cs.Failed = append(cs.Failed, name)
+		}
+	}
+	return cs, nil
+}
+
+// policyRefusal reports whether a gh pr merge error is the host refusing the
+// high-level merge on a ruleset or branch policy, which the REST endpoint may
+// still accept.
+func policyRefusal(err error) bool {
+	s := strings.ToLower(err.Error())
+	for _, m := range []string{"base branch policy", "ruleset", "rule violation", "not allowed", "prohibited", "--admin"} {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// Merge squash-merges PR n with `gh pr merge --squash --subject --body`; on a
+// policy refusal it falls back to `gh api -X PUT repos/{owner}/{repo}/pulls/<n>/merge`
+// (Repo substituted when set). The caller re-reads the state either way.
+func (g GhTracker) Merge(n int, title, message string) error {
+	_, err := g.gh(true, "pr", "merge", strconv.Itoa(n), "--squash", "--subject", title, "--body", message)
+	if err == nil || !policyRefusal(err) {
+		return err
+	}
+	repo := "{owner}/{repo}"
+	if g.Repo != "" {
+		repo = g.Repo
+	}
+	if _, rerr := g.gh(false, "api", "-X", "PUT", "repos/"+repo+"/pulls/"+strconv.Itoa(n)+"/merge",
+		"-f", "merge_method=squash", "-f", "commit_title="+title, "-f", "commit_message="+message); rerr != nil {
+		return fmt.Errorf("%v; the REST fallback failed too: %w", err, rerr)
+	}
+	return nil
+}
+
+// CommentIssue runs `gh issue comment <n> --body <body>`.
+func (g GhTracker) CommentIssue(n int, body string) error {
+	_, err := g.gh(true, "issue", "comment", strconv.Itoa(n), "--body", body)
+	return err
+}
+
+// CloseIssue runs `gh issue close <n>`, with --comment when one is given.
+func (g GhTracker) CloseIssue(n int, comment string) error {
+	args := []string{"issue", "close", strconv.Itoa(n)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	_, err := g.gh(true, args...)
+	return err
+}
+
 // runGhOutput runs the real gh binary and returns its stdout, with its stderr
 // in the error when it fails.
 func runGhOutput(args ...string) ([]byte, error) {

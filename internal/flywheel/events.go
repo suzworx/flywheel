@@ -290,8 +290,10 @@ var kinds = map[string]bool{
 }
 
 // ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
-// shipped event's Step must be one of them. The remote half extends it.
-var ShipSteps = []string{"preflight", "commit", "merge-base", "gates"}
+// shipped event's Step must be one of them. The local half runs preflight
+// through gates; the remote half pushes, opens or reuses the PR, waits for
+// CI, squash merges, records the landing and closes the issue.
+var ShipSteps = []string{"preflight", "commit", "merge-base", "gates", "push", "pr", "ci", "merge", "landed", "closed"}
 
 // shipResults are the outcomes a shipped event's Result may carry.
 var shipResults = map[string]bool{"ok": true, "skip": true, "fail": true}
