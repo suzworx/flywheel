@@ -69,6 +69,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   --prefer-offline --no-audit`). It is skipped while the lockfile is unchanged since the last
   install that exited 0 and every `(install)` path is present. No lockfile, a failed install, or a
   path both `(link)` and `(install)` refuses the dispatch.
+  A tree the lead prepared by hand — a merge with conflicts in progress, say — is dispatched with
+  `flywheel run <task> --workdir <tree>` instead of `--worktree` (issue #545): no copies, links,
+  installs or setup; its dirty and conflicted files are baselined at dispatch, events still go to
+  the main ledger, and the lead commits the merge after inspection.
 - **gate:** lines — the header carries one or more `gate:` lines, each a single shell command
   that `flywheel validate` runs to re-measure the brief's claims on the exact tree as built; a
   brief without one is refused. The `gate:` lines list **every** gate the gauges must run on the

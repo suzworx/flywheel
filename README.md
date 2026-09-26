@@ -93,6 +93,9 @@ flowchart LR
   `integration.branch` is set, and is refused when neither resolves; otherwise from the main
   checkout's HEAD, with a warning when HEAD carries commits `origin/main` lacks (#550). The
   `dispatched` event's `base` records the commit the unit branched from.
+  `flywheel run --workdir PATH` runs the worker in an existing tree the lead prepared (a merge in
+  progress, say) while events still go to `--dir`'s ledger; it is refused (exit 6) with `--worktree`
+  or `--base`, or when PATH is not a git working tree of the same repository.
   `flywheel run --session ID` (default `$FLYWHEEL_SESSION`) records the dispatching lead session as
   the dispatched event's `lead`, so leads sharing one ledger can tell their units apart.
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` opens an interactive, k9s-style view of the floor (`:units` `:workers` `:andon` `:events` `:lines` to switch, `/` to filter, enter to explain a unit, `l` for its log, `?` for help, `q` to quit; `--plain` keeps the plain redraw), and `flywheel watch` streams every event as one readable line.
