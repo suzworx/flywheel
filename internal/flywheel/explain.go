@@ -102,28 +102,16 @@ func explainLine(e Event) string {
 		return words("report", e.Attempt, path)
 
 	case "validated":
-		var line string
+		return validatedLine(e, nil)
+
+	case "gate_probed":
+		// A pre-dispatch probe on the base tree (issue #544).
 		if e.RC != nil && *e.RC == 0 {
-			line = fmt.Sprintf("gate %s: pass", e.Gate)
-		} else if e.Reason == "inconclusive" {
-			line = fmt.Sprintf("gate %s: inconclusive", e.Gate)
-		} else {
-			var rc string
-			if e.RC != nil {
-				rc = fmt.Sprintf("%d", *e.RC)
-			} else {
-				rc = "?"
-			}
-			line = fmt.Sprintf("gate %s: fail rc=%s", e.Gate, rc)
+			return fmt.Sprintf("gate %s probed on the base tree: pass", e.Gate)
 		}
-		if e.DurationMS > 0 {
-			line += fmt.Sprintf(" in %dms", e.DurationMS)
-		}
-		if e.Tree != "" {
-			line += fmt.Sprintf(" tree %s", hash8(e.Tree))
-		}
-		if e.Path != "" {
-			line += fmt.Sprintf(" (%s)", e.Path)
+		line := fmt.Sprintf("gate %s probed on the base tree: fail rc=%s", e.Gate, rcText(e.RC))
+		if e.Reason != "" {
+			line += ": " + e.Reason
 		}
 		return line
 
@@ -195,6 +183,41 @@ func explainLine(e Event) string {
 		}
 		return line
 	}
+}
+
+// validatedLine formats a validated event; base is the task's failed probe of
+// the same gate command on the base tree before dispatch (issue #544), or nil,
+// and a failed gate that has one says so.
+func validatedLine(e Event, base *Event) string {
+	var line string
+	if e.RC != nil && *e.RC == 0 {
+		line = fmt.Sprintf("gate %s: pass", e.Gate)
+	} else if e.Reason == "inconclusive" {
+		line = fmt.Sprintf("gate %s: inconclusive", e.Gate)
+	} else {
+		line = fmt.Sprintf("gate %s: fail rc=%s", e.Gate, rcText(e.RC))
+		if base != nil {
+			line += fmt.Sprintf(" (also failed on the base tree before dispatch, exit %s)", rcText(base.RC))
+		}
+	}
+	if e.DurationMS > 0 {
+		line += fmt.Sprintf(" in %dms", e.DurationMS)
+	}
+	if e.Tree != "" {
+		line += fmt.Sprintf(" tree %s", hash8(e.Tree))
+	}
+	if e.Path != "" {
+		line += fmt.Sprintf(" (%s)", e.Path)
+	}
+	return line
+}
+
+// rcText renders an exit code, "?" when the event carries none.
+func rcText(rc *int) string {
+	if rc == nil {
+		return "?"
+	}
+	return fmt.Sprintf("%d", *rc)
 }
 
 // Explain folds a task's events from the ledger into one Explanation.
@@ -276,13 +299,19 @@ func Explain(events []Event, task string) (Explanation, error) {
 		}
 	}
 
-	// Build timeline
+	// Build timeline; a failed gate that already failed on the base tree
+	// before dispatch says so (issue #544).
+	probeFails := baseProbeFailures(events, task)
 	for _, e := range taskEvents {
+		line := explainLine(e)
+		if p, ok := probeFails[e.Command]; ok && e.Kind == "validated" {
+			line = validatedLine(e, &p)
+		}
 		entry := ExplainEntry{
 			TS:      e.TS,
 			Kind:    e.Kind,
 			Attempt: e.Attempt,
-			Line:    explainLine(e),
+			Line:    line,
 		}
 		explanation.Timeline = append(explanation.Timeline, entry)
 	}

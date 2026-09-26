@@ -7,7 +7,7 @@ description: >-
   can hold this persona, or the CLI alone (`flywheel supervise`, planned #55).
 license: MIT
 metadata:
-  version: 0.33.0 # x-release-please-version
+  version: 0.34.0 # x-release-please-version
 ---
 
 # Flywheel Foreman

@@ -65,3 +65,62 @@ func TestNeedsEnvValidateRefusal(t *testing.T) {
 		t.Error("a gate ran despite the refusal")
 	}
 }
+
+// TestValidateBaseProbeNote checks validate notes a failed gate whose newest
+// probe on the base tree also failed, matched by command, and prints nothing
+// extra for one whose newest probe passed or that was never probed (issue #544).
+func TestValidateBaseProbeNote(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	gitInitRepo(t, dir)
+	if _, err := flywheel.Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	brief := "owns: out.txt (new)\nneeds: none\ngate: exit 1\ngate: exit 2\ngate: exit 3\n\n# TASK x\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	rebaseGit(t, dir, "add", "-A")
+	rebaseGit(t, dir, "commit", "-q", "-m", "base")
+	rc := func(n int) *int { return &n }
+	// The probes precede planned, as lint --probe --task runs before it; the
+	// probe of gate 1 was recorded at index 3, so matching is by command.
+	evs := []flywheel.Event{
+		{TS: "2026-09-26T00:00:00Z", Task: "T1", Kind: "gate_probed", Gate: "3", Command: "exit 1", RC: rc(1), Reason: "boom"},
+		{TS: "2026-09-26T00:00:00Z", Task: "T1", Kind: "gate_probed", Gate: "2", Command: "exit 2", RC: rc(2), Reason: "old"},
+		{TS: "2026-09-26T00:00:01Z", Task: "T1", Kind: "gate_probed", Gate: "2", Command: "exit 2", RC: rc(0)},
+		// A failed probe with no reason ends the note at the exit code.
+		{TS: "2026-09-26T00:00:01Z", Task: "T1", Kind: "gate_probed", Gate: "1", Command: "exit 3", RC: rc(3)},
+		{TS: "2026-09-26T00:00:02Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+	}
+	if err := flywheel.AppendEvents(dir, evs); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNeedsEnvValidateRefusal$")
+	cmd.Env = append(os.Environ(), runValidateHelperEnv+"="+strings.Join([]string{"T1", "--dir", dir}, "\x1f"))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	code := 0
+	var e *exec.ExitError
+	if errors.As(err, &e) {
+		code = e.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run child: %v", err)
+	}
+	if code != 5 {
+		t.Fatalf("validate exit = %d, want 5; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	out := stdout.String()
+	want := "T1 gate 1: failed (rc=1)\n" +
+		"T1 gate 1: note: this gate already failed on the base tree before dispatch (exit 1): boom\n" +
+		"T1 gate 2: failed (rc=2)\n" +
+		"T1 gate 3: failed (rc=3)\n" +
+		"T1 gate 3: note: this gate already failed on the base tree before dispatch (exit 3)\n"
+	if !strings.Contains(out, want) {
+		t.Errorf("validate stdout lacks\n%s\ngot:\n%s", want, out)
+	}
+	if n := strings.Count(out, "note: this gate already failed"); n != 2 {
+		t.Errorf("validate printed %d base-tree notes, want 2:\n%s", n, out)
+	}
+}
