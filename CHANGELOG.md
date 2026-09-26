@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.3](https://github.com/suzworx/flywheel/compare/v0.25.2...v0.25.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* a denied worker command names the deny pattern and the segment that matched ([#499](https://github.com/suzworx/flywheel/issues/499)) ([cc9eee7](https://github.com/suzworx/flywheel/commit/cc9eee78d2a518e73349f154736c60f83f97afe9)), closes [#497](https://github.com/suzworx/flywheel/issues/497)
+* flywheel log --base records a hand rebase as a rebased event ([#500](https://github.com/suzworx/flywheel/issues/500)) ([0ad7067](https://github.com/suzworx/flywheel/commit/0ad7067a5ec95f8844ebf36a752157c0159d288c)), closes [#498](https://github.com/suzworx/flywheel/issues/498)
+* the review agent may run the unit's own gate commands, read-only gh issue/pr view, and review.allowed_tools ([#501](https://github.com/suzworx/flywheel/issues/501)) ([71159e2](https://github.com/suzworx/flywheel/commit/71159e2f1a4336b99688015c45ebbb02ca7dc920)), closes [#469](https://github.com/suzworx/flywheel/issues/469)
+
 ## [0.25.2](https://github.com/suzworx/flywheel/compare/v0.25.1...v0.25.2) (2026-09-26)
 
 
