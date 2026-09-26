@@ -150,6 +150,7 @@ may own that id, so plan under a new one. Take a plan back with
 a later `--kind planned` revives it).
 
 ### 2. Dispatch (canonical `flywheel run`, raw command as fallback)
+Shortcut from a tracker issue: `flywheel brief <t> --from-issue <n> --owns ...` writes the linted brief and records it planned with the issue.
 First choice: `flywheel log --task <id> --kind planned --brief <path> --session <your session> --model <your model> [--goal <goal>]`, then `flywheel run <task>`
 (attaches the brief with `--file`, applies the deny policy, records every event). `flywheel run` is
 adapter-agnostic: each worker in `.flywheel/config.json` names its adapter (`opencode`, `claude`,

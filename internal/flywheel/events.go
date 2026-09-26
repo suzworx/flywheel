@@ -156,6 +156,9 @@ type Event struct {
 	// Increment is a dispatched event's increment number when `flywheel run --increment N` sent only
 	// increment N of the brief (issue #83); 0 means the whole brief.
 	Increment int `json:"increment,omitempty"`
+	// Issue is the tracker issue a planned event links to (flywheel brief
+	// --from-issue, issue #457); only the planned kind may carry it.
+	Issue int `json:"issue,omitempty"`
 	// Source "external" marks a validated or owns_checked reading flywheel did
 	// not measure (issue #367): flywheel attest records a run elsewhere (CI on
 	// the PR, say) that measured a named commit. Such a reading must carry
@@ -578,6 +581,9 @@ func Validate(e Event) error {
 	}
 	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
 		return fmt.Errorf("event increment %d: only a dispatched event may carry one, and it must be >= 1", e.Increment)
+	}
+	if e.Issue < 0 || (e.Issue != 0 && e.Kind != "planned") {
+		return fmt.Errorf("event issue %d: only a planned event may carry one, and it must be >= 1", e.Issue)
 	}
 	if e.Attempt != "" && !attemptOK(e.Attempt) {
 		return fmt.Errorf("event attempt %q does not match ^[rc][0-9]+$", e.Attempt)

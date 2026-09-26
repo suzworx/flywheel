@@ -59,6 +59,45 @@ var allFlagsFuncs = map[string]flagsAny{
 	"rebase":     func() (*flag.FlagSet, any) { fs, o := rebaseFlags(); return fs, o },
 	"recover":    func() (*flag.FlagSet, any) { fs, o := recoverFlags(); return fs, o },
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
+	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
+}
+
+// TestBriefFlagsBindEveryOption parses non-default values for every brief
+// flag, --gate repeated, and asserts the bound options hold them (issue #457).
+func TestBriefFlagsBindEveryOption(t *testing.T) {
+	t.Parallel()
+	fs, o := briefFlags()
+	args := []string{"--from-issue", "7", "--owns", "a,b", "--gate", "x", "--gate", "y", "--repo", "o/r",
+		"--needs", "t1,t2", "--kind", "feature", "--force", "--no-plan", "--dir", "D"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("briefFlags: %v", err)
+	}
+	want := briefOptions{dir: "D", fromIssue: 7, repo: "o/r", owns: "a,b", needs: "t1,t2",
+		gates: gateList{"x", "y"}, kind: "feature", force: true, noPlan: true}
+	if !reflect.DeepEqual(*o, want) {
+		t.Errorf("briefFlags parsed = %#v, want %#v", *o, want)
+	}
+	if got := splitCSV(o.owns); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Errorf("splitCSV(owns) = %v, want [a b]", got)
+	}
+}
+
+// TestBriefFlagsUsageExits checks a missing --from-issue, a bad N and a
+// missing --owns are usage errors (exit 2) before gh is run.
+func TestBriefFlagsUsageExits(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"t1", "--owns", "a", "--dir", dir},
+		{"t1", "--from-issue", "x", "--owns", "a", "--dir", dir},
+		{"t1", "--from-issue", "0", "--owns", "a", "--dir", dir},
+		{"t1", "--from-issue", "7", "--dir", dir},
+	} {
+		var out, errb strings.Builder
+		if code := briefMain(args, &out, &errb); code != 2 {
+			t.Errorf("briefMain(%v) = %d, want 2; stderr:\n%s", args, code, errb.String())
+		}
+	}
 }
 
 // optionDir reads the dir an options struct bound; "" when it has no dir.

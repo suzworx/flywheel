@@ -39,9 +39,21 @@ all.
   `chore`, `perf`; an empty `kind:` line or another value is a lint problem, and no kind is ever
   inferred), `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
-  nothing is appended), and `note`. `owns`/`needs` are copied from the brief header when the event
+  nothing is appended), `note`, and `issue` (the tracker issue the plan links to, set by `flywheel
+  brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1).
+  `owns`/`needs` are copied from the brief header when the event
   is appended. When `header` is present it is authoritative over the brief file, and `owns`/`needs`
   are its summary.
+- `flywheel brief <task> --from-issue N [--repo OWNER/REPO] --owns a,b [--needs t1,t2] [--gate
+  CMD]... [--kind K] [--force] [--no-plan] [--dir DIR]` (issue #457) reads issue N with `gh issue
+  view N --json number,title,body,url`, writes `.flywheel/briefs/<task>.txt` atomically (the header
+  from the flags — needs default `none`, gates default `go build ./... && go vet ./... && go test
+  ./...` when `--dir` has `go.mod`, otherwise `--gate` is required — then `# TASK: <title> (issue
+  #N)`, `Issue: <url>`, `## Why (from the issue)` with the issue body, and `## Checks`), refuses an
+  existing brief without `--force`, lints it (a lint problem removes the file), prints the path and,
+  unless `--no-plan`, appends this planned event with `issue` N, printing the warnings `flywheel log
+  --kind planned` prints. Exit 0 ok, 1 error (gh, write, lint), 2 usage (missing `--from-issue`, a
+  bad N, missing `--owns`).
 - Effect: `Derive` sets status `planned`. Verify's T1 (`plannedBriefOnly`) uses the task's *latest*
   `planned` event's brief path, deliberately ignoring any `amended` events, as the hash a fresh
   dispatch must match. Acceptance criteria belong to the goal (`flywheel goal add --accept CMD`),

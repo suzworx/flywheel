@@ -14,6 +14,8 @@ type PlanMeta struct {
 	Model   string
 	GoalID  string
 	Note    string
+	// Issue is the tracker issue a planned event links to (issue #457); 0 omits it.
+	Issue int
 }
 
 // RecordPlanned parses the brief header at brief (resolved against dir when
@@ -48,6 +50,7 @@ func RecordPlannedBy(dir, task, brief string, meta PlanMeta) error {
 		Model:   meta.Model,
 		GoalID:  meta.GoalID,
 		Note:    meta.Note,
+		Issue:   meta.Issue,
 	})
 }
 
