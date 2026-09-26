@@ -21,6 +21,7 @@ type RecoverReport struct {
 	// when dormancy was disabled.
 	DormantAfter string `json:"dormant_after,omitempty"`
 	all          bool   // Text prints every unit and every history item
+	session      string // RecoverOptions.Session: Text marks units other leads dispatched
 }
 
 // RecoverOptions configures one recover pass (issue #422).
@@ -31,17 +32,71 @@ type RecoverOptions struct {
 	// All makes Text list landed and dormant units and every history item
 	// instead of summary lines.
 	All bool
+	// Session is the current lead session (issue #472): its integrity
+	// failures are grouped first, and Text marks units other leads dispatched.
+	Session string
 }
 
 // RecoverIntegrity is the log chain and the verify rules over every task.
 // Failed are the chain and the rule failures on units not landed: they fail
 // integrity. History are rule failures on landed units, which can no longer
-// be acted on: reported and counted, never failing integrity.
+// be acted on: reported and counted, never failing integrity. ByLead is
+// Failed grouped by the lead that dispatched each item's task (issue #472).
 type RecoverIntegrity struct {
-	Pass    bool         `json:"pass"`
-	Chain   LogChain     `json:"chain"`
-	Failed  []VerifyItem `json:"failed,omitempty"`
-	History []VerifyItem `json:"history,omitempty"`
+	Pass    bool               `json:"pass"`
+	Chain   LogChain           `json:"chain"`
+	Failed  []VerifyItem       `json:"failed,omitempty"`
+	ByLead  []RecoverLeadGroup `json:"by_lead,omitempty"`
+	History []VerifyItem       `json:"history,omitempty"`
+}
+
+// RecoverLeadGroup is the integrity failures on units one lead dispatched:
+// Lead is the latest dispatched event's lead, "" when unrecorded; Current
+// marks RecoverOptions.Session's group, which is listed first.
+type RecoverLeadGroup struct {
+	Lead    string       `json:"lead"`
+	Current bool         `json:"current,omitempty"`
+	Items   []VerifyItem `json:"items"`
+}
+
+// groupByLead groups items by leads[item.Task]: the group of session (when
+// non-empty) first and Current, then the other recorded leads sorted, then
+// the unrecorded ("") last. Items keep their order within a group.
+func groupByLead(items []VerifyItem, leads map[string]string, session string) []RecoverLeadGroup {
+	byLead := map[string][]VerifyItem{}
+	for _, it := range items {
+		byLead[leads[it.Task]] = append(byLead[leads[it.Task]], it)
+	}
+	var others []string
+	for l := range byLead {
+		if l != "" && (session == "" || l != session) {
+			others = append(others, l)
+		}
+	}
+	slices.Sort(others)
+	var groups []RecoverLeadGroup
+	if its, ok := byLead[session]; ok && session != "" {
+		groups = append(groups, RecoverLeadGroup{Lead: session, Current: true, Items: its})
+	}
+	for _, l := range others {
+		groups = append(groups, RecoverLeadGroup{Lead: l, Items: byLead[l]})
+	}
+	if its, ok := byLead[""]; ok {
+		groups = append(groups, RecoverLeadGroup{Lead: "", Items: its})
+	}
+	return groups
+}
+
+// latestLeads maps each task to the lead of its latest dispatched event that
+// records one, so a dispatch without --session (a review --fix round) keeps it.
+func latestLeads(events []Event) map[string]string {
+	leads := map[string]string{}
+	for _, e := range events {
+		if e.Kind == "dispatched" && e.Task != "" && e.Lead != "" {
+			leads[e.Task] = e.Lead
+		}
+	}
+	return leads
 }
 
 // RecoverTask is one unit's derived state, its world checks and next action.
@@ -50,6 +105,7 @@ type RecoverTask struct {
 	Status  string `json:"status"`
 	Attempt string `json:"attempt,omitempty"`
 	Model   string `json:"model,omitempty"`
+	Lead    string `json:"lead,omitempty"` // the latest recorded dispatched lead (issue #472)
 	// Worktree is the unit's task worktree or recorded workdir; empty when
 	// the unit works in the flywheel root, whose changes are shared.
 	Worktree string `json:"worktree,omitempty"`
@@ -152,7 +208,7 @@ func nextAction(f recoverFacts) Next {
 // Recover reads the ledger and the world and reports integrity, every unit's
 // checks and its next action (issue #422). It writes nothing.
 func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error) {
-	rep := RecoverReport{At: now.UTC().Format(time.RFC3339), Tasks: []RecoverTask{}, all: o.All}
+	rep := RecoverReport{At: now.UTC().Format(time.RFC3339), Tasks: []RecoverTask{}, all: o.All, session: o.Session}
 	if o.DormantAfter > 0 {
 		rep.DormantAfter = o.DormantAfter.String()
 	}
@@ -165,6 +221,7 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 	for _, ts := range state.Tasks {
 		landed[ts.ID] = ts.Status == "landed"
 	}
+	leads := latestLeads(events)
 	chain, err := VerifyLogChain(dir)
 	if err != nil {
 		return rep, err
@@ -183,6 +240,7 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 			rep.Integrity.Failed = append(rep.Integrity.Failed, it)
 		}
 	}
+	rep.Integrity.ByLead = groupByLead(rep.Integrity.Failed, leads, o.Session)
 	rep.Integrity.Pass = chain.OK() && len(rep.Integrity.Failed) == 0
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
@@ -199,6 +257,7 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 	for _, ts := range state.Tasks {
 		t, f := recoverTask(dir, ts, events, obs, cfg, now)
 		t.Next = nextAction(f)
+		t.Lead = leads[ts.ID]
 		if last, err := time.Parse(time.RFC3339Nano, ts.UpdatedAt); err == nil && o.DormantAfter > 0 && ts.Status != "landed" && now.Sub(last) > o.DormantAfter {
 			t.Dormant = true
 		}
@@ -530,8 +589,24 @@ func (r RecoverReport) Text() string {
 			}
 			b.WriteString("\n")
 		}
-		for _, it := range r.Integrity.Failed {
-			fmt.Fprintf(&b, "  %s %s: %s\n", it.Rule, it.Task, it.Reason)
+		if recorded := slices.ContainsFunc(r.Integrity.ByLead, func(g RecoverLeadGroup) bool { return g.Lead != "" }); !recorded {
+			for _, it := range r.Integrity.Failed {
+				fmt.Fprintf(&b, "  %s %s: %s\n", it.Rule, it.Task, it.Reason)
+			}
+		} else {
+			for _, g := range r.Integrity.ByLead {
+				switch {
+				case g.Lead == "":
+					fmt.Fprintf(&b, "  lead unrecorded: %d\n", len(g.Items))
+				case g.Current:
+					fmt.Fprintf(&b, "  lead %s (this session): %d\n", g.Lead, len(g.Items))
+				default:
+					fmt.Fprintf(&b, "  lead %s: %d\n", g.Lead, len(g.Items))
+				}
+				for _, it := range g.Items {
+					fmt.Fprintf(&b, "    %s %s: %s\n", it.Rule, it.Task, it.Reason)
+				}
+			}
 		}
 	}
 	if len(hist) > 0 {
@@ -573,7 +648,11 @@ func (r RecoverReport) Text() string {
 		if t.Attempt != "" {
 			fmt.Fprintf(&b, " %s", t.Attempt)
 		}
-		fmt.Fprintf(&b, " -> %s: %s\n", t.Next.Action, t.Next.Reason)
+		fmt.Fprintf(&b, " -> %s: %s", t.Next.Action, t.Next.Reason)
+		if r.session != "" && t.Lead != "" && t.Lead != r.session {
+			fmt.Fprintf(&b, " [lead %s]", t.Lead) // dispatched by another lead (issue #472)
+		}
+		b.WriteString("\n")
 		if t.Next.Command != "" {
 			fmt.Fprintf(&b, "  run: %s\n", t.Next.Command)
 		}

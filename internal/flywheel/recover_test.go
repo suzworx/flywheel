@@ -286,6 +286,72 @@ func TestRecoverHistorySplit(t *testing.T) {
 	}
 }
 
+// TestRecoverGroupsByLead checks integrity failures are grouped by the lead
+// that dispatched each unit, the current session first (issue #472), and a
+// unit another lead dispatched is marked, while a ledger with no lead recorded
+// keeps the flat lines.
+func TestRecoverGroupsByLead(t *testing.T) {
+	t.Parallel()
+	failing := func(task, lead string) []Event {
+		return []Event{{Task: task, Kind: "planned", Brief: "gone.txt"},
+			{Task: task, Kind: "dispatched", Attempt: "r1", Lead: lead},
+			{Task: task, Kind: "finished", Attempt: "r1", Reason: "stop"}}
+	}
+	dir := t.TempDir()
+	recoverLedger(t, dir, slices.Concat(failing("A", "lead-a"), failing("B", "lead-b"), failing("C", ""))...)
+	rep, err := Recover(dir, recoverNow, RecoverOptions{Session: "lead-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := rep.Integrity.ByLead
+	if len(g) != 3 || g[0].Lead != "lead-b" || !g[0].Current || g[1].Lead != "lead-a" || g[1].Current || g[2].Lead != "" || g[2].Current {
+		t.Fatalf("by_lead = %+v", g)
+	}
+	n := 0
+	for i, task := range []string{"B", "A", "C"} {
+		if len(g[i].Items) == 0 {
+			t.Errorf("group %q has no items", g[i].Lead)
+		}
+		for _, it := range g[i].Items {
+			n++
+			if it.Task != task {
+				t.Errorf("group %q holds %s's item %+v", g[i].Lead, it.Task, it)
+			}
+		}
+	}
+	if n != len(rep.Integrity.Failed) {
+		t.Errorf("groups hold %d items, failed has %d", n, len(rep.Integrity.Failed))
+	}
+	text := rep.Text()
+	ib, ia, iu := strings.Index(text, "  lead lead-b (this session): "), strings.Index(text, "  lead lead-a: "), strings.Index(text, "  lead unrecorded: ")
+	if ib < 0 || ia < ib || iu < ia {
+		t.Errorf("groups out of order (%d, %d, %d):\n%s", ib, ia, iu, text)
+	}
+	if !strings.Contains(text, "\nA ") || !strings.Contains(text, " [lead lead-a]\n") {
+		t.Errorf("A's line with its lead mark is missing:\n%s", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(line, "A ") && !strings.HasSuffix(line, " [lead lead-a]"):
+			t.Errorf("A's line lacks its lead: %q", line)
+		case (strings.HasPrefix(line, "B ") || strings.HasPrefix(line, "C ")) && strings.Contains(line, "[lead "):
+			t.Errorf("a unit of this session or unrecorded is marked: %q", line)
+		}
+	}
+	flat := t.TempDir()
+	recoverLedger(t, flat, slices.Concat(failing("A", ""), failing("C", ""))...)
+	if rep, err = Recover(flat, recoverNow, RecoverOptions{Session: "lead-b"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "integrity: FAIL\n"
+	for _, it := range rep.Integrity.Failed {
+		want += "  " + it.Rule + " " + it.Task + ": " + it.Reason + "\n"
+	}
+	if text := rep.Text(); !strings.Contains(text, want) || strings.Contains(text, "lead ") {
+		t.Errorf("no lead recorded: want the flat lines\n%s\ngot:\n%s", want, text)
+	}
+}
+
 // TestRecoverDormant checks a unit untouched past DormantAfter is dormant:
 // reported, its Next kept, and --apply never re-validates it, while a fresh
 // unit with the same action is re-validated.

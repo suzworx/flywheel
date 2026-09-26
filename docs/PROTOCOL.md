@@ -58,7 +58,9 @@ all.
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter`, `worker` (the resolved worker's name, issue #469; omitted on events recorded before
-  it), `model`, `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
+  it), `lead` (the lead session that dispatched it: `flywheel run --session ID`, default
+  `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required), `model`,
+  `path` (the run file), `sha256` (of the exact prompt sent), `brief` (for a
   correction attempt: `.flywheel/briefs/<task>.<attempt>.delta.txt`, the per-attempt snapshot of
   the delta taken atomically at dispatch; the operator's `--delta` file is left untouched and may be
   edited or reused for the next correction without breaking this one's T1, issue #452; a failed
@@ -544,7 +546,7 @@ all.
   tasks they touched, sorted). `Validate` requires the note and refuses a task.
 - Effect: no status change; the applied actions record their own events (`lost`, `validated`,
   `owns_checked`, `rebased`).
-- `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR]` (read-only without `--apply`)
+- `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID]` (read-only without `--apply`)
   is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
   over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a
   `landed` task is **history**: it can no longer be acted on, so it is reported and counted
@@ -565,6 +567,16 @@ all.
   shows dormant tasks as one summary line (count and ids) unless `--all`, and `--apply` never acts
   on one: it is listed as `dormant`. Landed tasks are likewise one summary line (`N landed units`)
   unless `--all`. Exit 0 when integrity passes and no task's next action is `investigate`, else 1.
+
+  Several lead sessions may share one ledger (issue #472). `--session ID` (default
+  `$FLYWHEEL_SESSION`) names yours. Each task carries `lead`, the `lead` of its latest `dispatched`
+  event that records one (a dispatch without a session, a `review --fix` round say, keeps it). `integrity.failed` stays flat. `integrity.by_lead` groups it by that lead: your
+  session's group first (`current: true`), then the other recorded leads sorted, then `""`
+  (unrecorded, or an item with no task). When at least one failed item's lead is recorded, the text
+  prints the failures under `lead <id> (this session): <n>`, `lead <id>: <n>` and
+  `lead unrecorded: <n>` headers; otherwise it keeps the flat lines. With a session given, a task
+  another lead dispatched ends its line with ` [lead <id>]`. Export `FLYWHEEL_SESSION` once per
+  lead session so `flywheel run` records it and `flywheel recover` groups by it.
 - The next action per task, first match wins:
 
   | Condition | Action | Command |

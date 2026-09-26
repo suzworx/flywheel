@@ -36,6 +36,7 @@ type RunOptions struct {
 	StrictBrief  bool   // a drifted brief is a T1 RuleRefusal instead of a warning (issue #135)
 	Increment    int    // > 0: do only increment N of the brief, as a fresh session (issue #83)
 	Worktree     bool   // run the worker in the task's own worktree (issue #45)
+	Lead         string // the lead session dispatching; recorded as the dispatched event's lead (issue #472)
 	StartTimeout time.Duration
 	StallTimeout time.Duration
 	Progress     io.Writer
@@ -690,7 +691,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Adapter: worker.Adapter, Worker: worker.Name, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
-		Line: usedLine,
+		Line: usedLine, Lead: o.Lead,
 	}); err != nil {
 		return Result{}, err
 	}

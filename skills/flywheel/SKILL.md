@@ -104,6 +104,7 @@ When you start a session, register yourself on the floor:
 ## The loop (compact)
 
 ### 0. Recover — every session starts with `flywheel recover`
+Once per session, `export FLYWHEEL_SESSION=<your session>`: `flywheel run` records it as the unit's lead and `flywheel recover` lists your integrity failures first.
 Before planning or dispatching anything, run `flywheel recover` (read-only). It checks the log's
 hash chain and every verify rule, compares each unit's worktree, lease and run file with the
 ledger, and prints one next action per unit with its reason and exact command. Act on that list,
