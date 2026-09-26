@@ -101,6 +101,43 @@ func shellWarning(h shellHost) string {
 	return fmt.Sprintf("bash on PATH is the WSL launcher (%s); gates and worktree.setup use %s", wsl, chosen)
 }
 
+// DoctorLedgerWarning is the local tracked-ledger check (issue #464): when
+// git tracks dir's ledger (.flywheel/events.jsonl or anything under the
+// shard directory .flywheel/events), one line naming at most three of the
+// paths and the fix; "" otherwise, and "" when dir is not a repository or git
+// fails. Read-only: ls-files never writes the index.
+func DoctorLedgerWarning(dir string) string {
+	root, _, err := LedgerRoot(dir)
+	if err != nil {
+		return ""
+	}
+	shardDir := ".flywheel/" + shardDirName
+	paths, err := gitList(root, "\x00", "ls-files", "-z", "--", ".flywheel/events.jsonl", shardDir)
+	if err != nil || len(paths) == 0 {
+		return ""
+	}
+	named := strings.Join(paths, ", ")
+	if len(paths) > 3 {
+		named = fmt.Sprintf("%s and %d more", strings.Join(paths[:3], ", "), len(paths)-3)
+	}
+	// The untrack command names the shard directory once (rm -r takes it),
+	// not every shard file.
+	var rm []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if strings.HasPrefix(p, shardDir+"/") {
+			p = shardDir
+		}
+		if !seen[p] {
+			seen[p] = true
+			rm = append(rm, p)
+		}
+	}
+	return fmt.Sprintf("the ledger is tracked by git (%s): branch switches and merges rewrite it; "+
+		"untrack it (git rm --cached -r %s) and add .flywheel/ to .gitignore, "+
+		"or add \".flywheel/events.jsonl merge=union\" to .gitattributes (#436)", named, strings.Join(rm, " "))
+}
+
 // DoctorAllOK reports whether every probe classified as ClassOK.
 func DoctorAllOK(probes []DoctorProbe) bool {
 	for _, p := range probes {
