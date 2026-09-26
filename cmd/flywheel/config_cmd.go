@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	register("config", "read and validate the flywheel config\n    get <key>          print a config value (bare keys use the default worker)\n    set <key> <value>  set a config value (model, variant, adapter, max_parallel,\n                       feedback.upstream, feedback.submit, limits.per_host,\n                       staffing.<lead|inspector|auditor>.<adapter|model|session>)\n    show               print the effective config as JSON\n    validate           check the config and list every problem", runConfig)
+	register("config", "read and validate the flywheel config\n    get <key>          print a config value (bare keys use the default worker)\n    set <key> <value>  set a config value; an unknown key lists every settable key\n                       (put -- before a value beginning with -)\n    show               print the effective config as JSON\n    validate           check the config and list every problem", runConfig)
 	registerHelp("config", "flywheel config <get|set|show|validate> [--dir DIR]", nil)
 }
 
@@ -43,11 +43,14 @@ func runConfig(args []string) {
 
 // parseConfigArgs splits a config subcommand's arguments into the --dir value
 // and the positional arguments, accepting flags before or after positionals.
+// A lone -- ends flag parsing: every later argument is positional.
 func parseConfigArgs(args []string) (dir string, positional []string, err error) {
 	dir = "."
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case a == "--":
+			return dir, append(positional, args[i+1:]...), nil
 		case a == "-dir" || a == "--dir":
 			if i+1 >= len(args) {
 				return "", nil, fmt.Errorf("flag needs an argument: -dir")
@@ -73,8 +76,8 @@ func configUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: flywheel config <get|set|show|validate>")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  get <key>      print a config value (bare keys use the default worker)")
-	fmt.Fprintln(w, "  set <key> <value>  set a config value (model, variant, adapter, max_parallel,")
-	fmt.Fprintln(w, "                 feedback.upstream, feedback.submit, limits.per_host)")
+	fmt.Fprintln(w, "  set <key> <value>  set a config value; an unknown key lists every settable key")
+	fmt.Fprintln(w, "                 (put -- before a value beginning with -: set <key> -- <value>)")
 	fmt.Fprintln(w, "  show           print the effective config as JSON")
 	fmt.Fprintln(w, "  validate       check the config and list every problem")
 	fmt.Fprintln(w)
