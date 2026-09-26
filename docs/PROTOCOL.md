@@ -3,10 +3,14 @@
 This is the protocol flywheel enforces today, in code — not the fuller factory model it is
 building toward. The authority for everything below is the code itself:
 `internal/flywheel/events.go` (the `kinds` map and `Validate`), `internal/flywheel/state.go`
-(`Derive`'s status transitions), and `internal/flywheel/verify.go` (rules T1, T3, T4, T5, T8, the
-only ones implemented). `docs/design/autonomous-shipping.md` describes a larger design — audits,
-nonconformances, andon signals, a hash-chained log — that this repo has not built yet; §3 below
-says exactly which parts of that design are still aspiration, so a reader never has to guess.
+(`Derive`'s status transitions), `internal/flywheel/verify.go` (`flywheel verify`: rules T1, T3,
+T4, T5, T8, R1, W1 and P1), `internal/flywheel/land.go` (`flywheel land` enforces T7 and T9 live)
+and `internal/flywheel/chain.go` (the hash-chained log, checked by `flywheel verify --log`, with a
+chain per shard in the sharded layout). `docs/design/autonomous-shipping.md` describes a larger
+design — audits, nonconformances, andon signals, a hash-chained log — and much of it is built now
+(`audited` and `signal` events, first-article audits, the chain); §3 below says exactly which parts
+of that design are still aspiration (T2, T6 and parts of T9 and T10), so a reader never has to
+guess.
 
 Every record is one JSON line appended to `.flywheel/events.jsonl` by `AppendEvent`, and the log is
 never rewritten — `flywheel log` (or a command that calls `AppendEvent` internally) is the only way
@@ -20,14 +24,64 @@ Every skill in `skills/` that drives this loop cites `protocol v1` and links bac
 `cmd/flywheel/docs_test.go` fails the build the moment a skill stops citing it, or this file's
 first line stops matching `^# flywheel protocol v`.
 
+## Contents
+
+- [1. Required entries per task](#1-required-entries-per-task)
+  - [`planned`](#planned)
+  - [`dispatched`](#dispatched)
+  - [`worktree_setup`](#worktree_setup)
+  - [`started`](#started)
+  - [`worker_plan`](#worker_plan)
+  - [`no-plan`](#no-plan)
+  - [`off-course`](#off-course)
+  - [`finished`](#finished)
+  - [`report`](#report)
+  - [`reviewed`](#reviewed)
+  - [`review_finding`](#review_finding)
+  - [`finding_response`](#finding_response)
+  - [`group_reviewed`](#group_reviewed)
+  - [`blocked`](#blocked)
+  - [`lost`](#lost)
+  - [`withdrawn`](#withdrawn)
+  - [`rebased`](#rebased)
+  - [`recovered`](#recovered)
+  - [`landed`](#landed)
+  - [`excepted`](#excepted)
+  - [`allow_untriaged`](#allow_untriaged)
+  - [`audited`](#audited)
+  - [`release_audited`](#release_audited)
+  - [`health`](#health)
+  - [`probed`](#probed)
+  - [`amended`](#amended)
+  - [`validated`](#validated)
+  - [`owns_checked`](#owns_checked)
+  - [`inspected`](#inspected)
+  - [`staffed`](#staffed)
+  - [`session_start`](#session_start)
+  - [`session_command`](#session_command)
+  - [`session_end`](#session_end)
+  - [`learning`](#learning)
+  - [`note`](#note)
+  - [`lead_edit`](#lead_edit)
+  - [`goal`](#goal)
+- [2. Transitions the code enforces](#2-transitions-the-code-enforces)
+- [3. Designed, not enforced](#3-designed-not-enforced)
+- [4. Who may write which event](#4-who-may-write-which-event)
+- [Log layout](#log-layout)
+  - [Legacy layout](#legacy-layout)
+  - [Sharded layout](#sharded-layout)
+  - [Backups](#backups)
+- [5. `flywheel verify` and exit codes](#5-flywheel-verify-and-exit-codes)
+
 ## 1. Required entries per task
 
-Twenty-two event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
+Forty-one event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
 `Validate` rejects anything else. Nine of them carry a task's status (`state.go`'s `kindRank`
-orders them for replay); the rest — `worker_plan`, `no-plan`, `off-course`, `report`, `validated`,
-`owns_checked`, `amended`, `sharded` — change other fields but never the status itself. `staffed`, `goal`,
-`session_start`, `session_command` and `session_end` are the five kinds that carry no `task` at
-all.
+orders them, together with some status-neutral kinds, for replay); the rest — `worker_plan`,
+`no-plan`, `off-course`, `report`, `validated`, `owns_checked`, `amended`, `sharded` and the
+others — change other fields but never the status itself. `staffed`, `goal`, `session_start`,
+`session_command` and `session_end` carry no `task` at all, and `Validate` also refuses a `task`
+on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
@@ -73,7 +127,8 @@ all.
 ### `dispatched`
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
-  `adapter`, `worker` (the resolved worker's name, issue #469; omitted on events recorded before
+  `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
+  `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
   it), `lead` (the lead session that dispatched it: `flywheel run --session ID`, default
   `$FLYWHEEL_SESSION`, issue #472; omitted when unset and on older events, never required),
   `variant` (the worker's reasoning variant, issue #473; omitted when unset and on older events),
@@ -1129,10 +1184,12 @@ gates (exit 5) without touching the log's legality.
 ## 3. Designed, not enforced
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
-vocabulary (`audited`, `signal`, `dismissed`, `learning`, "by" attribution blocks). Only T1, T3, T4,
-T5 and T8 exist in `verify.go` (T9 is enforced live by `flywheel land`, below), and only the kinds in `events.go`'s known-kinds map exist
-at all — `Validate` rejects any other kind by name, so an event carrying `audited` today is simply a
-validation error, not a recognized-but-unchecked record. Concretely, still design-only:
+vocabulary (`audited`, `signal`, `dismissed`, `learning`, "by" attribution blocks). Of the T rules,
+T1, T3, T4, T5 and T8 exist in `verify.go` (alongside R1, W1 and P1, §2), and T7 and T9 are enforced
+live by `flywheel land` (`land.go`, below). Only the kinds in `events.go`'s known-kinds map exist at
+all — `Validate` rejects any other kind by name — and `audited`, `signal`, `dismissed` and
+`learning` are all in that map, so each is a recognized record (`audited` is written by
+`flywheel audit`, §1). Concretely, still design-only or only partly built:
 
 - **T2** (a step-20 `worker_plan` or a signal) — the `no-plan` half landed (§1); `flywheel run` now
   records a `signal` event for `no-plan` and the other conditions, but nothing treats one as a
@@ -1157,9 +1214,11 @@ validation error, not a recognized-but-unchecked record. Concretely, still desig
   none. Appends are serialised by `.flywheel/events.lock` (held only for the read of the last line
   and the write), so within one ledger the chain is linear: every record but the last is the
   predecessor of the next, and removing or editing any of them is detected. "Some earlier line" is
-  accepted so a git merge, which interleaves two branches' lines, stays valid. Limits: removing the
-  LAST line, or editing a line written before the chain existed, is not detected (issue #47 tracks
-  per-shard chains).
+  accepted so a git merge, which interleaves two branches' lines, stays valid. The per-shard half is
+  built too: in the sharded layout each shard file has its own chain from the shard genesis hash,
+  and `@floor.jsonl`'s seal pins the legacy file (`verifyShardedChain` in `chain.go`; see
+  [Sharded layout](#sharded-layout)). Still not built: removing the LAST line of a file, or editing
+  a line written before the chain existed, is not detected.
 
 Until these land, the factory-role table, the andon cord, sampling, and nonconformance handling in
 `docs/design/autonomous-shipping.md` and `skills/flywheel/references/factory.md` describe intent
