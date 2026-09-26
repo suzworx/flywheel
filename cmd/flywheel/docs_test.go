@@ -23,6 +23,22 @@ func TestDocsCommandTable(t *testing.T) {
 	}
 }
 
+// TestDocsReadmeCommands checks every registered command appears in README.md
+// as "flywheel <name>", so the README's CLI reference never drifts from the
+// implemented commands.
+func TestDocsReadmeCommands(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	for name := range commands {
+		if !strings.Contains(string(data), "flywheel "+name) {
+			t.Errorf("command %q is missing from README.md; add a `flywheel %s` row to its CLI table", name, name)
+		}
+	}
+}
+
 // TestDocsProtocolCitations checks docs/PROTOCOL.md exists with the expected
 // first line and that every skill file driving the loop still cites the
 // protocol version it implements, so a skill that stops citing it (or a

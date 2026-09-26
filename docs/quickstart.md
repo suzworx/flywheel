@@ -345,7 +345,7 @@ unmeasured or out-of-bounds unit pass. Read the message — it names the rule an
   poka-yoke rules, and who does what.
 - `skills/` — the persona skills the loop drives: `flywheel` (the lead), `flywheel-planner`,
   `flywheel-worker`, `flywheel-inspector`, and the rest.
-- [Driving the loop by hand](../HUMAN.md) — every step above as a human lead runs it, without
+- [Driving the loop by hand](https://github.com/suzworx/flywheel/blob/main/HUMAN.md) — every step above as a human lead runs it, without
   an agent.
 - [docs/design/](design/) — the factory model and the rules behind it
   ([autonomous-shipping.md](design/autonomous-shipping.md),
