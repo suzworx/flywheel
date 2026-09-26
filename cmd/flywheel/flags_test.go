@@ -586,12 +586,12 @@ func TestHealthStaleIsAndon(t *testing.T) {
 	}
 }
 
-// TestShipFlagsBindEveryOption parses every ship flag, the task before or
-// after them, checks the defaults, the help names the missing remote half, and
-// a missing task is a usage error (issue #457).
+// TestShipFlagsBindEveryOption parses every local ship flag, the task before
+// or after them, checks the defaults, the help's exit codes, and a missing
+// task is a usage error (issue #457).
 func TestShipFlagsBindEveryOption(t *testing.T) {
 	t.Parallel()
-	if _, o := shipFlags(); *o != (shipOptions{dir: ".", remote: "origin"}) {
+	if _, o := shipFlags(); !reflect.DeepEqual(*o, shipOptions{dir: ".", remote: "origin", ciTimeout: 45 * time.Minute, poll: 30 * time.Second}) {
 		t.Errorf("shipFlags defaults = %#v", *o)
 	}
 	for _, args := range [][]string{
@@ -600,18 +600,42 @@ func TestShipFlagsBindEveryOption(t *testing.T) {
 	} {
 		fs, o := shipFlags()
 		pos, err := parseArgs(fs, args)
-		want := shipOptions{dir: "D", integration: "main2", workdir: "W", remote: "up", message: "m"}
-		if err != nil || len(pos) != 1 || pos[0] != "T1" || *o != want {
+		want := shipOptions{dir: "D", integration: "main2", workdir: "W", remote: "up", message: "m", ciTimeout: 45 * time.Minute, poll: 30 * time.Second}
+		if err != nil || len(pos) != 1 || pos[0] != "T1" || !reflect.DeepEqual(*o, want) {
 			t.Errorf("parseArgs(%v) = %v, %#v, %v; want [T1], %#v", args, pos, *o, err, want)
 		}
 	}
 	var b strings.Builder
 	shipUsage(&b)
-	if !strings.Contains(b.String(), "--integration BRANCH") || !strings.Contains(b.String(), "not in this version yet") {
+	if !strings.Contains(b.String(), "--integration BRANCH") || !strings.Contains(b.String(), "5 gates or CI failed") || strings.Contains(b.String(), "not in this version yet") {
 		t.Errorf("ship usage = %q", b.String())
 	}
 	var out, errb strings.Builder
 	if code := shipMain([]string{"--dir", t.TempDir()}, &out, &errb); code != 2 {
 		t.Errorf("shipMain without a task = %d, want 2", code)
+	}
+}
+
+// TestShipRemoteFlags binds every remote-half ship flag, --ignore-check
+// repeated, and the help names them; a missing --body-file is a usage error.
+func TestShipRemoteFlags(t *testing.T) {
+	t.Parallel()
+	fs, o := shipFlags()
+	pos, err := parseArgs(fs, []string{"T1", "--title", "Ti", "--body-file", "B.md", "--no-merge", "--ci-timeout", "10m",
+		"--poll", "5s", "--ignore-check", "lint", "--ignore-check", "docs", "--repo", "o/r"})
+	want := shipOptions{dir: ".", remote: "origin", title: "Ti", bodyFile: "B.md", noMerge: true, ciTimeout: 10 * time.Minute,
+		poll: 5 * time.Second, ignoreChecks: repeatable{"lint", "docs"}, repo: "o/r"}
+	if err != nil || len(pos) != 1 || pos[0] != "T1" || !reflect.DeepEqual(*o, want) {
+		t.Errorf("parseArgs = %v, %#v, %v; want [T1], %#v", pos, *o, err, want)
+	}
+	for _, f := range []string{"--title", "--body-file", "--no-merge", "--ci-timeout", "--poll", "--ignore-check", "--repo"} {
+		if !strings.Contains(shipUsageLine, f) {
+			t.Errorf("ship usage lacks %s: %q", f, shipUsageLine)
+		}
+	}
+	var out, errb strings.Builder
+	missing := filepath.Join(t.TempDir(), "none.md")
+	if code := shipMain([]string{"T1", "--body-file", missing, "--dir", t.TempDir()}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "--body-file") {
+		t.Errorf("shipMain with a missing --body-file = %d, %q; want 2", code, errb.String())
 	}
 }

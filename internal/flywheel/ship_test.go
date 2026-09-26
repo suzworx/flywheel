@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,12 @@ type shipFixture struct {
 
 func newShipFixture(t *testing.T, gate string, inspected bool) shipFixture {
 	t.Helper()
+	return newShipFixtureIssue(t, gate, inspected, 0)
+}
+
+// newShipFixtureIssue is newShipFixture with T planned from issue (0 none).
+func newShipFixtureIssue(t *testing.T, gate string, inspected bool, issue int) shipFixture {
+	t.Helper()
 	f := shipFixture{origin: t.TempDir(), dir: t.TempDir()}
 	shipGit(t, f.origin, "init", "-q", "--bare")
 	shipGit(t, f.dir, "init", "-q")
@@ -62,7 +69,7 @@ func newShipFixture(t *testing.T, gate string, inspected bool) shipFixture {
 	shipWrite(t, f.dir, "brief.txt", "owns: src/\nneeds: none\ngate: "+gate+"\n\n# TASK: T\n")
 	rc := 0
 	evs := []Event{
-		{TS: "2026-01-01T00:00:00Z", Task: "T", Kind: "planned", Brief: "brief.txt"},
+		{TS: "2026-01-01T00:00:00Z", Task: "T", Kind: "planned", Brief: "brief.txt", Issue: issue},
 		{TS: "2026-01-01T00:01:00Z", Task: "T", Kind: "dispatched", Attempt: "r1", Base: base},
 		{TS: "2026-01-01T00:02:00Z", Task: "T", Kind: "finished", Attempt: "r1", Reason: "stop"},
 		{TS: "2026-01-01T00:03:00Z", Task: "T", Kind: "validated", Attempt: "r1", Gate: "1", Tree: "t", RC: &rc},
@@ -96,6 +103,12 @@ func (f shipFixture) ship(t *testing.T, o ShipOptions) (ShipResult, string, erro
 	var b strings.Builder
 	o.Progress = &b
 	o.Now = func() time.Time { return time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC) }
+	if o.Forge == nil {
+		o.Forge = &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
+	}
+	if o.Sleep == nil {
+		o.Sleep = func(time.Duration) {}
+	}
 	res, err := Ship(f.dir, "T", o)
 	return res, b.String(), err
 }
@@ -128,14 +141,10 @@ func TestShipLocalHappyAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ship: %v\n%s", err, out)
 	}
-	var got []string
-	for _, s := range res.Steps {
-		got = append(got, s.Step+"="+s.Result)
-	}
-	if strings.Join(got, " ") != "preflight=ok commit=ok merge-base=ok gates=ok" {
+	if got := shipSteps(res); got != "preflight=ok commit=ok merge-base=ok gates=ok push=ok pr=ok ci=ok merge=ok landed=ok closed=skip" {
 		t.Fatalf("steps = %v\n%s", got, out)
 	}
-	if evs := f.shipped(t); len(evs) != 4 || evs[3].Step != "gates" || evs[3].Attempt != "r1" || evs[3].Commit != shipGit(t, f.dir, "rev-parse", "fw/T") {
+	if evs := f.shipped(t); len(evs) != len(ShipSteps) || evs[3].Step != "gates" || evs[3].Attempt != "r1" || evs[3].Commit != shipGit(t, f.dir, "rev-parse", "fw/T") {
 		t.Fatalf("shipped events = %+v", evs)
 	}
 	shipGit(t, f.dir, "merge-base", "--is-ancestor", up, "fw/T")
@@ -151,13 +160,13 @@ func TestShipLocalHappyAndResume(t *testing.T) {
 	head := shipGit(t, f.dir, "rev-parse", "fw/T")
 
 	res, out, err = f.ship(t, ShipOptions{})
-	if err != nil || strings.Count(out, "(done)") != 4 || len(res.Steps) != 4 {
+	if err != nil || strings.Count(out, "(done)") != len(ShipSteps) || len(res.Steps) != len(ShipSteps) {
 		t.Fatalf("rerun: %v, steps %+v\n%s", err, res.Steps, out)
 	}
 	if now := shipGit(t, f.dir, "rev-parse", "fw/T"); now != head {
 		t.Errorf("rerun moved fw/T %s -> %s", head, now)
 	}
-	if n := len(f.shipped(t)); n != 4 {
+	if n := len(f.shipped(t)); n != len(ShipSteps) {
 		t.Errorf("rerun appended shipped events: %d", n)
 	}
 }
@@ -246,4 +255,277 @@ func TestShipLocalIntegrationBranch(t *testing.T) {
 		t.Fatalf("Ship = %+v, %v; want origin/main2 merged\n%s", res, err, out)
 	}
 	shipGit(t, f.dir, "merge-base", "--is-ancestor", up, "fw/T")
+}
+
+// fakeForge is a scripted Forge: pr is the existing PR (nil none), checks
+// the successive Checks answers (the last repeats; none means no checks),
+// checkErrs errors Checks returns first, one per call, and mergeState the
+// state a Merge leaves the PR in (default MERGED). It records every call.
+type fakeForge struct {
+	pr         *PullRequest
+	checks     []ChecksState
+	checkErrs  []error
+	mergeState string
+
+	created, merges, checkCalls int
+	mergeTitle, mergeMsg        string
+	comments                    []string
+	closed                      []int
+}
+
+const fakeMergeCommit = "abcdef0123456789abcdef0123456789abcdef01"
+
+func (f *fakeForge) PR(branch string) (PullRequest, bool, error) {
+	if f.pr == nil {
+		return PullRequest{}, false, nil
+	}
+	return *f.pr, true, nil
+}
+
+func (f *fakeForge) CreatePR(base, head, title, body string) (PullRequest, error) {
+	f.created++
+	f.pr = &PullRequest{Number: 7, URL: "https://example.test/o/r/pull/7", State: "OPEN"}
+	return *f.pr, nil
+}
+
+func (f *fakeForge) Checks(n int) (ChecksState, error) {
+	f.checkCalls++
+	if len(f.checkErrs) > 0 {
+		err := f.checkErrs[0]
+		f.checkErrs = f.checkErrs[1:]
+		return ChecksState{}, err
+	}
+	if len(f.checks) == 0 {
+		return ChecksState{}, nil
+	}
+	c := f.checks[0]
+	if len(f.checks) > 1 {
+		f.checks = f.checks[1:]
+	}
+	return c, nil
+}
+
+func (f *fakeForge) Merge(n int, title, message string) error {
+	f.merges++
+	f.mergeTitle, f.mergeMsg = title, message
+	f.pr.State = "MERGED"
+	if f.mergeState != "" {
+		f.pr.State = f.mergeState
+	}
+	if f.pr.State == "MERGED" {
+		f.pr.MergeCommit = fakeMergeCommit
+	}
+	return nil
+}
+
+func (f *fakeForge) PRState(n int) (string, string, error) {
+	return f.pr.State, f.pr.MergeCommit, nil
+}
+
+func (f *fakeForge) CommentIssue(n int, body string) error {
+	f.comments = append(f.comments, fmt.Sprintf("%d: %s", n, body))
+	return nil
+}
+
+func (f *fakeForge) CloseIssue(n int, comment string) error {
+	f.closed = append(f.closed, n)
+	return nil
+}
+
+// shipSteps is res's steps as "step=result", space separated.
+func shipSteps(res ShipResult) string {
+	var got []string
+	for _, s := range res.Steps {
+		got = append(got, s.Step+"="+s.Result)
+	}
+	return strings.Join(got, " ")
+}
+
+// landedCommit is the fixture's landed commit, "" when T has not landed.
+func (f shipFixture) landedCommit(t *testing.T) string {
+	t.Helper()
+	events, err := ReadEvents(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Task == "T" && e.Kind == "landed" {
+			return e.Commit
+		}
+	}
+	return ""
+}
+
+// TestShipRemoteHappyPath (a): push, a new PR, checks pending then passed,
+// merged and re-read MERGED, landed with the merge commit, the issue commented
+// and closed because the generated body says Fixes #42.
+func TestShipRemoteHappyPath(t *testing.T) {
+	t.Parallel()
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	ff := &fakeForge{checks: []ChecksState{{Pending: []string{"build"}}, {Passed: []string{"build"}}}}
+	var sleeps []time.Duration
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Poll: time.Millisecond, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }})
+	if err != nil || shipSteps(res) != "preflight=ok commit=skip merge-base=skip gates=ok push=ok pr=ok ci=ok merge=ok landed=ok closed=ok" {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if got, want := shipGit(t, f.origin, "rev-parse", "fw/T"), shipGit(t, f.dir, "rev-parse", "fw/T"); got != want {
+		t.Errorf("origin fw/T = %s, want %s", got, want)
+	}
+	if ff.created != 1 || ff.merges != 1 || ff.mergeTitle != "T (#7)" || ff.checkCalls != 2 || len(sleeps) != 1 {
+		t.Errorf("forge = %+v, sleeps %v", ff, sleeps)
+	}
+	if !strings.Contains(ff.mergeMsg, "Fixes #42") || !strings.Contains(ff.mergeMsg, "exit 0") {
+		t.Errorf("merge message = %q", ff.mergeMsg)
+	}
+	if c := f.landedCommit(t); c != fakeMergeCommit {
+		t.Errorf("landed commit = %q, want %s", c, fakeMergeCommit)
+	}
+	if len(ff.comments) != 1 || !strings.HasPrefix(ff.comments[0], "42: Landed in #7 https://example.test/o/r/pull/7") || len(ff.closed) != 1 || ff.closed[0] != 42 {
+		t.Errorf("comments %q, closed %v", ff.comments, ff.closed)
+	}
+}
+
+// TestShipRemoteReusesOpenPR (b): an open PR for fw/T is reused, not created.
+func TestShipRemoteReusesOpenPR(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{pr: &PullRequest{Number: 9, URL: "u9", State: "OPEN"}, checks: []ChecksState{{Passed: []string{"build"}}}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	if err != nil || !strings.Contains(shipSteps(res), "pr=skip ci=ok merge=ok") || ff.created != 0 || ff.mergeTitle != "T (#9)" {
+		t.Fatalf("Ship = %s, %v, forge %+v\n%s", shipSteps(res), err, ff, out)
+	}
+}
+
+// TestShipRemoteEmptyChecksNeverPass (c): a PR with no checks reported is
+// never green; ci times out, naming that none were reported, and nothing merges.
+func TestShipRemoteEmptyChecksNeverPass(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Poll: time.Millisecond, CITimeout: 5 * time.Millisecond})
+	last := res.Steps[len(res.Steps)-1]
+	if !errors.Is(err, ErrShipCI) || last.Step != "ci" || last.Result != "fail" || !strings.Contains(last.Note, "no checks reported") {
+		t.Fatalf("Ship = %s, %v, last %+v\n%s", shipSteps(res), err, last, out)
+	}
+	if ff.merges != 0 || ff.checkCalls != 6 || f.landedCommit(t) != "" {
+		t.Errorf("forge = %+v, landed %q", ff, f.landedCommit(t))
+	}
+}
+
+// TestShipRemoteFailedCheck (d): one failed check fails ci naming it; the
+// same check ignored with IgnoreChecks passes.
+func TestShipRemoteFailedCheck(t *testing.T) {
+	t.Parallel()
+	checks := []ChecksState{{Passed: []string{"build"}, Failed: []string{"lint"}}}
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: checks}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	last := res.Steps[len(res.Steps)-1]
+	if !errors.Is(err, ErrShipCI) || last.Step != "ci" || last.Note != "failed: lint" || ff.merges != 0 {
+		t.Fatalf("Ship = %s, %v, last %+v\n%s", shipSteps(res), err, last, out)
+	}
+	f = newShipFixture(t, "exit 0", true)
+	ff = &fakeForge{checks: checks}
+	res, out, err = f.ship(t, ShipOptions{Forge: ff, IgnoreChecks: []string{"lint"}})
+	if err != nil || !strings.Contains(shipSteps(res), "ci=ok merge=ok") || ff.merges != 1 {
+		t.Fatalf("Ship ignoring lint = %s, %v\n%s", shipSteps(res), err, out)
+	}
+}
+
+// TestShipRemoteMergeNotMerged (e): a merge call that returns nil while the
+// PR stays OPEN fails merge naming the state, and nothing lands.
+func TestShipRemoteMergeNotMerged(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}, mergeState: "OPEN"}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	last := res.Steps[len(res.Steps)-1]
+	if err == nil || !strings.Contains(err.Error(), "OPEN") || last.Step != "merge" || last.Result != "fail" || f.landedCommit(t) != "" {
+		t.Fatalf("Ship = %s, %v, last %+v\n%s", shipSteps(res), err, last, out)
+	}
+}
+
+// TestShipRemoteTransientRetry (f): a TLS handshake timeout and a connection
+// reset from Checks are retried after 2s and 4s, then ci passes.
+func TestShipRemoteTransientRetry(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}},
+		checkErrs: []error{errors.New("net/http: TLS handshake timeout"), errors.New("read tcp: connection reset by peer")}}
+	var sleeps []time.Duration
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }})
+	if err != nil || !strings.Contains(shipSteps(res), "ci=ok merge=ok") {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if len(sleeps) != 2 || sleeps[0] != 2*time.Second || sleeps[1] != 4*time.Second || ff.checkCalls != 3 {
+		t.Errorf("sleeps %v, checks called %d", sleeps, ff.checkCalls)
+	}
+}
+
+// TestShipRemoteNoMerge (g): NoMerge stops after ci with Ship ok.
+func TestShipRemoteNoMerge(t *testing.T) {
+	t.Parallel()
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, NoMerge: true})
+	if err != nil || !strings.HasSuffix(shipSteps(res), "push=ok pr=ok ci=ok") || ff.merges != 0 || f.landedCommit(t) != "" || len(ff.comments) != 0 {
+		t.Fatalf("Ship = %s, %v, forge %+v\n%s", shipSteps(res), err, ff, out)
+	}
+}
+
+// TestShipRemoteBodyWithoutFixes (h): a body without Fixes #42 comments that
+// part landed and leaves the issue open.
+func TestShipRemoteBodyWithoutFixes(t *testing.T) {
+	t.Parallel()
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Body: "part one of #42"})
+	if err != nil || !strings.HasSuffix(shipSteps(res), "closed=ok") {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if len(ff.comments) != 1 || ff.comments[0] != "42: Part of this issue landed in #7" || len(ff.closed) != 0 {
+		t.Errorf("comments %q, closed %v", ff.comments, ff.closed)
+	}
+}
+
+// TestShipRemoteResumeAfterMerged (i): a ship stopped after ci whose PR was
+// merged since resumes at merge, which skips without a merge call, then lands
+// and closes; a third run trusts every step.
+func TestShipRemoteResumeAfterMerged(t *testing.T) {
+	t.Parallel()
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
+	if _, out, err := f.ship(t, ShipOptions{Forge: ff, NoMerge: true}); err != nil {
+		t.Fatalf("first ship: %v\n%s", err, out)
+	}
+	ff.pr.State, ff.pr.MergeCommit = "MERGED", fakeMergeCommit
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	if err != nil || strings.Count(out, "(done)") != 7 || !strings.HasSuffix(shipSteps(res), "merge=skip landed=ok closed=ok") || ff.merges != 0 {
+		t.Fatalf("resume = %s, %v, merges %d\n%s", shipSteps(res), err, ff.merges, out)
+	}
+	if c := f.landedCommit(t); c != fakeMergeCommit || len(ff.closed) != 1 {
+		t.Errorf("landed %q, closed %v", c, ff.closed)
+	}
+	if _, out, err = f.ship(t, ShipOptions{Forge: ff}); err != nil || strings.Count(out, "(done)") != len(ShipSteps) || ff.merges != 0 || len(ff.closed) != 1 {
+		t.Errorf("third run: %v, merges %d, closed %v\n%s", err, ff.merges, ff.closed, out)
+	}
+}
+
+// TestShipRemoteScrubsSessionLines (j): the squash message keeps the body but
+// drops a claude.ai/code/session link and a Claude-Session trailer.
+func TestShipRemoteScrubsSessionLines(t *testing.T) {
+	t.Parallel()
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
+	body := "Summary\nsee https://claude.ai/code/session_abc\nClaude-Session: xyz\n\nFixes #42\n"
+	if res, out, err := f.ship(t, ShipOptions{Forge: ff, Body: body}); err != nil {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if strings.Contains(ff.mergeMsg, "claude.ai/code/session") || strings.Contains(ff.mergeMsg, "Claude-Session") ||
+		!strings.Contains(ff.mergeMsg, "Summary") || !strings.Contains(ff.mergeMsg, "Fixes #42") {
+		t.Errorf("merge message = %q", ff.mergeMsg)
+	}
+	if len(ff.closed) != 1 {
+		t.Errorf("closed = %v; the body says Fixes #42", ff.closed)
+	}
 }
