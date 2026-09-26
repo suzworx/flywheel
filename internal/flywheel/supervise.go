@@ -3,6 +3,7 @@ package flywheel
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 // whether its gauges passed, or the error that stopped its measurement.
 type SuperviseResult struct {
 	Measured []SupervisedTask `json:"measured"`
+	// Resumed are the rate-limited units a --resume-limited pass acted on.
+	Resumed []SupervisedResume `json:"resumed,omitempty"`
 }
 
 // SupervisedTask is one measured task.
@@ -164,10 +167,38 @@ func parseTS(ts string) (time.Time, bool) {
 	return t, err == nil
 }
 
-// Supervise finds every task that needs measuring, runs ValidateTask on each,
-// and returns a SuperviseResult. It takes a lock so two supervisors never
-// measure at once.
+// SuperviseOptions configures one supervise pass. The zero value measures only.
+type SuperviseOptions struct {
+	// ResumeLimited re-dispatches, through Start, every unit whose current
+	// attempt finished rate-limited and whose recover next action is
+	// resume-session (the model's reset has passed), at most
+	// limits.rate_limit_retries times per planned unit (issue #472).
+	ResumeLimited bool
+	Now           time.Time          // the pass's clock, for the model pauses
+	Start         func(string) error // starts flywheel run <task> --resume
+	Session       string             // recorded on the auto-resume recovered event
+}
+
+// SupervisedResume is one rate-limited unit a --resume-limited pass acted on:
+// Started when Start ran without error, else Reason says why not.
+type SupervisedResume struct {
+	Task    string `json:"task"`
+	Attempt string `json:"attempt"`
+	Started bool   `json:"started"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// Supervise is SuperviseWith with the zero options: it only measures.
 func Supervise(dir string) (SuperviseResult, error) {
+	return SuperviseWith(dir, SuperviseOptions{})
+}
+
+// SuperviseWith finds every task that needs measuring, runs ValidateTask on
+// each, and returns a SuperviseResult. It takes a lock so two supervisors never
+// measure at once. With o.ResumeLimited it then, under the same lock, resumes
+// the rate-limited units whose model is no longer paused (resumeLimited). It
+// never inspects or lands, and never resumes any other finish reason.
+func SuperviseWith(dir string, o SuperviseOptions) (SuperviseResult, error) {
 	release, err := acquireRepoLock(dir, "supervise.lock", defaultRepoLockTimings())
 	if err != nil {
 		return SuperviseResult{}, err
@@ -197,7 +228,94 @@ func Supervise(dir string) (SuperviseResult, error) {
 		result.Measured = append(result.Measured, st)
 	}
 
+	if o.ResumeLimited {
+		if result.Resumed, err = resumeLimited(dir, o); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+// resumeLimited starts flywheel run <task> --resume, through o.Start, for every
+// non-dormant unit whose recover next action is resume-session and whose
+// latest finish is its current attempt's rate-limited one. A unit already
+// auto-resumed since that finish is skipped silently; one auto-resumed
+// limits.rate_limit_retries times since its latest planned event is reported,
+// never started. The auto-resume recovered event is appended BEFORE Start, so
+// a crash between the two never starts a unit twice; a failed Start keeps it,
+// and it counts toward the cap.
+func resumeLimited(dir string, o SuperviseOptions) ([]SupervisedResume, error) {
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return nil, fmt.Errorf("supervise --resume-limited: %w", err)
+	}
+	limit := cfg.Limits.RateLimitRetryCount()
+	rep, err := Recover(dir, o.Now, RecoverOptions{})
+	if err != nil {
+		return nil, err
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []SupervisedResume
+	for _, t := range rep.Tasks {
+		if t.Dormant || t.Next.Action != "resume-session" {
+			continue
+		}
+		prefix := "auto-resume " + t.Task + " "
+		fin, planned := -1, -1
+		var resumes []int // log indexes of the task's auto-resume events
+		for i, e := range events {
+			switch {
+			case e.Task == t.Task && e.Kind == "finished":
+				fin = i
+			case e.Task == t.Task && e.Kind == "planned":
+				planned = i
+			case e.Kind == "recovered" && strings.HasPrefix(e.Note, prefix) && slices.Contains(e.Paths, t.Task):
+				resumes = append(resumes, i)
+			}
+		}
+		if fin < 0 || events[fin].Attempt != t.Attempt || events[fin].Reason != "rate-limited" {
+			continue
+		}
+		n := 0
+		already := false
+		for _, i := range resumes {
+			if i > planned {
+				n++
+			}
+			already = already || i > fin
+		}
+		if already {
+			continue // a resume was already started for this finish
+		}
+		r := SupervisedResume{Task: t.Task, Attempt: t.Attempt}
+		if n >= limit {
+			r.Reason = fmt.Sprintf("auto-resume cap %d reached; flywheel run %s --resume", limit, t.Task)
+			out = append(out, r)
+			continue
+		}
+		note := fmt.Sprintf("auto-resume %s %s after rate limit (%d/%d)", t.Task, t.Attempt, n+1, limit)
+		if err := AppendEvent(dir, Event{Kind: "recovered", Note: note, Paths: []string{t.Task}, Session: o.Session}); err != nil {
+			return out, err
+		}
+		switch {
+		case o.Start == nil:
+			r.Reason = "start: no starter configured"
+		default:
+			if err := o.Start(t.Task); err != nil {
+				r.Reason = "start: " + err.Error()
+			} else {
+				r.Started = true
+			}
+		}
+		out = append(out, r)
+	}
+	if len(out) > 0 {
+		_, _ = WriteState(dir)
+	}
+	return out, nil
 }
 
 // MarshalJSON ensures SuperviseResult marshals with a non-nil Measured slice.

@@ -3,7 +3,10 @@ package flywheel
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSuperviseNeedsMeasuringFinishedOnly(t *testing.T) {
@@ -342,5 +345,142 @@ func TestSuperviseIgnoresEditOutsideOwns(t *testing.T) {
 	}
 	if len(result2.Measured) != 0 {
 		t.Errorf("second pass Measured len = %d, want 0", len(result2.Measured))
+	}
+}
+
+// limitedUnit is task's planned, dispatched and rate-limited finished events
+// on model, its reset at reset.
+func limitedUnit(task, model, reason string, reset time.Time) []Event {
+	return []Event{
+		{Task: task, Kind: "planned", Brief: "brief.txt"},
+		{Task: task, Kind: "dispatched", Attempt: "r1", Model: model},
+		{Task: task, Kind: "finished", Attempt: "r1", Model: model, Reason: reason, ResetAt: reset.Format(time.RFC3339)},
+	}
+}
+
+// resumeLimitedPass runs SuperviseWith --resume-limited at recoverNow, appending
+// every started task to calls.
+func resumeLimitedPass(t *testing.T, dir string, on bool, calls *[]string) SuperviseResult {
+	t.Helper()
+	res, err := SuperviseWith(dir, SuperviseOptions{ResumeLimited: on, Now: recoverNow, Session: "sup",
+		Start: func(task string) error { *calls = append(*calls, task); return nil }})
+	if err != nil {
+		t.Fatalf("SuperviseWith: %v", err)
+	}
+	return res
+}
+
+// autoResumes returns the ledger's auto-resume recovered events.
+func autoResumes(t *testing.T, dir string) []Event {
+	t.Helper()
+	events, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Event
+	for _, e := range events {
+		if e.Kind == "recovered" && strings.HasPrefix(e.Note, "auto-resume ") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestSuperviseResumeLimitedStarts: a rate-limited unit whose model's reset
+// has passed is started once and recorded by one recovered event (issue #472).
+func TestSuperviseResumeLimitedStarts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir, limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour))...)
+	var calls []string
+	res := resumeLimitedPass(t, dir, true, &calls)
+	if !slices.Equal(calls, []string{"T"}) {
+		t.Errorf("Start calls = %q, want [T]", calls)
+	}
+	if len(res.Resumed) != 1 || !res.Resumed[0].Started || res.Resumed[0].Attempt != "r1" {
+		t.Errorf("Resumed = %+v, want T r1 started", res.Resumed)
+	}
+	if ev := autoResumes(t, dir); len(ev) != 1 || !strings.HasPrefix(ev[0].Note, "auto-resume T r1") || ev[0].Session != "sup" || !slices.Equal(ev[0].Paths, []string{"T"}) {
+		t.Errorf("auto-resume events = %+v, want one for T r1 by sup", ev)
+	}
+}
+
+// TestSuperviseResumeLimitedOncePerFinish: a second pass before the child
+// records anything starts nothing; a new rate-limited finish is resumed again.
+func TestSuperviseResumeLimitedOncePerFinish(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir, limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour))...)
+	var calls []string
+	resumeLimitedPass(t, dir, true, &calls)
+	if res := resumeLimitedPass(t, dir, true, &calls); len(calls) != 1 || len(res.Resumed) != 0 {
+		t.Fatalf("second pass: calls = %q, Resumed = %+v; want no second start", calls, res.Resumed)
+	}
+	reset := recoverNow.Add(-time.Hour).Format(time.RFC3339)
+	for _, e := range []Event{
+		{TS: recoverNow.Add(-2 * time.Hour).Format(time.RFC3339), Task: "T", Kind: "dispatched", Attempt: "r2", Model: "m"},
+		{TS: recoverNow.Add(-90 * time.Minute).Format(time.RFC3339), Task: "T", Kind: "finished", Attempt: "r2", Model: "m", Reason: "rate-limited", ResetAt: reset},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resumeLimitedPass(t, dir, true, &calls)
+	if !slices.Equal(calls, []string{"T", "T"}) || len(autoResumes(t, dir)) != 2 {
+		t.Errorf("calls = %q, auto-resumes = %d; want a second start after the new finish", calls, len(autoResumes(t, dir)))
+	}
+}
+
+// TestSuperviseResumeLimitedCap: once limits.rate_limit_retries auto-resumes
+// since the unit was planned, a new rate-limited finish is reported, never
+// started.
+func TestSuperviseResumeLimitedCap(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	one := 1
+	if err := WriteConfig(dir, Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "m"}}, Limits: Limits{RateLimitRetries: &one}}); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	reset := recoverNow.Add(-time.Hour).Format(time.RFC3339)
+	recoverLedger(t, dir, append(limitedUnit("T", "m", "rate-limited", recoverNow.Add(-time.Hour)),
+		Event{Kind: "recovered", Note: "auto-resume T r1 after rate limit (1/1)", Paths: []string{"T"}},
+		Event{Task: "T", Kind: "dispatched", Attempt: "r2", Model: "m"},
+		Event{Task: "T", Kind: "finished", Attempt: "r2", Model: "m", Reason: "rate-limited", ResetAt: reset})...)
+	var calls []string
+	res := resumeLimitedPass(t, dir, true, &calls)
+	if len(calls) != 0 {
+		t.Errorf("Start calls = %q, want none past the cap", calls)
+	}
+	if len(res.Resumed) != 1 || res.Resumed[0].Started || !strings.Contains(res.Resumed[0].Reason, "auto-resume cap 1 reached") {
+		t.Errorf("Resumed = %+v, want T not started naming the cap", res.Resumed)
+	}
+	if n := len(autoResumes(t, dir)); n != 1 {
+		t.Errorf("auto-resume events = %d, want the earlier one only", n)
+	}
+}
+
+// TestSuperviseResumeLimitedSkips: without the flag nothing is started; with
+// it a unit whose model is still paused (wait-reset) and one that ended
+// abandoned-job are never started, only the rate-limited unit past its reset.
+func TestSuperviseResumeLimitedSkips(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var evs []Event
+	evs = append(evs, limitedUnit("P", "m", "rate-limited", recoverNow.Add(time.Hour))...)
+	evs = append(evs, limitedUnit("A", "n", "abandoned-job", recoverNow.Add(-time.Hour))...)
+	evs = append(evs, limitedUnit("L", "n", "rate-limited", recoverNow.Add(-time.Hour))...)
+	recoverLedger(t, dir, evs...)
+	var calls []string
+	if res := resumeLimitedPass(t, dir, false, &calls); len(calls) != 0 || len(res.Resumed) != 0 || len(autoResumes(t, dir)) != 0 {
+		t.Fatalf("without --resume-limited: calls = %q, Resumed = %+v; want nothing", calls, res.Resumed)
+	}
+	resumeLimitedPass(t, dir, true, &calls)
+	if !slices.Equal(calls, []string{"L"}) {
+		t.Errorf("Start calls = %q, want only L (P paused, A abandoned-job)", calls)
+	}
+	for _, e := range autoResumes(t, dir) {
+		if !slices.Equal(e.Paths, []string{"L"}) {
+			t.Errorf("auto-resume event for %v, want L only", e.Paths)
+		}
 	}
 }
