@@ -1140,3 +1140,56 @@ func TestClaudeToolNameMultiEdit(t *testing.T) {
 		}
 	}
 }
+
+// TestPermissionModeCommand checks the claude dispatch's --permission-mode
+// comes from the request, acceptEdits when empty, and that --disallowedTools
+// is still passed under bypassPermissions (issue #526).
+func TestPermissionModeCommand(t *testing.T) {
+	t.Parallel()
+	req := RunRequest{Task: "T1", Model: "m", DisallowedTools: (Worker{}).disallowedTools()}
+	_, args := claudeAdapter{}.Command(req)
+	if got := flagValues(args, "--permission-mode"); !reflect.DeepEqual(got, []string{"acceptEdits"}) {
+		t.Errorf("empty mode: --permission-mode = %v, want [acceptEdits]", got)
+	}
+	req.PermissionMode = "bypassPermissions"
+	_, args = claudeAdapter{}.Command(req)
+	if got := flagValues(args, "--permission-mode"); !reflect.DeepEqual(got, []string{"bypassPermissions"}) {
+		t.Errorf("bypass: --permission-mode = %v, want [bypassPermissions]", got)
+	}
+	if got := flagValues(args, "--disallowedTools"); !reflect.DeepEqual(got, defaultDisallowedTools) {
+		t.Errorf("bypass: --disallowedTools = %v, want the git-write family %v", got, defaultDisallowedTools)
+	}
+}
+
+// TestClaudeLiveDenialFixture parses testdata/claude-denied-live.jsonl, a
+// HAND-BUILT fixture: only the user tool_result line reporting "requested
+// permissions to use WebSearch" is a live denial, naming WebSearch and the
+// denied call; no other line carries one (issue #526).
+func TestClaudeLiveDenialFixture(t *testing.T) {
+	t.Parallel()
+	a, _ := AdapterFor("claude")
+	lines := fixtureLines("claude-denied-live.jsonl", t)
+	if len(lines) != 5 {
+		t.Fatalf("claude-denied-live.jsonl has %d lines, want 5", len(lines))
+	}
+	for i, l := range lines {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Fatalf("line %d: %v", i, err)
+		}
+		id, tool, ok := claudeLiveDenial(m)
+		obs, _ := a.Parse([]byte(l))
+		if i == 2 {
+			if !ok || tool != "WebSearch" || id != "toolu_ws1" {
+				t.Errorf("denial line: claudeLiveDenial = %q, %q, %v, want toolu_ws1, WebSearch, true", id, tool, ok)
+			}
+			if obs.Kind != "tool_result" || obs.Denied != "WebSearch" {
+				t.Errorf("denial line: Parse = %+v, want tool_result Denied WebSearch", obs)
+			}
+			continue
+		}
+		if ok || obs.Denied != "" {
+			t.Errorf("line %d: live denial %q/%q, want none", i, tool, obs.Denied)
+		}
+	}
+}

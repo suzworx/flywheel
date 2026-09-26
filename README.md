@@ -225,6 +225,12 @@ policy is enforced by the permission layer, not by asking nicely. An explicitly 
 replaces its default; it is not merged with it, so an operator can widen or narrow deliberately.
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean
 "allowed_tools"?`, issue #463).
+A claude worker's `permission_mode` sets its `--permission-mode`: `acceptEdits` (the default),
+`bypassPermissions`, `default`, `plan` or `dontAsk`; `disallowed_tools` is still enforced under
+every mode, `bypassPermissions` included. A tool the worker is denied raises the
+`permission-denied` andon live, while the run is still going (`andon: <task> <attempt>
+permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks for web research
+but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker loads no MCP servers (`--strict-mcp-config`) unless its `mcp` key lists them in
 the `--mcp-config` shape, e.g. `"mcp": {"mcpServers": {"fs": {"command": "mcp-fs"}}}` (issue #425).
 
