@@ -571,7 +571,8 @@ all.
   `owns_checked` note (the reading still runs), `flywheel land` refuses (rule `stacked`, below), and
   the floor shows the done unit's run state as `stacked` on the andon.
 - The **integration branch** (issue #456) is `.flywheel/config.json` `"integration": {"branch": "<name>"}`
-  when set (validated: non-empty, no whitespace, not starting with `-`), else `main` when
+  when set (validated: non-empty, no whitespace, not starting with `-`; set with
+  `flywheel config set integration.branch <name>`, an empty value clears it, issue #529), else `main` when
   `refs/heads/main` exists, else `master`. `flywheel rebase` (default `--onto`), stacked detection
   (`validate`, `land`'s `stacked` refusal, `recover`, the floor), `flywheel review --group`
   (default `--base`, `main` when none), `flywheel review calibrate` (default `--main`
