@@ -104,6 +104,56 @@ func TestFleetLearningsSync(t *testing.T) {
 	}
 }
 
+// TestFleetLearningsSinceFirstSync: a first sync with a 30m window makes only
+// the learning newer than that pending and still marks every learning seen.
+func TestFleetLearningsSinceFirstSync(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	f, _ := learnFleet(t, now)
+	queue := filepath.Join(t.TempDir(), "fleet-learnings.json")
+	newly, first, err := SyncLearningsSince(queue, f, now, 30*time.Minute)
+	if err != nil || !first || titles(newly) != "fresh@a/u1" {
+		t.Fatalf("first sync since 30m = %q, first %v, err %v; want only fresh", titles(newly), first, err)
+	}
+	if q, _ := LoadLearningsQueue(queue); len(q.Seen) != 3 || len(q.Pending) != 1 {
+		t.Errorf("queue seen %d pending %d; want 3, 1", len(q.Seen), len(q.Pending))
+	}
+}
+
+// TestFleetLearningsImportSeen: importing titles, as strings or {title}
+// objects, into an empty queue marks the matching learnings seen, removes
+// them from pending and reports how many matched; an unknown title matches
+// nothing, a later sync brings none back, and a file of the wrong shape is
+// an error.
+func TestFleetLearningsImportSeen(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	f, _ := learnFleet(t, now)
+	queue := filepath.Join(t.TempDir(), "fleet-learnings.json")
+	n, err := ImportSeenLearnings(queue, f, now, 0, []byte(`[{"title":"root","seen_at":"x"},"old","nope"]`))
+	if err != nil || n != 2 {
+		t.Fatalf("import = %d, %v; want 2 matched (root, old)", n, err)
+	}
+	q, _ := LoadLearningsQueue(queue)
+	if len(q.Seen) != 3 || len(q.Pending) != 1 || q.Pending[LearningKey("fresh", "saw fresh")].Title != "fresh" {
+		t.Errorf("queue seen %d pending %v; want 3 seen, only fresh pending", len(q.Seen), q.Pending)
+	}
+	if newly, first, _ := SyncLearnings(queue, f, now); first || len(newly) != 0 {
+		t.Errorf("sync after import = %q, first %v; want nothing new", titles(newly), first)
+	}
+	if n, err := ImportSeenLearnings(queue, f, now, 0, []byte(`["fresh"]`)); err != nil || n != 1 {
+		t.Errorf("import fresh = %d, %v; want 1", n, err)
+	}
+	if q, _ := LoadLearningsQueue(queue); len(q.Pending) != 0 {
+		t.Errorf("pending after importing fresh = %v, want empty", q.Pending)
+	}
+	for _, bad := range []string{`{"title":"root"}`, `[42]`} {
+		if _, err := ImportSeenLearnings(queue, f, now, 0, []byte(bad)); err == nil {
+			t.Errorf("import %s succeeded, want an error", bad)
+		}
+	}
+}
+
 // TestFleetLearningsDismissedDone: a learning dismissed in its worktree (by
 // that ledger's L-NN id) is dismissed fleet-wide and never pending, only
 // seen; --done drains by key prefix and by title prefix, never from seen, so

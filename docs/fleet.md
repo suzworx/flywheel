@@ -53,7 +53,8 @@ Discovery is `flywheel.FleetLedgers(fleet)`, a plain function other commands reu
 | `flywheel fleet remove <name>` | Unregister the root named `name`. |
 | `flywheel fleet list [--json]` | Each root and the ledgers discovered under it. |
 | `flywheel fleet status [--json] [--all] [--idle-after D]` | One row per ledger; idle worktree ledgers fold into one row per root. |
-| `flywheel fleet learnings [--pending\|--all] [--json] [--sync=false] [--done <key\|title prefix>\|--done-all]` | Sync every ledger's learnings into the pending queue, then list it (see [Learnings queue](#learnings-queue)). |
+| `flywheel fleet learnings [--pending\|--all] [--json] [--sync=false] [--since D] [--done <key\|title prefix>\|--done-all\|--import-seen FILE]` | Sync every ledger's learnings into the pending queue, then list it (see [Learnings queue](#learnings-queue)). |
+| `flywheel fleet watch [--once] [--interval D] [--notify CMD] [--report-all] [--registry FILE]` | Print what is new since the last look: learnings, andons, state changes, stale health; the first run records a baseline (see [Watch](#watch)). |
 
 `fleet status` prints an aligned table:
 
@@ -129,7 +130,14 @@ and pending list.
 - **Sync.** Every run (unless `--sync=false`) adds each key not yet seen to `seen` and, unless
   dismissed, to `pending`, and notes on stderr how many it added. Repeated syncs add nothing new.
 - **The first sync.** On an empty queue the first sync marks every learning seen but makes pending
-  only those newer than 7 days, so history does not flood the queue; it says so on stderr.
+  only those newer than `--since` (default `168h`, 7 days; any Go duration such as `24h`), so
+  history does not flood the queue; it says so on stderr. `--since` matters only on that first
+  sync.
+- **Importing what was already triaged.** `--import-seen FILE` reads a JSON array of titles, or of
+  `{"title": ...}` objects (the shape a hand-written watcher keeps; other fields are ignored). It
+  syncs first (so an empty queue still gets the `--since` window), then marks every current
+  learning whose title is in the file seen and removes it from pending, and prints how many
+  learnings matched. A file of another shape is an error.
 - **Draining.** `--done <ref>` removes from pending every learning whose key starts with `ref`
   (at least 6 characters; the table shows 12) or, when none does, whose title starts with `ref`
   (case folded). `--done-all` empties pending. Neither syncs, and neither removes from `seen`,
@@ -145,10 +153,68 @@ KEY           SEVERITY  AGE  ROOT      TASK  TITLE
 `--all` lists every learning in the fleet instead (a dismissed one marked `(dismissed)`); `--json`
 prints the list as JSON (`[]` when empty) for scripts.
 
-Exit codes: 0 ok, 1 error (unreadable registry or queue, refused add, unknown name, unmatched
-`--done`), 2 usage.
+## Watch
+
+`flywheel fleet watch [--once] [--interval D] [--notify CMD] [--report-all] [--registry FILE]` tells a person
+what is new across the fleet since the last look. It compares the fleet now with the state it
+saved last time, `fleet-watch.json` beside the registry (written atomically; a file that does not
+parse is an error, never a reset that would report everything again), and prints one line per
+item:
+
+```
+2026-09-27T10:05:00Z olexa learning: [P1] gate runs twice on a resumed session (3f9a0c41be27)
+2026-09-27T10:05:00Z olexa state: running -> SUSPENDED
+2026-09-27T10:05:00Z flywheel/f1 andon: f1 finished: length
+2026-09-27T10:05:00Z flywheel stale: health older than 10m0s
+```
+
+| Kind | Reported when |
+| --- | --- |
+| `learning` | the learnings queue sync made a learning pending (the same sync as `fleet learnings`, so the first watch on an empty queue follows the first-sync rule) |
+| `state` | a ledger's STATE changed: `running`, `SUSPENDED` or `paused: <models>`, both ways, so a thaw or an unpause is reported too; a ledger seen for the first time counts as `running` before |
+| `andon` | a ledger has an andon it did not have last time: a group with open blocking findings, or a unit with an attempt that is blocked or finished for a reason other than a clean stop. The suspension and the pauses are `state` items and stale health is a `stale` item, so none is reported twice |
+| `stale` | a ledger's latest health event became older than 10 minutes |
+| `error` | the learnings sync failed (for example, a queue that does not parse) |
+
+Learnings come first (oldest first), then each ledger in discovery order: its state change, its
+new andons (sorted), its stale health. A worktree ledger counts only its own events after the
+fork, as in `fleet status`. A ledger that fails to read keeps its previous state and reports
+nothing. The next look with the saved state reports nothing until something changes again.
+
+**The first run records a baseline.** With no `fleet-watch.json` yet (the first run, or the file
+removed), the watch records the current fleet as the baseline and prints one line instead of every
+historical andon:
+
+```
+baseline recorded: 4 ledgers, 37 andons, 12 pending learnings; changes from now on are reported
+```
+
+It runs no `--notify` and exits 0; only later runs report differences. The learnings sync on that
+run follows the queue's own first-sync rule, and its pending learnings stay in
+`flywheel fleet learnings`.
+
+- `--report-all` prints the whole current set once: every pending learning (oldest first), then per
+  ledger its state when not `running`, every open andon and stale health. It records the state
+  like any run and runs no `--notify`.
+- `--once` looks once and exits; without it the watch loops every `--interval` (default `5m`).
+- `--notify CMD` runs `CMD` once per item through the same shell chooser as gates (bash where
+  there is one), with `FLYWHEEL_FLEET_ITEM` set to the item's line. The state is saved before
+  notifying; a notify failure only warns on stderr.
+- `--registry FILE` watches another registry file than the default (the scheduled task passes
+  it, so a task never depends on `FLYWHEEL_FLEET` being set).
+
+### Running the watch from the OS scheduler
+
+`flywheel schedule install --fleet [--every D] [--notify CMD]` registers a separate OS task,
+`flywheel-fleet-<user>`, next to any repository's controller task, with the same schedulers
+(Task Scheduler on Windows, the user crontab on Linux, launchd on macOS). It runs
+`flywheel fleet watch --once --registry <registry>` (plus `--notify CMD` when given) every
+`--every`, default `5m`, and appends its output to `fleet-watch.log` beside the registry.
+`flywheel schedule status --fleet` and `flywheel schedule remove --fleet` act on that same task.
+
+Exit codes: 0 ok, 1 error (unreadable registry, queue or watch state, refused add, unknown name,
+unmatched `--done`, unreadable `--import-seen` file), 2 usage.
 
 ## Coming next
 
-- `flywheel fleet watch`: a watcher over the fleet.
 - `:ctx` in the factory view to switch between fleet ledgers.
