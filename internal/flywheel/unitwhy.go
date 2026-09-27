@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,7 +25,54 @@ type WhyContext struct {
 // from the ledger's facts only, naming the next step the way recover does
 // (nextAction).
 func UnitWhy(events []Event, task string, now time.Time, extra WhyContext) string {
-	events = whyEvents(events, task)
+	return NewWhyIndex(events).UnitWhy(task, now, extra)
+}
+
+// WhyIndex is a ledger grouped once for many UnitWhy calls (issue #630): each
+// unit's needs and the indexes of each task's events, in ledger order, so a
+// unit's why reads its own events instead of scanning the ledger again.
+type WhyIndex struct {
+	events []Event
+	needs  map[string][]string
+	byTask map[string][]int
+}
+
+// NewWhyIndex groups events, in ledger order, by task.
+func NewWhyIndex(events []Event) *WhyIndex {
+	x := &WhyIndex{events: events, needs: unitNeeds(events), byTask: map[string][]int{}}
+	for i, e := range events {
+		x.byTask[e.Task] = append(x.byTask[e.Task], i)
+	}
+	return x
+}
+
+// UnitWhy is UnitWhy over the indexed ledger.
+func (x *WhyIndex) UnitWhy(task string, now time.Time, extra WhyContext) string {
+	return unitWhy(x.whyEvents(task), task, now, extra)
+}
+
+// whyEvents are the events UnitWhy reads, in ledger order: task's, its
+// needs' and the floor's own (a suspension), so Derive sorts a few events,
+// not the ledger.
+func (x *WhyIndex) whyEvents(task string) []Event {
+	keep := map[string]bool{task: true, "": true}
+	for _, n := range NeedTargets(x.needs[task]...) {
+		keep[n] = true
+	}
+	var idx []int
+	for t := range keep {
+		idx = append(idx, x.byTask[t]...)
+	}
+	slices.Sort(idx)
+	out := make([]Event, len(idx))
+	for i, j := range idx {
+		out[i] = x.events[j]
+	}
+	return out
+}
+
+// unitWhy is UnitWhy over events already cut to whyEvents.
+func unitWhy(events []Event, task string, now time.Time, extra WhyContext) string {
 	st := Derive(events)
 	status := map[string]string{}
 	var ts TaskState
@@ -125,22 +173,6 @@ func whyFinished(events []Event, ts TaskState, now time.Time, extra WhyContext) 
 		return withNext("validated, awaiting the review panel", n)
 	}
 	return withNext("finished: "+n.Reason, n)
-}
-
-// whyEvents keeps the events UnitWhy reads: task's, its needs' and the
-// floor's own (a suspension), so Derive sorts a few events, not the ledger.
-func whyEvents(events []Event, task string) []Event {
-	keep := map[string]bool{task: true, "": true}
-	for _, n := range NeedTargets(unitNeeds(events)[task]...) {
-		keep[n] = true
-	}
-	var out []Event
-	for _, e := range events {
-		if keep[e.Task] {
-			out = append(out, e)
-		}
-	}
-	return out
 }
 
 // lastOf is the time of task's latest event of kind ("" any) and attempt
@@ -315,13 +347,20 @@ const timelineGap = 5 * time.Minute
 // first event to the last, the touch time (each attempt's start to its
 // finish or loss) and the flow efficiency, touch over total.
 func UnitTimeline(events []Event, task string) []TimelineRow {
+	return UnitTimelineOrdered(derivationOrder(events), task)
+}
+
+// UnitTimelineOrdered is UnitTimeline over events already in derivation
+// order (derivationOrder), so a caller that orders the ledger once passes it
+// to every unit (issue #630).
+func UnitTimelineOrdered(ordered []Event, task string) []TimelineRow {
 	var rows []TimelineRow
 	var frozen [][2]time.Time // suspensions: from, to (zero while open)
 	starts := map[string]time.Time{}
 	var prev Event
 	var first, last time.Time
 	var touch time.Duration
-	for _, e := range derivationOrder(events) {
+	for _, e := range ordered {
 		t, err := time.Parse(time.RFC3339Nano, e.TS)
 		if err != nil {
 			continue

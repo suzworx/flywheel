@@ -243,9 +243,9 @@ func TestTUILiveFetcherLog(t *testing.T) {
 		}
 	}
 
-	// Create a TUI model in log drill-down mode for T1.
+	// The events tab keeps the unit's ledger events (issue #583 k7).
 	m := NewTUI()
-	m.drillKind = "log"
+	m.drillKind = "unitevents"
 	m.drillTask = "T1"
 
 	// Get the fetcher and call it.
@@ -258,6 +258,32 @@ func TestTUILiveFetcherLog(t *testing.T) {
 	// Check Detail has exactly 2 lines (T1's two events).
 	if len(data.Detail) != 2 {
 		t.Errorf("Detail has %d lines, want 2 (T1 started and finished); got:\n%v", len(data.Detail), data.Detail)
+	}
+
+	// The log tab is T2's run, once a dispatch names its attempt and adapter.
+	m.drillKind, m.drillTask = "log", "T2"
+	if data, err = fetcher(m); err != nil {
+		t.Fatalf("TUIFetcher failed: %v", err)
+	}
+	if len(data.Detail) != 1 || !strings.Contains(data.Detail[0], "not been dispatched") {
+		t.Errorf("log of an undispatched unit = %q, want the no-run line", data.Detail)
+	}
+	if err := AppendEvent(dir, Event{TS: now.Add(3 * time.Second).Format(time.RFC3339), Task: "T2", Kind: "dispatched",
+		Attempt: "r1", Model: "claude-opus-5-5", Adapter: "claude", Session: "s2"}); err != nil {
+		t.Fatalf("AppendEvent failed: %v", err)
+	}
+	run := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"a.go"}}]},"session_id":"s"}` + "\n"
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel", "runs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "runs", "T2.r1.jsonl"), []byte(run), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, err = fetcher(m); err != nil {
+		t.Fatalf("TUIFetcher failed: %v", err)
+	}
+	if got := strings.Join(data.Detail, "\n"); !strings.Contains(got, "attempt r1 on claude-opus-5-5 (claude)") || !strings.Contains(got, "#1 read a.go") {
+		t.Errorf("log of T2 = %q, want its dispatch and its read step", data.Detail)
 	}
 
 	// Check Events has at least 3 (our 3 events; Init may add more).
@@ -449,5 +475,73 @@ func TestTUIInstantKeysWhileFetching(t *testing.T) {
 	}
 	if calls.Load() != 3 || overlap.Load() != 0 {
 		t.Errorf("fetches = %d with %d overlapping, want 3 (first, tick, reload) and none overlapping", calls.Load(), overlap.Load())
+	}
+}
+
+// TestTUIAndonNextFetchFast checks the andon fetch on a large ledger (issue
+// #583 k7 c1): 5,000 events, and the fetch ends well within a hang guard
+// with NEXT decided from the events alone, never by Recover's world checks.
+func TestTUIAndonNextFetchFast(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	reasons := []string{"rate-limited", "error", "stop", "silent"}
+	// 100 units of 25 attempts each, as a long-running factory's ledger
+	// holds them; each unit's last attempt ends as reasons says.
+	var b strings.Builder
+	for n := 0; n < 2500; n++ {
+		i, attempt := n%100, n/100+1
+		task := fmt.Sprintf("T%04d", i)
+		reason := "error"
+		if attempt == 25 {
+			reason = reasons[i%len(reasons)]
+		}
+		ts := now.Add(time.Duration(n) * time.Second)
+		for _, e := range []Event{
+			{TS: ts.Format(time.RFC3339), Task: task, Kind: "dispatched", Attempt: fmt.Sprintf("r%d", attempt), Model: "m", Adapter: "claude", Session: "s"},
+			{TS: ts.Add(time.Second / 2).Format(time.RFC3339Nano), Task: task, Kind: "finished", Attempt: fmt.Sprintf("r%d", attempt), RC: intPtr(0), Reason: reason, Session: "s"},
+		} {
+			line, err := marshalEvent(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.Write(line)
+			b.WriteByte('\n')
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewTUI()
+	typed(m, TUIData{}, ":a")
+	fetch := TUIFetcher(dir, func() time.Time { return now.Add(3 * time.Hour) })
+	type res struct {
+		d   TUIData
+		err error
+	}
+	done := make(chan res, 1)
+	go func() { d, err := fetch(m); done <- res{d, err} }()
+	var r res
+	select {
+	case r = <-done:
+	case <-time.After(budget(10 * time.Second)):
+		t.Fatalf("the andon fetch did not end within %s (race %v) on a 5,000-event ledger", budget(10*time.Second), raceEnabled)
+	}
+	if r.err != nil {
+		t.Fatalf("fetch: %v", r.err)
+	}
+	_, rows := m.Rows(r.d)
+	next := map[string]string{}
+	for _, row := range rows {
+		next[row[0]] = row[len(row)-1]
+	}
+	if got := next["T0000"]; got != "flywheel run T0000 --resume" {
+		t.Errorf("rate-limited T0000's NEXT = %q, want flywheel run T0000 --resume (andon %d rows)", got, len(rows))
+	}
+	if got := next["T0001"]; !strings.Contains(got, "correct or dispatch again") {
+		t.Errorf("failed T0001's NEXT = %q, want the correct-or-dispatch step", got)
 	}
 }

@@ -3,6 +3,7 @@ package flywheel
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -35,6 +36,10 @@ type TUIData struct {
 	// The metrics (issue #583 k4) by window name (24h, 7d, 30d): 24h for the
 	// header stats, and the window :pulse, :metrics and the drill-down show.
 	Metrics map[string]TUIMetrics
+
+	// Next is each unit's next action as recover decides it (issue #583
+	// k7), filled while the andon view is shown.
+	Next map[string]Next
 }
 
 // TUIHealth is one health event: when, and its snapshot.
@@ -109,6 +114,12 @@ type TUI struct {
 	metricPart string
 	evCursor   int
 	metricBack *metricReturn
+
+	// The :metrics split (issue #583 k7): by model or worker ("" none), the
+	// metric it splits and the row to come back to.
+	split       string
+	splitMetric string
+	splitRow    int
 
 	// The k9s feel (issue #583 k6): the skin, the rows each fetch changed
 	// (Observe), fullscreen, and the log tab's wrap, timestamps and follow.
@@ -537,6 +548,9 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	if (m.view == "pulse" || m.view == "metrics") && m.pulseKey(k) {
 		return
 	}
+	if m.view == "metrics" && m.splitKey(k, rows) {
+		return
+	}
 
 	switch k.Kind {
 	case term.KeyEsc:
@@ -631,7 +645,9 @@ func (m *TUI) enter(d TUIData, row []string) {
 	case "units", "andon", "tree":
 		m.drill(d, "why")
 	case "metrics":
-		m.openMetric(metricOfRow(row))
+		if m.split == "" {
+			m.openMetric(metricOfRow(row))
+		}
 	case "learnings":
 		m.drillLocal("learning", row[0])
 	case "checkpoints":
@@ -905,7 +921,11 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 	case "search":
 		header, rows = searchRows(d.Search)
 	case "metrics":
-		header, rows = metricRows(d, m.window)
+		if m.split != "" {
+			header, rows = splitRows(d, m.window, m.split)
+		} else {
+			header, rows = metricRows(d, m.window)
+		}
 	default:
 		return []string{}, [][]string{}
 	}
@@ -1014,15 +1034,11 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 	return header, rows
 }
 
-// rowsAndon returns the header and filtered rows for the andon view.
+// rowsAndon returns the header and filtered rows for the andon view
+// (andonRows: worst first, with each entry's next step).
 func (m *TUI) rowsAndon(d TUIData) (header []string, rows [][]string) {
-	header = []string{"TASK", "AGE", "STATE"} // STATE last, as in units: it is the coloured cell
-	for _, a := range d.Floor.Andon {
-		row := []string{
-			a.Task,
-			HumanAge(a.Age),
-			a.State,
-		}
+	header, all := andonRows(d)
+	for _, row := range all {
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
 		}
@@ -1098,7 +1114,7 @@ var viewHints = map[string][]hint{
 	"checkpoints": join(tableHints, []hint{{"enter", "paths"}}, sortHints, layoutHints),
 	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
 	"pulse":       join(tableHints, []hint{{"h/j/k/l", "panel"}, {"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, layoutHints),
-	"metrics":     join(tableHints, []hint{{"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, sortHints, layoutHints),
+	"metrics":     join(tableHints, []hint{{"enter", "drill"}, {"1/2/3", "24h/7d/30d"}, {"M/W", "by model/worker"}}, sortHints, layoutHints),
 	"metric":      join([]hint{{"h", "chart"}, {"u", "units"}, {"enter", "unit"}}, scrollHints, fullHints, layoutHints),
 	"why":         join(tabHints, scrollHints, fullHints, layoutHints),
 	"explain":     join(tabHints, scrollHints, fullHints, layoutHints),
@@ -1346,6 +1362,9 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		count := fmt.Sprint(rowCount)
 		if m.view == "metrics" {
 			viewName += " " + m.window
+			if def, ok := metricByID(m.splitMetric); ok && m.split != "" {
+				viewName += " · " + def.name + " by " + m.split
+			}
 		}
 		if m.view == "search" {
 			viewName = fmt.Sprintf("Search %q", m.search)
@@ -1390,6 +1409,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  h j k l the pulse panel (or the arrows); enter its metric",
 			"  enter   a metric's drill-down: h its chart, u the units behind",
 			"          it (worst first), enter a unit's why",
+			"  M W     :metrics split by model / by worker; esc returns",
 			"  ctrl-a  list every view and alias",
 			"History:",
 			"  esc     back: leave the drill-down or help, clear the filter,",
@@ -1475,6 +1495,12 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			rows = cutCells(rows)
 		}
 		widths := m.computeColumnWidths(header, rows)
+		// The andon's SIGNAL is the state its rows are coloured by.
+		paintHeader := header
+		if i := slices.Index(header, "SIGNAL"); i >= 0 {
+			paintHeader = slices.Clone(header)
+			paintHeader[i] = "STATE"
+		}
 
 		// Clamp cursor to rows and keep visible.
 		m.cursor = max(0, min(m.cursor, len(rows)-1))
@@ -1509,7 +1535,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			// cursor row in reverse video, else the whole row in the skin's
 			// colour of its state, highlighted while a fetch's change marks it.
 			if color {
-				rowLineCut = m.paintRow(header, row, rowLineCut, isCursor, m.marked(cell(whole[i], 0)))
+				rowLineCut = m.paintRow(paintHeader, row, rowLineCut, isCursor, m.marked(cell(whole[i], 0)))
 			}
 			lines = append(lines, rowLineCut)
 		}

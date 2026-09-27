@@ -16,9 +16,10 @@ import (
 // every number opening its chart and then the units behind it.
 
 // TUIMetrics is one window's MetricsReport and the previous window's, for
-// the trends.
+// the trends, and the window split by worker (issue #583 k7).
 type TUIMetrics struct {
 	Cur, Prev MetricsReport
+	Workers   []TUIWorkerStat
 }
 
 // metricDef is one metric as the view shows it: its id (MetricIDs), name,
@@ -168,7 +169,7 @@ func (c *metricsCache) get(name string, now time.Time, events []Event, cfg Confi
 		c.at, c.reps = map[string]time.Time{}, map[string]TUIMetrics{}
 	}
 	c.at[name] = now
-	c.reps[name] = TUIMetrics{Cur: Metrics(events, cfg, w), Prev: Metrics(events, cfg, w.Previous())}
+	c.reps[name] = TUIMetrics{Cur: Metrics(events, cfg, w), Prev: Metrics(events, cfg, w.Previous()), Workers: workerStats(events, w)}
 	return c.reps[name], true
 }
 
@@ -328,6 +329,114 @@ func metricRows(d TUIData, window string) (header []string, rows [][]string) {
 		rows = append(rows, []string{def.family(), def.name, fmtMetric(def.kind, cur), trend, fmtDelta(def.kind, cur, prev), def.def})
 	}
 	return header, rows
+}
+
+// TUIWorkerStat is one worker's share of a window (issue #583 k7): the spend
+// of its attempts' finishes, the units it landed, those landed on their first
+// attempt, and its cost per landed unit.
+type TUIWorkerStat struct {
+	Worker            string
+	Spend             float64
+	Landed, FirstPass int
+}
+
+// workerStats splits the window's spend and landings by worker: an attempt's
+// worker is its dispatched event's (older dispatches name none: "-"), and a
+// landed unit counts for the worker of its latest dispatch. Workers sorted.
+func workerStats(events []Event, w MetricsWindow) []TUIWorkerStat {
+	in := func(ts string) bool {
+		t, err := time.Parse(time.RFC3339Nano, ts)
+		return err == nil && !t.Before(w.Since) && t.Before(w.Until)
+	}
+	worker, latest, dispatches := map[string]string{}, map[string]string{}, map[string]int{}
+	stats := map[string]*TUIWorkerStat{}
+	stat := func(name string) *TUIWorkerStat {
+		if stats[name] == nil {
+			stats[name] = &TUIWorkerStat{Worker: name}
+		}
+		return stats[name]
+	}
+	for _, e := range events {
+		switch e.Kind {
+		case "dispatched":
+			name := cmp.Or(e.Worker, "-")
+			worker[e.Task+"\x00"+e.Attempt], latest[e.Task] = name, name
+			dispatches[e.Task]++
+		case "finished":
+			if in(e.TS) {
+				stat(cmp.Or(worker[e.Task+"\x00"+e.Attempt], "-")).Spend += e.Cost
+			}
+		case "landed":
+			if in(e.TS) {
+				s := stat(cmp.Or(latest[e.Task], "-"))
+				s.Landed++
+				if dispatches[e.Task] == 1 {
+					s.FirstPass++
+				}
+			}
+		}
+	}
+	var out []TUIWorkerStat
+	for _, s := range stats {
+		out = append(out, *s)
+	}
+	slices.SortFunc(out, func(a, b TUIWorkerStat) int { return strings.Compare(a.Worker, b.Worker) })
+	return out
+}
+
+// splitRows are the selected metric's window split by model (MetricsReport's
+// by-model scoreboard: first-pass is accepted of inspected, landed is
+// accepted) or by worker (workerStats).
+func splitRows(d TUIData, window, by string) (header []string, rows [][]string) {
+	tm, ok := d.Metrics[window]
+	pct := func(num, den int) string {
+		if den == 0 {
+			return "–"
+		}
+		return fmtMetric("pct", float64(num)/float64(den))
+	}
+	per := func(spend float64, landed int) string {
+		if landed == 0 {
+			return "–"
+		}
+		return fmtUSD(spend / float64(landed))
+	}
+	if by == "worker" {
+		header = []string{"WORKER", "SPEND", "LANDED", "FIRST-PASS", "PER LANDED"}
+		if ok {
+			for _, s := range tm.Workers {
+				rows = append(rows, []string{s.Worker, fmtUSD(s.Spend), fmt.Sprint(s.Landed), pct(s.FirstPass, s.Landed), per(s.Spend, s.Landed)})
+			}
+		}
+		return header, rows
+	}
+	header = []string{"MODEL", "SPEND", "LANDED", "FIRST-PASS", "PER LANDED"}
+	if ok {
+		for _, s := range tm.Cur.Cost.ByModel {
+			rows = append(rows, []string{s.Model, fmtUSD(s.Spend), fmt.Sprint(s.Accepted), pct(s.Accepted, s.Inspected), per(s.Spend, s.Accepted)})
+		}
+	}
+	return header, rows
+}
+
+// splitKey handles the :metrics split keys (issue #583 k7): Shift-M the
+// metric under the cursor by model, Shift-W by worker (the same key again
+// closes it), Esc back to every metric. It reports whether it used the key.
+func (m *TUI) splitKey(k term.Key, rows [][]string) bool {
+	by := map[rune]string{'M': "model", 'W': "worker"}[k.Rune]
+	switch {
+	case k.Kind == term.KeyEsc && m.split != "" && m.filter == "":
+		m.split, m.cursor = "", m.splitRow
+	case k.Kind != term.KeyRune || by == "":
+		return false
+	case m.split == by:
+		m.split, m.cursor = "", m.splitRow
+	case m.split != "":
+		m.split = by
+	case m.cursor < len(rows):
+		m.split, m.splitMetric, m.splitRow, m.cursor = by, metricOfRow(rows[m.cursor]), m.cursor, 0
+	}
+	return true
 }
 
 // metricOfRow is the id of the metric a :metrics row shows.

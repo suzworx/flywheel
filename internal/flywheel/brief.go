@@ -58,8 +58,14 @@ type BriefHeader struct {
 	// reports both. Neither is recorded in a dispatched event.
 	needsEnvInvalid []string
 	needsEnvEmpty   bool
-	Review          []string
-	Line            string `json:",omitempty"`
+	// Preflight lists the commands `preflight:` lines name (issue #635), in
+	// order: flywheel run runs each before dispatch and refuses on the first
+	// that exits non-zero, before any attempt is recorded.
+	Preflight []string `json:",omitempty"`
+	// preflightEmpty records an empty preflight: line; flywheel lint reports it.
+	preflightEmpty bool
+	Review         []string
+	Line           string `json:",omitempty"`
 	// Kind is the task's kind of work, the `kind:` line trimmed and
 	// lowercased, the last one winning (issue #475): routing scores models per
 	// kind. flywheel lint checks it against lint.kinds.
@@ -181,6 +187,13 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 				} else if !slices.Contains(h.NeedsEnv, e) {
 					h.NeedsEnv = append(h.NeedsEnv, e)
 				}
+			}
+		case "preflight":
+			// A command that must exit 0 before run dispatches (issue #635).
+			if c := strings.TrimSpace(val); c != "" {
+				h.Preflight = append(h.Preflight, c)
+			} else {
+				h.preflightEmpty = true
 			}
 		case "exclusive":
 			h.Exclusive = append(h.Exclusive, val)

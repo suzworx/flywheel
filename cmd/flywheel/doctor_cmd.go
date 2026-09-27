@@ -40,7 +40,8 @@ func doctorFlags() (*flag.FlagSet, *doctorOptions) {
 
 // runDoctor implements `flywheel doctor`: probe the selected worker's model
 // then its fallbacks, in config order, through the worker's own adapter, and
-// print one "<model>: <class>" line per probe. Exit 0 when every probe is
+// print one "<model>: <class>" line per probe, with " (<detail>)" saying why
+// a probe is not ok. Exit 0 when every probe is
 // ok, 1 when any is not (or fails to run), 2 on a usage error.
 func runDoctor(args []string) {
 	fs, o := doctorFlags()
@@ -75,7 +76,7 @@ func runDoctor(args []string) {
 		}
 	}
 	for _, p := range probes {
-		fmt.Printf("%s: %s\n", p.Model, p.Class)
+		fmt.Println(doctorLine(p))
 	}
 	// A local, non-fatal note; stderr keeps stdout's "<model>: <class>" lines.
 	if w := flywheel.DoctorShellWarning(); w != "" {
@@ -98,4 +99,13 @@ func runDoctor(args []string) {
 	if !flywheel.DoctorAllOK(probes) {
 		os.Exit(1)
 	}
+}
+
+// doctorLine is one probe's output line: "<model>: <class>", with
+// " (<detail>)" when the probe says why it is not ok (issue #637).
+func doctorLine(p flywheel.DoctorProbe) string {
+	if p.Detail != "" {
+		return fmt.Sprintf("%s: %s (%s)", p.Model, p.Class, p.Detail)
+	}
+	return fmt.Sprintf("%s: %s", p.Model, p.Class)
 }

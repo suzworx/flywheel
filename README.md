@@ -351,7 +351,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | --- | --- |
 | `flywheel init` | Scaffold `flywheel.md` and `.flywheel/`; `--hooks` agent session hooks, `--git-hooks` commit-msg and pre-push hooks, `--ci` the `flywheel-audit` workflow, `--local MODEL` an offline worker. |
 | `flywheel config <get\|set\|show\|validate>` | Read, set and validate `.flywheel/config.json`, e.g. `flywheel config set integration.branch main2`; an unknown key lists every settable key. |
-| `flywheel doctor [--worker NAME] [--record]` | Probe every configured model and classify its availability (exit 0/1); warns when the ledger is untracked or lacks `merge=union`, and names the integration branch. |
+| `flywheel doctor [--worker NAME] [--record]` | Probe every configured model and classify its availability (exit 0/1), printing why a probe is not ok; warns when the ledger is untracked or lacks `merge=union`, and names the integration branch. |
 | `flywheel version` | Print the flywheel version. |
 | `flywheel upgrade [--check] [--to VERSION] [--force]` | Self-update to a release, checksum-verified; refuses (exit 6) while a run's lease is live unless `--force`. |
 | `flywheel brief <task> --from-issue N --owns a,b` | Turn a tracker issue into a linted brief at `.flywheel/briefs/<task>.txt` and record it `planned` with the issue number. |

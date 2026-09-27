@@ -488,9 +488,12 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	if err := readEvents(dir, w); err != nil {
 		return Floor{}, err
 	}
+	// The ledger is derived once and indexed by task once (issue #630): each
+	// unit reads its own events, never the whole ledger again.
 	st := Derive(w.events)
+	byTask := tasksEvents(w.events)
 	stallTimeout := int(cfg.DefaultWorker().stallTimeoutDuration().Seconds())
-	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout, cfg)
+	units, byModel, uerr := buildUnits(w, st, now, dir, stallTimeout, cfg, byTask)
 	if uerr != nil {
 		return Floor{}, uerr
 	}
@@ -502,11 +505,11 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 		dims := cfg.PanelDimensions()
 		for i := range units {
 			// A small unit's scoped tree needs only its panel_scoped panel (issue #459).
-			need := dims
-			if tree := measuredTree(w.events, units[i].Task, units[i].Attempt); tree != "" {
-				need = panelFor(w.events, units[i].Task, tree, dims)
+			ev, need := byTask[units[i].Task], dims
+			if tree := measuredTree(ev, units[i].Task, units[i].Attempt); tree != "" {
+				need = panelFor(ev, units[i].Task, tree, dims)
 			}
-			units[i].Panel = panelCells(w.events, units[i].Task, units[i].Attempt, need)
+			units[i].Panel = panelCells(ev, units[i].Task, units[i].Attempt, need)
 		}
 	}
 	fl.Units = units
@@ -516,6 +519,17 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.Andon = append(suspendedAndon(w.events, now), buildAndon(units, fl.Staffing.Roles, extra)...)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
+}
+
+// tasksEvents indexes events by task, each task's in ledger order (issue
+// #630): a per-unit read that filters by its task gets the same answer from
+// its own events as from the ledger.
+func tasksEvents(events []Event) map[string][]Event {
+	byTask := map[string][]Event{}
+	for _, e := range events {
+		byTask[e.Task] = append(byTask[e.Task], e)
+	}
+	return byTask
 }
 
 // readEvents folds only the bytes appended since the last refresh into the
@@ -640,11 +654,17 @@ func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtim
 // buildUnits derives one Unit per task, reads the latest attempt's run file
 // for its run state, and tallies in-flight units by model. stallTimeout is
 // the default worker's configured stall_timeout in seconds, passed through to
-// classifyRun (issue #85).
-func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int, cfg Config) ([]Unit, map[string]int, error) {
+// classifyRun (issue #85). byTask is the ledger indexed by task (tasksEvents)
+// so each unit reads only its own events (issue #630); nil reads the whole
+// ledger for every unit, as the reads all filter by task anyway.
+func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout int, cfg Config, byTask map[string][]Event) ([]Unit, map[string]int, error) {
 	var units []Unit
 	byModel := map[string]int{}
 	for _, t := range st.Tasks {
+		ev := w.events
+		if byTask != nil {
+			ev = byTask[t.ID]
+		}
 		u := Unit{
 			Task: t.ID, Stage: stageOf(t.Status, t.Reason), Attempt: t.Attempt,
 			Session: shortSession(t.Session), Model: t.Model,
@@ -655,7 +675,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 		finished := false
 		if t.Attempt != "" {
 			rel := ".flywheel/runs/" + t.ID + "." + t.Attempt + ".jsonl"
-			size, mtime, rerr := readRun(dir, w, rel, runAdapter(w.events, t.ID, t.Attempt))
+			size, mtime, rerr := readRun(dir, w, rel, runAdapter(ev, t.ID, t.Attempt))
 			if rerr != nil {
 				return nil, byModel, rerr
 			}
@@ -668,21 +688,21 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			if done && t.Reason != "" {
 				reason = t.Reason
 			}
-			noPlan := hasNoPlan(w.events, t.ID, t.Attempt)
-			wrote := done && len(wroteFor(w.events, t.ID, t.Attempt)) > 0
+			noPlan := hasNoPlan(ev, t.ID, t.Attempt)
+			wrote := done && len(wroteFor(ev, t.ID, t.Attempt)) > 0
 			stopState := ""
 			if done {
-				stopState = stopStateFor(w.events, t.ID, t.Attempt, t.Status)
+				stopState = stopStateFor(ev, t.ID, t.Attempt, t.Status)
 			}
 			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote, stopState)
 			if u.RunState == "rate-limited" {
-				u.ResetAt = resetAtFor(w.events, t.ID, t.Attempt)
+				u.ResetAt = resetAtFor(ev, t.ID, t.Attempt)
 			}
 			finished = done
 			u.Steps = w.runSteps[rel]
-			u.Peak = peakReasoningFor(w.events, t.ID, t.Attempt)
-			u.Line = lineFor(w.events, t.ID, t.Attempt)
-			u.Workdir, u.Base = worktreeFor(w.events, t.ID, t.Attempt)
+			u.Peak = peakReasoningFor(ev, t.ID, t.Attempt)
+			u.Line = lineFor(ev, t.ID, t.Attempt)
+			u.Workdir, u.Base = worktreeFor(ev, t.ID, t.Attempt)
 			// stacked (issue #414): a done, unlanded unit in its own task
 			// worktree whose base landed as a squash. Computed only there,
 			// since it costs a few git reads, and never over a live state.
@@ -695,18 +715,18 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 		if u.Line == "" {
 			// A unit planned but never dispatched still belongs to the line
 			// its brief resolves to.
-			u.Line = LineOf(cfg, dir, w.events, t.ID)
+			u.Line = lineOfTask(cfg, dir, ev, t)
 		}
-		u.Station = StationFor(t, w.events)
+		u.Station = StationFor(t, ev)
 		// An agent review is inspection work (issue #389): a unit whose latest
 		// event is one stands at inspect — not back at measure after a pass, nor
 		// at build after a correct verdict until a correction is dispatched.
-		if (u.Station == "measure" || u.Station == "build") && latestIsAgentReview(w.events, t.ID) {
+		if (u.Station == "measure" || u.Station == "build") && latestIsAgentReview(ev, t.ID) {
 			u.Station = "inspect"
 		}
-		u.Open = len(openBlockingIDs(w.events, t.ID))
+		u.Open = len(openBlockingIDs(ev, t.ID))
 		if u.Open > 0 {
-			u.NeedsOwner = len(needsOwnerFindings(dir, w.events, t.ID))
+			u.NeedsOwner = len(needsOwnerFindings(dir, ev, t.ID))
 		}
 		if !finished && liveRun(u.RunState) {
 			byModel[u.Model] = byModel[u.Model] + 1
