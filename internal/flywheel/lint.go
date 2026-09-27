@@ -223,6 +223,10 @@ func lintStructure(dir, path string) (LintResult, error) {
 	if header.needsEnvEmpty {
 		res.Problems = append(res.Problems, "needs-env: line is empty; name variables or write needs-env: none")
 	}
+	// preflight: (issue #635) is checked for shape only; lint never runs it.
+	if header.preflightEmpty {
+		res.Problems = append(res.Problems, "preflight: line is empty; name a command or remove the line")
+	}
 	for i, g := range header.Gates {
 		if gateBacktickInDoubleQuotes(g) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))

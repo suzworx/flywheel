@@ -61,6 +61,18 @@ func TestLintBriefMissingOwnsAlone(t *testing.T) {
 	want(t, res, []string{"missing owns: line"}, nil)
 }
 
+// TestLintBriefPreflightEmptyAlone checks an empty preflight: line is a
+// problem and a named command is not (issue #635).
+func TestLintBriefPreflightEmptyAlone(t *testing.T) {
+	t.Parallel()
+	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\npreflight:\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, []string{"preflight: line is empty; name a command or remove the line"}, nil)
+	res = lintCheck(t, t.TempDir(), []string{"a.go"},
+		"owns: a.go\nneeds: none\npreflight: exit 0\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
+	want(t, res, nil, nil)
+}
+
 func TestLintBriefNoGoalAlone(t *testing.T) {
 	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
