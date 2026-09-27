@@ -594,6 +594,21 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if r := needsEnvRefusal(needs); r != nil {
 			return Result{}, r
 		}
+		// Preflight (issue #635): each preflight: command (a correction's
+		// unioned with the base brief's) must exit 0 in the repository root
+		// before anything is recorded or written, so a spent external budget
+		// refuses here instead of failing the attempt midway. flywheel validate
+		// does not run preflight: it measures the deliverable, not capacity.
+		pre := ph.Preflight
+		if o.Resume || o.DeltaPath != "" {
+			pre = unionStrings(baseHeader.Preflight, ph.Preflight)
+		}
+		for _, c := range pre {
+			if r := preflightRefusal(dir, []string{c}); r != nil {
+				return Result{}, r
+			}
+			progress(o.Progress, fmt.Sprintf("%s preflight ok: %s", o.Task, c))
+		}
 	}
 	// A correction's delta is snapshotted per attempt at dispatch (issue
 	// #452): promptB is written atomically to
