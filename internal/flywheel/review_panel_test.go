@@ -172,12 +172,16 @@ func TestReviewThreadPanel(t *testing.T) {
 }
 
 // crashingMember is a fake panel member run: dimension d fails (a run
-// failure) its first fails[d] calls, then records a clean review on tree t.
+// failure that spent $0.25 and 15 tokens) its first fails[d] calls, then
+// records a clean review on tree t.
 func crashingMember(fails map[string]int, calls map[string]int) func(string, string, ReviewAgentOptions) (ReviewAgentResult, error) {
 	return func(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, error) {
 		calls[o.Dimension]++
 		if calls[o.Dimension] <= fails[o.Dimension] {
-			return ReviewAgentResult{}, &reviewRunError{"review agent claude failed (exit status 1, stream <nil>): API Error: overloaded; transcript x.jsonl"}
+			return ReviewAgentResult{}, &reviewRunError{
+				msg:   "review agent claude failed (exit status 1, stream <nil>): API Error: overloaded; transcript x.jsonl",
+				spend: reviewSpend{Tokens: Tokens{Input: 10, Output: 5}, Cost: 0.25},
+			}
 		}
 		evs, verdict, _ := dimensionReviewEvents(task, "r1", o.Round, o.Session, "m", "claude", "t", o.Dimension, nil)
 		return ReviewAgentResult{Round: o.Round, Verdict: verdict, Tree: "t"}, AppendEvents(dir, evs)
@@ -239,5 +243,32 @@ func TestReviewPanelCrash(t *testing.T) {
 	}
 	if _, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: members, Session: "rev-1", review: fail}); err == nil || !IsRuleRefusal(err) {
 		t.Errorf("rule refusal: err = %v, want it returned", err)
+	}
+}
+
+// TestReviewSpendPanelCrash checks a crashed panel member's reviewed crashed
+// event carries the spend of its two failed runs (issue #459).
+func TestReviewSpendPanelCrash(t *testing.T) {
+	t.Parallel()
+	dir := loopRepo(t)
+	members := []PanelMember{{Persona: "correctness"}, {Persona: "tests"}}
+	if _, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Panel: members, Session: "rev-1", review: crashingMember(map[string]int{"tests": 2}, map[string]int{})}); err != nil {
+		t.Fatalf("ReviewPanel() error = %v", err)
+	}
+	var crashed []Event
+	for _, e := range mustEvents(t, dir) {
+		if crashedReview(e) {
+			crashed = append(crashed, e)
+		}
+	}
+	if len(crashed) != 1 || crashed[0].Cost != 0.5 || crashed[0].Tokens == nil || *crashed[0].Tokens != (Tokens{Input: 20, Output: 10}) {
+		t.Fatalf("crashed events = %+v, want one carrying both runs' $0.50 and 30 tokens", crashed)
+	}
+	rep, err := Cost(dir)
+	if err != nil {
+		t.Fatalf("Cost() error = %v", err)
+	}
+	if rep.Total.Review != 0.5 {
+		t.Errorf("Total.Review = %v, want the crashed member's 0.5", rep.Total.Review)
 	}
 }

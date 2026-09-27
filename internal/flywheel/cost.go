@@ -6,14 +6,24 @@ import (
 )
 
 // CostRow is one per-task or per-model cost line: the id, the summed Tokens
-// struct and the summed cost of its finished events.
+// struct and the summed cost of its spend events (spendEvent). Review is the
+// part of Cost that came from reviewed events (issue #459).
 type CostRow struct {
 	ID     string  `json:"id,omitempty"`
 	Tokens Tokens  `json:"tokens"`
 	Cost   float64 `json:"cost"`
+	Review float64 `json:"review,omitempty"`
 }
 
-// CostReport is the summed cost view over the log's finished events: one row
+// spendEvent reports whether e records spend: a finished event, or a reviewed
+// event carrying a review agent's cost or tokens (issue #459). A hand verdict
+// carries neither. Every spend sum (flywheel cost, the unit cost cap, the
+// wave budget, the floor) counts exactly these events.
+func spendEvent(e Event) bool {
+	return e.Kind == "finished" || (e.Kind == "reviewed" && (e.Cost > 0 || e.Tokens != nil))
+}
+
+// CostReport is the summed cost view over the log's spend events: one row
 // per task and per model with ids sorted, plus the grand total.
 type CostReport struct {
 	Tasks  []CostRow `json:"tasks"`
@@ -27,8 +37,10 @@ func (r CostRow) Count() int {
 		r.Tokens.CacheRead + r.Tokens.CacheWrite
 }
 
-// Cost reads the event log and sums the Tokens and cost of every finished
-// event, grouped per task and per model. A finished event is charged to the
+// Cost reads the event log and sums the Tokens and cost of every spend event
+// (spendEvent), grouped per task and per model. A reviewed event is charged
+// to its own Model field, else "unknown", and its cost is also summed into
+// the rows' Review. A finished event is charged to the
 // model on the dispatched event of the same task and attempt (issue #473), so
 // a finish logged after a later attempt's dispatch still counts under its own
 // attempt's model. A finished event without an attempt, or whose attempt has
@@ -49,16 +61,22 @@ func Cost(dir string) (CostReport, error) {
 		if e.Kind == "dispatched" && e.Model != "" {
 			model[e.Task] = e.Model
 		}
-		if e.Kind != "finished" {
+		if !spendEvent(e) {
 			continue
 		}
 		t := e.Tokens
 		if t == nil {
 			t = &Tokens{}
 		}
-		m := attemptModel[attemptKey{task: e.Task, attempt: e.Attempt}]
-		if e.Attempt == "" || m == "" {
-			m = model[e.Task]
+		review := 0.0
+		m := e.Model
+		if e.Kind == "reviewed" {
+			review = e.Cost
+		} else {
+			m = attemptModel[attemptKey{task: e.Task, attempt: e.Attempt}]
+			if e.Attempt == "" || m == "" {
+				m = model[e.Task]
+			}
 		}
 		if m == "" {
 			m = "unknown"
@@ -69,9 +87,10 @@ func Cost(dir string) (CostReport, error) {
 		if byModel[m] == nil {
 			byModel[m] = &CostRow{ID: m}
 		}
-		addCostRow(byTask[e.Task], *t, e.Cost)
-		addCostRow(byModel[m], *t, e.Cost)
-		addCostRow(&total, *t, e.Cost)
+		for _, r := range []*CostRow{byTask[e.Task], byModel[m], &total} {
+			addCostRow(r, *t, e.Cost)
+			r.Review += review
+		}
 	}
 	return CostReport{
 		Tasks:  sortedCostRows(byTask),
