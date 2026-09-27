@@ -3,6 +3,9 @@ package flywheel
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -254,6 +257,65 @@ func TestTUILiveFetcherLog(t *testing.T) {
 	// Check Events has at least 3 (our 3 events; Init may add more).
 	if len(data.Events) < 3 {
 		t.Errorf("Events has %d lines, want >= 3", len(data.Events))
+	}
+}
+
+// TestTUILiveFetcherSearch checks the live fetch (issue #583 k2): the needs
+// and learnings come from the ledger, and `:s` searches the events, a run
+// log, a report and a brief, naming each file's task and attempt.
+func TestTUILiveFetcherSearch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	for _, e := range []Event{
+		{TS: now.Format(time.RFC3339), Task: "T2", Kind: "planned", Needs: []string{"T1"}},
+		{TS: now.Format(time.RFC3339), Task: "T2", Kind: "learning", Severity: "P2", Title: "Quota gone", Observed: "o", Evidence: "e", Ask: "a"},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent failed: %v", err)
+		}
+	}
+	files := map[string]string{
+		"runs/T2.3.jsonl":     "{\"a\":1}\r\n{\"text\":\"quota gone at step 4\"}\r\n",
+		"runs/T2.3.report.md": "# report\nquota gone\n",
+		"briefs/T2.txt":       "owns: x\n\nwhen the QUOTA GONE, stop\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, ".flywheel", filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewTUI()
+	m.runCommand("s quota gone")
+	data, err := TUIFetcher(dir, func() time.Time { return now })(m)
+	if err != nil {
+		t.Fatalf("TUIFetcher failed: %v", err)
+	}
+	if got := data.Needs["T2"]; len(got) != 1 || got[0] != "T1" {
+		t.Errorf("needs of T2 = %v, want [T1]", got)
+	}
+	if len(data.Learnings) != 1 || data.Learnings[0].Title != "Quota gone" {
+		t.Errorf("learnings = %+v", data.Learnings)
+	}
+	var got []string
+	for _, h := range data.Search {
+		got = append(got, fmt.Sprintf("%s %s %s %d", h.Source, h.Task, h.Attempt, h.Line))
+	}
+	joined := strings.Join(got, ", ")
+	for _, want := range []string{"log T2 3 2", "report T2 3 2", "brief T2  3"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("search results %q lack %q", joined, want)
+		}
+	}
+	if !strings.HasPrefix(joined, "event T2 ") {
+		t.Errorf("search results %q do not start with the learning event", joined)
 	}
 }
 

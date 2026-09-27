@@ -1,0 +1,299 @@
+---
+layout: default
+title: Factory screens
+description: The approved design for the flywheel factory view, a k9s-style terminal UI, with what exists today marked on each screen.
+---
+<style>
+/* every rule is scoped under .fs so the page never restyles the site layout */
+.fs{
+  --t-bg:#0c1218; --t-ink:#c9d4de; --t-dim:#6d7f8f; --t-rule:#233140; --t-sel:#1d3242;
+  --t-cyan:#56c8d8; --t-green:#7fd18b; --t-yellow:#e8c46a; --t-red:#ef7b7b; --t-magenta:#c792ea; --t-blue:#82aaff;
+  display:grid; gap:34px;
+}
+.fs .lede{color:var(--soft)}
+.fs .jump{display:flex; flex-wrap:wrap; gap:8px; margin:0}
+.fs .jump a{font-size:13px; line-height:1; color:var(--ink); background:var(--code); border:1px solid var(--line);
+  padding:7px 10px; border-radius:6px; text-decoration:none}
+.fs .jump a:hover,.fs .jump a:focus-visible{border-color:var(--accent); outline:none}
+.fs .legend{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; font-size:14px; margin:0}
+.fs section{display:grid; gap:10px; scroll-margin-top:84px}
+.fs section p{margin:0}
+.fs .meta{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+.fs .meta h2{margin:0; padding:0; border:0; font-size:21px}
+.fs .kbd{font:600 12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--accent);
+  background:var(--code); border:1px solid var(--line); padding:1px 6px; border-radius:4px}
+.fs .status{font-size:11.5px; font-weight:650; letter-spacing:.06em; text-transform:uppercase;
+  padding:2px 8px; border-radius:999px; border:1px solid currentColor; line-height:1.5}
+.fs .status.shipped{color:#2f8a4a}
+.fs .status.building{color:#b7791f}
+.fs .status.planned{color:var(--soft)}
+.fs .scroll{overflow-x:auto; border-radius:10px; border:1px solid var(--t-rule); background:var(--t-bg)}
+.fs pre.t{margin:0; padding:14px 16px; border:0; border-radius:0; background:var(--t-bg); color:var(--t-ink);
+  font:13px/1.45 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace; white-space:pre; min-width:max-content}
+.fs pre.t .c{color:var(--t-cyan)} .fs pre.t .g{color:var(--t-green)} .fs pre.t .y{color:var(--t-yellow)}
+.fs pre.t .r{color:var(--t-red)} .fs pre.t .m{color:var(--t-magenta)} .fs pre.t .b{color:var(--t-blue)}
+.fs pre.t .d{color:var(--t-dim)} .fs pre.t .h{color:#fff; font-weight:600} .fs pre.t .k{color:var(--t-blue)}
+.fs pre.t .s{background:var(--t-sel); display:inline-block; min-width:100%}
+.fs pre.t .crumb{background:#233140; color:#cfe3f0; padding:0 4px}
+.fs ul.notes{margin:0; padding-left:18px; color:var(--soft); font-size:15px}
+.fs .foot-note{color:var(--soft); font-size:14px}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .fs .status.shipped{color:#7fd18b}
+  :root:not([data-theme="light"]) .fs .status.building{color:#e8c46a}
+}
+:root[data-theme="dark"] .fs .status.shipped{color:#7fd18b}
+:root[data-theme="dark"] .fs .status.building{color:#e8c46a}
+</style>
+
+<div class="fs">
+<header style="display:grid;gap:12px">
+  <h1>Factory screens</h1>
+  <p class="lede">The approved design for <code>flywheel factory</code> (issue <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>): a k9s-style terminal UI for a person inspecting the factory by hand and working out what happened and why. Agents keep using the CLI and <code>--json</code>. Every screen is drawn at a 110-column terminal with example data.</p>
+  <p class="legend">The badge on each screen says what exists today:
+    <span class="status shipped">shipped</span> on main,
+    <span class="status building">building</span> in a unit now,
+    <span class="status planned">planned</span> in the design only.</p>
+  <p class="jump" aria-label="Screens">
+    <a href="#map">Navigation map</a><a href="#units">Units</a><a href="#why">Unit · why + timeline</a><a href="#log">Unit · log</a><a href="#tree">Tree</a><a href="#pulse">Pulse</a><a href="#metrics">Metrics</a><a href="#drill">Metric drill-down</a><a href="#cfd">Flow chart</a><a href="#andon">Andon</a><a href="#search">Search</a><a href="#frozen">Frozen</a><a href="#fleet">Fleet</a><a href="#help">Help</a>
+  </p>
+</header>
+
+<section id="map">
+  <div class="meta"><h2>Navigation map</h2><span class="status planned">planned</span></div>
+  <p>Three levels, one path. <span class="kbd">Enter</span> goes down a level, <span class="kbd">Esc</span> goes up, <span class="kbd">-</span> jumps to the last view, <span class="kbd">[</span> <span class="kbd">]</span> walk the command history. The breadcrumbs at the bottom always show the path.</p>
+  <div class="scroll"><pre class="t"><span class="h">fleet</span>  ──Enter──▶  <span class="h">factory</span> (one ledger)  ──Enter──▶  <span class="h">unit</span>  ──keys──▶  why · timeline · explain · brief · log · checkpoints · findings
+ <span class="d">:ctx</span>                <span class="d">:units :workers :lines :andon :events</span>
+                     <span class="d">:tree :pulse :metrics :health :learnings :checkpoints  :s &lt;text&gt;</span>
+   ▲                       ▲                                   │
+   └────────── Esc ────────┴──────────────── Esc ──────────────┘</pre></div>
+</section>
+
+<section id="units">
+  <div class="meta"><h2>Units</h2><span class="kbd">:u</span><span class="status building">building</span></div>
+  <p>The home screen. The header shows context on the left, the factory's stats in the middle and the keys valid here on the right. Rows are coloured by state; a row that changed on the last refresh flashes.</p>
+  <p class="meta">The layout parts, from unit k1: the header block, the key menu, the breadcrumbs and the header and crumb toggles <span class="status building">building</span></p>
+  <div class="scroll"><pre class="t"><span class="h">flywheel-main</span> <span class="d">· main</span>                   <span class="d">THROUGHPUT</span> landed <span class="h">7</span> <span class="g">▂▃▅▇▅▃▂</span>   <span class="k">&lt;:&gt;</span> view    <span class="k">&lt;/&gt;</span> filter   <span class="k">&lt;enter&gt;</span> open
+factory <span class="g">running</span>  paused <span class="d">none</span>          <span class="d">WIP</span>       <span class="h">3</span>  <span class="d">first-pass</span> <span class="h">71%</span>    <span class="k">&lt;s&gt;</span> search  <span class="k">&lt;S-s&gt;</span> sort   <span class="k">&lt;space&gt;</span> mark
+lead lead-claude-c60c5d               <span class="d">andon</span>     <span class="y">1</span>  <span class="d">spend today</span> <span class="h">$18.40</span>  <span class="k">&lt;?&gt;</span> help    <span class="k">&lt;C-e&gt;</span> header <span class="k">&lt;C-w&gt;</span> wide
+health <span class="g">2m ago</span> · flywheel v0.36.0      <span class="d">workers</span>  <span class="h">3/4</span> busy                <span class="k">&lt;q&gt;</span> quit    <span class="k">&lt;C-g&gt;</span> crumbs <span class="k">&lt;C-r&gt;</span> reload
+<span class="d">── Units(all)[6] ↑stage ─────────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">TASK     STAGE      ATT  RUN          MODEL            STEPS  GATES  COST    AGE   WHY</span>
+<span class="s"><span class="c">&gt; o572c    building   r1   running      claude-opus-5-5     41   –      $1.20    9m   worker writing autofreeze.go</span></span>
+  <span class="c">f1       building   r1   running      claude-opus-5-5     18   –      $0.40    3m   worker writing fleet.go</span>
+  <span class="c">m1       building   r1   running      claude-opus-5-5     27   –      $0.95    6m   worker writing metrics.go</span>
+  <span class="y">k2       planned    –    –            –                    –   –      –        1m   blocked: needs k1 (landing)</span>
+  <span class="g">k1       passed     r1   done         claude-opus-5-5     83   6/6    $2.47    1h   inspected pass; shipping #587</span>
+  <span class="d">o572b    landed     r1   done         claude-opus-5-5    128   5/5    $3.90    3h   landed as #584</span>
+
+
+
+
+
+
+<span class="crumb">fleet</span> <span class="crumb">flywheel-main</span> <span class="crumb">units</span>                                               <span class="g">✓ k1 inspected pass</span></pre></div>
+  <ul class="notes"><li>The <b>WHY</b> column is one plain sentence per unit, built from the same facts <code>recover</code> uses, so it is deterministic.</li><li>Colours: cyan running, green passed, yellow waiting or needs correction, red failed/stalled, magenta frozen, dim landed.</li></ul>
+</section>
+
+<section id="why">
+  <div class="meta"><h2>Unit · why and timeline</h2><span class="kbd">Enter</span><span class="kbd">T</span><span class="status planned">planned</span></div>
+  <p>Opening a unit starts with the answer: its state and the reason, then the timeline with every gap and duration labelled.</p>
+  <div class="scroll"><pre class="t"><span class="h">o526</span> <span class="d">· claude permission_mode + live denial andon · kind feature</span>        <span class="k">&lt;w&gt;</span> why+timeline <span class="k">&lt;d&gt;</span> explain <span class="k">&lt;y&gt;</span> brief
+<span class="d">owns</span> config.go adapter.go run.go lint.go (+8)   <span class="d">needs</span> none           <span class="k">&lt;l&gt;</span> log          <span class="k">&lt;c&gt;</span> checkpoints <span class="k">&lt;F&gt;</span> findings
+<span class="d">── Why ──────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="g">LANDED</span> as #535 after one correction. r1 was cut off by the account's rate limit at step 23; flywheel waited
+for the reset and resumed the same session as c1, which finished and passed 5/5 gates.
+<span class="d">── Timeline ─────────────────────────────────────────────────────────────── total 3h12m · touch 1h41m · 53% ─</span>
+ <span class="d">08:41</span>  planned            brief .flywheel/briefs/o526.txt
+ <span class="d">08:42</span>  dispatched r1       claude-opus-5-5 in fw-o526
+ <span class="d">08:43</span>  plan recorded      <span class="d">"files-to-change: config.go adapter.go run.go lint.go …"</span>
+ <span class="d">08:58</span>  <span class="y">finished r1         rate-limited  step 23  $0.54   reset 09:40</span>
+            <span class="y">│ waited 42m for the rate-limit reset</span>
+ <span class="d">09:40</span>  dispatched c1       --resume, same session
+ <span class="d">10:31</span>  finished c1        stop  step 70  $2.16
+ <span class="d">10:33</span>  <span class="g">validated          gates 1-5 pass · owns ok</span>
+ <span class="d">10:41</span>  <span class="g">inspected pass     lead-claude-c60c5d</span>
+ <span class="d">11:53</span>  <span class="g">landed             a9a2f09 (#535)</span>
+
+<span class="crumb">flywheel-main</span> <span class="crumb">units</span> <span class="crumb">o526</span> <span class="crumb">why</span></pre></div>
+</section>
+
+<section id="log">
+  <div class="meta"><h2>Unit · log</h2><span class="kbd">l</span><span class="status planned">planned</span></div>
+  <p>The worker's run, tailed live while it runs. <span class="kbd">w</span> wraps, <span class="kbd">t</span> shows timestamps, <span class="kbd">f</span> goes fullscreen, <span class="kbd">/</span> searches inside.</p>
+  <div class="scroll"><pre class="t"><span class="h">o572c · r1 log</span> <span class="d">· .flywheel/runs/o572c.r1.jsonl · live tail · 41 steps · $1.20</span>        <span class="k">&lt;w&gt;</span> wrap <span class="k">&lt;t&gt;</span> time <span class="k">&lt;f&gt;</span> full
+<span class="d">── Log(following) ───────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">14:02:11</span> <span class="b">step 38</span>  Read internal/flywheel/ratelimit.go (lines 120-180)
+<span class="d">14:02:19</span> <span class="b">step 39</span>  Edit internal/flywheel/autofreeze.go  <span class="g">+46 −0</span>
+<span class="d">14:02:31</span> <span class="b">step 40</span>  Bash  go build ./...                                 <span class="g">rc=0</span>
+<span class="d">14:02:44</span> <span class="b">step 41</span>  Bash  go test -run TestAutoFreeze ./internal/flywheel/  <span class="r">rc=1</span>
+          <span class="r">autofreeze_test.go:88: AutoThaw returned 2 units, want 3 (rate-limited unit missing)</span>
+<span class="d">14:02:58</span> <span class="b">step 42</span>  Read internal/flywheel/suspend.go (SuspendedAttempts)
+<span class="d">▌</span>
+
+<span class="crumb">units</span> <span class="crumb">o572c</span> <span class="crumb">log</span>                                                                  <span class="d">following · 1 new line</span></pre></div>
+</section>
+
+<section id="tree">
+  <div class="meta"><h2>Needs tree</h2><span class="kbd">:t</span><span class="status planned">planned</span></div>
+  <p>Which unit waits on which, like k9s xray. Enter on a node opens that unit.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Tree(open units)[9] ──────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="g">k1</span>  passed <span class="d">· shipping #587</span>
+├─ <span class="y">k2</span>  planned <span class="d">· waits for k1</span>
+│  └─ <span class="y">k3</span>  planned <span class="d">· waits for k2</span>
+│     └─ <span class="y">k4</span>  planned <span class="d">· waits for k3, m2</span>
+<span class="c">m1</span>  building <span class="d">· 27 steps</span>
+└─ <span class="y">m2</span>  planned <span class="d">· waits for m1</span>
+   └─ <span class="y">k4</span>  <span class="d">(shown above)</span>
+<span class="c">f1</span>  building <span class="d">· 18 steps</span>
+└─ <span class="y">f2</span>  planned <span class="d">· waits for f1</span>
+
+<span class="crumb">flywheel-main</span> <span class="crumb">tree</span></pre></div>
+</section>
+
+<section id="pulse">
+  <div class="meta"><h2>Pulse</h2><span class="kbd">:p</span><span class="status planned">planned</span></div>
+  <p>The factory at a glance over a window (<span class="kbd">1</span> 24h, <span class="kbd">2</span> 7d, <span class="kbd">3</span> 30d). Each panel opens its detail chart with <span class="kbd">Enter</span>.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Pulse(7d) ────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="h">FLOW</span>                              <span class="h">QUALITY</span>                           <span class="h">RELIABILITY</span>
+landed      <span class="h">31</span>  <span class="g">▂▃▅▇▆▅▇</span>   ↑ 24%    first-pass   <span class="h">71%</span>  <span class="g">▅▅▆▆▇▆▇</span>  ↑ 6pt   andons       <span class="h">9</span>  <span class="y">▃▁▂▅▂▁▁</span>  ↓ 3
+WIP          <span class="h">4</span>  <span class="c">▅▆▇▅▄▆▄</span>   →        rework      <span class="h">0.29</span>  <span class="y">▅▄▄▃▃▃▂</span>  ↓        MTTR       <span class="h">18m</span>  <span class="g">▆▅▄▄▃▃▂</span>  ↓
+lead p50  <span class="h">2h40m</span>  <span class="c">▆▅▅▄▄▃▃</span>   ↓ 35m    gates red   <span class="h">6%</span>   <span class="y">▂▃▁▂▁▁▁</span>  ↓        frozen     <span class="h">1h12m</span> <span class="m">▁▁▁▁▇▁▁</span>  auto
+lead p90  <span class="h">6h05m</span>                      findings/unit <span class="h">1.8</span>                    paused     <span class="h">3h40m</span> <span class="d">opus 2h · sonnet 1h40m</span>
+
+<span class="h">COST</span>                              <span class="h">CAPACITY</span>                          <span class="h">BY MODEL</span>  <span class="d">(cost per landed unit)</span>
+spend    <span class="h">$96.10</span>  <span class="c">▃▄▅▇▆▄▅</span>             utilization  <span class="h">62%</span>  <span class="c">▄▅▇▇▆▅▆</span>            opus-5-5   <span class="c">████████████</span> <span class="h">$2.63</span>
+/landed   <span class="h">$3.10</span>  <span class="g">▆▅▅▄▄▃▃</span>  ↓ 12%      idle         <span class="h">38%</span>                    sonnet-5   <span class="c">█████</span>        <span class="h">$1.05</span>
+tokens/step <span class="h">1.9k</span>                      rate headroom <span class="h">41%</span>                    haiku-4-5  <span class="c">██</span>           <span class="h">$0.44</span>
+
+<span class="crumb">flywheel-main</span> <span class="crumb">pulse</span>                                                              <span class="d">window 7d · vs previous 7d</span></pre></div>
+</section>
+
+<section id="metrics">
+  <div class="meta"><h2>Metrics</h2><span class="kbd">:m</span><span class="status planned">planned</span></div>
+  <p>Every metric as a table row: value, trend and change against the previous window. <span class="kbd">S-M</span> splits by model, <span class="kbd">S-W</span> by worker.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Metrics(7d)[18] ↑family ──────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">FAMILY       METRIC             VALUE     TREND      Δ PREV    DEFINITION</span>
+  flow         throughput         31/wk     <span class="g">▂▃▅▇▆▅▇</span>    <span class="g">+24%</span>      units landed
+  flow         WIP                4         <span class="c">▅▆▇▅▄▆▄</span>    <span class="d">0</span>         dispatched…passed, not landed
+<span class="s">  flow         lead time p50      2h40m     <span class="g">▆▅▅▄▄▃▃</span>    <span class="g">−35m</span>      first planned → landed</span>
+  flow         flow efficiency    53%       <span class="c">▄▄▅▅▅▆▅</span>    <span class="g">+4pt</span>      touch ÷ cycle
+  quality      first-pass yield   71%       <span class="g">▅▅▆▆▇▆▇</span>    <span class="g">+6pt</span>      passed on r1, no correction
+  quality      rework rate        0.29      <span class="y">▅▄▄▃▃▃▂</span>    <span class="g">−0.08</span>     corrections per landed unit
+  quality      gate fail rate     6%        <span class="y">▂▃▁▂▁▁▁</span>    <span class="g">−2pt</span>      failed readings ÷ readings
+  reliability  andons             9         <span class="y">▃▁▂▅▂▁▁</span>    <span class="g">−3</span>        signals + unclean finishes
+  reliability  MTTR               18m       <span class="g">▆▅▄▄▃▃▂</span>    <span class="g">−6m</span>       andon → cleared
+  cost         spend              $96.10    <span class="c">▃▄▅▇▆▄▅</span>    <span class="r">+$11</span>      worker + review cost
+  cost         cost / landed      $3.10     <span class="g">▆▅▅▄▄▃▃</span>    <span class="g">−12%</span>      spend ÷ landed units
+  capacity     utilization        62%       <span class="c">▄▅▇▇▆▅▆</span>    <span class="g">+9pt</span>      busy ÷ max_parallel · window
+
+<span class="crumb">flywheel-main</span> <span class="crumb">metrics</span>                                                  <span class="d">definitions: docs/metrics.md</span></pre></div>
+</section>
+
+<section id="drill">
+  <div class="meta"><h2>Metric drill-down</h2><span class="kbd">Enter</span><span class="status planned">planned</span></div>
+  <p>Every number opens to its chart and then to its evidence: the exact units behind it. Here, lead time: the distribution, the control chart, then the units.</p>
+  <div class="scroll"><pre class="t"><span class="h">lead time</span> <span class="d">· first planned → landed · 31 landed units · 7d</span>                 <span class="k">&lt;h&gt;</span> histogram <span class="k">&lt;c&gt;</span> control <span class="k">&lt;u&gt;</span> units
+<span class="d">── Histogram ──────────────────────────────────────  ── Control chart (cycle time per landed unit) ─────────</span>
+ &lt;1h   <span class="c">██████</span>  6                                    8h ┤                    <span class="r">●</span>              <span class="d">+2σ 6h50m</span>
+ 1-2h  <span class="c">██████████</span>  10     <span class="g">p50 ▲ 2h40m</span>                6h ┤<span class="d">┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄</span>
+ 2-4h  <span class="c">████████</span>  8                                    4h ┤   ●      ●   ●       ●    ●
+ 4-8h  <span class="c">█████</span>  5         <span class="y">p90 ▲ 6h05m</span>                2h ┤<span class="d">─</span>●<span class="d">──</span>●<span class="d">─</span>●●<span class="d">─</span>●●<span class="d">──</span>●<span class="d">─</span>●●●<span class="d">─</span>●●<span class="d">──</span>●●●<span class="d">─</span>●●<span class="d">── mean 2h58m</span>
+ &gt;8h   <span class="r">██</span>  2                                       0h └┬──────┬──────┬──────┬──────┬──
+                                                         Mon    Tue    Wed    Thu    Fri
+<span class="d">── Units (slowest first) ───────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">TASK     LEAD     QUEUE   CYCLE    TOUCH   ATTEMPTS  WHY IT TOOK LONG</span>
+<span class="s">  <span class="r">o457c    9h12m    4h02m   5h10m    1h05m   1         queued 4h behind o457b (same files)</span></span>
+  <span class="r">d5       8h40m    0h20m   8h20m    0h58m   1         landing raced main 3 times (README conflicts)</span>
+  <span class="y">o572a    5h55m    0h10m   5h45m    1h40m   1         merge conflict in events.go, resolved by lead</span>
+
+<span class="crumb">pulse</span> <span class="crumb">lead time</span> <span class="crumb">units</span>                                                   <span class="d">Enter opens the unit's timeline</span></pre></div>
+</section>
+
+<section id="cfd">
+  <div class="meta"><h2>Cumulative flow</h2><span class="kbd">Enter</span> on WIP<span class="status planned">planned</span></div>
+  <p>The factory's classic flow chart: each band is a stage. A band that widens is a bottleneck forming.</p>
+  <div class="scroll"><pre class="t"><span class="h">cumulative flow</span> <span class="d">· units by stage · 7d · hourly</span>
+ 40 ┤                                                           <span class="d">░░░░░░░░░░</span>  <span class="d">░ landed</span>
+ 32 ┤                                         <span class="d">░░░░░░░░░░░░░░░░░░░░</span><span class="g">▒▒▒▒▒▒▒▒▒▒</span>  <span class="g">▒ passed</span>
+ 24 ┤                     <span class="d">░░░░░░░░░░░░░░░░░░░░</span><span class="g">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span><span class="y">▓▓▓▓▓▓▓▓▓▓</span>  <span class="y">▓ finished</span>
+ 16 ┤      <span class="d">░░░░░░░░░░░░░░░</span><span class="g">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span><span class="y">▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓</span><span class="c">████████████</span>  <span class="c">█ building</span>
+  8 ┤<span class="d">░░░░░░</span><span class="g">▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒</span><span class="y">▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓</span><span class="c">████████████████████</span><span class="b">░░░░░░░░░░░░</span>  <span class="b">░ planned</span>
+  0 └┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬
+     Mon        Tue        Wed        Thu        Fri        Sat        Sun
+     <span class="y">▲ finished band widening since Fri: units finish but wait for inspection</span></pre></div>
+</section>
+
+<section id="andon">
+  <div class="meta"><h2>Andon</h2><span class="kbd">:a</span><span class="status planned">planned</span></div>
+  <p>Everything that needs a person, worst first, each with what to do next. Today's <code>:andon</code> view lists the andon entries; the severity and next-action columns are the design.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Andon[4] ─────────────────────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">SEVERITY  UNIT     SIGNAL              SINCE   WHAT HAPPENED                                NEXT</span>
+<span class="s">  <span class="r">high      d5       permission-denied   14:21   Bash(git commit) denied in a temp demo repo  triage: learning or dismiss</span></span>
+  <span class="r">high      o581     stalled             13:58   no output for 10m at step 64                 flywheel run o581 --resume</span>
+  <span class="y">medium    –        health stale        13:40   controller has not recorded health for 22m   flywheel controller</span>
+  <span class="y">medium    –        paused model        13:35   claude-opus-5-5 paused until 15:00 (limit)   waits; auto-resumes 15:00</span>
+
+<span class="crumb">flywheel-main</span> <span class="crumb">andon</span></pre></div>
+</section>
+
+<section id="search">
+  <div class="meta"><h2>Search</h2><span class="kbd">:s &lt;text&gt;</span><span class="status planned">planned</span></div>
+  <p>Hunting a cause: one search across the ledger, run logs, reports and briefs. Enter jumps to the match in context.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Search "could not resolve host"[3] ───────────────────────────────────────────────────────────────────────</span>
+  <span class="h">SOURCE   TASK    ATT  WHERE                          MATCH</span>
+<span class="s">  event    o572a   –    shipped · push                 …git push failed (rc=128): fatal: <span class="y">Could not resolve host</span>: github.com</span>
+  event    o572d   –    shipped · merge-base           …git fetch failed (rc=128): fatal: <span class="y">Could not resolve host</span>: github…
+  log      m1      r1   runs/m1.r1.jsonl:212           …go: downloading … <span class="y">could not resolve host</span> proxy.golang.org…
+
+<span class="crumb">flywheel-main</span> <span class="crumb">search</span>                                                              <span class="d">3 matches in 0.2s</span></pre></div>
+</section>
+
+<section id="frozen">
+  <div class="meta"><h2>Frozen factory</h2><span class="status planned">planned</span></div>
+  <p>When every model's tokens run out, the factory freezes itself and says until when. Units stopped by the freeze show why and resume in their own session at the thaw. The freeze itself is shipped (<code>flywheel suspend</code> and <code>flywheel resume</code>, see <a href="features.html#freeze-and-resume">Freeze and resume</a>); this screen and the automatic freeze are not yet.</p>
+  <div class="scroll"><pre class="t"><span class="h">flywheel-main</span> <span class="d">· main</span>                   <span class="d">THROUGHPUT</span> landed <span class="h">7</span> <span class="g">▂▃▅▇▅▃▂</span>   <span class="k">&lt;R&gt;</span> resume now (asks to confirm)
+factory <span class="m">FROZEN until 15:00</span> <span class="d">(auto: tokens exhausted)</span>   <span class="d">WIP</span> <span class="h">3</span>              <span class="k">&lt;:&gt;</span> view  <span class="k">&lt;?&gt;</span> help
+paused  <span class="m">claude-opus-5-5 until 15:00 · claude-sonnet-5 until 15:20</span>
+<span class="d">── Units(all)[5] ────────────────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">TASK     STAGE      ATT  RUN          STEPS  COST    WHY</span>
+  <span class="m">o572c    suspended  r1   stopped         41  $1.20   stopped by the freeze at 13:35; resumes in its session at 15:00</span>
+  <span class="m">f1       suspended  r1   stopped         18  $0.40   stopped by the freeze at 13:35; resumes in its session at 15:00</span>
+  <span class="m">m1       suspended  r1   stopped         27  $0.95   stopped by the freeze at 13:35; checkpoint 4be1c20</span>
+  <span class="y">k2       planned    –    –                –  –       waits for the thaw (and for k1)</span>
+
+<span class="crumb">flywheel-main</span> <span class="crumb">units</span>                                <span class="m">frozen 1h25m · thaws 15:00 · 3 units will resume</span></pre></div>
+</section>
+
+<section id="fleet">
+  <div class="meta"><h2>Fleet</h2><span class="kbd">:ctx</span><span class="status planned">planned</span></div>
+  <p>Every factory on the machine, like k9s contexts. Enter switches the whole view to that ledger.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Fleet[5] ─────────────────────────────────────────────────────────────────────────────────────────────────</span>
+  <span class="h">NAME            KIND        RUNNING  PASSED  LANDED/7d  FIRST-PASS  ANDON  STATE                    HEALTH</span>
+<span class="s">  <span class="g">flywheel-main   root              3       1         31         71%      1  running                  2m</span></span>
+  <span class="c">olexa-main2     root              2       0         18         64%      2  running                  4m</span>
+  <span class="m">olexa-perf-394  root              0       0          9         78%      0  FROZEN until 15:00       6m</span>
+  <span class="d">olexa           root              0       0          0          –       0  idle                     none</span>
+  <span class="c">cardputer       root              1       0          4         50%      0  paused: opus until 15:00  9m</span>
+
+<span class="crumb">fleet</span>                                                                      <span class="d">registry ~/.config/flywheel/fleet.json</span></pre></div>
+</section>
+
+<section id="help">
+  <div class="meta"><h2>Help</h2><span class="kbd">?</span><span class="kbd">C-a</span><span class="status planned">planned</span></div>
+  <p>Every key and every view in one place.</p>
+  <div class="scroll"><pre class="t"><span class="d">── Help ─────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="h">MOVE</span>                      <span class="h">VIEWS</span>                          <span class="h">FILTER · SORT</span>              <span class="h">UNIT</span>
+<span class="k">j k</span>     down / up         <span class="k">:u</span>  units    <span class="k">:w</span>  workers       <span class="k">/re</span>    regex             <span class="k">w</span>  why + timeline
+<span class="k">g G</span>     top / bottom      <span class="k">:l</span>  lines    <span class="k">:a</span>  andon         <span class="k">/!re</span>   inverse           <span class="k">d</span>  explain
+<span class="k">PgUp/Dn</span> page              <span class="k">:e</span>  events   <span class="k">:t</span>  tree          <span class="k">/-f x</span>  fuzzy             <span class="k">y</span>  brief
+<span class="k">Enter</span>   open              <span class="k">:p</span>  pulse    <span class="k">:m</span>  metrics       <span class="k">S-n</span>    sort by name      <span class="k">l</span>  log
+<span class="k">Esc</span>     back              <span class="k">:h</span>  health   <span class="k">:lr</span> learnings     <span class="k">S-a</span>    sort by age       <span class="k">c</span>  checkpoints
+<span class="k">-</span>       last view         <span class="k">:c</span>  checkpoints               <span class="k">S-s</span>    sort by stage     <span class="k">F</span>  findings
+<span class="k">[ ]</span>     history           <span class="k">:ctx</span> fleet   <span class="k">:s x</span> search     <span class="k">S-c</span>    sort by cost      <span class="k">S-j</span> jump to needs
+<span class="h">SCREEN</span>                    <span class="h">ACTIONS</span> <span class="d">(confirm; off with --readonly)</span>
+<span class="k">C-e</span> header <span class="k">C-g</span> crumbs     <span class="k">v</span> validate  <span class="k">i</span> inspect  <span class="k">r</span> resume  <span class="k">x</span> withdraw  <span class="k">space</span> mark  <span class="k">S</span> suspend  <span class="k">R</span> resume factory
+<span class="k">C-w</span> wide   <span class="k">C-r</span> reload     <span class="k">.flywheel/hotkeys.json</span> adds your own keys, scoped per view</pre></div>
+</section>
+
+<p class="foot-note">Example data. Build order on <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>: k1 layout (building), m1 metrics engine (building; it has no screen of its own), k2 navigation and search, k3 unit detail, m2 charts with k4 pulse and metrics, k6 feel, f4 fleet, k5 actions.</p>
+</div>
