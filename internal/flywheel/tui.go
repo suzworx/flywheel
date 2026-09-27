@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/suzworx/flywheel/internal/term"
@@ -14,10 +15,27 @@ type TUIData struct {
 	Floor  Floor
 	Events []string // recent events as readable lines, oldest first
 	Detail []string // the drill-down's lines when the model Wants one, else nil
+
+	// The header's context (issue #583).
+	Branch   string       // the integration branch, "" when unknown
+	Suspend  SuspendState // the factory's freeze
+	Paused   []TUIPause   // models a rate limit pauses
+	HealthAt time.Time    // the latest health event's time; zero when none
+	Version  string       // the flywheel version
 }
 
+// TUIPause is one model a rate limit pauses, and until when.
+type TUIPause struct {
+	Model string
+	Until time.Time
+}
+
+// flashFor is how long a flash message stays up when no key clears it.
+const flashFor = 5 * time.Second
+
 // TUI is the interactive factory's state (issue #336): which view is shown,
-// the cursor, the filter, the command/filter prompt and the drill-down.
+// the cursor, the filter, the command/filter prompt and the drill-down; and
+// (issue #583) the navigation path, the flash message and the layout toggles.
 type TUI struct {
 	view       string // units, workers, andon, events
 	cursor     int
@@ -29,9 +47,17 @@ type TUI struct {
 	drillKind  string // "", "explain", "log"
 	drillTask  string
 	detailTop  int // first visible line in drill-down
-	statusMsg  string
 	quit       bool
 	help       bool
+
+	crumbs     []string // the navigation path: the view, then drill-downs
+	flashMsg   string
+	flashUntil time.Time
+	hideHeader bool // Ctrl-E
+	hideCrumbs bool // Ctrl-G
+	wide       bool // Ctrl-W: cells untruncated
+	refresh    bool // Ctrl-R: a reload the live loop consumes (TakeRefresh)
+	now        func() time.Time
 }
 
 // NewTUI creates a new TUI with default state.
@@ -40,7 +66,47 @@ func NewTUI() *TUI {
 		view:   "units",
 		cursor: 0,
 		page:   10,
+		crumbs: []string{"units"},
+		now:    time.Now,
 	}
+}
+
+// flash shows msg on the flash line until the next key or flashFor passes.
+func (m *TUI) flash(msg string) {
+	m.flashMsg = msg
+	m.flashUntil = m.now().Add(flashFor)
+}
+
+// flashLine is the flash message still up, "" when none.
+func (m *TUI) flashLine() string {
+	if m.flashMsg == "" || !m.now().Before(m.flashUntil) {
+		return ""
+	}
+	return m.flashMsg
+}
+
+// Crumbs returns the navigation path, e.g. [units T3 log].
+func (m *TUI) Crumbs() []string {
+	return append([]string(nil), m.crumbs...)
+}
+
+// pushCrumbs extends the path; popCrumbs cuts it back to its first n crumbs.
+func (m *TUI) pushCrumbs(c ...string) { m.crumbs = append(m.crumbs, c...) }
+func (m *TUI) popCrumbs(n int)        { m.crumbs = m.crumbs[:min(n, len(m.crumbs))] }
+
+// setView switches to view with a fresh cursor, filter and path.
+func (m *TUI) setView(view string) {
+	m.view = view
+	m.cursor = 0
+	m.filter = ""
+	m.crumbs = []string{view}
+}
+
+// TakeRefresh reports whether Ctrl-R asked for a reload, and clears it.
+func (m *TUI) TakeRefresh() bool {
+	r := m.refresh
+	m.refresh = false
+	return r
 }
 
 // cutRunes returns at most n runes; when s is longer, returns the first n-1
@@ -74,6 +140,29 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	if k.Alt {
 		return
 	}
+	// Any key clears the flash; the key may set a new one.
+	m.flashMsg = ""
+
+	// The layout toggles work in every mode (issue #583).
+	if k.Kind == term.KeyCtrl {
+		switch k.Rune {
+		case 'e':
+			m.hideHeader = !m.hideHeader
+		case 'g':
+			m.hideCrumbs = !m.hideCrumbs
+		case 'w':
+			m.wide = !m.wide
+			if m.wide {
+				m.flash("wide: every cell untruncated")
+			} else {
+				m.flash("normal: long cells cut")
+			}
+		case 'r':
+			m.refresh = true
+			m.flash("reloading")
+		}
+		return
+	}
 
 	// Drill-down mode (explain/log view).
 	if m.drillKind != "" {
@@ -81,43 +170,28 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case term.KeyEsc:
 			m.drillKind = ""
 			m.drillTask = ""
-			m.statusMsg = ""
+			m.popCrumbs(1)
 		case term.KeyDown:
 			m.detailTop++
-			m.statusMsg = ""
 		case term.KeyUp:
-			m.detailTop--
-			if m.detailTop < 0 {
-				m.detailTop = 0
-			}
-			m.statusMsg = ""
+			m.detailTop = max(0, m.detailTop-1)
 		case term.KeyPgDn:
 			m.detailTop += m.page
-			m.statusMsg = ""
 		case term.KeyPgUp:
-			m.detailTop -= m.page
-			if m.detailTop < 0 {
-				m.detailTop = 0
-			}
-			m.statusMsg = ""
+			m.detailTop = max(0, m.detailTop-m.page)
 		case term.KeyRune:
-			if k.Rune == 'j' {
+			switch k.Rune {
+			case 'j':
 				m.detailTop++
-				m.statusMsg = ""
-			} else if k.Rune == 'k' {
-				m.detailTop--
-				if m.detailTop < 0 {
-					m.detailTop = 0
-				}
-				m.statusMsg = ""
-			} else if k.Rune == 'q' {
+			case 'k':
+				m.detailTop = max(0, m.detailTop-1)
+			case 'q':
 				m.quit = true
-			} else if k.Rune == '?' {
+			case '?':
 				m.drillKind = ""
 				m.drillTask = ""
-				m.help = true
-				m.detailTop = 0
-				m.statusMsg = ""
+				m.popCrumbs(1)
+				m.openHelp()
 			}
 		case term.KeyCtrlC:
 			m.quit = true
@@ -130,8 +204,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	if m.help {
 		switch k.Kind {
 		case term.KeyEsc:
-			m.help = false
-			m.statusMsg = ""
+			m.closeHelp()
 		case term.KeyDown:
 			m.detailTop++
 		case term.KeyUp:
@@ -143,8 +216,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case term.KeyRune:
 			switch k.Rune {
 			case '?':
-				m.help = false
-				m.statusMsg = ""
+				m.closeHelp()
 			case 'q':
 				m.quit = true
 			case 'j':
@@ -172,7 +244,6 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 			if wasFilter {
 				m.filter = ""
 			}
-			m.statusMsg = ""
 		case term.KeyEnter:
 			if m.promptKind == "command" {
 				m.executeCommand()
@@ -180,7 +251,6 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 				m.promptKind = ""
 				m.filter = m.prompt
 				m.cursor = 0
-				m.statusMsg = ""
 			}
 		case term.KeyRune:
 			m.prompt += string(k.Rune)
@@ -197,58 +267,33 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	n := len(rows)
 	defer m.clampCursor(n)
 
+	// clampCursor keeps every move below on the table's rows.
 	switch k.Kind {
 	case term.KeyEsc:
 		m.filter = ""
 		m.cursor = 0
-		m.statusMsg = ""
 	case term.KeyDown:
 		m.cursor++
-		if m.cursor >= n {
-			m.cursor = n - 1
-		}
-		m.statusMsg = ""
 	case term.KeyUp:
 		m.cursor--
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
-		m.statusMsg = ""
 	case term.KeyRune:
 		switch k.Rune {
 		case 'j':
 			m.cursor++
-			if m.cursor >= n {
-				m.cursor = n - 1
-			}
-			m.statusMsg = ""
 		case 'k':
 			m.cursor--
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-			m.statusMsg = ""
 		case 'g':
 			m.cursor = 0
-			m.statusMsg = ""
 		case 'G':
 			m.cursor = n - 1
-			if m.cursor < 0 {
-				m.cursor = 0
-			}
-			m.statusMsg = ""
 		case ':':
 			m.promptKind = "command"
 			m.prompt = ""
-			m.statusMsg = ""
 		case '/':
 			m.promptKind = "filter"
 			m.prompt = ""
-			m.statusMsg = ""
 		case '?':
-			m.help = true
-			m.detailTop = 0
-			m.statusMsg = ""
+			m.openHelp()
 		case 'q':
 			m.quit = true
 		case 'l':
@@ -260,25 +305,12 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		}
 	case term.KeyPgDn:
 		m.cursor += m.page
-		if m.cursor >= n {
-			m.cursor = n - 1
-		}
-		m.statusMsg = ""
 	case term.KeyPgUp:
-		m.cursor -= m.page
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
-		m.statusMsg = ""
+		m.cursor = max(0, m.cursor-m.page)
 	case term.KeyHome:
 		m.cursor = 0
-		m.statusMsg = ""
 	case term.KeyEnd:
 		m.cursor = n - 1
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
-		m.statusMsg = ""
 	case term.KeyEnter:
 		if (m.view == "units" || m.view == "andon") && m.cursor < len(rows) && len(rows) > 0 {
 			m.drill(d, "explain")
@@ -288,19 +320,32 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	}
 }
 
+// openHelp shows the help screen and adds it to the path; closeHelp leaves
+// it and drops it from the path.
+func (m *TUI) openHelp() {
+	m.help = true
+	m.detailTop = 0
+	m.pushCrumbs("help")
+}
+
+func (m *TUI) closeHelp() {
+	m.help = false
+	m.popCrumbs(len(m.crumbs) - 1)
+}
+
 // drill opens a drill-down of the row under the cursor, unless that row is
 // not a unit: a condition of the floor itself (staffing/<role>) has no task
 // to explain, so it says so instead of asking for one (#357 review).
 func (m *TUI) drill(d TUIData, kind string) {
 	task := m.getTaskAtCursor(d)
 	if !unitExists(d, task) {
-		m.statusMsg = task + " is a condition of the floor, not a unit: nothing to " + kind
+		m.flash(task + " is a condition of the floor, not a unit: nothing to " + kind)
 		return
 	}
 	m.drillKind = kind
 	m.drillTask = task
 	m.detailTop = 0
-	m.statusMsg = ""
+	m.pushCrumbs(task, kind)
 }
 
 // unitExists reports whether task names one of the floor's units.
@@ -327,34 +372,19 @@ func (m *TUI) executeCommand() {
 
 	switch cmd {
 	case "u", "units":
-		m.view = "units"
-		m.cursor = 0
-		m.filter = ""
-		m.statusMsg = ""
+		m.setView("units")
 	case "w", "workers":
-		m.view = "workers"
-		m.cursor = 0
-		m.filter = ""
-		m.statusMsg = ""
+		m.setView("workers")
 	case "a", "andon":
-		m.view = "andon"
-		m.cursor = 0
-		m.filter = ""
-		m.statusMsg = ""
+		m.setView("andon")
 	case "e", "events":
-		m.view = "events"
-		m.cursor = 0
-		m.filter = ""
-		m.statusMsg = ""
+		m.setView("events")
 	case "l", "lines":
-		m.view = "lines"
-		m.cursor = 0
-		m.filter = ""
-		m.statusMsg = ""
+		m.setView("lines")
 	case "q", "quit":
 		m.quit = true
 	default:
-		m.statusMsg = fmt.Sprintf("unknown view: %s", cmd)
+		m.flash(fmt.Sprintf("unknown view: %s", cmd))
 	}
 }
 
@@ -540,6 +570,131 @@ func (m *TUI) rowsLines(d TUIData) (header []string, rows [][]string) {
 	return header, rows
 }
 
+// hint is one entry of the header's key menu.
+type hint struct{ key, label string }
+
+// hintRows is how many rows the key menu fills before it starts a column.
+const hintRows = 4
+
+// Key menus shared by the views: tableHints lead every table view,
+// layoutHints close every menu.
+var (
+	tableHints  = []hint{{":", "view"}, {"/", "filter"}}
+	layoutHints = []hint{{"?", "help"}, {"q", "quit"}, {"ctrl-e", "header"}, {"ctrl-g", "crumbs"}, {"ctrl-w", "wide"}, {"ctrl-r", "reload"}}
+	scrollHints = []hint{{"j/k", "scroll"}, {"esc", "back"}}
+	unitHints   = []hint{{"enter", "explain"}, {"l", "log"}}
+)
+
+// viewHints is the key menu of each view (a table view, a drill-down kind or
+// help): the keys valid there, in the order the menu lists them.
+var viewHints = map[string][]hint{
+	"units":   join(tableHints, unitHints, layoutHints),
+	"andon":   join(tableHints, unitHints, layoutHints),
+	"workers": join(tableHints, layoutHints),
+	"events":  join(tableHints, layoutHints),
+	"lines":   join(tableHints, layoutHints),
+	"explain": join(scrollHints, layoutHints),
+	"log":     join(scrollHints, layoutHints),
+	"help":    join(scrollHints, layoutHints),
+}
+
+func join(parts ...[]hint) []hint {
+	var out []hint
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+// hintsFor is the key menu of the screen shown: help, the drill-down, or the
+// table view.
+func (m *TUI) hintsFor() []hint {
+	switch {
+	case m.help:
+		return viewHints["help"]
+	case m.drillKind != "":
+		return viewHints[m.drillKind]
+	}
+	return viewHints[m.view]
+}
+
+// contextLines are the header's left column: where the factory is, whether
+// it runs, what pauses it, who leads it, its last health check and version.
+func contextLines(d TUIData) []string {
+	busy, most := 0, 0
+	for _, l := range d.Floor.Lines {
+		busy += l.Busy
+		most += l.MaxParallel
+	}
+	repo := "repo " + filepath.Base(d.Floor.Dir)
+	if d.Branch != "" {
+		repo += " · " + d.Branch
+	}
+	factory := "factory running"
+	if s := d.Suspend; s.Suspended {
+		factory = "factory FROZEN since " + hhmm(s.Since)
+		if s.Until != "" {
+			factory += " until " + hhmm(s.Until)
+		}
+		factory += " by " + s.By + ": " + s.Reason
+	}
+	out := []string{repo, factory}
+	for _, p := range d.Paused {
+		out = append(out, "paused "+p.Model+" until "+p.Until.Local().Format("15:04"))
+	}
+	out = append(out, fmt.Sprintf("lead %s · workers %d/%d · landed today %d · $%.2f",
+		d.Floor.Staffing.Lead, busy, most, d.Floor.Output.LandedToday, d.Floor.Output.Cost))
+	health := "health none"
+	if !d.HealthAt.IsZero() {
+		health = "health " + HumanAge(max(0, int(d.Floor.Refreshed.Sub(d.HealthAt).Seconds()))) + " ago"
+	}
+	version := d.Version
+	if version == "" {
+		version = "dev"
+	}
+	return append(out, health, "flywheel "+version)
+}
+
+// headerBlock is the header: the context lines on the left, the key menu in
+// columns of up to hintRows rows on the right, every line cut to width.
+func (m *TUI) headerBlock(d TUIData, width int) []string {
+	left := contextLines(d)
+	leftW := 0
+	for _, l := range left {
+		leftW = max(leftW, utf8.RuneCountInString(l))
+	}
+	hints := m.hintsFor()
+	// One column per hintRows hints, each as wide as its widest entry.
+	var cols [][]string
+	for i := 0; i < len(hints); i += hintRows {
+		var col []string
+		w := 0
+		for _, h := range hints[i:min(i+hintRows, len(hints))] {
+			col = append(col, "<"+h.key+"> "+h.label)
+			w = max(w, utf8.RuneCountInString(col[len(col)-1]))
+		}
+		for j := range col {
+			col[j] += strings.Repeat(" ", w-utf8.RuneCountInString(col[j]))
+		}
+		cols = append(cols, col)
+	}
+	out := make([]string, max(len(left), min(hintRows, len(hints))))
+	for r := range out {
+		line := ""
+		if r < len(left) {
+			line = left[r]
+		}
+		line += strings.Repeat(" ", leftW-utf8.RuneCountInString(line)+3)
+		for _, col := range cols {
+			if r < len(col) {
+				line += col[r] + "  "
+			}
+		}
+		out[r] = cutRunes(strings.TrimRight(line, " "), width)
+	}
+	return out
+}
+
 // View renders one full frame, exactly height lines, each at most width
 // runes wide; color adds ANSI colours and reverse video for the cursor row.
 // A frame too short for the layout keeps its first lines and the last one
@@ -549,25 +704,36 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		return ""
 	}
 
-	lines := []string{}
-
-	// Line 1: Header line
-	repoDir := filepath.Base(d.Floor.Dir)
-	totalBusy := 0
-	totalMax := 0
-	for _, l := range d.Floor.Lines {
-		totalBusy += l.Busy
-		totalMax += l.MaxParallel
+	// The bottom: the flash line, then the prompt or the crumbs on the last
+	// line; a frame too short for both keeps the last.
+	var foot []string
+	switch {
+	case m.promptKind == "command":
+		foot = []string{m.flashLine(), ":" + m.prompt}
+	case m.promptKind == "filter":
+		foot = []string{m.flashLine(), "/" + m.prompt}
+	case !m.hideCrumbs:
+		foot = []string{m.flashLine(), m.crumbLine()}
+	default:
+		foot = []string{m.flashLine()}
 	}
-	headerLine := fmt.Sprintf("flywheel factory · %s · lead %s · workers %d/%d · landed today %d · $%.2f",
-		repoDir, d.Floor.Staffing.Lead, totalBusy, totalMax, d.Floor.Output.LandedToday, d.Floor.Output.Cost)
-	lines = append(lines, cutRunes(headerLine, width))
+	for len(foot) > 1 && height-len(foot) < 1 {
+		foot = foot[1:]
+	}
 
-	// Line 2: Hints line
-	hintsLine := "<:>view  </>filter  <enter>explain  <l>log  <?>help  <q>quit"
-	lines = append(lines, cutRunes(hintsLine, width))
+	// The header, unless hidden or the frame is too short to keep a title,
+	// a column header and minTableRows rows below it.
+	const minTableRows = 5
+	var lines []string
+	if !m.hideHeader {
+		if hdr := m.headerBlock(d, width); height-len(foot)-len(hdr) >= 2+minTableRows {
+			lines = hdr
+		}
+	}
+	// body is how many lines the title and the content below it get.
+	body := height - len(foot) - len(lines)
 
-	// Line 3: Title bar
+	// The title bar.
 	filterText := "all"
 	if m.promptKind == "filter" {
 		filterText = fmt.Sprintf("/%s", m.prompt)
@@ -614,49 +780,40 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  /       open filter prompt",
 			"  enter   explain (drill-down)",
 			"  l       show log (drill-down)",
+			"  esc     back: leave the drill-down or help, clear the filter",
+			"Layout:",
+			"  ctrl-e  show or hide the header",
+			"  ctrl-g  show or hide the crumbs",
+			"  ctrl-w  wide: show every cell untruncated",
+			"  ctrl-r  reload the factory now",
 			"  ?       show this help",
 			"  q       quit",
 		}
-		visible := max(1, height-4)
+		visible := max(1, body-1)
 		m.page = visible
 		m.detailTop = max(0, min(m.detailTop, len(helpText)-visible))
 		for i := m.detailTop; i < len(helpText) && i < m.detailTop+visible; i++ {
 			lines = append(lines, cutRunes(helpText[i], width))
 		}
 	} else if m.drillKind != "" {
-		// Drill-down view shows detail lines with scrolling.
-		visible := height - 4
-		if visible < 1 {
-			visible = 1
-		}
+		// Drill-down view shows detail lines with scrolling; detailTop is
+		// clamped so the last page stays full.
+		visible := max(1, body-1)
 		m.page = visible
-		// Clamp detailTop to show the last visible line.
-		maxDetailTop := len(d.Detail) - visible
-		if maxDetailTop < 0 {
-			maxDetailTop = 0
-		}
-		if m.detailTop > maxDetailTop {
-			m.detailTop = maxDetailTop
-		}
-		// Draw Detail lines [detailTop, detailTop+visible).
+		m.detailTop = max(0, min(m.detailTop, len(d.Detail)-visible))
 		for i := m.detailTop; i < m.detailTop+visible && i < len(d.Detail); i++ {
-			if len(lines) < height-1 {
-				lines = append(lines, cutRunes(d.Detail[i], width))
-			}
+			lines = append(lines, cutRunes(d.Detail[i], width))
 		}
 	} else {
-		// Table view.
+		// Table view: long cells cut to maxCell unless wide (Ctrl-W).
+		if !m.wide {
+			rows = cutCells(rows)
+		}
 		widths := m.computeColumnWidths(header, rows)
 
 		// Clamp cursor to rows and keep visible.
-		m.cursor = min(m.cursor, len(rows)-1)
-		if m.cursor < 0 {
-			m.cursor = 0
-		}
-		visible := height - 5
-		if visible < 1 {
-			visible = 1
-		}
+		m.cursor = max(0, min(m.cursor, len(rows)-1))
+		visible := max(1, body-2)
 		m.page = visible
 		if m.cursor < m.top {
 			m.top = m.cursor
@@ -671,16 +828,10 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		// Print header row (with cursor prefix for alignment).
 		headerRow := m.formatRowWithColumns(header, widths)
 		headerRowLine := "  " + headerRow
-		headerRowCut := cutRunes(headerRowLine, width)
-		if len(lines) < height-1 {
-			lines = append(lines, headerRowCut)
-		}
+		lines = append(lines, cutRunes(headerRowLine, width))
 
 		// Print data rows [top, top+visible).
 		for i := m.top; i < m.top+visible && i < len(rows); i++ {
-			if len(lines) >= height-1 {
-				break
-			}
 			row := rows[i]
 			cursor := "  "
 			isCursor := i == m.cursor
@@ -706,32 +857,44 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		}
 
 	}
-	// Pad the body so the last line sits on the frame's bottom row in every
-	// mode (#344 review).
-	for len(lines) < height-1 {
+	// Exactly height lines: pad the body so the footer sits on the frame's
+	// bottom rows in every mode (#344 review); a short frame drops body
+	// lines, never the footer.
+	for len(lines) < height-len(foot) {
 		lines = append(lines, "")
 	}
-
-	// Last line: status, prompt, or breadcrumbs.
-	lastLine := ""
-	if m.promptKind == "command" {
-		lastLine = fmt.Sprintf(":%s", m.prompt)
-	} else if m.promptKind == "filter" {
-		lastLine = fmt.Sprintf("/%s", m.prompt)
-	} else if m.statusMsg != "" {
-		lastLine = m.statusMsg
-	} else if m.drillKind != "" {
-		lastLine = fmt.Sprintf("<%s> <%s> <%s>", m.view, m.drillTask, m.drillKind)
-	} else {
-		lastLine = fmt.Sprintf("<%s>", m.view)
+	lines = lines[:height-len(foot)]
+	for _, f := range foot {
+		lines = append(lines, cutRunes(f, width))
 	}
-	// Exactly height lines: a short frame drops body lines, never the last.
-	if len(lines) > height-1 {
-		lines = lines[:height-1]
-	}
-	lines = append(lines, cutRunes(lastLine, width))
 
 	return strings.Join(lines, "\n")
+}
+
+// crumbLine is the navigation path as k9s draws it, each crumb a tag:
+// "<units> <T3> <log>".
+func (m *TUI) crumbLine() string {
+	tags := make([]string, len(m.crumbs))
+	for i, c := range m.crumbs {
+		tags[i] = "<" + c + ">"
+	}
+	return strings.Join(tags, " ")
+}
+
+// maxCell is the widest a table cell other than a row's last is drawn
+// outside wide mode.
+const maxCell = 40
+
+// cutCells returns rows with every cell but the last cut to maxCell runes.
+func cutCells(rows [][]string) [][]string {
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		out[i] = append([]string(nil), row...)
+		for j := 0; j < len(row)-1; j++ {
+			out[i][j] = cutRunes(row[j], maxCell)
+		}
+	}
+	return out
 }
 
 // computeColumnWidths computes the max rune width for each column across all rows and header.
