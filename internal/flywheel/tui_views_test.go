@@ -154,7 +154,7 @@ func TestTUIViews(t *testing.T) {
 	}
 	press(m, d, "jj")
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
-	if kind, task, ok := m.Wants(); !ok || kind != "explain" || task != "T1" {
+	if kind, task, ok := m.Wants(); !ok || kind != "why" || task != "T1" {
 		t.Errorf("Enter on the tree's T1: wants %q %q %v", kind, task, ok)
 	}
 	esc(m, d)

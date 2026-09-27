@@ -97,6 +97,7 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 	w := NewWatcher()
 	var branch string
 	var pauseAt float64
+	var stall time.Duration
 	loaded := false
 	var (
 		lastView   string
@@ -106,17 +107,20 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		searchDone bool
 		hits       []SearchHit
 		capped     bool
+		cpTask     string // the unit whose checkpoints unitCPs holds
+		unitCPs    []string
 	)
 	return func(m *TUI) (TUIData, error) {
 		if m.TakeRefresh() {
 			w = NewWatcher()
-			loaded, cpLoaded, searchDone = false, false, false
+			loaded, cpLoaded, searchDone, cpTask = false, false, false, ""
 		}
 		if !loaded {
 			branch, _ = IntegrationBranch(dir)
 			pauseAt = Limits{}.RateLimitPauseThreshold()
 			if cfg, _, err := LoadConfig(dir); err == nil {
 				pauseAt = cfg.Limits.RateLimitPauseThreshold()
+				stall = cfg.DefaultWorker().stallTimeoutDuration()
 			}
 			loaded = true
 		}
@@ -187,6 +191,16 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		}
 		data.Search, data.SearchCapped = hits, capped
 
+		// Every unit's why (issue #583 k3), from what the floor measured.
+		data.Why = map[string]string{}
+		for _, u := range floor.Units {
+			ctx := WhyContext{RunState: u.RunState, Steps: u.Steps, StallTimeout: stall, PauseAt: pauseAt}
+			if u.NeedsOwner > 0 {
+				ctx.NeedsOwner = needsOwnerFindings(dir, events, u.Task)
+			}
+			data.Why[u.Task] = UnitWhy(events, u.Task, at, ctx)
+		}
+
 		// Fill Detail if Wants drill-down.
 		kind, task, ok := m.Wants()
 		if ok {
@@ -213,11 +227,54 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 						data.Detail = append(data.Detail, HumanLine(e))
 					}
 				}
+			case "why":
+				data.Detail = timelineLines(UnitTimeline(events, task))
+			case "brief":
+				data.Detail = briefLines(dir, events, task)
+			case "unitcp":
+				// Read from git as the tab opens (and on a reload), not on
+				// every key press.
+				if cpTask != task {
+					cps, err := ListCheckpoints(dir, task)
+					if err != nil {
+						unitCPs = []string{fmt.Sprintf("checkpoints: %v", err)}
+					} else {
+						unitCPs = checkpointLines(cps)
+					}
+					cpTask = task
+				}
+				data.Detail = unitCPs
+			case "findings":
+				data.Detail = findingLines(events, task)
+			case "unitevents":
+				data.Detail = unitEventLines(events, task)
 			}
 		}
 
 		return data, nil
 	}
+}
+
+// briefLines is the text of task's brief, the file its latest planned,
+// amended or dispatched event names.
+func briefLines(dir string, events []Event, task string) []string {
+	path := ""
+	for _, e := range events {
+		if e.Task == task && e.Brief != "" && (e.Kind == "planned" || e.Kind == "amended" || e.Kind == "dispatched") {
+			path = e.Brief
+		}
+	}
+	if path == "" {
+		return []string{"brief: no event names " + task + "'s brief"}
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return []string{fmt.Sprintf("brief: %v", err)}
+	}
+	return strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
 }
 
 // tuiVersion is the running binary's module version as the build stamped

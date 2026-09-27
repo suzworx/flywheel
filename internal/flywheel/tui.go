@@ -3,6 +3,7 @@ package flywheel
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,8 +14,9 @@ import (
 // TUIData is everything one frame shows; the caller fetches it.
 type TUIData struct {
 	Floor  Floor
-	Events []string // recent events as readable lines, oldest first
-	Detail []string // the drill-down's lines when the model Wants one, else nil
+	Events []string          // recent events as readable lines, oldest first
+	Detail []string          // the drill-down's lines when the model Wants one, else nil
+	Why    map[string]string // each unit's UnitWhy (issue #583 k3)
 
 	// The header's context (issue #583).
 	Branch   string       // the integration branch, "" when unknown
@@ -65,7 +67,7 @@ type TUI struct {
 	filter     string
 	prompt     string // command/filter input text
 	promptKind string // "", "command", "filter"
-	drillKind  string // "", "explain", "log"
+	drillKind  string // "", a unit tab (unitTabs) or a local drill-down
 	drillTask  string
 	detailTop  int // first visible line in drill-down
 	quit       bool
@@ -254,11 +256,66 @@ var viewNames = map[string]string{
 
 // drillTitles are the drill-downs' titles in the title bar.
 var drillTitles = map[string]string{
+	"why":        "Why",
 	"explain":    "Explain",
+	"brief":      "Brief",
 	"log":        "Log",
+	"unitcp":     "Checkpoints",
+	"findings":   "Findings",
+	"unitevents": "Events",
 	"learning":   "Learning",
 	"checkpoint": "Checkpoint",
 	"views":      "Views",
+}
+
+// unitTabs are the unit detail's tabs (issue #583 k3), each switched by its
+// key; the live fetch fills each one's lines.
+var unitTabs = []struct {
+	key        rune
+	kind, what string
+}{
+	{'w', "why", "why"}, {'d', "explain", "explain"}, {'y', "brief", "brief"}, {'l', "log", "log"},
+	{'c', "unitcp", "checkpoints"}, {'F', "findings", "findings"}, {'e', "unitevents", "events"},
+}
+
+// unitTab is the tab kind key switches to, ok false when key is no tab's.
+func unitTab(key rune) (kind string, ok bool) {
+	for _, t := range unitTabs {
+		if t.key == key {
+			return t.kind, true
+		}
+	}
+	return "", false
+}
+
+// isUnitTab reports whether kind is a unit detail tab.
+func isUnitTab(kind string) bool {
+	for _, t := range unitTabs {
+		if t.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// openNeed opens the why tab of the first need of the unit shown that has
+// not landed (Shift-J).
+func (m *TUI) openNeed(d TUIData) {
+	stage := map[string]string{}
+	for _, u := range d.Floor.Units {
+		stage[u.Task] = u.Stage
+	}
+	for _, n := range d.Needs[m.drillTask] {
+		if stage[n] != "landed" {
+			if _, ok := stage[n]; !ok {
+				m.flash("need " + n + " is not a unit of this factory")
+				return
+			}
+			m.drillUnit(d, n, "why")
+			return
+		}
+	}
+	m.flash(m.drillTask + " has no unmet need")
 }
 
 // Update applies one key press to the model; d is the data the current frame
@@ -317,7 +374,16 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case term.KeyPgUp:
 			m.detailTop = max(0, m.detailTop-m.page)
 		case term.KeyRune:
+			if kind, ok := unitTab(k.Rune); ok && isUnitTab(m.drillKind) {
+				m.drillKind, m.detailTop = kind, 0
+				m.crumbs[len(m.crumbs)-1] = kind
+				return
+			}
 			switch k.Rune {
+			case 'J':
+				if isUnitTab(m.drillKind) {
+					m.openNeed(d)
+				}
 			case 'j':
 				m.detailTop++
 			case 'k':
@@ -497,13 +563,13 @@ func (m *TUI) drill(d TUIData, kind string) {
 	m.drillUnit(d, m.getTaskAtCursor(d), kind)
 }
 
-// enter is Enter on row: a unit's explanation (units, andon, tree), a
+// enter is Enter on row: a unit's detail at its why tab (units, andon, tree), a
 // learning in full, a checkpoint's changed paths, or a search result's unit
 // at the match (its log for an event, else its explanation).
 func (m *TUI) enter(d TUIData, row []string) {
 	switch m.view {
 	case "units", "andon", "tree":
-		m.drill(d, "explain")
+		m.drill(d, "why")
 	case "learnings":
 		m.drillLocal("learning", row[0])
 	case "checkpoints":
@@ -738,9 +804,9 @@ func (m *TUI) rowsUnits(d TUIData) (header []string, rows [][]string) {
 		}
 	}
 	if hasLine {
-		header = []string{"TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE"}
+		header = []string{"TASK", "LINE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE", "WHY"}
 	} else {
-		header = []string{"TASK", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE"}
+		header = []string{"TASK", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", "STATE", "WHY"}
 	}
 	for _, u := range d.Floor.Units {
 		var row []string
@@ -772,6 +838,8 @@ func (m *TUI) rowsUnits(d TUIData) (header []string, rows [][]string) {
 		if u.RunState == "capped" && u.Peak > 0 {
 			row[len(row)-1] = "capped " + tokensK(Tokens{Reasoning: u.Peak})
 		}
+		// WHY last (issue #583 k3): the frame cuts it to fit; the detail has it whole.
+		row = append(row, d.Why[u.Task])
 		if m.matchesFilter(row) {
 			rows = append(rows, row)
 		}
@@ -868,7 +936,7 @@ func (m *TUI) rowsLines(d TUIData) (header []string, rows [][]string) {
 // hint is one entry of the header's key menu.
 type hint struct{ key, label string }
 
-// hintRows is how many rows the key menu fills before it starts a column.
+// hintRows is the fewest rows a key menu of that many hints takes.
 const hintRows = 4
 
 // Key menus shared by the views: tableHints lead every table view,
@@ -878,7 +946,9 @@ var (
 	sortHints   = []hint{{"N/A/S/C", "sort"}}
 	layoutHints = []hint{{"?", "help"}, {"q", "quit"}, {"ctrl-e", "header"}, {"ctrl-g", "crumbs"}, {"ctrl-w", "wide"}, {"ctrl-r", "reload"}}
 	scrollHints = []hint{{"j/k", "scroll"}, {"esc", "back"}}
-	unitHints   = []hint{{"enter", "explain"}, {"l", "log"}}
+	unitHints   = []hint{{"enter", "why"}, {"l", "log"}}
+	tabHints    = []hint{{"w", "why"}, {"d", "explain"}, {"y", "brief"}, {"l", "log"}, {"c", "checkpoints"},
+		{"F", "findings"}, {"e", "events"}, {"J", "need"}}
 )
 
 // viewHints is the key menu of each view (a table view, a drill-down kind or
@@ -894,8 +964,13 @@ var viewHints = map[string][]hint{
 	"learnings":   join(tableHints, []hint{{"enter", "learning"}}, sortHints, layoutHints),
 	"checkpoints": join(tableHints, []hint{{"enter", "paths"}}, sortHints, layoutHints),
 	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
-	"explain":     join(scrollHints, layoutHints),
-	"log":         join(scrollHints, layoutHints),
+	"why":         join(tabHints, scrollHints, layoutHints),
+	"explain":     join(tabHints, scrollHints, layoutHints),
+	"brief":       join(tabHints, scrollHints, layoutHints),
+	"log":         join(tabHints, scrollHints, layoutHints),
+	"unitcp":      join(tabHints, scrollHints, layoutHints),
+	"findings":    join(tabHints, scrollHints, layoutHints),
+	"unitevents":  join(tabHints, scrollHints, layoutHints),
 	"learning":    join(scrollHints, layoutHints),
 	"checkpoint":  join(scrollHints, layoutHints),
 	"views":       join(scrollHints, layoutHints),
@@ -959,34 +1034,26 @@ func contextLines(d TUIData) []string {
 	return append(out, health, "flywheel "+version)
 }
 
-// headerBlock is the header: the context lines on the left, the key menu in
-// columns of up to hintRows rows on the right, every line cut to width.
+// headerBlock is the header: the context lines on the left (at most three
+// fifths of the width), the key menu in the rest (hintColumns), every line
+// cut to width.
 func (m *TUI) headerBlock(d TUIData, width int) []string {
 	left := contextLines(d)
 	leftW := 0
 	for _, l := range left {
 		leftW = max(leftW, utf8.RuneCountInString(l))
 	}
-	hints := m.hintsFor()
-	// One column per hintRows hints, each as wide as its widest entry.
-	var cols [][]string
-	for i := 0; i < len(hints); i += hintRows {
-		var col []string
-		w := 0
-		for _, h := range hints[i:min(i+hintRows, len(hints))] {
-			col = append(col, "<"+h.key+"> "+h.label)
-			w = max(w, utf8.RuneCountInString(col[len(col)-1]))
-		}
-		for j := range col {
-			col[j] += strings.Repeat(" ", w-utf8.RuneCountInString(col[j]))
-		}
-		cols = append(cols, col)
+	leftW = min(leftW, width*3/5)
+	cols := hintColumns(m.hintsFor(), width-leftW-3)
+	rows := 0
+	for _, col := range cols {
+		rows = max(rows, len(col))
 	}
-	out := make([]string, max(len(left), min(hintRows, len(hints))))
+	out := make([]string, max(len(left), rows))
 	for r := range out {
 		line := ""
 		if r < len(left) {
-			line = left[r]
+			line = cutRunes(left[r], leftW)
 		}
 		line += strings.Repeat(" ", leftW-utf8.RuneCountInString(line)+3)
 		for _, col := range cols {
@@ -997,6 +1064,58 @@ func (m *TUI) headerBlock(d TUIData, width int) []string {
 		out[r] = cutRunes(strings.TrimRight(line, " "), width)
 	}
 	return out
+}
+
+// maxHintRows is the most rows the key menu takes.
+const maxHintRows = 5
+
+// hintColumns lays hints out in columns within avail runes: the fewest rows
+// from hintRows to maxHintRows whose columns fit. When none do, it drops
+// whole hints from the end, never cutting one, and keeps "<?> help" last so
+// the dropped ones stay one key away.
+func hintColumns(hints []hint, avail int) [][]string {
+	if len(hints) == 0 {
+		return nil
+	}
+	for rows := min(hintRows, len(hints)); rows <= maxHintRows; rows++ {
+		if cols, w := layHints(hints, rows); w <= avail {
+			return cols
+		}
+	}
+	help := hint{"?", "help"}
+	var rest []hint
+	for _, h := range hints {
+		if h != help {
+			rest = append(rest, h)
+		}
+	}
+	for n := len(rest); n >= 0; n-- {
+		if cols, w := layHints(append(rest[:n:n], help), maxHintRows); w <= avail {
+			return cols
+		}
+	}
+	return nil
+}
+
+// layHints lays hints out in columns of rows entries, each padded to its
+// widest, and returns them with their width, two spaces between columns.
+func layHints(hints []hint, rows int) (cols [][]string, width int) {
+	for i := 0; i < len(hints); i += rows {
+		var col []string
+		w := 0
+		for _, h := range hints[i:min(i+rows, len(hints))] {
+			col = append(col, "<"+h.key+"> "+h.label)
+			w = max(w, utf8.RuneCountInString(col[len(col)-1]))
+		}
+		for j := range col {
+			col[j] += strings.Repeat(" ", w-utf8.RuneCountInString(col[j]))
+		}
+		if len(cols) > 0 {
+			width += 2
+		}
+		cols, width = append(cols, col), width+w
+	}
+	return cols, width
 }
 
 // View renders one full frame, exactly height lines, each at most width
@@ -1106,9 +1225,12 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"Sort (again flips the direction):",
 			"  N A S C by name, age, stage/state, cost",
 			"Drill-down:",
-			"  enter   explain a unit, open a learning, a checkpoint's paths,",
-			"          or a search result at its match",
-			"  l       show log (drill-down)",
+			"  enter   a unit's detail (why and timeline), a learning, a",
+			"          checkpoint's paths, or a search result at its match",
+			"  l       a unit's log",
+			"Unit detail tabs:",
+			"  w why and timeline, d explain, y brief, l log, c checkpoints,",
+			"  F review findings, e events; J opens the first unmet need",
 			"Layout:",
 			"  ctrl-e  show or hide the header",
 			"  ctrl-g  show or hide the crumbs",
@@ -1127,7 +1249,10 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		// Drill-down view shows detail lines with scrolling; detailTop is
 		// clamped so the last page stays full.
 		detail := d.Detail
-		if _, ok := drillTitles[m.drillKind]; ok && m.drillKind != "explain" && m.drillKind != "log" {
+		if isUnitTab(m.drillKind) {
+			// The unit detail: its why line leads every tab.
+			detail = append([]string{"why: " + d.Why[m.drillTask], ""}, d.Detail...)
+		} else if _, ok := drillTitles[m.drillKind]; ok {
 			detail = localDetail(d, m.drillKind, m.drillTask)
 		}
 		// A search result's drill-down opens at its match, once its lines
@@ -1184,16 +1309,18 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			rowLineCut := cutRunes(cursor+m.formatRowWithColumns(row, widths), width)
 
 			// Colour after cutting, so widths are measured on plain text: the
-			// cursor row in reverse video, else the STATE cell (the last cell of
-			// the units and andon views) when it survived the cut whole.
-			switch state := row[len(row)-1]; {
+			// cursor row in reverse video, else the STATE cell of the units and
+			// andon views when it survived the cut whole.
+			switch si := slices.Index(header, "STATE"); {
 			case !color:
 			case isCursor:
 				rowLineCut = "\x1b[7m" + rowLineCut + "\x1b[0m"
-			case (m.view == "units" || m.view == "andon") && strings.HasSuffix(rowLineCut, state):
-				// The colour comes from the state word: "capped 50k" is capped.
-				word, _, _ := strings.Cut(state, " ")
-				rowLineCut = strings.TrimSuffix(rowLineCut, state) + paint(true, stateColor(word), state)
+			case (m.view == "units" || m.view == "andon") && si >= 0:
+				at := 2 // the cursor column
+				for _, w := range widths[:si] {
+					at += w + 2
+				}
+				rowLineCut = paintCell(rowLineCut, row[si], at)
 			}
 
 			lines = append(lines, rowLineCut)
@@ -1212,6 +1339,18 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// paintCell colours the cell state that starts at rune at of line, when
+// the line holds it whole there; the colour comes from the state word:
+// "capped 50k" is capped.
+func paintCell(line, state string, at int) string {
+	runes, n := []rune(line), utf8.RuneCountInString(state)
+	if state == "" || at+n > len(runes) || string(runes[at:at+n]) != state {
+		return line
+	}
+	word, _, _ := strings.Cut(state, " ")
+	return string(runes[:at]) + paint(true, stateColor(word), state) + string(runes[at+n:])
 }
 
 // crumbLine is the navigation path as k9s draws it, each crumb a tag:
