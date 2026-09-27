@@ -22,6 +22,27 @@ type TUIData struct {
 	Paused   []TUIPause   // models a rate limit pauses
 	HealthAt time.Time    // the latest health event's time; zero when none
 	Version  string       // the flywheel version
+
+	// The navigation views (issue #583 k2); the rows come from tui_views.go.
+	Needs        map[string][]string // each unit's needs
+	Health       []TUIHealth         // the recent health events, oldest first
+	Learnings    []LearningView      // in log order
+	Checkpoints  []TUICheckpoint     // filled while the checkpoints view is shown
+	Search       []SearchHit         // the search view's results
+	SearchCapped bool                // the search stopped at searchLimit results
+}
+
+// TUIHealth is one health event: when, and its snapshot.
+type TUIHealth struct {
+	TS   string
+	Snap HealthSnapshot
+}
+
+// TUICheckpoint is one checkpoint and its age in seconds (-1 when the
+// ledger does not say when it was taken).
+type TUICheckpoint struct {
+	Checkpoint
+	Age int
 }
 
 // TUIPause is one model a rate limit pauses, and until when.
@@ -58,7 +79,39 @@ type TUI struct {
 	wide       bool // Ctrl-W: cells untruncated
 	refresh    bool // Ctrl-R: a reload the live loop consumes (TakeRefresh)
 	now        func() time.Time
+
+	// Navigation (issue #583 k2): the views below the current one, each
+	// view's last level (restored when you come back), the `:` commands
+	// entered and where `[` / `]` stand in them.
+	stack  []navLevel
+	saved  map[string]navLevel
+	cmds   []string
+	cmdPos int
+
+	sort      tuiSort
+	matchText string // the filter text matchFn was built for
+	matchFn   func(string) bool
+	search    string // the `:s` query the search view shows
+	drillFind string // the drill-down scrolls to the first line holding it
 }
+
+// navLevel is one level of the navigation stack: a view with its filter,
+// sort and cursor.
+type navLevel struct {
+	view, filter string
+	sort         tuiSort
+	cursor       int
+}
+
+// tuiSort is a table's sort: the key (name, age, stage, cost; "" none) and
+// its direction.
+type tuiSort struct {
+	key  string
+	desc bool
+}
+
+// maxStack bounds the navigation stack; the oldest level falls off.
+const maxStack = 20
 
 // NewTUI creates a new TUI with default state.
 func NewTUI() *TUI {
@@ -68,7 +121,54 @@ func NewTUI() *TUI {
 		page:   10,
 		crumbs: []string{"units"},
 		now:    time.Now,
+		saved:  map[string]navLevel{},
 	}
+}
+
+// level is the current view's navLevel; restore makes l the current one.
+func (m *TUI) level() navLevel {
+	return navLevel{view: m.view, filter: m.filter, sort: m.sort, cursor: m.cursor}
+}
+
+func (m *TUI) restore(l navLevel) {
+	m.view, m.filter, m.sort, m.cursor = l.view, l.filter, l.sort, l.cursor
+	m.top = 0
+	m.resetCrumbs()
+}
+
+// resetCrumbs rebuilds the path from the stack: the views below, then the
+// current one.
+func (m *TUI) resetCrumbs() {
+	m.crumbs = m.crumbs[:0]
+	for _, l := range m.stack {
+		m.crumbs = append(m.crumbs, l.view)
+	}
+	m.crumbs = append(m.crumbs, m.view)
+}
+
+// popLevel goes back one level (Esc); false when the stack is empty.
+func (m *TUI) popLevel() bool {
+	if len(m.stack) == 0 {
+		return false
+	}
+	m.saved[m.view] = m.level()
+	l := m.stack[len(m.stack)-1]
+	m.stack = m.stack[:len(m.stack)-1]
+	m.restore(l)
+	return true
+}
+
+// swapLevel swaps the current view with the previous one (`-`).
+func (m *TUI) swapLevel() {
+	if len(m.stack) == 0 {
+		m.flash("no previous view")
+		return
+	}
+	cur := m.level()
+	m.saved[m.view] = cur
+	l := m.stack[len(m.stack)-1]
+	m.stack[len(m.stack)-1] = cur
+	m.restore(l)
 }
 
 // flash shows msg on the flash line until the next key or flashFor passes.
@@ -94,12 +194,27 @@ func (m *TUI) Crumbs() []string {
 func (m *TUI) pushCrumbs(c ...string) { m.crumbs = append(m.crumbs, c...) }
 func (m *TUI) popCrumbs(n int)        { m.crumbs = m.crumbs[:min(n, len(m.crumbs))] }
 
-// setView switches to view with a fresh cursor, filter and path.
+// setView pushes the current view on the stack and switches to view, with
+// the cursor, filter and sort it had when you left it (fresh the first
+// time). Switching to the view shown changes nothing, except that the
+// search view always starts at its first result.
 func (m *TUI) setView(view string) {
-	m.view = view
-	m.cursor = 0
-	m.filter = ""
-	m.crumbs = []string{view}
+	if view == m.view {
+		if view == "search" {
+			m.cursor, m.top = 0, 0
+		}
+		return
+	}
+	m.saved[m.view] = m.level()
+	m.stack = append(m.stack, m.level())
+	if len(m.stack) > maxStack {
+		m.stack = m.stack[1:]
+	}
+	l, ok := m.saved[view]
+	if !ok || view == "search" {
+		l = navLevel{view: view}
+	}
+	m.restore(l)
 }
 
 // TakeRefresh reports whether Ctrl-R asked for a reload, and clears it.
@@ -126,11 +241,24 @@ func cutRunes(s string, n int) string {
 
 // viewNames are the views' titles in the title bar.
 var viewNames = map[string]string{
-	"units":   "Units",
-	"workers": "Workers",
-	"andon":   "Andon",
-	"events":  "Events",
-	"lines":   "Lines",
+	"units":       "Units",
+	"workers":     "Workers",
+	"andon":       "Andon",
+	"events":      "Events",
+	"lines":       "Lines",
+	"tree":        "Tree",
+	"health":      "Health",
+	"learnings":   "Learnings",
+	"checkpoints": "Checkpoints",
+}
+
+// drillTitles are the drill-downs' titles in the title bar.
+var drillTitles = map[string]string{
+	"explain":    "Explain",
+	"log":        "Log",
+	"learning":   "Learning",
+	"checkpoint": "Checkpoint",
+	"views":      "Views",
 }
 
 // Update applies one key press to the model; d is the data the current frame
@@ -160,6 +288,14 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case 'r':
 			m.refresh = true
 			m.flash("reloading")
+		case 'a':
+			// Every view and alias, in the drill-down pane.
+			if m.promptKind == "" {
+				m.help = false
+				m.drillKind, m.drillTask, m.detailTop = "views", "", 0
+				m.resetCrumbs()
+				m.pushCrumbs("views")
+			}
 		}
 		return
 	}
@@ -170,7 +306,8 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case term.KeyEsc:
 			m.drillKind = ""
 			m.drillTask = ""
-			m.popCrumbs(1)
+			m.drillFind = ""
+			m.resetCrumbs()
 		case term.KeyDown:
 			m.detailTop++
 		case term.KeyUp:
@@ -190,7 +327,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 			case '?':
 				m.drillKind = ""
 				m.drillTask = ""
-				m.popCrumbs(1)
+				m.resetCrumbs()
 				m.openHelp()
 			}
 		case term.KeyCtrlC:
@@ -251,6 +388,9 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 				m.promptKind = ""
 				m.filter = m.prompt
 				m.cursor = 0
+				if _, literal := filterMatcher(m.filter); literal {
+					m.flash("literal match: /" + m.filter + " is not a valid regex")
+				}
 			}
 		case term.KeyRune:
 			m.prompt += string(k.Rune)
@@ -265,13 +405,22 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	// Table mode.
 	_, rows := m.Rows(d)
 	n := len(rows)
-	defer m.clampCursor(n)
+	// clampCursor keeps every move below on the rows of the view shown
+	// after the key, which may be another view.
+	defer func() {
+		_, after := m.Rows(d)
+		m.clampCursor(len(after))
+	}()
 
-	// clampCursor keeps every move below on the table's rows.
 	switch k.Kind {
 	case term.KeyEsc:
-		m.filter = ""
-		m.cursor = 0
+		// A filtered view clears its filter first; then Esc goes back a level.
+		if m.filter != "" {
+			m.filter = ""
+			m.cursor = 0
+		} else {
+			m.popLevel()
+		}
 	case term.KeyDown:
 		m.cursor++
 	case term.KeyUp:
@@ -297,11 +446,19 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		case 'q':
 			m.quit = true
 		case 'l':
-			if m.view == "units" || m.view == "andon" {
+			if m.view == "units" || m.view == "andon" || m.view == "tree" {
 				if m.cursor < len(rows) && len(rows) > 0 {
 					m.drill(d, "log")
 				}
 			}
+		case '-':
+			m.swapLevel()
+		case '[':
+			m.historyStep(-1)
+		case ']':
+			m.historyStep(1)
+		case 'N', 'A', 'S', 'C':
+			m.sortBy(sortKeys[k.Rune], d)
 		}
 	case term.KeyPgDn:
 		m.cursor += m.page
@@ -312,8 +469,8 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	case term.KeyEnd:
 		m.cursor = n - 1
 	case term.KeyEnter:
-		if (m.view == "units" || m.view == "andon") && m.cursor < len(rows) && len(rows) > 0 {
-			m.drill(d, "explain")
+		if m.cursor < len(rows) && len(rows) > 0 {
+			m.enter(d, rows[m.cursor])
 		}
 	case term.KeyCtrlC:
 		m.quit = true
@@ -337,7 +494,63 @@ func (m *TUI) closeHelp() {
 // not a unit: a condition of the floor itself (staffing/<role>) has no task
 // to explain, so it says so instead of asking for one (#357 review).
 func (m *TUI) drill(d TUIData, kind string) {
-	task := m.getTaskAtCursor(d)
+	m.drillUnit(d, m.getTaskAtCursor(d), kind)
+}
+
+// enter is Enter on row: a unit's explanation (units, andon, tree), a
+// learning in full, a checkpoint's changed paths, or a search result's unit
+// at the match (its log for an event, else its explanation).
+func (m *TUI) enter(d TUIData, row []string) {
+	switch m.view {
+	case "units", "andon", "tree":
+		m.drill(d, "explain")
+	case "learnings":
+		m.drillLocal("learning", row[0])
+	case "checkpoints":
+		m.drillLocal("checkpoint", row[0]+"/"+row[1])
+	case "search":
+		kind := "explain"
+		if row[0] == "event" {
+			kind = "log"
+		}
+		m.drillUnit(d, row[1], kind)
+		if m.drillKind != "" {
+			m.drillFind = m.search
+		}
+	}
+}
+
+// drillLocal opens a drill-down whose lines the model builds from TUIData
+// itself (detailLines): a learning, a checkpoint.
+func (m *TUI) drillLocal(kind, id string) {
+	m.drillKind, m.drillTask, m.detailTop = kind, id, 0
+	m.pushCrumbs(id, kind)
+}
+
+// sortKeys are the sort keys Shift-N/A/S/C pick.
+var sortKeys = map[rune]string{'N': "name", 'A': "age", 'S': "stage", 'C': "cost"}
+
+// sortBy sorts the table by key; the same key again flips the direction.
+func (m *TUI) sortBy(key string, d TUIData) {
+	if m.view == "tree" {
+		m.flash("the tree keeps its order")
+		return
+	}
+	header, _ := m.Rows(d)
+	if sortColumn(header, key) < 0 {
+		m.flash("no " + key + " column in this view")
+		return
+	}
+	if m.sort.key == key {
+		m.sort.desc = !m.sort.desc
+	} else {
+		m.sort = tuiSort{key: key}
+	}
+	m.cursor = 0
+}
+
+// drillUnit opens a drill-down of task, unless it is not a unit.
+func (m *TUI) drillUnit(d TUIData, task, kind string) {
 	if !unitExists(d, task) {
 		m.flash(task + " is a condition of the floor, not a unit: nothing to " + kind)
 		return
@@ -364,29 +577,83 @@ func (m *TUI) clampCursor(n int) {
 	m.cursor = max(0, min(m.cursor, n-1))
 }
 
-// executeCommand processes the command entered by the user.
+// tuiViews are the views `:` opens, with their aliases, in the order Ctrl-A
+// lists them.
+var tuiViews = []struct{ name, alias, what string }{
+	{"units", "u", "every unit: stage, attempt, session, model, age, state"},
+	{"workers", "w", "the worker lines and the staffed roles"},
+	{"andon", "a", "the units that stopped the line"},
+	{"events", "e", "the recent events, newest first"},
+	{"lines", "l", "the product lines"},
+	{"tree", "t", "the needs tree of every unit not landed"},
+	{"health", "h", "the recent health events"},
+	{"learnings", "lr", "the learnings, newest first"},
+	{"checkpoints", "c", "the saved checkpoints of interrupted attempts"},
+	{"search", "s", "search <text>: the ledger, the run logs, the reports and the briefs"},
+}
+
+// executeCommand runs the command in the prompt and records it in the
+// command history.
 func (m *TUI) executeCommand() {
 	cmd := strings.TrimSpace(m.prompt)
 	m.prompt = ""
 	m.promptKind = ""
-
-	switch cmd {
-	case "u", "units":
-		m.setView("units")
-	case "w", "workers":
-		m.setView("workers")
-	case "a", "andon":
-		m.setView("andon")
-	case "e", "events":
-		m.setView("events")
-	case "l", "lines":
-		m.setView("lines")
-	case "q", "quit":
-		m.quit = true
-	default:
-		m.flash(fmt.Sprintf("unknown view: %s", cmd))
+	if m.runCommand(cmd) {
+		m.cmds = append(m.cmds, cmd)
+		m.cmdPos = len(m.cmds) - 1
 	}
 }
+
+// historyStep runs the command by steps from the current one in the command
+// history (`[` is -1, `]` is +1), without recording it again.
+func (m *TUI) historyStep(by int) {
+	i := m.cmdPos + by
+	if i < 0 || i >= len(m.cmds) {
+		m.flash("no more commands in the history")
+		return
+	}
+	m.cmdPos = i
+	m.runCommand(m.cmds[i])
+}
+
+// runCommand runs one `:` command; false when it named no view.
+func (m *TUI) runCommand(cmd string) bool {
+	name, arg, _ := strings.Cut(cmd, " ")
+	switch name {
+	case "q", "quit":
+		m.quit = true
+		return true
+	case "s", "search":
+		if arg = strings.TrimSpace(arg); arg == "" {
+			m.flash("search what? :s <text>")
+			return false
+		}
+		m.search = arg
+		m.setView("search")
+		return true
+	}
+	for _, v := range tuiViews {
+		if (name == v.name || name == v.alias) && v.name != "search" && arg == "" {
+			m.setView(v.name)
+			return true
+		}
+	}
+	m.flash(fmt.Sprintf("unknown view :%s (Ctrl-A lists them)", cmd))
+	return false
+}
+
+// SearchQuery is the text the search view searches for, "" when it is not
+// shown: the live fetch runs the search only then.
+func (m *TUI) SearchQuery() string {
+	if m.view != "search" {
+		return ""
+	}
+	return m.search
+}
+
+// ViewName is the table view shown, so the live fetch reads only what it
+// needs.
+func (m *TUI) ViewName() string { return m.view }
 
 // getTaskAtCursor returns the task ID at the current cursor position.
 func (m *TUI) getTaskAtCursor(d TUIData) string {
@@ -395,14 +662,16 @@ func (m *TUI) getTaskAtCursor(d TUIData) string {
 		return ""
 	}
 
-	// The first cell of each row is the task.
+	// The first cell of each row is the task; the tree draws it after its
+	// branch.
 	if len(rows[m.cursor]) > 0 {
-		return rows[m.cursor][0]
+		return strings.TrimLeft(rows[m.cursor][0], treeChars)
 	}
 	return ""
 }
 
-// matchesFilter reports whether a row matches the current filter or prompt filter.
+// matchesFilter reports whether a row matches the current filter or prompt
+// filter (filterMatcher: a regex, `!` inverse, `-f` fuzzy).
 func (m *TUI) matchesFilter(row []string) bool {
 	filterText := m.filter
 	if m.promptKind == "filter" {
@@ -411,26 +680,52 @@ func (m *TUI) matchesFilter(row []string) bool {
 	if filterText == "" {
 		return true
 	}
-	joined := strings.ToLower(strings.Join(row, " "))
-	return strings.Contains(joined, strings.ToLower(filterText))
+	if m.matchFn == nil || filterText != m.matchText {
+		m.matchFn, _ = filterMatcher(filterText)
+		m.matchText = filterText
+	}
+	return m.matchFn(strings.Join(row, " "))
 }
 
-// Rows returns the current view's rows after the filter, each a slice of
-// cells, and the header cells.
+// Rows returns the current view's rows after the filter and the sort, each
+// a slice of cells, and the header cells.
 func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 	switch m.view {
 	case "units":
-		return m.rowsUnits(d)
+		header, rows = m.rowsUnits(d)
 	case "workers":
-		return m.rowsWorkers(d)
+		header, rows = m.rowsWorkers(d)
 	case "andon":
-		return m.rowsAndon(d)
+		header, rows = m.rowsAndon(d)
 	case "events":
-		return m.rowsEvents(d)
+		header, rows = m.rowsEvents(d)
 	case "lines":
-		return m.rowsLines(d)
+		header, rows = m.rowsLines(d)
+	case "tree":
+		header, rows = treeRows(d)
+	case "health":
+		header, rows = healthRows(d)
+	case "learnings":
+		header, rows = learningRows(d)
+	case "checkpoints":
+		header, rows = checkpointRows(d)
+	case "search":
+		header, rows = searchRows(d.Search)
+	default:
+		return []string{}, [][]string{}
 	}
-	return []string{}, [][]string{}
+	// The views built in tui_views.go are pure: the filter applies here.
+	switch m.view {
+	case "tree", "health", "learnings", "checkpoints", "search":
+		var kept [][]string
+		for _, row := range rows {
+			if m.matchesFilter(row) {
+				kept = append(kept, row)
+			}
+		}
+		rows = kept
+	}
+	return header, sortRows(header, rows, m.sort)
 }
 
 // rowsUnits returns the header and filtered rows for the units view.
@@ -579,7 +874,8 @@ const hintRows = 4
 // Key menus shared by the views: tableHints lead every table view,
 // layoutHints close every menu.
 var (
-	tableHints  = []hint{{":", "view"}, {"/", "filter"}}
+	tableHints  = []hint{{":", "view"}, {"/", "filter"}, {"esc", "back"}, {"-", "last view"}, {"[ ]", "history"}, {"ctrl-a", "views"}}
+	sortHints   = []hint{{"N/A/S/C", "sort"}}
 	layoutHints = []hint{{"?", "help"}, {"q", "quit"}, {"ctrl-e", "header"}, {"ctrl-g", "crumbs"}, {"ctrl-w", "wide"}, {"ctrl-r", "reload"}}
 	scrollHints = []hint{{"j/k", "scroll"}, {"esc", "back"}}
 	unitHints   = []hint{{"enter", "explain"}, {"l", "log"}}
@@ -588,14 +884,22 @@ var (
 // viewHints is the key menu of each view (a table view, a drill-down kind or
 // help): the keys valid there, in the order the menu lists them.
 var viewHints = map[string][]hint{
-	"units":   join(tableHints, unitHints, layoutHints),
-	"andon":   join(tableHints, unitHints, layoutHints),
-	"workers": join(tableHints, layoutHints),
-	"events":  join(tableHints, layoutHints),
-	"lines":   join(tableHints, layoutHints),
-	"explain": join(scrollHints, layoutHints),
-	"log":     join(scrollHints, layoutHints),
-	"help":    join(scrollHints, layoutHints),
+	"units":       join(tableHints, unitHints, sortHints, layoutHints),
+	"andon":       join(tableHints, unitHints, sortHints, layoutHints),
+	"workers":     join(tableHints, sortHints, layoutHints),
+	"events":      join(tableHints, sortHints, layoutHints),
+	"lines":       join(tableHints, sortHints, layoutHints),
+	"tree":        join(tableHints, unitHints, layoutHints),
+	"health":      join(tableHints, sortHints, layoutHints),
+	"learnings":   join(tableHints, []hint{{"enter", "learning"}}, sortHints, layoutHints),
+	"checkpoints": join(tableHints, []hint{{"enter", "paths"}}, sortHints, layoutHints),
+	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
+	"explain":     join(scrollHints, layoutHints),
+	"log":         join(scrollHints, layoutHints),
+	"learning":    join(scrollHints, layoutHints),
+	"checkpoint":  join(scrollHints, layoutHints),
+	"views":       join(scrollHints, layoutHints),
+	"help":        join(scrollHints, layoutHints),
 }
 
 func join(parts ...[]hint) []hint {
@@ -745,16 +1049,26 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 
 	titleBar := ""
 	if m.drillKind != "" {
-		titleDisplay := "Explain"
-		if m.drillKind == "log" {
-			titleDisplay = "Log"
-		}
-		titleBar = fmt.Sprintf("── %s %s ──", titleDisplay, m.drillTask)
+		titleBar = strings.TrimRight(fmt.Sprintf("── %s %s", drillTitles[m.drillKind], m.drillTask), " ") + " ──"
 	} else if m.help {
 		titleBar = "── Help ──"
 	} else {
 		viewName := viewNames[m.view]
-		titleBar = fmt.Sprintf("── %s(%s)[%d] ──", viewName, filterText, rowCount)
+		count := fmt.Sprint(rowCount)
+		if m.view == "search" {
+			viewName = fmt.Sprintf("Search %q", m.search)
+			if d.SearchCapped {
+				count = fmt.Sprintf("%d+ (narrow the search)", searchLimit)
+			}
+		}
+		sortText := ""
+		if m.sort.key != "" {
+			sortText = " ↑" + m.sort.key
+			if m.sort.desc {
+				sortText = " ↓" + m.sort.key
+			}
+		}
+		titleBar = fmt.Sprintf("── %s(%s)[%s]%s ──", viewName, filterText, count, sortText)
 	}
 	// Pad with ─ to width (by rune count).
 	titleRuneCount := len([]rune(titleBar))
@@ -774,13 +1088,27 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  G/End   move to bottom",
 			"  PgDn    page down",
 			"  PgUp    page up",
-			"Prompts:",
+			"Views (:name or :alias):",
 			"  :       open command prompt: units (u), workers (w), andon (a),",
-			"          events (e), lines (l), quit (q)",
-			"  /       open filter prompt",
-			"  enter   explain (drill-down)",
+			"          events (e), lines (l), tree (t), health (h), learnings (lr),",
+			"          checkpoints (c), quit (q)",
+			"  :s txt  search the ledger, run logs, reports and briefs for txt",
+			"  ctrl-a  list every view and alias",
+			"History:",
+			"  esc     back: leave the drill-down or help, clear the filter,",
+			"          then go back to the previous view",
+			"  -       swap to the previous view",
+			"  [ / ]   step back / forward through the : commands entered",
+			"Filter (/):",
+			"  /re     case-insensitive regex (an invalid one matches literally)",
+			"  /!re    inverse: the rows the regex does not match",
+			"  /-f txt fuzzy: every character of txt, in order",
+			"Sort (again flips the direction):",
+			"  N A S C by name, age, stage/state, cost",
+			"Drill-down:",
+			"  enter   explain a unit, open a learning, a checkpoint's paths,",
+			"          or a search result at its match",
 			"  l       show log (drill-down)",
-			"  esc     back: leave the drill-down or help, clear the filter",
 			"Layout:",
 			"  ctrl-e  show or hide the header",
 			"  ctrl-g  show or hide the crumbs",
@@ -798,11 +1126,26 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	} else if m.drillKind != "" {
 		// Drill-down view shows detail lines with scrolling; detailTop is
 		// clamped so the last page stays full.
+		detail := d.Detail
+		if _, ok := drillTitles[m.drillKind]; ok && m.drillKind != "explain" && m.drillKind != "log" {
+			detail = localDetail(d, m.drillKind, m.drillTask)
+		}
+		// A search result's drill-down opens at its match, once its lines
+		// have arrived.
+		if m.drillFind != "" && len(detail) > 0 {
+			for i, l := range detail {
+				if runeIndex(lowerRunes(l), lowerRunes(m.drillFind)) >= 0 {
+					m.detailTop = i
+					break
+				}
+			}
+			m.drillFind = ""
+		}
 		visible := max(1, body-1)
 		m.page = visible
-		m.detailTop = max(0, min(m.detailTop, len(d.Detail)-visible))
-		for i := m.detailTop; i < m.detailTop+visible && i < len(d.Detail); i++ {
-			lines = append(lines, cutRunes(d.Detail[i], width))
+		m.detailTop = max(0, min(m.detailTop, len(detail)-visible))
+		for i := m.detailTop; i < m.detailTop+visible && i < len(detail); i++ {
+			lines = append(lines, cutRunes(detail[i], width))
 		}
 	} else {
 		// Table view: long cells cut to maxCell unless wide (Ctrl-W).

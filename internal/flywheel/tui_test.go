@@ -174,8 +174,8 @@ func TestTUIUnknownCommandMessage(t *testing.T) {
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
 
 	view := m.View(d, 100, 20, false)
-	if !strings.Contains(view, "unknown view: xy") {
-		t.Errorf("expected 'unknown view: xy' in last line of view")
+	if !strings.Contains(view, "unknown view :xy (Ctrl-A lists them)") {
+		t.Errorf("expected 'unknown view :xy (Ctrl-A lists them)' in the view")
 	}
 }
 
@@ -325,8 +325,9 @@ func TestTUIHelp(t *testing.T) {
 		t.Errorf("expected help to be shown")
 	}
 
-	// Check the frame mentions "filter" and "explain".
-	view := m.View(d, 100, 20, false)
+	// Check the frame mentions "filter" and "explain" (tall enough for the
+	// whole help; TestTUIHelpScrolls covers a short one).
+	view := m.View(d, 100, 60, false)
 	if !strings.Contains(view, "filter") {
 		t.Errorf("expected 'filter' in help view")
 	}
@@ -915,8 +916,8 @@ func TestTUICrumbs(t *testing.T) {
 	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'z'}, {Kind: term.KeyEnter}} {
 		m.Update(k, d)
 	}
-	if got := flashLine(); got != "unknown view: z" {
-		t.Errorf("flash line = %q, want unknown view: z", got)
+	if got := flashLine(); got != "unknown view :z (Ctrl-A lists them)" {
+		t.Errorf("flash line = %q, want unknown view :z (Ctrl-A lists them)", got)
 	}
 	m.Update(term.Key{Kind: term.KeyRune, Rune: 'j'}, d)
 	if got := flashLine(); got != "" {
