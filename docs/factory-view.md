@@ -13,7 +13,8 @@ From top to bottom:
   - `factory running`, or `factory FROZEN since HH:MM until HH:MM by <session>: <reason>` while
     `flywheel suspend` holds it (no `until` when it lasts until `flywheel resume`)
   - one `paused <model> until HH:MM` line per model a rate limit pauses
-  - `lead <session> · workers <busy>/<max> · landed today <n> · $<cost>`
+  - `lead <session> · workers <busy>/<max> · landed today <n> · $<cost>`, the cost (like the
+    middle column's spend) compact rather than cut: `$7.25` under $100, then `$711`, `$1.2k`, `$3.4M`
   - `health <age> ago` for the latest health event, or `health none`
   - `flywheel <version>` (`dev` for a local build)
 
@@ -61,6 +62,9 @@ Hiding the header or the crumbs gives their lines to the table.
 | `l` | units, andon, tree | the unit's detail at its log tab |
 | `w` `d` `y` `l` `c` `F` `e` | unit detail | switch tab: why, explain, brief, log, checkpoints, findings, events |
 | `J` (Shift) | unit detail | open the detail of the unit's first need that has not landed |
+| `f` | drill-down | fullscreen: hide the header and the crumbs and give their lines to the drill-down; again to leave |
+| `G` (Shift) | drill-down | the last line; in the log tab, follow the unit again |
+| `w` `t` | log tab | wrap long lines (instead of cutting them); show or hide the timestamps. In the log tab `w` wraps, so the why tab is Esc then Enter away |
 | `1` `2` `3` | pulse, metrics | the window: 24h, 7d, 30d |
 | arrows, `h` `j` `k` `l` | pulse | move between the panels |
 | Enter | pulse, metrics | the metric's drill-down: the panel's first metric, the row's metric (see [Metric drill-down](#metric-drill-down)) |
@@ -209,7 +213,7 @@ one below.
 | RELIABILITY | andons, MTTR, frozen, paused |
 | COST | spend, cost per landed unit, tokens per step |
 | CAPACITY | utilization, idle |
-| BY MODEL | a bar per model: its cost per accepted unit and its spend |
+| BY MODEL | a bar per model: its cost per accepted unit (`–` when none of its units was accepted) and its spend; a narrow panel drops the spend, never cutting an amount |
 
 Each line is the value, the sparkline of its per-bucket series (landed, wip, andons and spend
 have one) and its trend arrow. The panel under the cursor is marked `▶`; the arrows or `h` `j`
@@ -238,6 +242,58 @@ The value, its trend and change, and its definition, then one of two parts; the 
   unit's part, e.g. `lead 9h12m`, `corrected x2`, `stalled 09-02 13:58, open`, `$3.40`) and GROUP,
   worst first. `j` `k` move the cursor; Enter opens that unit's detail at its why and timeline,
   and Esc from it comes back to the same row.
+
+## Instant keys
+
+A key never waits for the ledger. The view redraws at once from the data it last read; reading
+runs in the background, every refresh interval, and on Ctrl-R, and the frame redraws when it ends.
+A key that needs other data (another view, a unit's tab, a search, a metrics window) starts a
+read too, and until it arrives the drill-down says `loading…`. Only one read runs at a time: a
+refresh or Ctrl-R asked for while one runs starts right after it. Only the first frame waits for
+its data.
+
+## Colours
+
+With colour on, each row of the units, andon and tree tables is drawn whole in the colour of its
+state (a landed unit by its stage, else by its STATE, else by its STAGE):
+
+| Colour (dark skin) | States |
+| --- | --- |
+| cyan | running, exploring, long-step |
+| green | passed, done, validated |
+| yellow | waiting, planned, dispatched, finished, blocked, needs-correction, rate-limited, stacked |
+| red | failed, stalled, silent, capped, provider-error, mismatch, no-writes, lost |
+| magenta | suspended, frozen |
+| dim | landed, withdrawn |
+
+The header's `factory running` takes the running colour and `factory FROZEN` the frozen one; the
+key menu's `<key>`s and the crumbs have their own colours. The cursor row is in reverse video.
+
+### Changed rows
+
+Like k9s's MODIFIED and NEW markers, a row of the units, andon, tree, workers or lines table whose
+cells changed since the previous read, or that was not there before, is drawn bold for two
+refreshes. Its age and its WHY move with the clock, so they alone do not count as a change. The
+first read marks nothing.
+
+### Skins
+
+`factory.skin` in `.flywheel/config.json` picks the colours: `dark` (the default), `light` (darker
+colours for a light terminal), or `none` for no colour at all (the cursor's reverse video
+included). Any other value is refused when the config is read.
+
+```json
+{ "factory": { "skin": "light" } }
+```
+
+`flywheel factory --plain`, `--once` and `--json` do not use the skin.
+
+## The log tab
+
+A running unit's log follows it: the last line stays in sight as lines arrive. Scrolling up (`k`,
+Up, PgUp) pauses that and the title says `paused; G to follow`; `G` follows again. A unit that
+does not run opens its log at the first line. `w` wraps long lines instead of cutting them, `t`
+hides or shows the timestamps, and `f` (as in every drill-down) goes fullscreen.
 
 ## Coming next
 

@@ -22,60 +22,119 @@ type TUIIO struct {
 	Size  func() (width, height int)
 	Out   io.Writer
 	Color bool
+	Skin  Skin // the colours when Color is on; the zero Skin is DefaultSkin
 	// Stop ends the loop cleanly when it is closed or receives (a signal
 	// from another process, #346 review); nil never stops.
 	Stop <-chan struct{}
 }
 
+// fetchResult is what a background fetch hands the loop: the data, the
+// fetchKey of the model it was fetched for, and its error.
+type fetchResult struct {
+	data TUIData
+	key  string
+	err  error
+}
+
+// fetchKey names what a fetch for the model reads beyond the floor: the
+// view, the drill-down, the search and the metrics window. A key that
+// changes it starts a fetch.
+func (m *TUI) fetchKey() string {
+	return strings.Join([]string{m.view, m.drillKind, m.drillTask, m.SearchQuery(), m.MetricsWindow()}, "\x00")
+}
+
 // RunTUILoop drives the interactive factory until the model quits or Keys is
-// closed: fetch the data, draw a frame, then wait for a key (Update, and
-// fetch again when the drill-down it Wants changed) or a tick (fetch again),
-// and draw again. Each frame is written as "\x1b[H" + View(...) with every
-// line ended by "\x1b[K" (clear to end of line) and the frame followed by
-// "\x1b[J" (clear below). A fetch error ends the loop with that error; a
-// quit key or Stop ends it at once, without another fetch. Every key is
-// followed by a fetch, so Ctrl-R's reload request (TakeRefresh, consumed by
-// the fetch) is honoured at once, not at the next tick.
+// closed (issue #583 k6: k9s's instant keys). The first frame waits for the
+// first fetch; after it, this goroutine alone owns the model, and fetches run
+// in a background goroutine on a copy of it, so a slow fetch never delays a
+// key. A key updates the model and redraws at once from the last data; when
+// it changed what the fetch reads (fetchKey) or asked for a reload (Ctrl-R),
+// a fetch starts. A tick starts a fetch. At most one fetch runs at a time: a
+// request while one runs starts another when it ends. A finished fetch
+// becomes the data (Observe marks the rows it changed) and redraws; until a
+// fetch for the drill-down shown arrives, the drill-down says "loading…".
+// Each frame is written as "\x1b[H" + View(...) with every line ended by
+// "\x1b[K" (clear to end of line) and the frame followed by "\x1b[J" (clear
+// below). A fetch error ends the loop with that error; a quit key, closed
+// Keys or Stop end it at once, without waiting for a fetch or starting one.
 func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	m := NewTUI()
-	for {
-		// Fetch data.
-		data, err := fetch(m)
-		if err != nil {
-			return err
-		}
+	if tio.Skin.Name != "" {
+		m.skin = tio.Skin
+	}
+	data, err := fetch(m)
+	if err != nil {
+		return err
+	}
+	m.Observe(data)
+	dataKey := m.fetchKey()
 
+	// Buffered, so a fetch still running when the loop returns never blocks.
+	results := make(chan fetchResult, 1)
+	running, again := false, false
+	start := func() {
+		if running {
+			again = true
+			return
+		}
+		running = true
+		snap := *m // the fetch reads its copy; the model stays this goroutine's
+		m.refresh = false
+		go func() {
+			d, err := fetch(&snap)
+			results <- fetchResult{data: d, key: snap.fetchKey(), err: err}
+		}()
+	}
+
+	ticks := tio.Ticks
+	for {
 		// Draw the frame in one write (no flicker): home, each line cleared
 		// to its end, then everything below cleared.
+		shown := data
+		if _, _, ok := m.Wants(); ok && dataKey != m.fetchKey() {
+			shown.Detail = []string{"loading…"}
+		}
 		w, h := tio.Size()
 		var frame strings.Builder
 		frame.WriteString("\x1b[H")
-		frame.WriteString(strings.ReplaceAll(m.View(data, w, h, tio.Color), "\n", "\x1b[K\r\n"))
+		frame.WriteString(strings.ReplaceAll(m.View(shown, w, h, tio.Color), "\n", "\x1b[K\r\n"))
 		frame.WriteString("\x1b[K\x1b[J")
 		if _, err := io.WriteString(tio.Out, frame.String()); err != nil {
 			return fmt.Errorf("draw the factory: %w", err)
 		}
 
-		// Check if the user quit.
-		if m.Quit() {
-			return nil
-		}
-
-		// Wait for next key or tick.
 		select {
 		case k, ok := <-tio.Keys:
 			if !ok {
-				// Keys closed, exit.
 				return nil
 			}
+			before := m.fetchKey()
 			m.Update(k, data)
 			if m.Quit() {
 				// No refresh on the way out: a failing read must not turn a
 				// clean quit into an error (#346 review).
 				return nil
 			}
-		case <-tio.Ticks:
-			// Tick: fetch again.
+			if m.refresh || m.fetchKey() != before {
+				start()
+			}
+		case _, ok := <-ticks:
+			if !ok {
+				ticks = nil // a closed tick channel never ticks again
+				continue
+			}
+			start()
+		case r := <-results:
+			running = false
+			if r.err != nil {
+				return r.err
+			}
+			data, dataKey = r.data, r.key
+			m.Observe(data)
+			if again {
+				again = false
+				start()
+			}
 		case <-tio.Stop:
 			return nil
 		}
@@ -406,7 +465,8 @@ func searchDocs(dir string, events []Event) ([]SearchDoc, error) {
 // cursor ("\x1b[?25l", shown again with "\x1b[?25h"), a goroutine reading
 // term.NewReader(stdin, 0).ReadKey() into Keys (closing it on error), a
 // time.Ticker at interval for Ticks, Size from term.Size(stdout) (80x24 on
-// error), Color from term.EnableVT(stdout). It restores the terminal mode,
+// error), Color from term.EnableVT(stdout) and the skin factory.skin names
+// (issue #583 k6; "none" draws no colour). It restores the terminal mode,
 // cursor and screen on every return path, a panic included (defer), and on
 // SIGINT or SIGTERM from another process, which stop the loop instead of
 // killing the process with the terminal still raw (#346 review). A failed
@@ -461,8 +521,18 @@ func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// The skin factory.skin names; an unreadable config keeps the default,
+	// and "none" turns colour off.
+	skin := skins[DefaultSkin]
+	if c, _, err := LoadConfig(dir); err == nil {
+		if s, err := SkinFor(c.FactorySkin()); err == nil {
+			skin = s
+		}
+	}
+
 	// Run the loop.
 	tio := TUIIO{
+		Skin:  skin,
 		Keys:  keys,
 		Ticks: ticker.C,
 		Size: func() (int, int) {

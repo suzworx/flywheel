@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,13 +55,16 @@ func TestTUILiveQuitKey(t *testing.T) {
 // next tick, receives the reload request (issue #583).
 func TestTUILiveCtrlRReloads(t *testing.T) {
 	t.Parallel()
-	keys := make(chan term.Key, 2)
+	// The fetches run in the background (issue #583 k6): q is queued by the
+	// second, so the loop sees it only once that fetch ran.
+	keys := make(chan term.Key, 1)
 	keys <- term.Key{Kind: term.KeyCtrl, Rune: 'r'}
-	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
-	close(keys)
 	var reloads []bool
 	fetch := func(m *TUI) (TUIData, error) {
 		reloads = append(reloads, m.TakeRefresh())
+		if len(reloads) == 2 {
+			keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+		}
 		return makeTestTUIData(), nil
 	}
 	tio := TUIIO{Keys: keys, Ticks: make(chan time.Time), Size: func() (int, int) { return 100, 20 }, Out: &bytes.Buffer{}}
@@ -137,12 +141,11 @@ func TestTUILiveTickRefetches(t *testing.T) {
 
 func TestTUILiveEnterFetchesWhy(t *testing.T) {
 	t.Parallel()
-	keys := make(chan term.Key, 2)
+	// Enter starts a background fetch (issue #583 k6), which queues q.
+	keys := make(chan term.Key, 1)
 	ticks := make(chan time.Time)
 
 	keys <- term.Key{Kind: term.KeyEnter}
-	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
-	close(keys)
 	close(ticks)
 
 	out := &bytes.Buffer{}
@@ -158,6 +161,9 @@ func TestTUILiveEnterFetchesWhy(t *testing.T) {
 			kind, task string
 			ok         bool
 		}{kind, task, ok})
+		if len(wantsList) == 2 {
+			keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+		}
 		return makeTestTUIData(), nil
 	}
 
@@ -359,5 +365,89 @@ func TestTUILiveStopEndsLoop(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("RunTUILoop did not stop")
+	}
+}
+
+// frameWriter hands every frame RunTUILoop writes to the test.
+type frameWriter chan string
+
+func (w frameWriter) Write(p []byte) (int, error) { w <- string(p); return len(p), nil }
+
+// TestTUIInstantKeysWhileFetching checks issue #583 k6's instant keys: while
+// a fetch blocks, a key still updates the model and redraws at once; Ctrl-R
+// during it waits for it rather than fetching alongside; the fetch's data,
+// when released, redraws; and no two fetches ever run together.
+func TestTUIInstantKeysWhileFetching(t *testing.T) {
+	t.Parallel()
+	keys, ticks := make(chan term.Key), make(chan time.Time)
+	frames, release := make(frameWriter, 16), make(chan TUIData)
+	var calls, running, overlap atomic.Int32
+	fetch := func(m *TUI) (TUIData, error) {
+		n := calls.Add(1)
+		if running.Add(1) > 1 {
+			overlap.Add(1)
+		}
+		defer running.Add(-1)
+		if n == 2 {
+			return <-release, nil // the tick's fetch blocks until released
+		}
+		return makeTestTUIData(), nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- RunTUILoop(TUIIO{Keys: keys, Ticks: ticks, Size: func() (int, int) { return 100, 20 }, Out: frames}, fetch)
+	}()
+	// Hang guards only: nothing below waits on the clock.
+	guard := func() <-chan time.Time { return time.After(10 * time.Second) }
+	next := func(what string) string {
+		t.Helper()
+		select {
+		case f := <-frames:
+			return f
+		case <-guard():
+			t.Fatalf("no frame after %s", what)
+		}
+		return ""
+	}
+	send := func(k term.Key) {
+		t.Helper()
+		select {
+		case keys <- k:
+		case <-guard():
+			t.Fatalf("the loop did not read the key %q", k.Rune)
+		}
+	}
+
+	next("the first fetch")
+	select {
+	case ticks <- time.Now():
+	case <-guard():
+		t.Fatal("the loop did not read the tick")
+	}
+	next("the tick")
+	send(term.Key{Kind: term.KeyRune, Rune: 'j'})
+	if f := next("j while the fetch blocks"); !strings.Contains(f, "> T2") {
+		t.Errorf("j while a fetch blocks: the cursor did not move to T2:\n%q", f)
+	}
+	send(term.Key{Kind: term.KeyCtrl, Rune: 'r'})
+	next("Ctrl-R while the fetch blocks")
+
+	d := makeTestTUIData()
+	d.Floor.Units = append(d.Floor.Units, Unit{Task: "T4", Stage: "planned"})
+	select {
+	case release <- d:
+	case <-guard():
+		t.Fatal("the tick's fetch never ran")
+	}
+	if f := next("the released fetch"); !strings.Contains(f, "T4") {
+		t.Errorf("the released fetch's data was not drawn:\n%q", f)
+	}
+	next("the reload's fetch")
+	send(term.Key{Kind: term.KeyRune, Rune: 'q'})
+	if err := <-done; err != nil {
+		t.Errorf("RunTUILoop() = %v, want nil", err)
+	}
+	if calls.Load() != 3 || overlap.Load() != 0 {
+		t.Errorf("fetches = %d with %d overlapping, want 3 (first, tick, reload) and none overlapping", calls.Load(), overlap.Load())
 	}
 }
