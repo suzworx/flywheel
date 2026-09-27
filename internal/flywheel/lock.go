@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -91,7 +92,16 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(p), err)
 	}
 	token := repoLockToken()
-	deadline := now().Add(timings.wait)
+	// The lock is not fair, so a waiter can lose every race while the lock
+	// changes hands many times (issue #588). Starvation is not a stuck
+	// holder: each time the holder token read from the file changes, the
+	// deadline restarts, so only one holder keeping the lock for the whole
+	// wait — or a file unreadable that long — makes this waiter give up. An
+	// empty or unreadable first line neither resets nor replaces the holder.
+	start := now()
+	deadline := start.Add(timings.wait)
+	holder, handovers := "", 0
+	var seenMod time.Time
 	for {
 		f, oerr := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if oerr == nil {
@@ -103,7 +113,24 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 		if !os.IsExist(oerr) && !lockBusyOnWindows(oerr) {
 			return nil, fmt.Errorf("create %s: %w", p, oerr)
 		}
-		if info, serr := os.Stat(p); serr == nil && now().Sub(info.ModTime()) > timings.staleAfter {
+		info, serr := os.Stat(p)
+		// Read the holder only when the file's mtime moved (a new holder or a
+		// heartbeat): on Windows a reader's open handle makes the holder's
+		// remove and a stale rename fail, so reading every poll would slow
+		// the very handovers this waiter is waiting for.
+		if serr == nil && !info.ModTime().Equal(seenMod) {
+			if seen := repoLockHolder(p); seen != "" {
+				seenMod = info.ModTime()
+				if seen != holder {
+					if holder != "" {
+						handovers++
+					}
+					holder = seen
+					deadline = now().Add(timings.wait)
+				}
+			}
+		}
+		if serr == nil && now().Sub(info.ModTime()) > timings.staleAfter {
 			stale := p + ".stale-" + token
 			if rerr := os.Rename(p, stale); rerr == nil {
 				_ = os.Remove(stale)
@@ -113,7 +140,13 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 			}
 		}
 		if now().After(deadline) {
-			return nil, fmt.Errorf("lock %s is held by another command; if none is running, remove the file and retry", p)
+			waited := now().Sub(start)
+			if waited >= time.Second {
+				waited = waited.Round(time.Second)
+			} else {
+				waited = waited.Round(time.Millisecond)
+			}
+			return nil, fmt.Errorf("lock %s is held by another command (waited %s, %d handovers); if none is running, remove the file and retry", p, waited, handovers)
 		}
 		time.Sleep(timings.retry)
 	}
@@ -150,8 +183,17 @@ func repoLockRelease(p, token string, heartbeat time.Duration) func() {
 		once.Do(func() {
 			close(done)
 			<-exited
-			if ownRepoLock(p, token) {
-				_ = os.Remove(p)
+			if !ownRepoLock(p, token) {
+				return
+			}
+			// A waiter reading the holder token can make the remove fail
+			// busy on Windows for a moment; retry briefly rather than leave
+			// the lock to go stale.
+			for i := 0; i < 1000; i++ {
+				if err := os.Remove(p); err == nil || !lockBusyOnWindows(err) {
+					return
+				}
+				time.Sleep(time.Millisecond)
 			}
 		})
 	}
@@ -161,12 +203,20 @@ func repoLockRelease(p, token string, heartbeat time.Duration) func() {
 // first line — that is, whether the file is still this acquisition's and not
 // a successor's. A missing or unreadable file is never ours.
 func ownRepoLock(p, token string) bool {
+	line := repoLockHolder(p)
+	return line != "" && line == token
+}
+
+// repoLockHolder returns the holder token on the first line of the lock file
+// at p, read best-effort: a missing, unreadable or not-yet-written file
+// yields "".
+func repoLockHolder(p string) string {
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return false
+		return ""
 	}
 	line, _, _ := strings.Cut(string(b), "\n")
-	return line == token
+	return line
 }
 
 // repoLockToken returns a fresh random hex token for one lock acquisition.
@@ -183,7 +233,11 @@ func repoLockToken() string {
 // rename racing a pending delete fails with "Access is denied" instead of
 // "file exists". That is contention, not a real permission problem, so the
 // caller retries until its deadline; on every other OS a permission error
-// stays fatal.
+// stays fatal. A sharing violation — a waiter reading the holder token while
+// the file is renamed or removed — is the same contention.
 func lockBusyOnWindows(err error) bool {
-	return runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission)
+	return runtime.GOOS == "windows" && (errors.Is(err, fs.ErrPermission) || errors.Is(err, errWindowsSharingViolation))
 }
+
+// errWindowsSharingViolation is Windows' ERROR_SHARING_VIOLATION (32).
+const errWindowsSharingViolation = syscall.Errno(32)
