@@ -1965,7 +1965,8 @@ type briefDrift struct {
 // read as the brief's (ruleT1 compares the same way). A task with no previous
 // dispatch cannot drift. A planned event recorded after that dispatch whose
 // brief file hashes to the brief's current content means a lead legitimately
-// re-planned; that stays silent. An unreadable brief never drifts — the
+// re-planned; that stays silent, and so does an amended event whose recorded
+// header hashes to it (issue #617). An unreadable brief never drifts — the
 // dispatch itself fails on it shortly after.
 func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift {
 	last := -1
@@ -1990,8 +1991,19 @@ func checkBriefDrift(dir string, events []Event, task, brief string) *briefDrift
 	if current == lastHash {
 		return nil
 	}
+	raw := sha256.Sum256(b)
+	rawHash := hex.EncodeToString(raw[:])
 	for _, e := range events[last+1:] {
-		if e.Task != task || e.Kind != "planned" || e.Brief == "" {
+		if e.Task != task || (e.Kind != "planned" && e.Kind != "amended") || e.Brief == "" {
+			continue
+		}
+		// An amended event usually names the same path as the brief, so its
+		// file always reads as the current one: the header it recorded holds
+		// the content it actually amended to (issue #617).
+		if e.Kind == "amended" && e.Header != nil && e.Header.SHA256 != "" {
+			if e.Header.SHA256 == rawHash || e.Header.SHA256 == current {
+				return nil
+			}
 			continue
 		}
 		if pb, err := os.ReadFile(resolveBriefPath(dir, e.Brief)); err == nil && contentSHA(pb) == current {
