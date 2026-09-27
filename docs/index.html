@@ -313,6 +313,7 @@ flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></p
         <tr><td><code>flywheel recover</code></td><td>Report where every unit is, whether the world matches the ledger, and the next safe action.</td></tr>
         <tr><td><code>flywheel supervise</code></td><td>Validate every finished unit that has not been measured yet; <code>--resume-limited</code> re-dispatches rate-limited units.</td></tr>
         <tr><td><code>flywheel controller</code></td><td>Run the controller loop: lock, reconcile, mark lost and blocked, resume rate-limited units.</td></tr>
+        <tr><td><code>flywheel suspend</code></td><td>Freeze the factory so every dispatch refuses (<code>--stop</code> also stops live workers, checkpointed); <code>flywheel resume</code> thaws it and continues each, and <code>flywheel schedule install</code> wakes the controller with an OS task.</td></tr>
         <tr><td><code>flywheel status</code></td><td>Print the factory's deterministic summary.</td></tr>
         <tr><td><code>flywheel factory</code></td><td>The floor at a glance, with an andon for units that stalled or went quiet.</td></tr>
         <tr><td><code>flywheel doctor</code></td><td>Probe every configured model and classify its availability.</td></tr>
@@ -341,6 +342,7 @@ flywheel upgrade   <span class="cmt"># later, checksum-verified</span></code></p
     <a href="quickstart.html">Quickstart</a>
     <a href="concepts.html">Concepts</a>
     <a href="PROTOCOL.html">Protocol</a>
+    <a href="screens.html">Screens</a>
     <a href="https://github.com/suzworx/flywheel/releases">Releases</a>
     <a href="https://github.com/suzworx/flywheel">GitHub</a>
   </span>
