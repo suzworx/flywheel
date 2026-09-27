@@ -331,7 +331,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel version` | Print the flywheel version. |
 | `flywheel upgrade [--check] [--to VERSION] [--force]` | Self-update to a release, checksum-verified; refuses (exit 6) while a run's lease is live unless `--force`. |
 | `flywheel brief <task> --from-issue N --owns a,b` | Turn a tracker issue into a linted brief at `.flywheel/briefs/<task>.txt` and record it `planned` with the issue number. |
-| `flywheel lint <brief> [--probe]` | Check a brief for problems and warnings (problems exit 1); `--probe` runs each `gate:` once on the base tree before dispatch. |
+| `flywheel lint <brief> [--probe [--task ID]]` | Check a brief for problems and warnings (problems exit 1); `--probe` runs each `gate:` once on the base tree before dispatch, and `--task` records each probe so validate and explain can tell a broken gate from broken work. |
 | `flywheel log --task T --kind K` | Append an event and re-derive state: `planned`, `withdrawn` (refused while an attempt is live, rule W1), `amended`, `rebased`, `note`, …; `--shard` switches to per-task shards. |
 | `flywheel goal` | Manage the factory's goals: add, list, show and set. |
 | `flywheel run <task>` | Dispatch a worker (`--worker`, `--model`, `--worktree [--base REF]`, `--workdir PATH`, `--delta`, `--resume`, `--notify CMD`) and record the run; exit 0 clean, 3 silent start, 4 unclean, 7 stall. |

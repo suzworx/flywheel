@@ -37,6 +37,10 @@ type RunRequest struct {
 	// populated by Run); <= 0 means 200, so the review agent keeps 200
 	// (issue #459).
 	MaxTurns int
+	// MaxBudgetUSD is what the unit may still spend on this attempt
+	// (cfg.unitCostCap(worker) minus the unit's recorded spend, populated by
+	// Run); > 0 passes claude --max-budget-usd, <= 0 passes nothing (issue #459).
+	MaxBudgetUSD float64
 	// NoWorkerRules marks a non-worker dispatch such as the review agent
 	// (issue #389): claude gets no --append-system-prompt workerRules.
 	NoWorkerRules bool
@@ -424,7 +428,9 @@ func (a claudeAdapter) Name() string {
 // --disallowedTools is passed under every mode, bypassPermissions included,
 // because Claude Code enforces deny rules even when bypassing permissions.
 // --max-turns is r.MaxTurns (the worker's max_turns, else limits.max_turns),
-// 200 when it is <= 0 (issue #459). acceptEdits grants
+// 200 when it is <= 0 (issue #459); --max-budget-usd is r.MaxBudgetUSD, what
+// the unit may still spend under its cost cap, passed only when > 0.
+// acceptEdits grants
 // file edits without a prompt and nothing else — notably NOT Bash, so a
 // worker running under it alone
 // could not run its own gates (issue #192). The dispatch therefore also
@@ -468,6 +474,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		"--model", r.Model,
 		"--permission-mode", mode,
 		"--setting-sources", "user",
+	}
+	if r.MaxBudgetUSD > 0 {
+		args = append(args, "--max-budget-usd", strconv.FormatFloat(r.MaxBudgetUSD, 'f', 4, 64))
 	}
 	if !r.NoWorkerRules {
 		args = append(args, "--append-system-prompt", workerRules)
@@ -538,7 +547,7 @@ func (a claudeAdapter) Parse(line []byte) (Observation, bool) {
 			_ = json.Unmarshal(raw, &isError)
 		}
 		obs.Reason = claudeReason(rawString(m, "stop_reason"), rawString(m, "subtype"), isError)
-		if status, _ := rawFloat(m, "api_error_status"); isError || status == 429 {
+		if status, _ := rawFloat(m, "api_error_status"); obs.Reason != "capped" && (isError || status == 429) {
 			if reset, ok := claudeRateLimit(status, rawString(m, "result")); ok {
 				obs.Reason = "rate-limited"
 				obs.ResetText = reset
@@ -1039,8 +1048,14 @@ func claudeTokens(msg map[string]json.RawMessage) *Tokens {
 // line pairing stop_sequence and subtype "success" with is_error:true and a
 // session-limit message — that run did no work, so is_error wins. Otherwise:
 // end_turn, stop_sequence, or subtype "success" is "stop"; max_tokens is
-// "length"; anything else is "error".
+// "length"; anything else is "error". The one exception is checked first:
+// subtype "error_max_budget_usd" (claude ended the run at --max-budget-usd,
+// with is_error true) is "capped", the unit cost cap, never an error
+// (issue #459).
 func claudeReason(stopReason, subtype string, isError bool) string {
+	if subtype == "error_max_budget_usd" {
+		return "capped"
+	}
 	if isError {
 		return "error"
 	}

@@ -165,3 +165,69 @@ func TestLintProbe(t *testing.T) {
 		t.Errorf("lint without --probe ran a gate: marker exists")
 	}
 }
+
+// TestLintProbeRecordsTask checks lint --probe --task records one gate_probed
+// event per gate with its index, command, rc, duration and first line, keeps
+// lint's exit code, and that --probe alone records nothing (issue #544).
+func TestLintProbeRecordsTask(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	gates := []string{"exit 0", "echo oops; exit 3", "definitely-not-a-command-xyz"}
+	brief := lintProbeBrief(t, dir, "probe.md", gates...)
+	if out, code := runLintProcess(t, brief, "--probe", "--dir", dir); code != 1 {
+		t.Fatalf("lint --probe exit %d, want 1\n%s", code, out)
+	}
+	if evs, err := flywheel.ReadEvents(dir); err != nil || len(evs) != 0 {
+		t.Fatalf("lint --probe without --task recorded %d events (err %v), want 0", len(evs), err)
+	}
+	if out, code := runLintProcess(t, brief, "--probe", "--task", "T1", "--dir", dir); code != 1 {
+		t.Fatalf("lint --probe --task exit %d, want 1\n%s", code, out)
+	}
+	evs, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 3 {
+		t.Fatalf("recorded %d events, want 3: %+v", len(evs), evs)
+	}
+	wantRC := []int{0, 3, 127}
+	for i, e := range evs {
+		if e.Kind != "gate_probed" || e.Task != "T1" || e.Gate != fmt.Sprint(i+1) || e.Command != gates[i] {
+			t.Errorf("event %d = %+v, want gate_probed T1 gate %d command %q", i, e, i+1, gates[i])
+		}
+		if e.RC == nil || *e.RC != wantRC[i] {
+			t.Errorf("event %d rc = %v, want %d", i, e.RC, wantRC[i])
+		}
+		if e.TS == "" || e.DurationMS < 0 {
+			t.Errorf("event %d ts %q duration %d", i, e.TS, e.DurationMS)
+		}
+	}
+	if evs[1].Reason != "oops" {
+		t.Errorf("failing gate reason = %q, want %q", evs[1].Reason, "oops")
+	}
+	if !strings.Contains(evs[2].Reason, "definitely-not-a-command-xyz") {
+		t.Errorf("cannot-start gate reason = %q, want it to name the command", evs[2].Reason)
+	}
+}
+
+// TestLintTaskUsage checks --task without --probe and an invalid task id are
+// usage errors (exit 2) that run no gate and record nothing (issue #544).
+func TestLintTaskUsage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	brief := lintProbeBrief(t, dir, "marker.md", "echo x > marker; exit 0")
+	for _, args := range [][]string{
+		{brief, "--task", "T1", "--dir", dir},
+		{brief, "--probe", "--task", "bad id!", "--dir", dir},
+	} {
+		if out, code := runLintProcess(t, args...); code != 2 {
+			t.Errorf("lint %q exit %d, want 2\n%s", args, code, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "marker")); err == nil {
+		t.Errorf("a usage error ran a gate: marker exists")
+	}
+	if evs, err := flywheel.ReadEvents(dir); err != nil || len(evs) != 0 {
+		t.Errorf("a usage error recorded %d events (err %v), want 0", len(evs), err)
+	}
+}

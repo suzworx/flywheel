@@ -79,6 +79,12 @@ func runValidate(args []string) {
 	} else if len(res.BriefPaths) == 1 {
 		fmt.Printf("validate: brief %s\n", res.BriefPaths[0])
 	}
+	// A gate that already failed on the base tree before dispatch (issue
+	// #544) is noted under its failure: a broken gate, not broken work.
+	probeFails, err := flywheel.BaseProbeFailures(o.dir, task)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel validate: warning: %v\n", err)
+	}
 	for _, g := range res.Gates {
 		if g.Live {
 			continue
@@ -91,6 +97,13 @@ func runValidate(args []string) {
 			fmt.Printf("%s gate %s: pass (%dms)\n", task, g.Gate, g.DurationMS)
 		} else {
 			fmt.Printf("%s gate %s: failed (rc=%d)\n", task, g.Gate, g.RC)
+			if p, ok := probeFails[g.Command]; ok {
+				note := fmt.Sprintf("%s gate %s: note: this gate already failed on the base tree before dispatch (exit %d)", task, g.Gate, *p.RC)
+				if p.Reason != "" {
+					note += ": " + p.Reason
+				}
+				fmt.Println(note)
+			}
 		}
 	}
 	for _, g := range res.Gates {

@@ -1678,6 +1678,88 @@ func TestConfigSetMaxTurns(t *testing.T) {
 	}
 }
 
+// TestUnitCostConfig checks the unit_cost_usd resolver (worker when > 0, else
+// limits, else 0 = no cap), that both values survive write and reload, and
+// that a negative value is a validation problem (issue #459).
+func TestUnitCostConfig(t *testing.T) {
+	t.Parallel()
+	w := Worker{Name: "c", Adapter: "opencode", Model: "m"}
+	cfg := Config{Version: 1, Workers: []Worker{w}}
+	if got := cfg.unitCostCap(w); got != 0 {
+		t.Errorf("unitCostCap with nothing set = %v, want 0", got)
+	}
+	cfg.Limits.UnitCostUSD = 2.5
+	if got := cfg.unitCostCap(w); got != 2.5 {
+		t.Errorf("unitCostCap with limits 2.5 = %v, want 2.5", got)
+	}
+	cfg.Workers[0].UnitCostUSD = 7
+	if got := cfg.unitCostCap(cfg.Workers[0]); got != 7 {
+		t.Errorf("unitCostCap with worker 7 and limits 2.5 = %v, want 7", got)
+	}
+
+	dir := t.TempDir()
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if loaded.Limits.UnitCostUSD != 2.5 || loaded.Workers[0].UnitCostUSD != 7 {
+		t.Errorf("reloaded limits.unit_cost_usd %v, worker unit_cost_usd %v; want 2.5, 7", loaded.Limits.UnitCostUSD, loaded.Workers[0].UnitCostUSD)
+	}
+
+	for name, tc := range map[string]struct {
+		mutate func(*Config)
+		want   string
+	}{
+		"negative limits": {func(c *Config) { c.Limits.UnitCostUSD = -1 }, "limits.unit_cost_usd -1 must be >= 0"},
+		"negative worker": {func(c *Config) { c.Workers[0].UnitCostUSD = -0.5 }, `worker "c": unit_cost_usd -0.5 must be >= 0`},
+	} {
+		c := Config{Version: 1, Workers: []Worker{w}}
+		tc.mutate(&c)
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Validate() = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
+// TestConfigSetUnitCost pins unit_cost_usd as a worker key and
+// limits.unit_cost_usd for Set and Get: a non-negative number sets it, 0
+// clears it, anything else is refused (issue #459).
+func TestConfigSetUnitCost(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "c", Adapter: "claude", Model: "m"}}}
+	if err := cfg.Set("workers.c.unit_cost_usd", "1.25"); err != nil {
+		t.Fatalf("Set(workers.c.unit_cost_usd, 1.25) error = %v", err)
+	}
+	if got, err := cfg.Get("workers.c.unit_cost_usd"); err != nil || got != "1.25" {
+		t.Errorf("Get(workers.c.unit_cost_usd) = %q, %v; want 1.25", got, err)
+	}
+	if err := cfg.Set("unit_cost_usd", "0"); err != nil || cfg.Workers[0].UnitCostUSD != 0 {
+		t.Errorf("Set(unit_cost_usd, 0) = %v, left %v; want cleared", err, cfg.Workers[0].UnitCostUSD)
+	}
+	for _, v := range []string{"abc", "-5", "NaN", "Inf"} {
+		if err := cfg.Set("workers.c.unit_cost_usd", v); err == nil {
+			t.Errorf("Set(workers.c.unit_cost_usd, %q) error = nil, want refused", v)
+		}
+		if err := cfg.Set("limits.unit_cost_usd", v); err == nil {
+			t.Errorf("Set(limits.unit_cost_usd, %q) error = nil, want refused", v)
+		}
+	}
+	if err := cfg.Set("limits.unit_cost_usd", "3.5"); err != nil || cfg.Limits.UnitCostUSD != 3.5 {
+		t.Errorf("Set(limits.unit_cost_usd, 3.5) = %v, left %v; want 3.5", err, cfg.Limits.UnitCostUSD)
+	}
+	if got, err := cfg.Get("limits.unit_cost_usd"); err != nil || got != "3.5" {
+		t.Errorf("Get(limits.unit_cost_usd) = %q, %v; want 3.5", got, err)
+	}
+	for _, k := range []string{"workers.c.unit_cost_usd", "limits.unit_cost_usd", "unit_cost_usd"} {
+		if !slices.Contains(cfg.settableKeys(), k) {
+			t.Errorf("settableKeys missing %s", k)
+		}
+	}
+}
+
 // TestPermissionModeValidate checks worker permission_mode (issue #526): each
 // valid mode is accepted on a claude worker, a bad value is rejected naming
 // the worker and the allowed values, and any mode on a non-claude worker is

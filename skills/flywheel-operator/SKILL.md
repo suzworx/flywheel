@@ -11,7 +11,7 @@ description: >-
   tasks with brief files and the raw worker commands shown here.
 license: MIT
 metadata:
-  version: 0.34.0 # x-release-please-version
+  version: 0.35.0 # x-release-please-version
 ---
 
 # Flywheel Operator
@@ -144,7 +144,7 @@ scratch — consumer repos commit theirs.
 | `version` | Config schema version (1). |
 | `workers[]` | One entry per worker: `name`, `adapter` (`opencode` or `sim`), `model`, `variant`, `max_parallel` (0 means 1), `fallbacks[{model, approved}]` (fallback models, each with a standing `approved` OK to switch without asking), `routing{candidates, objective, explore, min_attempts, seed}` (opt-in: each fresh run's model is picked from the per-model scoreboard, issue #474). |
 | `lines` | Product lines: each `{name, worker, owns}` — a part of the product, the worker that builds it, the paths it covers. A unit belongs to the line its brief names (`line:``) or the first whose `owns` cover all of its `owns:`; `flywheel run` uses that line's worker unless `--worker` is given, and refuses a brief naming an unknown line (exit 6, rule `line`). |
-| `limits` | Shared caps, enforced by `flywheel run` (refused with exit 6, rule `limits`/`budget`/`rate`/`breaker`; `flywheel next` respects all: fewer DISPATCHes under `per_host` and within the model's free `rate_per_minute` slots, and HOLD with the reason instead of DISPATCH while a cost or token budget is spent or the default model's breaker is open): `per_host` (attempts in flight at once in this ledger; 0 = no cap), `budget{wave_cost_usd}` (once the ledger's recorded spend reaches it, new dispatches are refused; the ledger is the wave), `budget{wave_tokens}` (the same for recorded input+output+reasoning tokens), `rate_per_minute` (at most this many dispatches of one model in any 60 s; rule `rate`), and `breaker{errors, cooldown}` (after `errors` consecutive provider errors on a model, `flywheel run` refuses it — exit 6, rule `breaker` — until `cooldown` after the last one; then one probe is let through; unless `--model` was given, an approved fallback takes over — the first whose own breaker is closed — and otherwise the refusal names the approved fallbacks). |
+| `limits` | Shared caps, enforced by `flywheel run` (refused with exit 6, rule `limits`/`budget`/`rate`/`breaker`; `flywheel next` respects all: fewer DISPATCHes under `per_host` and within the model's free `rate_per_minute` slots, and HOLD with the reason instead of DISPATCH while a cost or token budget is spent or the default model's breaker is open): `per_host` (attempts in flight at once in this ledger; 0 = no cap), `budget{wave_cost_usd}` (once the ledger's recorded spend reaches it, new dispatches are refused; the ledger is the wave), `budget{wave_tokens}` (the same for recorded input+output+reasoning tokens), `unit_cost_usd` (a cap on what one unit's worker attempts spend, corrections included; a worker's `unit_cost_usd` overrides it; a unit already at its cap is refused, rule `unit-cost`, and a running attempt that reaches it is stopped and finishes `capped` with a checkpoint — claude through `--max-budget-usd`, streaming adapters by their per-step cost; `flywheel next` does not HOLD for it), `rate_per_minute` (at most this many dispatches of one model in any 60 s; rule `rate`), and `breaker{errors, cooldown}` (after `errors` consecutive provider errors on a model, `flywheel run` refuses it — exit 6, rule `breaker` — until `cooldown` after the last one; then one probe is let through; unless `--model` was given, an approved fallback takes over — the first whose own breaker is closed — and otherwise the refusal names the approved fallbacks). |
 | `feedback` | `upstream` (owner/repo) and `submit` (`ask` or `never`). |
 | `baseline` | Frontier prices for `flywheel stats`'s cost comparison: `model`, `input_per_mtok`, `output_per_mtok`, `cache_read_per_mtok`, `cache_write_per_mtok` (USD per million tokens; reasoning is priced as output). |
 | `audit` | `first_article` (bool): opt into rule T7 — `flywheel land` refuses a unit (exit 6, rule `T7`) until its worker line (adapter/model of the passing attempt) has a conforming audit, and while the line's latest audit is a nonconformance; an `--exception` landing is not gated. Set it in .flywheel/config.json as `"audit": {"first_article": true}` (`audit.first_article`). |
@@ -159,6 +159,7 @@ flywheel config set variant low              # or model, adapter, max_parallel
 flywheel config set workers.<name>.<key> <v> # any worker by name
 flywheel config set workers.<name>.permission_mode bypassPermissions  # claude workers; empty = acceptEdits
 flywheel config set workers.<name>.max_turns 400    # claude --max-turns; 0 = limits.max_turns, else 200
+flywheel config set limits.unit_cost_usd 5          # per-unit cost cap in USD; 0 = none (workers.<name>.unit_cost_usd overrides)
 flywheel config set feedback.upstream <owner/repo>
 flywheel config set feedback.submit ask|never
 flywheel config set limits.per_host <n>
@@ -167,7 +168,8 @@ flywheel config validate                    # check the config, list every probl
 ```
 
 Settable keys: `model`, `variant`, `adapter`, `max_parallel` (bare = the default worker, or
-`workers.<name>.<key>`), `feedback.upstream`, `feedback.submit`, `limits.per_host`,
+`workers.<name>.<key>`), `max_turns` and `unit_cost_usd` (the same), `feedback.upstream`,
+`feedback.submit`, `limits.per_host`, `limits.max_turns`, `limits.unit_cost_usd`,
 `staffing.lead.adapter`, `staffing.lead.model`, `staffing.lead.session`,
 `staffing.inspector.adapter`, `staffing.inspector.model`, `staffing.inspector.session`,
 `staffing.auditor.adapter`, `staffing.auditor.model`, `staffing.auditor.session`,

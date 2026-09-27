@@ -136,6 +136,15 @@ permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks f
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
+`limits.unit_cost_usd` caps what one unit's worker attempts spend, corrections included (the sum
+of `cost` over its `finished` events); a worker's `unit_cost_usd` overrides it, and 0 means no
+cap (`flywheel config set limits.unit_cost_usd 5`). A unit already at its cap is refused at
+dispatch (exit 6, rule `unit-cost`; raise the cap or split the unit). A running attempt that
+reaches it is stopped: a claude worker gets `--max-budget-usd` set to what the unit has left, and
+a worker that streams a cost per step (opencode) is stopped at the step that reaches the cap.
+Either way the attempt finishes with reason `capped`, the note
+`unit cost cap $<cap> reached: $<spent> spent on the unit`, a checkpoint and a `capped` signal
+(issue #459).
 A claude worker loads no MCP servers (`--strict-mcp-config`) unless its `mcp` key lists them in
 the `--mcp-config` shape, e.g. `"mcp": {"mcpServers": {"fs": {"command": "mcp-fs"}}}` (issue #425).
 
@@ -196,6 +205,8 @@ With no model at all, the `sim` adapter replays a recorded run file (the worker'
 **Copy.** A single git-ignored file such as `.env` is copied instead: an entry annotated `(copy)` (`needs-state: .env (copy)`) and every `worktree.carry` path (`flywheel config set worktree.carry ".env,config/local.json"`) are copied from the repo into the worktree on every dispatch, before setup, and recorded as `copied` (paths only, never contents); a missing source or a path git tracks in the worktree refuses the dispatch, and a copied path git does not ignore is warned about ([#471](https://github.com/suzworx/flywheel/issues/471)). `flywheel validate --carry PATH` copies a path into `--workdir` the same way before its gates run.
 
 **Environment preconditions.** A brief header line `needs-env: NAME[, NAME...]` names environment variables the gates or live round read (a secret, say); `flywheel run` refuses (exit 6, rule `needs-env`, no event recorded) and `flywheel validate` refuses (exit 6, no gate run) while one is unset or empty in flywheel's environment, naming the variables but never printing a value, and `flywheel lint` flags an invalid name or an empty line ([#534](https://github.com/suzworx/flywheel/issues/534)).
+
+**Gate probes.** `flywheel lint <brief> --probe --task <id>`, run in the base checkout before `log --kind planned`, runs each `gate:` once on the base tree (a failing gate warns, one that cannot start is a problem) and records each result as a `gate_probed` event. Pass `--task <id>` so validate can tell a broken gate from broken work: when a gate fails, `flywheel validate` adds `<task> gate <N>: note: this gate already failed on the base tree before dispatch (exit <rc>): <reason>` if its newest probe of the same command failed, and `flywheel explain` notes the same on the failed gate's line; the exit code is unchanged ([#544](https://github.com/suzworx/flywheel/issues/544)).
 
 ## Product lines and staffing
 
