@@ -258,6 +258,11 @@ func resumeLimited(dir string, o SuperviseOptions) ([]SupervisedResume, error) {
 	if err != nil {
 		return nil, err
 	}
+	now := o.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	suspended := FactorySuspended(events, now)
 	var out []SupervisedResume
 	for _, t := range rep.Tasks {
 		if t.Dormant || t.Next.Action != "resume-session" {
@@ -291,6 +296,12 @@ func resumeLimited(dir string, o SuperviseOptions) ([]SupervisedResume, error) {
 			continue // a resume was already started for this finish
 		}
 		r := SupervisedResume{Task: t.Task, Attempt: t.Attempt}
+		// A suspended factory starts nothing and records nothing (issue #572).
+		if suspended.Suspended {
+			r.Reason = "suspended"
+			out = append(out, r)
+			continue
+		}
 		if n >= limit {
 			r.Reason = fmt.Sprintf("auto-resume cap %d reached; flywheel run %s --resume", limit, t.Task)
 			out = append(out, r)
