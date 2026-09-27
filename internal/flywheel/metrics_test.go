@@ -204,6 +204,53 @@ func TestMetricsDeterministic(t *testing.T) {
 	}
 }
 
+// TestMetricsEvidence checks every metric drills to its units (issue #583
+// k4): each id has evidence on the fixture, first-pass yield splits into its
+// groups as its value does, and lead time lists the slowest unit first.
+func TestMetricsEvidence(t *testing.T) {
+	t.Parallel()
+	rep := Metrics(metricsFixture(t), metricsConfig, metricsWindow(t))
+	for _, id := range MetricIDs {
+		if len(rep.Evidence[id]) == 0 {
+			t.Errorf("%s has no evidence", id)
+		}
+	}
+	for id := range rep.Evidence {
+		if !slices.Contains(MetricIDs, id) {
+			t.Errorf("evidence under %s, not in MetricIDs", id)
+		}
+	}
+	groups := map[string][]string{}
+	for _, u := range rep.Evidence["quality.first_pass_yield"] {
+		groups[u.Group] = append(groups[u.Group], u.Task+" "+u.Value)
+	}
+	q := rep.Quality
+	if len(groups["first pass"]) != q.FirstPass || len(groups["corrected"]) != q.Landed-q.FirstPass || len(groups) != 2 {
+		t.Errorf("first-pass groups = %v, want %d first pass and %d corrected", groups, q.FirstPass, q.Landed-q.FirstPass)
+	}
+	if !slices.Equal(groups["first pass"], []string{"a-first first pass"}) {
+		t.Errorf("first pass = %v, want a-first", groups["first pass"])
+	}
+	lead := rep.Evidence["flow.lead_time"]
+	var tasks []string
+	for i, u := range lead {
+		tasks = append(tasks, u.Task)
+		if i > 0 && u.Sort > lead[i-1].Sort {
+			t.Errorf("lead time evidence not slowest first: %+v", lead)
+		}
+	}
+	// b and c 6h (ties by task), a 2h.
+	if !slices.Equal(tasks, []string{"b-corrected", "c-stalled", "a-first"}) || lead[0].Value != "lead "+whyDur(6*time.Hour) {
+		t.Errorf("lead evidence = %+v", lead)
+	}
+	if a := rep.Evidence["reliability.andons"]; len(a) != rep.Reliability.AndonTotal {
+		t.Errorf("andon evidence = %+v, want %d", a, rep.Reliability.AndonTotal)
+	}
+	if f := rep.Evidence["reliability.frozen"]; len(f) != 1 || f[0].Task != "f-running" {
+		t.Errorf("frozen evidence = %+v, want f-running held", f)
+	}
+}
+
 // metricsJSON marshals rep or fails the test.
 func metricsJSON(t *testing.T, rep MetricsReport) string {
 	t.Helper()

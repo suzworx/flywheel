@@ -105,7 +105,63 @@ type MetricsReport struct {
 	Reliability ReliabilityMetrics `json:"reliability"`
 	Cost        CostMetrics        `json:"cost"`
 	Capacity    CapacityMetrics    `json:"capacity"`
+	// Evidence is, per metric id (MetricIDs), the units behind the number,
+	// worst first (issue #583 k4).
+	Evidence map[string][]MetricUnit `json:"evidence"`
 }
+
+// MetricUnit is one unit's part in a metric: Value its contribution in
+// words ("lead 9h12m", "corrected x2", "$3.40"), Group the split the metric
+// uses ("first pass", "corrected"), and Sort the number ordering the units,
+// highest (worst) first.
+type MetricUnit struct {
+	Task  string  `json:"task"`
+	Value string  `json:"value"`
+	Group string  `json:"group"`
+	Sort  float64 `json:"sort"`
+}
+
+// MetricIDs are the stable ids of the metrics Evidence covers, in
+// docs/metrics.md's order.
+var MetricIDs = []string{
+	"flow.throughput", "flow.wip", "flow.lead_time", "flow.cycle_time", "flow.queue_time", "flow.touch_time", "flow.flow_efficiency",
+	"quality.first_pass_yield", "quality.rework_rate", "quality.gates", "quality.review_find_rate", "quality.blocking_share", "quality.escapes",
+	"reliability.andons", "reliability.mttr", "reliability.frozen", "reliability.paused",
+	"cost.spend", "cost.cost_per_unit", "cost.cost_per_landed", "cost.tokens_per_step", "cost.by_model",
+	"capacity.utilization", "capacity.idle_share",
+}
+
+// evidence collects MetricUnits by metric id.
+type evidence map[string][]MetricUnit
+
+func (e evidence) add(id, task, value, group string, sort float64) {
+	e[id] = append(e[id], MetricUnit{Task: task, Value: value, Group: group, Sort: sort})
+}
+
+// sorted orders every metric's units by Sort, highest first, then by task.
+func (e evidence) sorted() map[string][]MetricUnit {
+	for _, us := range e {
+		slices.SortStableFunc(us, func(a, b MetricUnit) int {
+			switch {
+			case a.Sort > b.Sort:
+				return -1
+			case a.Sort < b.Sort:
+				return 1
+			}
+			if c := strings.Compare(a.Task, b.Task); c != 0 {
+				return c
+			}
+			if c := strings.Compare(a.Value, b.Value); c != 0 {
+				return c
+			}
+			return strings.Compare(a.Group, b.Group)
+		})
+	}
+	return e
+}
+
+// evAt is an evidence time: month-day hour:minute in UTC.
+func evAt(t time.Time) string { return t.UTC().Format("01-02 15:04") }
 
 // FlowMetrics is how work moves through the factory.
 type FlowMetrics struct {
@@ -266,20 +322,7 @@ func flowMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow, bucke
 // wipAt counts the units whose derived status, over the events before t, is
 // one of wipStatuses.
 func wipAt(ev []timed, t time.Time) int {
-	var prefix []Event
-	for _, e := range ev {
-		if !e.At.Before(t) {
-			break
-		}
-		prefix = append(prefix, e.Event)
-	}
-	n := 0
-	for _, ts := range Derive(prefix).Tasks {
-		if wipStatuses[ts.Status] {
-			n++
-		}
-	}
-	return n
+	return len(wipTasks(ev, t))
 }
 
 // QualityMetrics is how often work is right the first time.
@@ -487,37 +530,8 @@ func overlap(a, b time.Time, w MetricsWindow) time.Duration {
 // window's end runs to it.
 func frozenTime(ev []timed, w MetricsWindow) FrozenTime {
 	var f FrozenTime
-	frozen := false
-	var start, thaw time.Time // thaw zero: until flywheel resume
-	closeAt := func(t time.Time) {
-		f.Total += overlap(start, t, w)
-		frozen = false
-	}
-	for _, e := range ev {
-		if frozen && !thaw.IsZero() && !e.At.Before(thaw) {
-			closeAt(thaw)
-		}
-		switch e.Kind {
-		case "suspended":
-			if !frozen {
-				frozen, start = true, e.At
-			}
-			thaw = time.Time{}
-			if u, err := time.Parse(time.RFC3339, e.Until); err == nil {
-				thaw = u
-			}
-		case "unsuspended":
-			if frozen {
-				closeAt(e.At)
-			}
-		}
-	}
-	if frozen {
-		end := w.Until
-		if !thaw.IsZero() && thaw.Before(end) {
-			end = thaw
-		}
-		closeAt(end)
+	for _, s := range frozenSpans(ev, w) {
+		f.Total += s[1].Sub(s[0])
 	}
 	f.Manual = f.Total
 	return f
@@ -527,8 +541,31 @@ func frozenTime(ev []timed, w MetricsWindow) FrozenTime {
 // at every finished event rateLimitPausedAt decides whether the model is
 // paused from then, until the pause ends or the model's next finish.
 func pausedTime(ev []timed, cfg Config, w MetricsWindow) []ModelPause {
-	threshold := cfg.Limits.RateLimitPauseThreshold()
 	per := map[string]time.Duration{}
+	for _, p := range pauseSpans(ev, cfg, w) {
+		per[p.Model] += p.Paused
+	}
+	out := []ModelPause{}
+	for m, d := range per {
+		out = append(out, ModelPause{Model: m, Paused: d})
+	}
+	slices.SortFunc(out, func(a, b ModelPause) int { return strings.Compare(a.Model, b.Model) })
+	return out
+}
+
+// pauseSpan is one finish that paused its model: the unit, the model, when,
+// and the pause time inside the window.
+type pauseSpan struct {
+	Task, Model string
+	Start       time.Time
+	Paused      time.Duration
+}
+
+// pauseSpans are the finishes that paused their model inside w, by the rule
+// pausedTime sums, in log order.
+func pauseSpans(ev []timed, cfg Config, w MetricsWindow) []pauseSpan {
+	threshold := cfg.Limits.RateLimitPauseThreshold()
+	var spans []pauseSpan
 	prefix := make([]Event, 0, len(ev))
 	for i, e := range ev {
 		prefix = append(prefix, e.Event)
@@ -549,15 +586,10 @@ func pausedTime(ev []timed, cfg Config, w MetricsWindow) []ModelPause {
 			}
 		}
 		if d := overlap(e.At, end, w); d > 0 {
-			per[e.Model] += d
+			spans = append(spans, pauseSpan{Task: e.Task, Model: e.Model, Start: e.At, Paused: d})
 		}
 	}
-	out := []ModelPause{}
-	for m, d := range per {
-		out = append(out, ModelPause{Model: m, Paused: d})
-	}
-	slices.SortFunc(out, func(a, b ModelPause) int { return strings.Compare(a.Model, b.Model) })
-	return out
+	return spans
 }
 
 // CostMetrics is what the window's work cost.
@@ -656,15 +688,7 @@ func capacityMetrics(units map[string]*unitTimes, cfg Config, w MetricsWindow) C
 	slices.Sort(ids)
 	for _, id := range ids {
 		for _, s := range units[id].Spans {
-			name := s.Worker
-			for _, wk := range cfg.Workers {
-				if name == "" && s.Model != "" && wk.Model == s.Model {
-					name = wk.Name
-				}
-			}
-			if name == "" {
-				name = cfg.DefaultWorker().Name
-			}
+			name := spanWorker(s, cfg)
 			end := s.End
 			if end.IsZero() {
 				end = w.Until
@@ -707,7 +731,310 @@ func Metrics(events []Event, cfg Config, w MetricsWindow) MetricsReport {
 	rep.Reliability = reliabilityMetrics(ev, cfg, w, buckets)
 	rep.Cost = costMetrics(ev, rep.Quality.Landed, w, buckets)
 	rep.Capacity = capacityMetrics(units, cfg, w)
+	rep.Evidence = metricsEvidence(ev, units, cfg, w)
 	return rep
+}
+
+// metricsEvidence is every metric's evidence (MetricsReport.Evidence): the
+// units behind each number, by the same rules docs/metrics.md gives it.
+func metricsEvidence(ev []timed, units map[string]*unitTimes, cfg Config, w MetricsWindow) map[string][]MetricUnit {
+	e := evidence{}
+	e.flow(ev, units, w)
+	e.quality(ev, units, w)
+	e.reliability(ev, cfg, w)
+	e.cost(ev, units, w)
+	e.capacity(units, cfg, w)
+	return e.sorted()
+}
+
+// quality is the quality metrics' evidence: each landed unit first pass or
+// corrected, its corrections and escape, each conclusive gate reading and
+// each review finding in the window.
+func (e evidence) quality(ev []timed, units map[string]*unitTimes, w MetricsWindow) {
+	corrected := map[string]bool{}
+	for _, x := range ev {
+		if (x.Kind == "inspected" || x.Kind == "reviewed") && correctionVerdicts[x.Verdict] {
+			corrected[x.Task] = true
+		}
+	}
+	for _, id := range landedIn(units, w) {
+		u := units[id]
+		n := max(len(u.Attempts)-1, 0)
+		group, value, bad := "first pass", "first pass", 0.0
+		if len(u.Attempts) != 1 || u.Attempts[0] != "r1" || corrected[id] {
+			group, value, bad = "corrected", fmt.Sprintf("corrected x%d", n), float64(n+1)
+			switch {
+			case n > 0:
+			case corrected[id]:
+				value = "sent back by a verdict"
+			default:
+				value = "no r1 attempt"
+			}
+		}
+		e.add("quality.first_pass_yield", id, value, group, bad)
+		e.add("quality.rework_rate", id, fmt.Sprintf("%d corrections", n), group, float64(n))
+		for _, x := range ev {
+			if x.Task == id && x.Kind == "planned" && x.At.After(u.Landed) {
+				e.add("quality.escapes", id, "planned again "+evAt(x.At)+", landed "+evAt(u.Landed), "escaped", x.At.Sub(u.Landed).Seconds())
+				break
+			}
+		}
+	}
+	for _, x := range ev {
+		if !w.in(x.At) {
+			continue
+		}
+		switch {
+		case x.Kind == "validated" && x.RC != nil && x.Reason != "inconclusive" && x.Reason != "host-blocked":
+			group, bad := "pass", 0.0
+			if *x.RC != 0 {
+				group, bad = "fail", 1
+			}
+			e.add("quality.gates", x.Task, fmt.Sprintf("gate %s rc %d on %s", x.Gate, *x.RC, x.Attempt), group, bad)
+		case x.Kind == "review_finding":
+			group, bad := "other", 0.0
+			if blockingFinding(x.Event) {
+				group, bad = "blocking", 1
+			}
+			value := strings.TrimSpace(x.Severity + " " + oneLine.Replace(x.Title))
+			e.add("quality.review_find_rate", x.Task, value, x.Severity, bad)
+			e.add("quality.blocking_share", x.Task, value, group, bad)
+		}
+	}
+}
+
+// reliability is the reliability metrics' evidence: each andon (worst: open
+// longest) and its repair, each unit an attempt of which ran while the
+// factory was frozen, and each unit whose finish paused its model.
+func (e evidence) reliability(ev []timed, cfg Config, w MetricsWindow) {
+	signalled := map[[3]string]bool{}
+	for _, x := range ev {
+		if x.Kind == "signal" {
+			signalled[[3]string{x.Task, x.Attempt, x.Signal}] = true
+		}
+	}
+	for i, x := range ev {
+		kind := andonKind(x.Event, signalled)
+		if kind == "" || !w.in(x.At) {
+			continue
+		}
+		value, open := kind+" "+evAt(x.At)+", open", max(w.Until.Sub(x.At), 0)
+		for _, n := range ev[i+1:] {
+			if x.Task != "" && n.Task == x.Task && clears(n.Event) {
+				open = n.At.Sub(x.At)
+				value = kind + " " + evAt(x.At) + ", cleared in " + whyDur(open)
+				e.add("reliability.mttr", x.Task, kind+" cleared in "+whyDur(open), kind, open.Seconds())
+				break
+			}
+		}
+		e.add("reliability.andons", x.Task, value, kind, open.Seconds())
+	}
+	units := unitTimeline(ev)
+	for _, f := range frozenSpans(ev, w) {
+		for id, u := range units {
+			var held time.Duration
+			for _, s := range u.Spans {
+				end := s.End
+				if end.IsZero() {
+					end = w.Until
+				}
+				a, b := max(s.Start.Unix(), f[0].Unix()), min(end.Unix(), f[1].Unix())
+				held += max(time.Duration(b-a)*time.Second, 0)
+			}
+			if held > 0 {
+				e.add("reliability.frozen", id, "held "+whyDur(held)+" (frozen "+evAt(f[0])+" to "+evAt(f[1])+")", "frozen", held.Seconds())
+			}
+		}
+	}
+	for _, p := range pauseSpans(ev, cfg, w) {
+		e.add("reliability.paused", p.Task, p.Model+" paused "+whyDur(p.Paused)+" from "+evAt(p.Start), p.Model, p.Paused.Seconds())
+	}
+}
+
+// frozenSpans are the suspended intervals inside w, by the rule frozenTime
+// sums.
+func frozenSpans(ev []timed, w MetricsWindow) [][2]time.Time {
+	var out [][2]time.Time
+	frozen := false
+	var start, thaw time.Time // thaw zero: until flywheel resume
+	closeAt := func(t time.Time) {
+		a, b := max(start.UnixNano(), w.Since.UnixNano()), min(t.UnixNano(), w.Until.UnixNano())
+		if b > a {
+			out = append(out, [2]time.Time{time.Unix(0, a).UTC(), time.Unix(0, b).UTC()})
+		}
+		frozen = false
+	}
+	for _, e := range ev {
+		if frozen && !thaw.IsZero() && !e.At.Before(thaw) {
+			closeAt(thaw)
+		}
+		switch e.Kind {
+		case "suspended":
+			if !frozen {
+				frozen, start = true, e.At
+			}
+			thaw = time.Time{}
+			if u, err := time.Parse(time.RFC3339, e.Until); err == nil {
+				thaw = u
+			}
+		case "unsuspended":
+			if frozen {
+				closeAt(e.At)
+			}
+		}
+	}
+	if frozen {
+		end := w.Until
+		if !thaw.IsZero() && thaw.Before(end) {
+			end = thaw
+		}
+		closeAt(end)
+	}
+	return out
+}
+
+// cost is the cost metrics' evidence: each unit's spend in the window (split
+// landed or not), its tokens per step, and its finished cost per model.
+func (e evidence) cost(ev []timed, units map[string]*unitTimes, w MetricsWindow) {
+	type acc struct {
+		spend         float64
+		finished      bool
+		tokens, steps int
+		model         map[string]float64
+	}
+	per := map[string]*acc{}
+	var ids []string
+	for _, x := range ev {
+		if !w.in(x.At) || (x.Kind != "finished" && x.Kind != "reviewed") {
+			continue
+		}
+		a := per[x.Task]
+		if a == nil {
+			a = &acc{model: map[string]float64{}}
+			per[x.Task], ids = a, append(ids, x.Task)
+		}
+		a.spend += x.Cost
+		if x.Kind == "finished" {
+			a.finished, a.steps = true, a.steps+x.Steps
+			a.model[x.Model] += x.Cost
+			if t := x.Tokens; t != nil {
+				a.tokens += t.Input + t.Output + t.Reasoning
+			}
+		}
+	}
+	landed := map[string]bool{}
+	for _, id := range landedIn(units, w) {
+		landed[id] = true
+	}
+	for _, id := range ids {
+		a := per[id]
+		usd, group := fmt.Sprintf("$%.2f", a.spend), "not landed"
+		if landed[id] {
+			group = "landed"
+		}
+		e.add("cost.spend", id, usd, group, a.spend)
+		e.add("cost.cost_per_landed", id, usd, group, a.spend)
+		if a.finished {
+			e.add("cost.cost_per_unit", id, usd, "finished", a.spend)
+		}
+		if a.steps > 0 {
+			r := float64(a.tokens) / float64(a.steps)
+			e.add("cost.tokens_per_step", id, fmt.Sprintf("%.0f tokens/step over %d steps", r, a.steps), "finished", r)
+		}
+		for m, c := range a.model {
+			e.add("cost.by_model", id, fmt.Sprintf("%s $%.2f", m, c), m, c)
+		}
+	}
+}
+
+// capacity is the capacity metrics' evidence: each unit's busy time inside
+// the window on each worker.
+func (e evidence) capacity(units map[string]*unitTimes, cfg Config, w MetricsWindow) {
+	for id, u := range units {
+		busy := map[string]time.Duration{}
+		for _, s := range u.Spans {
+			end := s.End
+			if end.IsZero() {
+				end = w.Until
+			}
+			busy[spanWorker(s, cfg)] += overlap(s.Start, end, w)
+		}
+		for name, d := range busy {
+			if d > 0 {
+				v := "busy " + whyDur(d) + " on " + name
+				e.add("capacity.utilization", id, v, name, d.Seconds())
+				e.add("capacity.idle_share", id, v, name, d.Seconds())
+			}
+		}
+	}
+}
+
+// spanWorker is the worker an attempt ran on: its dispatched worker, else
+// the configured worker on its model, else the default worker.
+func spanWorker(s attemptSpan, cfg Config) string {
+	if s.Worker != "" {
+		return s.Worker
+	}
+	for _, wk := range cfg.Workers {
+		if s.Model != "" && wk.Model == s.Model {
+			return wk.Name
+		}
+	}
+	return cfg.DefaultWorker().Name
+}
+
+// flow is the flow metrics' evidence: each landed unit's landing, lead,
+// queue, cycle and touch time and flow efficiency, and each unit in progress
+// at the window's end with its time since dispatch.
+func (e evidence) flow(ev []timed, units map[string]*unitTimes, w MetricsWindow) {
+	for _, id := range landedIn(units, w) {
+		u := units[id]
+		e.add("flow.throughput", id, "landed "+evAt(u.Landed), "landed", float64(u.Landed.Unix()))
+		if !u.Planned.IsZero() {
+			d := u.Landed.Sub(u.Planned)
+			e.add("flow.lead_time", id, "lead "+whyDur(d), "landed", d.Seconds())
+		}
+		if !u.Planned.IsZero() && !u.Dispatched.IsZero() {
+			d := u.Dispatched.Sub(u.Planned)
+			e.add("flow.queue_time", id, "queued "+whyDur(d), "landed", d.Seconds())
+		}
+		if u.Dispatched.IsZero() {
+			continue
+		}
+		c, t := u.Landed.Sub(u.Dispatched), u.touch()
+		e.add("flow.cycle_time", id, "cycle "+whyDur(c), "landed", c.Seconds())
+		e.add("flow.touch_time", id, "touch "+whyDur(t), "landed", t.Seconds())
+		if c > 0 {
+			r := t.Seconds() / c.Seconds()
+			e.add("flow.flow_efficiency", id, fmt.Sprintf("%.0f%% (touch %s of cycle %s)", r*100, whyDur(t), whyDur(c)), "landed", 1-r)
+		}
+	}
+	for task, status := range wipTasks(ev, w.Until) {
+		var age time.Duration
+		if u := units[task]; u != nil && !u.Dispatched.IsZero() {
+			age = w.Until.Sub(u.Dispatched)
+		}
+		e.add("flow.wip", task, status+" for "+whyDur(age), status, age.Seconds())
+	}
+}
+
+// wipTasks maps each task whose derived status, over the events before t,
+// is one of wipStatuses to that status.
+func wipTasks(ev []timed, t time.Time) map[string]string {
+	var prefix []Event
+	for _, e := range ev {
+		if !e.At.Before(t) {
+			break
+		}
+		prefix = append(prefix, e.Event)
+	}
+	out := map[string]string{}
+	for _, ts := range Derive(prefix).Tasks {
+		if wipStatuses[ts.Status] {
+			out[ts.ID] = ts.Status
+		}
+	}
+	return out
 }
 
 // MetricsFor reads dir's event log and config and computes Metrics over w.

@@ -50,11 +50,14 @@ func fuzzyMatch(needle []rune, s string) bool {
 }
 
 // sortColumn is the index of the column key sorts by in header, -1 when
-// the view has none: name is the first column, age AGE, stage STAGE (else
-// STATE), cost COST.
+// the view has none: name is METRIC (the metrics table) else the first
+// column, age AGE, stage STAGE (else STATE), cost COST.
 func sortColumn(header []string, key string) int {
 	switch key {
 	case "name":
+		if i := slices.Index(header, "METRIC"); i >= 0 {
+			return i
+		}
 		if len(header) > 0 {
 			return 0
 		}

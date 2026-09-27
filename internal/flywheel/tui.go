@@ -32,6 +32,10 @@ type TUIData struct {
 	Checkpoints  []TUICheckpoint     // filled while the checkpoints view is shown
 	Search       []SearchHit         // the search view's results
 	SearchCapped bool                // the search stopped at searchLimit results
+
+	// The metrics (issue #583 k4) by window name (24h, 7d, 30d): 24h for the
+	// header stats, and the window :pulse, :metrics and the drill-down show.
+	Metrics map[string]TUIMetrics
 }
 
 // TUIHealth is one health event: when, and its snapshot.
@@ -95,6 +99,25 @@ type TUI struct {
 	matchFn   func(string) bool
 	search    string // the `:s` query the search view shows
 	drillFind string // the drill-down scrolls to the first line holding it
+
+	// The metrics views (issue #583 k4): the window shown (24h, 7d, 30d),
+	// the pulse panel under the cursor, the metric drill-down's part (chart,
+	// units) and evidence row, and the drill-down a unit opened from it
+	// returns to on Esc.
+	window     string
+	panel      int
+	pulseCols  int // the pulse grid's columns in the last frame
+	metricPart string
+	evCursor   int
+	metricBack *metricReturn
+}
+
+// metricReturn is a metric drill-down to come back to: its metric, part,
+// evidence row and crumbs.
+type metricReturn struct {
+	id, part string
+	row      int
+	crumbs   []string
 }
 
 // navLevel is one level of the navigation stack: a view with its filter,
@@ -124,6 +147,7 @@ func NewTUI() *TUI {
 		crumbs: []string{"units"},
 		now:    time.Now,
 		saved:  map[string]navLevel{},
+		window: "24h",
 	}
 }
 
@@ -252,10 +276,13 @@ var viewNames = map[string]string{
 	"health":      "Health",
 	"learnings":   "Learnings",
 	"checkpoints": "Checkpoints",
+	"pulse":       "Pulse",
+	"metrics":     "Metrics",
 }
 
 // drillTitles are the drill-downs' titles in the title bar.
 var drillTitles = map[string]string{
+	"metric":     "Metric",
 	"why":        "Why",
 	"explain":    "Explain",
 	"brief":      "Brief",
@@ -359,8 +386,15 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 
 	// Drill-down mode (explain/log view).
 	if m.drillKind != "" {
+		if m.drillKind == "metric" && m.metricKey(k, d) {
+			return
+		}
 		switch k.Kind {
 		case term.KeyEsc:
+			// A unit opened from a metric's evidence goes back to it.
+			if m.metricReturnTo() {
+				return
+			}
 			m.drillKind = ""
 			m.drillTask = ""
 			m.drillFind = ""
@@ -477,6 +511,10 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		_, after := m.Rows(d)
 		m.clampCursor(len(after))
 	}()
+	// The metrics views' keys (issue #583 k4): the window, the pulse panels.
+	if (m.view == "pulse" || m.view == "metrics") && m.pulseKey(k) {
+		return
+	}
 
 	switch k.Kind {
 	case term.KeyEsc:
@@ -570,6 +608,8 @@ func (m *TUI) enter(d TUIData, row []string) {
 	switch m.view {
 	case "units", "andon", "tree":
 		m.drill(d, "why")
+	case "metrics":
+		m.openMetric(metricOfRow(row))
 	case "learnings":
 		m.drillLocal("learning", row[0])
 	case "checkpoints":
@@ -655,6 +695,8 @@ var tuiViews = []struct{ name, alias, what string }{
 	{"health", "h", "the recent health events"},
 	{"learnings", "lr", "the learnings, newest first"},
 	{"checkpoints", "c", "the saved checkpoints of interrupted attempts"},
+	{"pulse", "p", "the metrics dashboard: flow, quality, reliability, cost, capacity, by model"},
+	{"metrics", "m", "every metric: value, trend, change and definition"},
 	{"search", "s", "search <text>: the ledger, the run logs, the reports and the briefs"},
 }
 
@@ -777,12 +819,15 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 		header, rows = checkpointRows(d)
 	case "search":
 		header, rows = searchRows(d.Search)
+	case "metrics":
+		header, rows = metricRows(d, m.window)
 	default:
 		return []string{}, [][]string{}
 	}
-	// The views built in tui_views.go are pure: the filter applies here.
+	// The views built in tui_views.go and tui_dash.go are pure: the filter
+	// applies here.
 	switch m.view {
-	case "tree", "health", "learnings", "checkpoints", "search":
+	case "tree", "health", "learnings", "checkpoints", "search", "metrics":
 		var kept [][]string
 		for _, row := range rows {
 			if m.matchesFilter(row) {
@@ -964,6 +1009,9 @@ var viewHints = map[string][]hint{
 	"learnings":   join(tableHints, []hint{{"enter", "learning"}}, sortHints, layoutHints),
 	"checkpoints": join(tableHints, []hint{{"enter", "paths"}}, sortHints, layoutHints),
 	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
+	"pulse":       join(tableHints, []hint{{"h/j/k/l", "panel"}, {"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, layoutHints),
+	"metrics":     join(tableHints, []hint{{"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, sortHints, layoutHints),
+	"metric":      join([]hint{{"h", "chart"}, {"u", "units"}, {"enter", "unit"}}, scrollHints, layoutHints),
 	"why":         join(tabHints, scrollHints, layoutHints),
 	"explain":     join(tabHints, scrollHints, layoutHints),
 	"brief":       join(tabHints, scrollHints, layoutHints),
@@ -1044,8 +1092,20 @@ func (m *TUI) headerBlock(d TUIData, width int) []string {
 		leftW = max(leftW, utf8.RuneCountInString(l))
 	}
 	leftW = min(leftW, width*3/5)
-	cols := hintColumns(m.hintsFor(), width-leftW-3)
-	rows := 0
+	// The stats (issue #583 k4) sit in the middle while the whole key menu
+	// still fits beside them.
+	hints, avail := m.hintsFor(), width-leftW-3
+	mid, midW := headerStats(d), 0
+	for _, l := range mid {
+		midW = max(midW, utf8.RuneCountInString(l))
+	}
+	if _, full := layHints(hints, maxHintRows); mid != nil && avail-midW-3 >= full {
+		avail -= midW + 3
+	} else {
+		mid = nil
+	}
+	cols := hintColumns(hints, avail)
+	rows := len(mid)
 	for _, col := range cols {
 		rows = max(rows, len(col))
 	}
@@ -1056,6 +1116,13 @@ func (m *TUI) headerBlock(d TUIData, width int) []string {
 			line = cutRunes(left[r], leftW)
 		}
 		line += strings.Repeat(" ", leftW-utf8.RuneCountInString(line)+3)
+		if mid != nil {
+			cell := ""
+			if r < len(mid) {
+				cell = mid[r]
+			}
+			line += cell + strings.Repeat(" ", midW-utf8.RuneCountInString(cell)+3)
+		}
 		for _, col := range cols {
 			if r < len(col) {
 				line += col[r] + "  "
@@ -1167,13 +1234,21 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	rowCount := len(rows)
 
 	titleBar := ""
-	if m.drillKind != "" {
+	if m.drillKind == "metric" {
+		def, _ := metricByID(m.drillTask)
+		titleBar = fmt.Sprintf("── Metric %s %s ──", def.name, m.window)
+	} else if m.drillKind != "" {
 		titleBar = strings.TrimRight(fmt.Sprintf("── %s %s", drillTitles[m.drillKind], m.drillTask), " ") + " ──"
 	} else if m.help {
 		titleBar = "── Help ──"
+	} else if m.view == "pulse" {
+		titleBar = fmt.Sprintf("── Pulse %s ──", m.window)
 	} else {
 		viewName := viewNames[m.view]
 		count := fmt.Sprint(rowCount)
+		if m.view == "metrics" {
+			viewName += " " + m.window
+		}
 		if m.view == "search" {
 			viewName = fmt.Sprintf("Search %q", m.search)
 			if d.SearchCapped {
@@ -1210,8 +1285,13 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"Views (:name or :alias):",
 			"  :       open command prompt: units (u), workers (w), andon (a),",
 			"          events (e), lines (l), tree (t), health (h), learnings (lr),",
-			"          checkpoints (c), quit (q)",
+			"          checkpoints (c), pulse (p), metrics (m), quit (q)",
 			"  :s txt  search the ledger, run logs, reports and briefs for txt",
+			"Metrics (:pulse, :metrics):",
+			"  1 2 3   the window: 24h, 7d, 30d",
+			"  h j k l the pulse panel (or the arrows); enter its metric",
+			"  enter   a metric's drill-down: h its chart, u the units behind",
+			"          it (worst first), enter a unit's why",
 			"  ctrl-a  list every view and alias",
 			"History:",
 			"  esc     back: leave the drill-down or help, clear the filter,",
@@ -1248,8 +1328,10 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	} else if m.drillKind != "" {
 		// Drill-down view shows detail lines with scrolling; detailTop is
 		// clamped so the last page stays full.
-		detail := d.Detail
-		if isUnitTab(m.drillKind) {
+		detail, cur := d.Detail, -1
+		if m.drillKind == "metric" {
+			detail, cur = m.metricLines(d, width)
+		} else if isUnitTab(m.drillKind) {
 			// The unit detail: its why line leads every tab.
 			detail = append([]string{"why: " + d.Why[m.drillTask], ""}, d.Detail...)
 		} else if _, ok := drillTitles[m.drillKind]; ok {
@@ -1268,10 +1350,16 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		}
 		visible := max(1, body-1)
 		m.page = visible
+		// The evidence row under the cursor stays in sight.
+		if cur >= 0 {
+			m.detailTop = max(min(m.detailTop, cur), cur-visible+1)
+		}
 		m.detailTop = max(0, min(m.detailTop, len(detail)-visible))
 		for i := m.detailTop; i < m.detailTop+visible && i < len(detail); i++ {
 			lines = append(lines, cutRunes(detail[i], width))
 		}
+	} else if m.view == "pulse" {
+		lines = append(lines, m.pulseLines(d, width)...)
 	} else {
 		// Table view: long cells cut to maxCell unless wide (Ctrl-W).
 		if !m.wide {
