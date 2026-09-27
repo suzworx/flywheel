@@ -182,10 +182,51 @@ func stopStateFor(events []Event, task, attempt, status string) string {
 			stopped = e.Reason == "stop"
 		}
 	}
-	if stopped && len(wroteFor(events, task, attempt)) == 0 {
+	if stopped && len(wroteFor(events, task, attempt)) == 0 && !sessionWroteBefore(events, task, attempt) {
 		return "no-writes"
 	}
 	return ""
+}
+
+// sessionWroteBefore reports whether an earlier attempt of the task, logged
+// before this attempt's first event, ran the same non-empty agent session and
+// finished having written files (issue #592): a resume that only wraps up that
+// work is not no-writes. An attempt's session is the Session of its started or
+// finished events, the rule run.go uses for lastSession.
+func sessionWroteBefore(events []Event, task, attempt string) bool {
+	session, first := "", -1
+	for i, e := range events {
+		if e.Task != task || e.Attempt != attempt {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
+			session = e.Session
+		}
+	}
+	if session == "" {
+		return false
+	}
+	sessions, wrote := map[string]string{}, map[string]bool{}
+	for _, e := range events[:first] {
+		if e.Task != task || e.Attempt == attempt {
+			continue
+		}
+		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
+			sessions[e.Attempt] = e.Session
+		}
+		if e.Kind == "finished" && len(e.Wrote) > 0 {
+			wrote[e.Attempt] = true
+		}
+	}
+	for a := range wrote {
+		if sessions[a] == session {
+			return true
+		}
+	}
+	return false
 }
 
 // ProductLine is one configured product line on the floor (issue #69): who
