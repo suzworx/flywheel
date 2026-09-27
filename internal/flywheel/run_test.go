@@ -614,7 +614,7 @@ func TestRunSimClean(t *testing.T) {
 	if evs[2].Kind != "started" || evs[2].Session != "ses_test_clean_001" {
 		t.Errorf("started event = %v", evs[2])
 	}
-	if evs[3].Kind != "worker_plan" || evs[3].Path != ".flywheel/runs/T1.r1.plan.md" || evs[3].SHA256 == "" {
+	if evs[3].Kind != "worker_plan" || evs[3].Attempt != "r1" || evs[3].Path != ".flywheel/runs/T1.r1.plan.md" || evs[3].SHA256 == "" {
 		t.Errorf("worker_plan event = %v", evs[3])
 	}
 	if evs[4].Kind != "report" || evs[4].Path != ".flywheel/runs/T1.r1.report.md" || evs[4].SHA256 == "" {

@@ -225,7 +225,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `worker_plan`
 - Written by: the CLI, the first time the run's text output has a line that, after stripping leading whitespace, list/quote markers (-, *, +, >, #) and markdown emphasis (*, _, `), starts with `PLAN ` (issue #284).
-- Carries: `task`, `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file. The recorded plan is the text from that matched line onward, with leading whitespace and list markers stripped but emphasis markers preserved.
+- Carries: `task`, `attempt` (set on every `worker_plan` since issue #592; older events have none and are matched by their path), `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file. The recorded plan is the text from that matched line onward, with leading whitespace and list markers stripped but emphasis markers preserved.
+- Carried over on `--resume` (issue #592): a resumed session is the same conversation and never
+  repeats its first message, so when an attempt of the session being resumed already checked in,
+  the CLI appends, before the stream starts, a `worker_plan` for the new attempt with the latest
+  such plan's `path` and `sha256` (the plan file is not copied), `attempt` the new attempt and
+  `note` "carried over from <attempt> (resumed session <first 8 chars of the session>)".
 - Effect: no status change. Its presence before step 20 is what a missing `no-plan` event
   certifies.
 
@@ -233,7 +238,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: the CLI, at most once per attempt, at the 20th completed step, or at finish (a
   normal or stalled end after at least one completed step, before that `finished` event), only if
   neither a `PLAN `-prefixed line (as detected above) nor an earlier `no-plan` has appeared (issue
-  #65, #284, #533). Ends with no worker output (silent, start failed) write none. Each one is followed by a
+  #65, #284, #533). Not written on a `--resume` whose session already checked in: that attempt
+  carries the session's `worker_plan` over (issue #592). Ends with no worker output (silent, start failed) write none. Each one is followed by a
   `no-plan` `signal`.
 - Carries: `task`, `attempt`; the finish-time one also carries `note` ("finished after N steps
   with no PLAN check-in").
