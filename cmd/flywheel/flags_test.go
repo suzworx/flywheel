@@ -61,6 +61,42 @@ var allFlagsFuncs = map[string]flagsAny{
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
 	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
 	"ship":       func() (*flag.FlagSet, any) { fs, o := shipFlags(); return fs, o },
+	"suspend":    func() (*flag.FlagSet, any) { fs, o := suspendFlags(); return fs, o },
+	"resume":     func() (*flag.FlagSet, any) { fs, o := resumeFlags(); return fs, o },
+}
+
+// TestSuspendFlagsBind parses every suspend and resume flag and asserts the
+// bound options hold them, and --until reads HH:MM as today or tomorrow
+// (issue #572).
+func TestSuspendFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := suspendFlags()
+	if err := fs.Parse([]string{"--reason", "r", "--until", "18:00", "--session", "s", "--dir", "D"}); err != nil {
+		t.Fatalf("suspendFlags: %v", err)
+	}
+	if want := (suspendOptions{dir: "D", session: "s", reason: "r", until: "18:00"}); *o != want {
+		t.Errorf("suspendFlags parsed = %#v, want %#v", *o, want)
+	}
+	fs, o = resumeFlags()
+	if err := fs.Parse([]string{"--note", "n", "--session", "s", "--dir", "D"}); err != nil {
+		t.Fatalf("resumeFlags: %v", err)
+	}
+	if want := (suspendOptions{dir: "D", session: "s", note: "n"}); *o != want {
+		t.Errorf("resumeFlags parsed = %#v, want %#v", *o, want)
+	}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	for in, want := range map[string]time.Time{
+		"18:00":                now.Add(6 * time.Hour),
+		"09:30":                now.Add(21*time.Hour + 30*time.Minute),
+		"2026-09-27T01:00:00Z": now.Add(13 * time.Hour),
+	} {
+		if got, err := parseUntil(in, now); err != nil || !got.Equal(want) {
+			t.Errorf("parseUntil(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := parseUntil("6pm", now); err == nil {
+		t.Error("parseUntil(6pm) = nil error, want one")
+	}
 }
 
 // TestBriefFlagsBindEveryOption parses non-default values for every brief

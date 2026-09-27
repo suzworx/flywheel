@@ -205,6 +205,10 @@ type Event struct {
 	// Health is a health event's snapshot of the factory (issue #528); only the
 	// health kind may carry it.
 	Health *HealthSnapshot `json:"health,omitempty"`
+	// Until is a suspended event's thaw time, RFC 3339 (issue #572): past it
+	// the factory is no longer suspended, without an unsuspended event. Empty
+	// when the suspension lasts until flywheel resume; only suspended carries it.
+	Until string `json:"until,omitempty"`
 	// Step and Result are a shipped event's ship step (one of ShipSteps) and
 	// its outcome (ok, skip or fail) (issue #457); only the shipped kind may
 	// carry them. The event reuses Attempt, Commit (fw/<task>'s HEAD after the
@@ -287,6 +291,13 @@ var kinds = map[string]bool{
 	// shipped records one step of `flywheel ship` (issue #457): Step, Result,
 	// Attempt, Commit (fw/<task>'s HEAD after the step) and Note.
 	"shipped": true,
+	// suspended freezes the whole factory (issue #572): no task, Session who
+	// froze it, Note the reason, Until the optional thaw time. Every dispatch
+	// path refuses while it holds (FactorySuspended).
+	"suspended": true,
+	// unsuspended thaws a suspended factory (issue #572): no task, Session who
+	// thawed it and Note.
+	"unsuspended": true,
 }
 
 // ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
@@ -411,7 +422,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited", "health":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited", "health", "suspended", "unsuspended":
 		return true
 	default:
 		return false
@@ -472,7 +483,18 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, suspended, unsuspended", e.Kind)
+	}
+	if (e.Kind == "suspended" || e.Kind == "unsuspended") && (e.Session == "" || e.Task != "") {
+		return fmt.Errorf("%s event must carry a session and no task", e.Kind)
+	}
+	if e.Until != "" {
+		if e.Kind != "suspended" {
+			return fmt.Errorf("event kind %q cannot carry an until", e.Kind)
+		}
+		if _, err := time.Parse(time.RFC3339, e.Until); err != nil {
+			return fmt.Errorf("suspended until %q is not RFC 3339", e.Until)
+		}
 	}
 	if e.Kind == "shipped" {
 		if !slices.Contains(ShipSteps, e.Step) {

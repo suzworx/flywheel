@@ -704,5 +704,15 @@ func NextActions(dir string, now time.Time) ([]Action, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", dir, err)
 	}
-	return append(marked, Reconcile(Derive(events), events, obs, PolicyFromConfig(cfg), now)...), nil
+	actions := append(marked, Reconcile(Derive(events), events, obs, PolicyFromConfig(cfg), now)...)
+	// A suspended factory dispatches nothing (issue #572): each DISPATCH
+	// waits, naming the suspension.
+	if s := FactorySuspended(events, now); s.Suspended {
+		for i, a := range actions {
+			if a.Kind == "DISPATCH" {
+				actions[i] = Action{Kind: "WAIT", Task: a.Task, Reason: suspendedRefusal(s).Fix}
+			}
+		}
+	}
+	return actions, nil
 }
