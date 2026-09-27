@@ -661,8 +661,8 @@ func TestTUIEmptyTableNoDrillDown(t *testing.T) {
 	}
 }
 
-// TestTUIAndonStateColored checks that the andon view colours the STATE
-// cell of rows off the cursor (#344 review).
+// TestTUIAndonStateColored checks that the andon view colours rows off the
+// cursor by their STATE (#344 review; the whole row since issue #583 k6).
 func TestTUIAndonStateColored(t *testing.T) {
 	t.Parallel()
 	d := makeTestTUIData()
@@ -672,8 +672,107 @@ func TestTUIAndonStateColored(t *testing.T) {
 		m.Update(k, d)
 	}
 	frame := m.View(d, 80, 12, true)
-	if !strings.Contains(frame, stateColor("stalled")+"stalled") {
-		t.Errorf("andon frame lacks a coloured STATE cell:\n%q", frame)
+	if !hasRow(frame, skins["dark"].Failed+"  T9", "stalled") {
+		t.Errorf("andon frame lacks a red T9 stalled row:\n%q", frame)
+	}
+}
+
+// hasRow reports whether a line of frame starts with prefix and holds every
+// one of texts.
+func hasRow(frame, prefix string, texts ...string) bool {
+	for _, l := range strings.Split(frame, "\n") {
+		if strings.HasPrefix(l, prefix) && lineWith(l, texts...) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTUIFullscreenHidesChrome checks that f in a drill-down (the log and
+// explain tabs, a learning) hides the header and the crumbs and gives their
+// lines to the drill-down, f again brings them back, and a table ignores it.
+func TestTUIFullscreenHidesChrome(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Detail = []string{"line one", "line two"}
+	chrome := func(f string) (header, crumbs bool) {
+		return strings.Contains(f, "lead test-lead"), strings.Contains(f, "<units> <T1>")
+	}
+	m := NewTUI()
+	press(m, d, "f")
+	if h, _ := chrome(m.View(d, 120, 30, false)); !h {
+		t.Error("f in the units table hid the header")
+	}
+	press(m, d, "l")
+	for _, tab := range []string{"", "d"} {
+		press(m, d, tab)
+		if h, c := chrome(m.View(d, 120, 30, false)); !h || !c {
+			t.Fatalf("tab %q before f: header %v, crumbs %v; want both", tab, h, c)
+		}
+		press(m, d, "f")
+		f := m.View(d, 120, 30, false)
+		if h, c := chrome(f); h || c || !strings.HasPrefix(f, "── ") || len(strings.Split(f, "\n")) != 30 {
+			t.Errorf("tab %q fullscreen: header %v, crumbs %v, want neither and the title first in 30 lines:\n%s", tab, h, c, f)
+		}
+		press(m, d, "f")
+		if h, c := chrome(m.View(d, 120, 30, false)); !h || !c {
+			t.Errorf("tab %q: f again did not bring back the header and crumbs", tab)
+		}
+	}
+}
+
+// logData is the test floor with 40 log lines for T1, the last one long.
+func logData() TUIData {
+	d := makeTestTUIData()
+	for i := range 39 {
+		d.Detail = append(d.Detail, fmt.Sprintf("12:00:%02d T1 event %d", i, i))
+	}
+	d.Detail = append(d.Detail, "12:00:39 T1 event 39 "+strings.Repeat("x", 80)+" END")
+	return d
+}
+
+// TestTUILogKeysFollowWrapTimestamps checks the log tab: it follows a
+// running unit (its last line in sight as lines arrive), a scroll up pauses
+// that and says "paused; G to follow", G follows again; t hides the
+// timestamps; w wraps long lines (and does not switch to the why tab); a
+// unit that does not run opens at its first line.
+func TestTUILogKeysFollowWrapTimestamps(t *testing.T) {
+	t.Parallel()
+	d := logData()
+	m := NewTUI()
+	press(m, d, "l") // T1, running
+	if f := m.View(d, 60, 20, false); !strings.Contains(f, "event 39") || strings.Contains(f, "event 0\n") {
+		t.Errorf("a running unit's log does not follow:\n%s", f)
+	}
+	press(m, d, "k")
+	d.Detail = append(d.Detail, "12:01:00 T1 event 40")
+	if f := m.View(d, 60, 20, false); !strings.Contains(f, "paused; G to follow") || strings.Contains(f, "event 40") {
+		t.Errorf("k did not pause the follow:\n%s", f)
+	}
+	press(m, d, "G")
+	if f := m.View(d, 60, 20, false); strings.Contains(f, "paused") || !strings.Contains(f, "event 40") {
+		t.Errorf("G did not follow again:\n%s", f)
+	}
+	if f := m.View(d, 60, 20, false); strings.Contains(f, " END") {
+		t.Errorf("the long line was not cut before w:\n%s", f)
+	}
+	press(m, d, "w")
+	if f := m.View(d, 60, 20, false); m.drillKind != "log" || !strings.Contains(f, "x END") {
+		t.Errorf("w: tab %q, the long line's end not wrapped into sight:\n%s", m.drillKind, f)
+	}
+	press(m, d, "t")
+	if f := m.View(d, 60, 20, false); strings.Contains(f, "12:0") || !strings.Contains(f, "T1 event 40") {
+		t.Errorf("t did not hide the timestamps:\n%s", f)
+	}
+	press(m, d, "t")
+	if f := m.View(d, 60, 20, false); !strings.Contains(f, "12:01:00 T1 event 40") {
+		t.Errorf("t again did not show the timestamps:\n%s", f)
+	}
+
+	m = NewTUI()
+	press(m, d, "jl") // T2, done
+	if f := m.View(d, 60, 20, false); !strings.Contains(f, "event 0\n") || strings.Contains(f, "paused") {
+		t.Errorf("a unit that does not run: its log should open at the top, not paused:\n%s", f)
 	}
 }
 
@@ -822,8 +921,8 @@ func TestTUICappedPeakColoured(t *testing.T) {
 	t.Parallel()
 	d := makeTestTUIData() // T3 is capped with Peak 50000
 	frame := NewTUI().View(d, 120, 12, true)
-	if !strings.Contains(frame, stateColor("capped")+"capped 50k") {
-		t.Errorf("frame lacks a coloured \"capped 50k\" cell:\n%q", frame)
+	if !hasRow(frame, skins["dark"].Failed+"  T3", "capped 50k") {
+		t.Errorf("frame lacks a red T3 row showing \"capped 50k\":\n%q", frame)
 	}
 }
 
