@@ -35,6 +35,7 @@ type ShipOptions struct {
 	Poll         time.Duration         // default 30s
 	IgnoreChecks []string              // check names ci disregards
 	Sleep        func(d time.Duration) // default time.Sleep
+	Requeue      int                   // re-runs from merge-base on ErrShipStale; 0 = 2, negative = never (issue #591)
 }
 
 // ShipStep is one step's outcome: Result ok, skip or fail, Commit fw/<task>'s
@@ -90,8 +91,10 @@ var shipStepFuncs = map[string]func(*shipRun) (result, note string, err error){
 // step appends one shipped event and prints one progress line; a step an
 // earlier run already recorded ok or skip (shipTrusted) is not run again. It
 // stops at the first failure: a *RuleRefusal for preflight or landed, an error
-// wrapping ErrShipGates for gates or ErrShipCI for ci, any other error
-// otherwise.
+// wrapping ErrShipGates for gates, ErrShipCI for ci or ErrShipStale for a
+// merge whose CI ran before <remote>/<integration> moved, any other error
+// otherwise. A stale merge re-runs the steps from merge-base up to Requeue
+// times, the returned Steps holding every pass (issue #591).
 func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 	if !taskOK(task) {
 		return ShipResult{}, fmt.Errorf("task %q does not match ^[A-Za-z0-9._-]+$", task)
@@ -138,7 +141,22 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events}
 	r.remoteDefaults()
 	res := ShipResult{Task: task, Attempt: attempt, Workdir: wt, Integration: o.Integration}
-	return r.steps(res)
+	n := o.Requeue
+	if n == 0 {
+		n = 2
+	}
+	for k := 1; ; k++ {
+		res, err = r.steps(res)
+		if !errors.Is(err, ErrShipStale) || k > n {
+			return res, err
+		}
+		// The failed merge event is in the ledger now: re-read it so the
+		// #577 cut re-runs merge-base, gates, push and ci on the new tree.
+		fmt.Fprintf(r.o.Progress, "ship %s merge: %s/%s moved; requeue %d/%d from merge-base\n", task, o.Remote, o.Integration, k, n)
+		if r.events, err = ReadEvents(abs); err != nil {
+			return res, err
+		}
+	}
 }
 
 // fwHead is fw/<task>'s commit, "" when it does not resolve.
@@ -465,6 +483,12 @@ func shipGates(r *shipRun) (string, string, error) {
 // CLI exits 5 for it.
 var ErrShipCI = errors.New("CI failed")
 
+// ErrShipStale is wrapped in the error Ship returns when the merge step finds
+// <remote>/<integration> moved past what the PR's CI ran on (issue #591): the
+// PR head does not contain the current integration commit. Ship re-runs from
+// merge-base up to ShipOptions.Requeue times first; the CLI exits 5 for it.
+var ErrShipStale = errors.New("integration branch moved after CI")
+
 // remoteDefaults fills the remote half's options and the planned issue.
 func (r *shipRun) remoteDefaults() {
 	o := &r.o
@@ -675,6 +699,20 @@ func shipMerge(r *shipRun) (string, string, error) {
 	}
 	if state == "MERGED" {
 		return "skip", fmt.Sprintf("#%d already merged as %s", n, short7(commit)), nil
+	}
+	// CI measured fw/<task>'s pushed HEAD: refuse it unless it contains the
+	// integration commit it would land on (issue #591).
+	cur, err := r.integrationCommit()
+	if err != nil {
+		return "", "", fmt.Errorf("resolving %s/%s before merge: %w", r.o.Remote, r.o.Integration, err)
+	}
+	in, err := isAncestor(r.wt, cur, "refs/heads/fw/"+r.task)
+	if err != nil {
+		return "", "", err
+	}
+	if !in {
+		note := fmt.Sprintf("%s/%s moved to %s after CI ran on %s", r.o.Remote, r.o.Integration, short7(cur), short7(r.fwHead()))
+		return "", note, fmt.Errorf("%w: %s", ErrShipStale, note)
 	}
 	title := fmt.Sprintf("%s (#%d)", r.o.Title, n)
 	merr := r.retry("merge", func() error { return r.o.Forge.Merge(n, title, scrubMessage(r.o.Body)) })
