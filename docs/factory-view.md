@@ -17,13 +17,19 @@ From top to bottom:
   - `health <age> ago` for the latest health event, or `health none`
   - `flywheel <version>` (`dev` for a local build)
 
-  The right column is the key menu of the screen shown, in columns of up to four keys:
-  `<:> view  </> filter  <enter> explain  <l> log  <?> help  <q> quit  <ctrl-e> header ...`.
-  Each view lists only the keys valid there, so the workers view has no `<enter> explain`.
+  The right column is the key menu of the screen shown:
+  `<:> view  </> filter  <enter> why  <l> log  <?> help  <q> quit  <ctrl-e> header ...`.
+  It takes four rows, or five when four do not fit, and as many columns as fit beside the context
+  column (which keeps at most three fifths of the width, its long lines cut with `~`). A hint is
+  never cut: when five rows still do not fit, whole hints are dropped from the end and `<?> help`
+  stays, since help lists every key. Each view lists only the keys valid there, so the workers view
+  has no `<enter> why`.
   A frame too short to keep five table rows below the header drops the header on its own.
 - **The title bar**: `── Units(all)[3] ──`, the view, its filter and its row count, then the sort
-  when one is set (`── Units(/build)[2] ↑stage ──`); in a drill-down `── Explain T3 ──`,
-  `── Log T3 ──`, `── Learning L-02 ──`, `── Checkpoint T3/2 ──` or `── Views ──`; `── Help ──`
+  when one is set (`── Units(/build)[2] ↑stage ──`); in a unit's detail the tab and the unit,
+  `── Why T3 ──`, `── Explain T3 ──`, `── Brief T3 ──`, `── Log T3 ──`, `── Checkpoints T3 ──`,
+  `── Findings T3 ──` or `── Events T3 ──`; in another drill-down `── Learning L-02 ──`,
+  `── Checkpoint T3/2 ──` or `── Views ──`; `── Help ──`
   in help. The search view's title names its text: `── Search "disk full"(all)[12] ──`.
 - **The table**, the drill-down's lines or the help text. The cursor row starts with `>`.
 - **The flash line**: the latest message (an unknown view, a toggle, a reload). The next key
@@ -42,9 +48,11 @@ Hiding the header or the crumbs gives their lines to the table.
 | PgDn, PgUp | table, drill-down, help | a page down or up |
 | `:` | table | the view prompt: a view by name or alias (see [Views](#views)), `s <text>` to search, `q` to quit |
 | `/` | table | the filter prompt; the table filters as you type, Enter keeps it (see [Filters](#filters)) |
-| Enter | units, andon, tree | explain the unit under the cursor |
+| Enter | units, andon, tree | the unit's detail, at its why tab (see [Unit detail](#unit-detail)) |
 | Enter | learnings, checkpoints, search | the learning in full, the checkpoint's changed paths, the result's unit at the match |
-| `l` | units, andon, tree | the unit's event log |
+| `l` | units, andon, tree | the unit's detail at its log tab |
+| `w` `d` `y` `l` `c` `F` `e` | unit detail | switch tab: why, explain, brief, log, checkpoints, findings, events |
+| `J` (Shift) | unit detail | open the detail of the unit's first need that has not landed |
 | Esc | everywhere | leave the drill-down, help or prompt; in a table, clear the filter, else go back to the previous view |
 | `-` | table | swap to the previous view, and back |
 | `[` / `]` | table | step back / forward through the `:` commands entered |
@@ -67,7 +75,7 @@ for the keys to come.
 
 | View | Alias | Rows |
 | --- | --- | --- |
-| `units` | `u` | every unit: stage, attempt, session, model, steps, age, state |
+| `units` | `u` | every unit: stage, attempt, session, model, steps, age, state, and last its why (see [Unit detail](#unit-detail)) |
 | `workers` | `w` | the worker lines and the staffed roles |
 | `andon` | `a` | the units that stopped the line |
 | `events` | `e` | the recent events, newest first |
@@ -103,6 +111,58 @@ stable, so rows with equal keys keep their order. Ages sort as durations and num
 Sorting by the column under a column cursor (k9s Shift-O with Shift-Left/Right) is not there: the
 terminal decoder does not report Shift-Left/Right. The tree keeps its order.
 
+## Unit detail
+
+Enter on a unit opens its detail. The first line is its why (below), then the tab's lines. A single
+key switches the tab, and the crumbs name it (`<units> <T3> <brief>`):
+
+| Key | Tab | Lines |
+| --- | --- | --- |
+| `w` | why | the why and the timeline (the tab Enter opens) |
+| `d` | explain | `flywheel explain` of the unit |
+| `y` | brief | the brief's text, the file its latest planned, amended or dispatched event names |
+| `l` | log | the unit's events as readable lines |
+| `c` | checkpoints | its `refs/flywheel/checkpoints/<task>/<attempt>` and their changed paths (read from git as the tab opens and on Ctrl-R) |
+| `F` | findings | its review findings, `OPEN` or `closed`, each followed by the responses to it |
+| `e` | events | its events as the ledger records them |
+
+Shift-J opens the detail of the unit's first need that has not landed; Esc returns to the list,
+the cursor where it was.
+
+### Why
+
+One or two plain sentences, from the ledger's facts only, the same on every machine (times in
+UTC). They name the state, the reason and the next step as `flywheel recover` would:
+
+- planned: `blocked: needs k1, which has not landed.`, or `queued: planned and its needs are met;
+  next: flywheel run k2.` (or that the factory is frozen)
+- dispatched: `queued: attempt 2 dispatched 3m ago, waiting for the worker to start.`
+- running: `building: attempt 2, 14 steps, running for 23m.`; `stalled` or `silent` when the floor
+  says so or nothing happened for longer than the worker's stall timeout, with the timeout
+- finished: `rate-limited` (the model and its reset), `capped` (the output cap and the peak
+  reasoning), `suspended` (frozen by suspend at a time; resumes at the thaw or on flywheel resume),
+  `failed` (the finish reason), `validation failed` (the failing gates and the first failing
+  command), `needs correction` (the open blocking findings), `finished, awaiting validation`,
+  `validated, awaiting inspection` or `validated, awaiting the review panel`
+- `passed, awaiting landing`, `landed as <commit> (PR #n)`, `withdrawn: <note>`, `lost`
+
+The units table shows it as its last column, WHY, cut to the frame; the detail has it whole.
+
+### Timeline
+
+Every event of the unit in order, and a `·· <length> <what>` row for each gap of more than five
+minutes between two of them:
+
+- `attempt N running`: an attempt was dispatched or started and had not finished
+- `waiting for the rate-limit reset at HH:MM UTC`: the gap follows a rate-limited finish
+- `frozen by suspend`: a factory suspension overlapped the gap
+- `waiting for validation`: the gap follows a finish
+- `waiting for inspection`: the gap follows a passing reading (owns checked or a gate passed)
+- `idle`: anything else
+
+The last line sums it up: `total` from the first event to the last, `touch` the attempts' run time
+(each dispatch or start to its finish or loss) and the `flow efficiency`, touch over total.
+
 ## Search
 
 `:s <text>` (or `:search <text>`) searches, case-insensitively, the ledger's events, the run logs
@@ -111,7 +171,7 @@ terminal decoder does not report Shift-Left/Right. The tree keeps its order.
 `report`, `brief`), TASK, ATTEMPT, LINE (an event's line in the ledger) and an excerpt, the match
 with about 40 characters on each side. It stops at 500 results and the title says
 `500+ (narrow the search)`. Enter on an event opens the unit's log at the match; on any other
-result, the unit's explanation. The search runs when you enter it and on Ctrl-R, never on every
+result, the unit's detail at its explain tab. The search runs when you enter it and on Ctrl-R, never on every
 refresh.
 
 ## Coming next

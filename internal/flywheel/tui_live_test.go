@@ -135,7 +135,7 @@ func TestTUILiveTickRefetches(t *testing.T) {
 	}
 }
 
-func TestTUILiveEnterFetchesExplain(t *testing.T) {
+func TestTUILiveEnterFetchesWhy(t *testing.T) {
 	t.Parallel()
 	keys := make(chan term.Key, 2)
 	ticks := make(chan time.Time)
@@ -174,16 +174,16 @@ func TestTUILiveEnterFetchesExplain(t *testing.T) {
 		t.Errorf("RunTUILoop returned error: %v", err)
 	}
 
-	// Expect at least one fetch after Enter, which should Wants explain.
+	// Expect at least one fetch after Enter, which should Want the why tab.
 	foundExplain := false
 	for _, w := range wantsList {
-		if w.kind == "explain" && w.ok && w.task == "T1" {
+		if w.kind == "why" && w.ok && w.task == "T1" {
 			foundExplain = true
 			break
 		}
 	}
 	if !foundExplain {
-		t.Errorf("no Wants(explain, T1, true) found in %d fetches", len(wantsList))
+		t.Errorf("no Wants(why, T1, true) found in %d fetches", len(wantsList))
 	}
 }
 

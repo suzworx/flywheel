@@ -64,6 +64,78 @@ var allFlagsFuncs = map[string]flagsAny{
 	"schedule":   func() (*flag.FlagSet, any) { fs, o := scheduleFlags(true); return fs, o },
 	"suspend":    func() (*flag.FlagSet, any) { fs, o := suspendFlags(); return fs, o },
 	"resume":     func() (*flag.FlagSet, any) { fs, o := resumeFlags(); return fs, o },
+	"fleet":      func() (*flag.FlagSet, any) { fs, o := fleetFlags("add"); return fs, o },
+}
+
+// TestFleetFlagsBind checks add's --name and list/status's --json reach the
+// bound options, and each subcommand takes only its own flags (issue #585).
+func TestFleetFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := fleetFlags("add")
+	if err := fs.Parse([]string{"--name", "N"}); err != nil || o.name != "N" {
+		t.Errorf("fleet add --name N: parsed %#v, err %v", *o, err)
+	}
+	for _, sub := range []string{"list", "status"} {
+		fs, o := fleetFlags(sub)
+		if err := fs.Parse([]string{"--json"}); err != nil || !o.json {
+			t.Errorf("fleet %s --json: parsed %#v, err %v", sub, *o, err)
+		}
+		if fs.Lookup("name") != nil {
+			t.Errorf("fleet %s defines --name", sub)
+		}
+	}
+	if fs, _ := fleetFlags("remove"); fs.Lookup("json") != nil || fs.Lookup("name") != nil {
+		t.Error("fleet remove defines flags, want none")
+	}
+}
+
+// TestFleetMainTable drives fleetMain against a temp registry: usage exits
+// 2, add then status prints the table's columns and the root's row, list
+// names the ledger, a duplicate add exits 1, and remove empties the fleet.
+func TestFleetMainTable(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "fleet.json")
+	root := filepath.Join(t.TempDir(), "alpha")
+	if _, err := flywheel.Init(root, false); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (int, string) {
+		var out, errb strings.Builder
+		code := fleetMain(args, &out, &errb, file, time.Now())
+		return code, out.String() + errb.String()
+	}
+	for _, args := range [][]string{nil, {"bogus"}, {"add"}, {"list", "x"}, {"status", "--name", "n"}} {
+		if code, out := run(args...); code != 2 {
+			t.Errorf("fleet %v = %d, want 2 (usage)\n%s", args, code, out)
+		}
+	}
+	if code, out := run("add", root, "--name", "a1"); code != 0 || !strings.Contains(out, "added a1") {
+		t.Fatalf("fleet add = %d\n%s", code, out)
+	}
+	if code, out := run("add", root); code != 1 || !strings.Contains(out, `"a1"`) {
+		t.Errorf("fleet add twice = %d, want 1 naming a1\n%s", code, out)
+	}
+	code, out := run("status")
+	head := strings.Fields(strings.SplitN(out, "\n", 2)[0])
+	if want := "NAME KIND RUNNING PASSED FINISHED ANDON STATE HEALTH LAST"; code != 0 || strings.Join(head, " ") != want {
+		t.Errorf("fleet status = %d, header %v, want %s\n%s", code, head, want, out)
+	}
+	if !strings.Contains(out, "a1") || !strings.Contains(out, "running") {
+		t.Errorf("fleet status lacks the a1 running row:\n%s", out)
+	}
+	if code, out := run("list"); code != 0 || !strings.Contains(out, "root") || !strings.Contains(out, root) {
+		t.Errorf("fleet list = %d\n%s", code, out)
+	}
+	var rows []flywheel.FleetRow
+	if code, out := run("status", "--json"); code != 0 || json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 1 {
+		t.Errorf("fleet status --json = %d, rows %d\n%s", code, len(rows), out)
+	}
+	if code, out := run("remove", "a1"); code != 0 {
+		t.Errorf("fleet remove = %d\n%s", code, out)
+	}
+	if code, out := run("remove", "a1"); code != 1 {
+		t.Errorf("fleet remove twice = %d, want 1\n%s", code, out)
+	}
 }
 
 // TestScheduleFlagsBind checks install's --every and --dir reach the bound

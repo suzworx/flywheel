@@ -375,3 +375,86 @@ func localDetail(d TUIData, kind, id string) []string {
 	}
 	return out
 }
+
+// timelineLines draws a unit's timeline (UnitTimeline): one line per event,
+// a "·· <length> <what>" line per gap, and the summary last.
+func timelineLines(rows []TimelineRow) []string {
+	out := []string{"timeline:"}
+	for _, r := range rows {
+		switch r.Kind {
+		case "gap":
+			out = append(out, fmt.Sprintf("  %14s  ·· %s %s", "", whyDur(r.Dur), r.Detail))
+		case "summary":
+			out = append(out, "", r.Detail)
+		default:
+			out = append(out, fmt.Sprintf("  %s  %-13s %s", r.TS.Local().Format("01-02 15:04:05"), r.Kind, r.Detail))
+		}
+	}
+	return out
+}
+
+// findingLines are the unit's review findings, open ones marked, each
+// followed by the responses to it.
+func findingLines(events []Event, task string) []string {
+	open := map[string]bool{}
+	for _, f := range OpenFindings(events, task) {
+		open[f.Finding] = true
+	}
+	var out []string
+	for _, e := range events {
+		if e.Task != task || e.Kind != "review_finding" {
+			continue
+		}
+		state := "closed"
+		if open[e.Finding] {
+			state = "OPEN"
+		}
+		where := e.Path
+		if e.LineNo > 0 {
+			where += fmt.Sprintf(":%d", e.LineNo)
+		}
+		out = append(out, strings.TrimSpace(fmt.Sprintf("%s %s %s %s %s", state, e.Finding, e.Severity, where, oneLine.Replace(e.Title))))
+		for _, r := range events {
+			if r.Task == task && r.Kind == "finding_response" && r.Finding == e.Finding {
+				out = append(out, "    ↳ "+strings.TrimSpace(r.Verdict+" by "+r.Session+": "+oneLine.Replace(r.Note)))
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"no review findings"}
+	}
+	return out
+}
+
+// unitEventLines are the unit's events as their ledger records.
+func unitEventLines(events []Event, task string) []string {
+	var out []string
+	for _, e := range events {
+		if e.Task != task {
+			continue
+		}
+		e.Prev = ""
+		b, err := marshalEvent(e)
+		if err != nil {
+			out = append(out, "event: "+err.Error())
+			continue
+		}
+		out = append(out, string(b))
+	}
+	return out
+}
+
+// checkpointLines are the unit's checkpoints and their changed paths.
+func checkpointLines(cps []Checkpoint) []string {
+	var out []string
+	for _, c := range cps {
+		out = append(out, checkpointRef(c.Task, c.Attempt)+" "+shortSHA(c.SHA))
+		for _, p := range c.Paths {
+			out = append(out, "  "+p)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"no checkpoints"}
+	}
+	return out
+}
