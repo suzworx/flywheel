@@ -293,3 +293,64 @@ func TestTUIMetricsView(t *testing.T) {
 		t.Errorf("enter on lead time opened %q %q", m.drillKind, m.drillTask)
 	}
 }
+
+// TestTUIMetricsSplitByModelAndWorker checks the :metrics split (issue #583
+// k7): Shift-M on a metric shows a row per model, Shift-W a row per worker
+// (the dispatched events' worker), and Esc returns to every metric.
+func TestTUIMetricsSplitByModelAndWorker(t *testing.T) {
+	t.Parallel()
+	at := func(h int) string { return time.Date(2026, 9, 2, h, 0, 0, 0, time.UTC).Format(time.RFC3339) }
+	events := []Event{
+		{TS: at(1), Task: "T1", Kind: "dispatched", Attempt: "r1", Worker: "fast"},
+		{TS: at(2), Task: "T1", Kind: "finished", Attempt: "r1", Cost: 1.5},
+		{TS: at(3), Task: "T1", Kind: "landed"},
+		{TS: at(4), Task: "T2", Kind: "dispatched", Attempt: "r1", Worker: "deep"},
+		{TS: at(5), Task: "T2", Kind: "finished", Attempt: "r1", Cost: 2},
+		{TS: at(6), Task: "T2", Kind: "dispatched", Attempt: "c1"},
+		{TS: at(7), Task: "T2", Kind: "finished", Attempt: "c1", Cost: 1},
+		{TS: at(8), Task: "T2", Kind: "landed"},
+	}
+	w, _ := WindowFor("24h", time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	workers := workerStats(events, w)
+	want := []TUIWorkerStat{{Worker: "-", Spend: 1, Landed: 1}, {Worker: "deep", Spend: 2}, {Worker: "fast", Spend: 1.5, Landed: 1, FirstPass: 1}}
+	if !slices.Equal(workers, want) {
+		t.Errorf("workerStats = %+v, want %+v", workers, want)
+	}
+
+	d := makeTestTUIData()
+	var tm TUIMetrics
+	tm.Cur.Cost.ByModel = []StatsModel{
+		{Model: "claude-opus-5-5", Spend: 6, Accepted: 3, Inspected: 4},
+		{Model: "gpt-5", Spend: 2, Inspected: 1},
+	}
+	tm.Workers = workers
+	d.Metrics = map[string]TUIMetrics{"24h": tm}
+	m := NewTUI()
+	typed(m, d, ":m")
+	for m.cursor < 30 && cell(func() []string { _, r := m.Rows(d); return r[m.cursor] }(), 1) != "spend" {
+		press(m, d, "j")
+	}
+	press(m, d, "M")
+	header, rows := m.Rows(d)
+	got := strings.Join(header, " ")
+	for _, r := range rows {
+		got += " | " + strings.Join(r, " ")
+	}
+	if want := "MODEL SPEND LANDED FIRST-PASS PER LANDED | claude-opus-5-5 $6.00 3 75% $2.00 | gpt-5 $2.00 0 0% –"; got != want {
+		t.Errorf("by model = %q\nwant       %q", got, want)
+	}
+	if frame := m.View(d, 120, 20, false); !strings.Contains(frame, "Metrics 24h · spend by model") {
+		t.Errorf("split title lacks the metric:\n%s", frame)
+	}
+	press(m, d, "W")
+	if got := firstCells(m, d); got != "- deep fast" {
+		t.Errorf("by worker rows = %q, want - deep fast", got)
+	}
+	esc(m, d)
+	if header, _ := m.Rows(d); m.view != "metrics" || header[1] != "METRIC" || m.split != "" {
+		t.Errorf("after Esc: view %q header %q; want every metric", m.view, header)
+	}
+	if _, rows := m.Rows(d); cell(rows[m.cursor], 1) != "spend" {
+		t.Errorf("after Esc the cursor is on %q, want spend", rows[m.cursor])
+	}
+}

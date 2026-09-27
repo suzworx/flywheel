@@ -1,8 +1,12 @@
 package flywheel
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/term"
 )
@@ -280,5 +284,110 @@ func TestTUISearchNeedsText(t *testing.T) {
 	typed(m, d, ":s")
 	if got := m.flashLine(); got != "search what? :s <text>" || m.view != "units" {
 		t.Errorf("flash %q view %q; want the ask and units", got, m.view)
+	}
+}
+
+// TestTUIAndonNextSeverityAndSteps checks the andon view (issue #583 k7):
+// SEVERITY, SIGNAL, SINCE, WHAT HAPPENED and NEXT, worst first; a unit's
+// next step is recover's command, a paused model's a factory-wide one.
+func TestTUIAndonNextSeverityAndSteps(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Floor.Refreshed = time.Date(2026, 9, 27, 12, 0, 0, 0, time.Local)
+	d.Floor.Andon = []Andon{
+		{Task: "model/claude-opus", State: "paused until 13:00", Age: 0},
+		{Task: "T3", State: "capped", Age: 60},
+		{Task: "T7", State: "stalled", Age: 600},
+	}
+	d.Why = map[string]string{"T7": "no output for 10m\nthe worker is stuck"}
+	d.Next = map[string]Next{
+		"T7": {Action: "mark-lost", Reason: "idle", Command: "flywheel recover --apply"},
+		"T3": {Action: "none", Reason: "attempt 1 ended capped; correct or dispatch again"},
+	}
+	m := NewTUI()
+	typed(m, d, ":a")
+	header, rows := m.Rows(d)
+	if got := strings.Join(header, " "); got != "UNIT SEVERITY SIGNAL SINCE WHAT HAPPENED NEXT" {
+		t.Fatalf("header = %q", got)
+	}
+	want := [][]string{
+		{"T7", "high", "stalled", "11:50", "no output for 10m the worker is stuck", "flywheel recover --apply"},
+		{"model/claude-opus", "medium", "paused until 13:00", "12:00", "a rate limit paused claude-opus: paused until 13:00", "wait for the reset, then flywheel supervise --resume-limited"},
+		{"T3", "low", "capped", "11:59", "capped", "none: attempt 1 ended capped; correct or dispatch again"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %q, want %q", rows, want)
+	}
+	for i := range want {
+		if strings.Join(rows[i], "|") != strings.Join(want[i], "|") {
+			t.Errorf("row %d = %q\nwant      %q", i, rows[i], want[i])
+		}
+	}
+	frame := m.View(d, 200, 12, false)
+	for _, s := range []string{"SEVERITY", "SIGNAL", "SINCE", "WHAT HAPPENED", "NEXT", "flywheel recover --apply"} {
+		if !strings.Contains(frame, s) {
+			t.Errorf("frame lacks %q:\n%s", s, frame)
+		}
+	}
+}
+
+// TestTUIRunLogSteps checks the log tab's run (issue #583 k7): a claude
+// stream through the adapter, one line per tool call with its tool and
+// target, +N −M for an edit, rc for a Bash call and a failed command's first
+// failing line; the unit's events stay on the events tab.
+func TestTUIRunLogSteps(t *testing.T) {
+	t.Parallel()
+	fixture, err := os.ReadFile(filepath.Join("testdata", "claude-tool.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's Edit and Grep, then a passing and a failing go test; its
+	// result line (max_tokens) closes the run.
+	lines := strings.SplitAfter(strings.ReplaceAll(string(fixture), "\r\n", "\n"), "\n")
+	bash := func(id, cmd string) string {
+		return `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"` + cmd + `"}}]},"session_id":"s"}` + "\n"
+	}
+	result := func(id string, isErr bool, text string) string {
+		b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": id, "is_error": isErr, "content": text}}}})
+		return string(b) + "\n"
+	}
+	run := lines[0] + lines[1] +
+		bash("toolu_3", "go build ./...") + result("toolu_3", false, "") +
+		bash("toolu_4", "go test ./internal/flywheel/") +
+		result("toolu_4", true, "Exit code 1\n=== RUN   TestX\n--- FAIL: TestX (0.00s)\n    x_test.go:9: boom\nFAIL") +
+		lines[2]
+	adap, _ := AdapterFor("claude")
+	got := runLogLines(adap, []byte(run), "10:00:00 dispatched T1 attempt r1 on claude-opus-5-5 (claude)", "10:05:00")
+	want := []string{
+		"10:00:00 dispatched T1 attempt r1 on claude-opus-5-5 (claude)",
+		"--:--:-- #1 edit internal/flywheel/adapter.go +1 −1",
+		"--:--:-- #2 grep internal/flywheel",
+		"--:--:-- #3 bash go build ./... rc=0",
+		"--:--:-- #4 bash go test ./internal/flywheel/ rc=1",
+		"--:--:--      ↳ --- FAIL: TestX (0.00s)",
+		"10:05:00 ended length $0.01",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("run log =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	// The log tab draws those lines; t hides the clocks.
+	d := makeTestTUIData()
+	d.Detail = got
+	m := NewTUI()
+	press(m, d, "l")
+	frame := m.View(d, 120, 30, false)
+	if !strings.Contains(frame, "#4 bash go test ./internal/flywheel/ rc=1") || !strings.Contains(frame, "↳ --- FAIL: TestX") {
+		t.Errorf("log tab lacks the run's steps:\n%s", frame)
+	}
+	press(m, d, "t")
+	if frame = m.View(d, 120, 30, false); strings.Contains(frame, "--:--:--") {
+		t.Errorf("t left the clocks:\n%s", frame)
+	}
+
+	// A torn last line waits for the next read; a run with no steps is its head.
+	if got := runLogLines(adap, []byte(bash("toolu_9", "ls")[:40]), "head", ""); len(got) != 1 {
+		t.Errorf("torn run = %q, want the head alone", got)
 	}
 }
