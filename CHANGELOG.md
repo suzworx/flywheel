@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.35.0](https://github.com/suzworx/flywheel/compare/v0.34.0...v0.35.0) (2026-09-27)
+
+
+### Features
+
+* a per-unit cost cap, limits.unit_cost_usd, refused at dispatch and enforced live ([#575](https://github.com/suzworx/flywheel/issues/575)) ([74926e1](https://github.com/suzworx/flywheel/commit/74926e1cb5e289265c923bf5179938d2fbebb855))
+* lint --probe --task records gate probes, and validate and explain name a gate that already failed before dispatch ([#573](https://github.com/suzworx/flywheel/issues/573)) ([58ec63b](https://github.com/suzworx/flywheel/commit/58ec63b01bde1615cb1ccfd148c2b03c53bd4112)), closes [#544](https://github.com/suzworx/flywheel/issues/544)
+
 ## [0.34.0](https://github.com/suzworx/flywheel/compare/v0.33.0...v0.34.0) (2026-09-26)
 
 
