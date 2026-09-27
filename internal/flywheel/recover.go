@@ -152,6 +152,7 @@ type recoverFacts struct {
 	InspectReady          bool // inspectionReady
 	PanelPending          []string
 	NeedsOwner            []string // open blocking findings outside owns (issue #458)
+	Suspended             bool     // the factory is suspended now (issue #572)
 }
 
 // nextAction is the deterministic next-action rule (docs/PROTOCOL.md).
@@ -171,6 +172,14 @@ func nextAction(f recoverFacts) Next {
 		return Next{Action: "mark-lost", Reason: f.Lost, Command: "flywheel recover --apply"}
 	case inFlight:
 		return Next{Action: "none", Reason: "in flight; no live lease, not yet idle past limits.lost_after"}
+	}
+	if f.Status == "finished" && f.FinishReason == "suspended" {
+		// Stopped by a factory suspension (issue #572): flywheel resume thaws
+		// and re-dispatches it; once thawed it resumes on its own.
+		if f.Suspended {
+			return Next{Action: "resume-session", Reason: "stopped by a factory suspension", Command: "flywheel resume --session <s>"}
+		}
+		return Next{Action: "resume-session", Reason: "stopped by a factory suspension", Command: "flywheel run " + t + " --resume"}
 	}
 	unclean := f.Status == "finished" && f.FinishReason != "stop" || f.Status == "lost"
 	if unclean && f.PausedUntil != "" {
@@ -254,8 +263,10 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 	if err != nil {
 		return rep, err
 	}
+	suspended := FactorySuspended(events, now).Suspended
 	for _, ts := range state.Tasks {
 		t, f := recoverTask(dir, ts, events, obs, cfg, now)
+		f.Suspended = suspended
 		t.Next = nextAction(f)
 		t.Lead = leads[ts.ID]
 		if last, err := time.Parse(time.RFC3339Nano, ts.UpdatedAt); err == nil && o.DormantAfter > 0 && ts.Status != "landed" && now.Sub(last) > o.DormantAfter {
