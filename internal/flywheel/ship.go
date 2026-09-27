@@ -66,6 +66,7 @@ type shipRun struct {
 	owns                   []string
 	pr                     PullRequest // the unit's PR once pr ran or was looked up
 	issue                  int         // the planned event's issue, 0 without one
+	base                   string      // <remote>/<integration>'s commit merge-base saw, recorded on its event
 }
 
 // shipStepFuncs runs each of ShipSteps: the outcome (ok or skip), a note, and
@@ -154,6 +155,23 @@ func (r *shipRun) fwHead() string {
 // nothing.
 func (r *shipRun) steps(res ShipResult) (ShipResult, error) {
 	trusted := shipTrusted(r.events, r.task, r.attempt, r.fwHead())
+	if shipBaseCheck(trusted) {
+		cur, cerr := r.integrationCommit()
+		if cut := shipTrustBase(trusted, cur); len(cut) < len(trusted) {
+			ref, old := r.o.Remote+"/"+r.o.Integration, trusted[len(cut)].Base
+			why := fmt.Sprintf("%s moved %s -> %s", ref, short7(old), short7(cur))
+			switch {
+			case cur == "" && cerr != nil:
+				why = fmt.Sprintf("cannot tell whether %s moved (%v)", ref, cerr)
+			case cur == "":
+				why = ref + " does not resolve"
+			case old == "":
+				why = "no recorded commit of " + ref
+			}
+			fmt.Fprintf(r.o.Progress, "ship %s merge-base: %s; re-running from merge-base\n", r.task, why)
+			trusted = cut
+		}
+	}
 	for i, name := range ShipSteps {
 		if name == "merge" && r.o.NoMerge {
 			break
@@ -176,6 +194,9 @@ func (r *shipRun) steps(res ShipResult) (ShipResult, error) {
 		fmt.Fprintln(r.o.Progress, strings.TrimSpace(fmt.Sprintf("ship %s %s: %s %s", r.task, name, result, step.Note)))
 		ev := Event{TS: r.o.Now().UTC().Format(time.RFC3339Nano), Task: r.task, Kind: "shipped", Attempt: r.attempt,
 			Step: name, Result: result, Commit: step.Commit, Note: step.Note}
+		if name == "merge-base" && err == nil {
+			ev.Base = r.base
+		}
 		if aerr := AppendEvent(r.dir, ev); aerr != nil {
 			if err != nil {
 				return res, fmt.Errorf("%w (and recording it failed: %v)", err, aerr)
@@ -220,6 +241,45 @@ func shipTrusted(events []Event, task, attempt, head string) []Event {
 		chain = chain[:len(chain)-1]
 	}
 	return chain
+}
+
+// shipBaseCheck reports whether a trusted chain includes merge-base but not
+// merge (issue #577): merge-base's outcome also depends on
+// <remote>/<integration>, which must be checked before trusting it. A unit
+// already merged keeps its chain.
+func shipBaseCheck(chain []Event) bool {
+	return len(chain) > slices.Index(ShipSteps, "merge-base") && len(chain) <= slices.Index(ShipSteps, "merge")
+}
+
+// shipTrustBase cuts a chain shipBaseCheck selects back to just before
+// merge-base unless merge-base's record carries Base equal to current, the
+// integration commit now ("" when it could not be fetched or resolved).
+func shipTrustBase(chain []Event, current string) []Event {
+	if !shipBaseCheck(chain) {
+		return chain
+	}
+	mb := slices.Index(ShipSteps, "merge-base")
+	if current == "" || chain[mb].Base != current {
+		return chain[:mb]
+	}
+	return chain
+}
+
+// integrationCommit fetches <remote> <integration> (retrying a transient
+// error) and resolves <remote>/<integration>'s commit.
+func (r *shipRun) integrationCommit() (string, error) {
+	if err := r.retry("merge-base", func() error {
+		_, err := gitWith(r.wt, shipEnv(), "fetch", r.o.Remote, r.o.Integration)
+		return err
+	}); err != nil {
+		return "", fmt.Errorf("git fetch %s %s: %w", r.o.Remote, r.o.Integration, err)
+	}
+	return r.integrationRef()
+}
+
+// integrationRef resolves <remote>/<integration>'s commit without fetching.
+func (r *shipRun) integrationRef() (string, error) {
+	return gitWith(r.wt, nil, "rev-parse", "--verify", "-q", r.o.Remote+"/"+r.o.Integration+"^{commit}")
 }
 
 // header loads the owns of task's current attempt once per ship.
@@ -334,6 +394,11 @@ func shipMergeBase(r *shipRun) (string, string, error) {
 	if _, err := gitWith(r.wt, env, "fetch", r.o.Remote, r.o.Integration); err != nil {
 		return "", "", fmt.Errorf("git fetch %s %s: %w", r.o.Remote, r.o.Integration, err)
 	}
+	base, err := r.integrationRef()
+	if err != nil {
+		return "", "", fmt.Errorf("resolving %s: %w", ref, err)
+	}
+	r.base = base
 	in, err := isAncestor(r.wt, ref, "HEAD")
 	if err != nil {
 		return "", "", err
@@ -474,10 +539,12 @@ func scrubMessage(s string) string {
 	return strings.Join(keep, "\n")
 }
 
-// transientErr reports whether err is a network blip worth retrying.
+// transientErr reports whether err is a network blip worth retrying,
+// name-resolution failures included (issue #577).
 func transientErr(err error) bool {
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "tls handshake timeout") || strings.Contains(s, "connection reset") || strings.Contains(s, "i/o timeout")
+	return strings.Contains(s, "tls handshake timeout") || strings.Contains(s, "connection reset") || strings.Contains(s, "i/o timeout") ||
+		strings.Contains(s, "could not resolve host") || strings.Contains(s, "temporary failure in name resolution")
 }
 
 // retry runs f, retrying a transient error after 2s, 4s, 8s and 16s.
