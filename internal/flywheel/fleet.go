@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -259,10 +260,17 @@ func isDir(p string) bool {
 // (ledgerSummary), whether it is suspended, the models a rate limit pauses,
 // and the ages in whole seconds of its latest health and latest events (nil
 // when none). Error is set when the ledger fails to read; the other fields
-// are then zero. A FoldIdle row has Kind FleetKindIdle, Idle the number of
-// ledgers it stands for and LastAge the oldest of their latest-event ages.
+// are then zero. Events is the number of events summarised: all of them for a
+// root or a full summary, only the worktree's own events for a worktree
+// summarised against its root; Inherited is the number of the worktree's
+// events that are also in its root's ledger (issue #608), whose tasks, andon,
+// freeze, pauses and ages the row leaves out. A FoldIdle row has Kind
+// FleetKindIdle, Idle the number of ledgers it stands for and LastAge the
+// oldest of their latest-event ages.
 type FleetRow struct {
 	FleetLedger
+	Events    int         `json:"events"`
+	Inherited int         `json:"inherited,omitempty"`
 	Tasks     StatusTasks `json:"tasks"`
 	Andon     int         `json:"andon"`
 	Suspended bool        `json:"suspended"`
@@ -280,13 +288,18 @@ const FleetKindIdle = "idle"
 const DefaultIdleAfter = 72 * time.Hour
 
 // FoldIdle drops each non-root ledger whose latest event is older than
-// idleAfter and appends, after the last row of each root that lost any, one
-// FleetKindIdle row counting them with the oldest age. Root ledgers, rows
-// carrying Error and ledgers with no event are always kept.
+// idleAfter, and each one with no event after its fork from the root
+// (Inherited > 0, Events == 0, issue #608) whatever its age, and appends,
+// after the last row of each root that lost any, one FleetKindIdle row
+// counting them with the oldest age they have. Root ledgers, rows carrying
+// Error and ledgers with no event at all are always kept.
 func FoldIdle(rows []FleetRow, idleAfter time.Duration) []FleetRow {
 	idle := func(r FleetRow) bool {
-		return r.Kind != FleetKindRoot && r.Error == "" && r.LastAge != nil &&
-			time.Duration(*r.LastAge)*time.Second > idleAfter
+		if r.Kind == FleetKindRoot || r.Error != "" {
+			return false
+		}
+		return r.Inherited > 0 && r.Events == 0 ||
+			r.LastAge != nil && time.Duration(*r.LastAge)*time.Second > idleAfter
 	}
 	var out []FleetRow
 	for i := 0; i < len(rows); {
@@ -298,7 +311,7 @@ func FoldIdle(rows []FleetRow, idleAfter time.Duration) []FleetRow {
 				continue
 			}
 			fold.Idle++
-			if fold.LastAge == nil || *rows[i].LastAge > *fold.LastAge {
+			if rows[i].LastAge != nil && (fold.LastAge == nil || *rows[i].LastAge > *fold.LastAge) {
 				age := *rows[i].LastAge
 				fold.LastAge = &age
 			}
@@ -324,69 +337,130 @@ func (r FleetRow) State() string {
 
 // FleetStatus summarises every ledger FleetLedgers finds in f at now with
 // ledgerSummary, runtime.GOMAXPROCS(0) ledgers at a time, returning the rows
-// in discovery order. A ledger that fails to read is a row carrying Error; it
-// never fails the rest.
+// in discovery order. The root ledgers are read first and keep their event
+// keys; every other ledger whose root read cleanly is then summarised against
+// that set, so a worktree row shows only its events after the fork (issue
+// #608); one whose root failed or is absent is summarised in full. A ledger
+// that fails to read is a row carrying Error; it never fails the rest.
 func FleetStatus(f Fleet, now time.Time) []FleetRow {
 	ledgers := FleetLedgers(f)
 	rows := make([]FleetRow, len(ledgers))
+	var roots, rest []int
+	for i, l := range ledgers {
+		rows[i] = FleetRow{FleetLedger: l}
+		switch {
+		case l.Error != "":
+		case l.Kind == FleetKindRoot:
+			roots = append(roots, i)
+		default:
+			rest = append(rest, i)
+		}
+	}
+	keys := make([]map[[32]byte]bool, len(ledgers))
+	summarise := func(i int, root map[[32]byte]bool) {
+		row, events, err := ledgerSummary(ledgers[i].Path, now, root)
+		row.FleetLedger = ledgers[i]
+		if err != nil {
+			row = FleetRow{FleetLedger: ledgers[i]}
+			row.Error = err.Error()
+		} else if ledgers[i].Kind == FleetKindRoot {
+			keys[i] = make(map[[32]byte]bool, len(events))
+			for _, e := range events {
+				keys[i][eventKey(e)] = true
+			}
+		}
+		rows[i] = row
+	}
+	fleetEach(roots, func(i int) { summarise(i, nil) })
+	rootKeys := map[string]map[[32]byte]bool{}
+	for _, i := range roots {
+		if keys[i] != nil {
+			rootKeys[ledgers[i].Root] = keys[i]
+		}
+	}
+	fleetEach(rest, func(i int) { summarise(i, rootKeys[ledgers[i].Root]) })
+	return rows
+}
+
+// fleetEach calls fn for each index in idx, runtime.GOMAXPROCS(0) at a time,
+// and returns when every call has.
+func fleetEach(idx []int, fn func(int)) {
 	next := make(chan int)
 	var wg sync.WaitGroup
-	for range min(runtime.GOMAXPROCS(0), len(ledgers)) {
+	for range min(runtime.GOMAXPROCS(0), len(idx)) {
 		wg.Go(func() {
 			for i := range next {
-				rows[i] = FleetRow{FleetLedger: ledgers[i]}
-				if ledgers[i].Error != "" {
-					continue
-				}
-				row, err := ledgerSummary(ledgers[i].Path, now)
-				row.FleetLedger = ledgers[i]
-				if err != nil {
-					row = FleetRow{FleetLedger: ledgers[i]}
-					row.Error = err.Error()
-				}
-				rows[i] = row
+				fn(i)
 			}
 		})
 	}
-	for i := range ledgers {
+	for _, i := range idx {
 		next <- i
 	}
 	close(next)
 	wg.Wait()
-	return rows
+}
+
+// eventKey is e's identity across ledgers (issue #608): the sha256 of its
+// JSON encoding, Prev included, so an event a worktree inherited from its
+// root has the same key in both.
+func eventKey(e Event) [32]byte {
+	b, _ := json.Marshal(e)
+	return sha256.Sum256(b)
 }
 
 // ledgerSummary is dir's fleet row from one read of its events (issue #605):
 // stage counts from Derive, the event-derivable andon count (summaryAndon),
 // the freeze, the paused models, and the ages of the latest health and the
-// latest event. It builds no floor, runs no git and reads no run file; the
-// returned row's FleetLedger is left zero for the caller to fill.
-func ledgerSummary(dir string, now time.Time) (FleetRow, error) {
+// latest event. With root, the key set of its root's events (eventKey), the
+// events in root are inherited (issue #608): the row counts only the tasks
+// with an event of the worktree's own and takes the freeze, the pauses, the
+// health, the group andons and the ages from its own events alone; nil root
+// summarises every event. It builds no floor, runs no git and reads no run
+// file; it returns the events it read, and the row's FleetLedger is left zero
+// for the caller to fill.
+func ledgerSummary(dir string, now time.Time, root map[[32]byte]bool) (FleetRow, []Event, error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
-		return FleetRow{}, fmt.Errorf("read events %s: %w", dir, err)
+		return FleetRow{}, nil, fmt.Errorf("read events %s: %w", dir, err)
 	}
 	pauseAt := Limits{}.RateLimitPauseThreshold()
 	if cfg, _, err := LoadConfig(dir); err == nil {
 		pauseAt = cfg.Limits.RateLimitPauseThreshold()
 	}
 	st := Derive(events)
-	var row FleetRow
-	for _, ts := range st.Tasks {
-		countStage(&row.Tasks, ts.Status)
+	own, groups := events, st.Groups
+	var mine map[string]bool
+	if root != nil {
+		own, mine = nil, map[string]bool{}
+		for _, e := range events {
+			if !root[eventKey(e)] {
+				own = append(own, e)
+				mine[e.Task] = true
+			}
+		}
+		groups = Derive(own).Groups
 	}
-	row.Suspended = FactorySuspended(events, now).Suspended
-	row.Paused, _ = pausedModels(events, now, pauseAt)
-	row.Andon = summaryAndon(events, st, now, len(row.Paused), row.Suspended)
-	if last := latestEvent(events, now, func(Event) bool { return true }); last != nil {
+	row := FleetRow{Events: len(own), Inherited: len(events) - len(own)}
+	var tasks []TaskState
+	for _, ts := range st.Tasks {
+		if mine == nil || mine[ts.ID] {
+			tasks = append(tasks, ts)
+			countStage(&row.Tasks, ts.Status)
+		}
+	}
+	row.Suspended = FactorySuspended(own, now).Suspended
+	row.Paused, _ = pausedModels(own, now, pauseAt)
+	row.Andon = summaryAndon(own, groups, tasks, now, len(row.Paused), row.Suspended)
+	if last := latestEvent(own, now, func(Event) bool { return true }); last != nil {
 		age := last.Age
 		row.LastAge = &age
 	}
-	if _, at, ok := LatestHealth(events); ok {
+	if _, at, ok := LatestHealth(own); ok {
 		age := ageOfTime(at, now)
 		row.HealthAge = &age
 	}
-	return row, nil
+	return row, events, nil
 }
 
 // countStage adds one task in status to t, as Status counts it.
@@ -424,12 +498,14 @@ func countStage(t *StatusTasks, status string) {
 // finished for a reason other than a clean stop (the floor, too, judges only
 // tasks with an attempt). Run-file states (silent, stalled, no-writes),
 // review findings and staffing mismatches need the floor and are left out.
-func summaryAndon(events []Event, st State, now time.Time, paused int, suspended bool) int {
-	n := paused + len(groupAndon(st.Groups, now)) + len(healthAndon(events, now))
+// events and groups are what the health and group andons read; tasks are the
+// tasks the row counts.
+func summaryAndon(events []Event, groups []GroupState, tasks []TaskState, now time.Time, paused int, suspended bool) int {
+	n := paused + len(groupAndon(groups, now)) + len(healthAndon(events, now))
 	if suspended {
 		n++
 	}
-	for _, ts := range st.Tasks {
+	for _, ts := range tasks {
 		if ts.Attempt == "" {
 			continue
 		}

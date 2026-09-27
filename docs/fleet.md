@@ -57,18 +57,30 @@ Discovery is `flywheel.FleetLedgers(fleet)`, a plain function other commands reu
 `fleet status` prints an aligned table:
 
 ```
-NAME                                     KIND               RUNNING  PASSED  FINISHED  ANDON  STATE        HEALTH  LAST
-flywheel                                 root               2        1       0         1      running      4m      30s
-flywheel/f1                              flywheel-worktree  0        0       0         0      running      -       2h
+NAME                                     KIND               EVENTS  RUNNING  PASSED  FINISHED  ANDON  STATE        HEALTH  LAST
+flywheel                                 root               412     2        1       0         1      running      4m      30s
+flywheel/f1                              flywheel-worktree  +9      0        0       0         0      running      -       2h
 +37 idle worktree ledgers (oldest 12d)   idle
-olexa                                    root               0        0       1         1      paused: m1   -       12m
-olexa-old                                root               0        0       0         0      SUSPENDED    -       3d
+olexa                                    root               230     0        0       1         1      paused: m1   -       12m
+olexa-old                                root               57      0        0       0         0      SUSPENDED    -       3d
 ```
 
 Each row is a summary of one read of that ledger's events (issue #605): no floor is built, no git
-runs, no run file is read, so a fleet of hundreds of ledgers answers in seconds. Ledgers are read
-in parallel, `GOMAXPROCS` at a time, and printed in discovery order.
+runs, no run file is read, so a fleet of hundreds of ledgers answers in seconds. The root ledgers
+are read first, then the rest in parallel, `GOMAXPROCS` at a time; rows print in discovery order.
 
+The ledger is committed, so a git worktree carries its root's events as of its branch point, and
+any it later merges in (issue #608). An event of a worktree ledger that is also in its root's
+ledger (the same event, byte for byte) is inherited: a worktree row shows only its own events
+after the fork, never a copy of the root's history. A worktree whose root fails to read is
+summarised in full.
+
+- EVENTS is the number of events summarised: the plain count for a root (or a worktree summarised
+  in full), `+N` for a worktree row, N being its own events after the fork. In `--json`, `events`
+  is that count and `inherited` the events shared with the root.
+- For a worktree row, RUNNING, PASSED, FINISHED and the per-unit andons count only units with an
+  event of its own; STATE, HEALTH, LAST and the other andons read its own events only, so an
+  inherited suspension or pause never shows.
 - RUNNING counts the dispatched and running units; PASSED and FINISHED count units in those
   stages, derived from the events as `flywheel status` derives them.
 - ANDON counts the andon kinds the events alone decide: the suspension, each model a rate limit
@@ -88,8 +100,11 @@ in parallel, `GOMAXPROCS` at a time, and printed in discovery order.
 A ledger that is not a root (`git-worktree`, `flywheel-worktree`, `claude-worktree`) whose latest
 event is older than `--idle-after` (default `72h`, any Go duration) is not listed. Instead each
 root that has any gets one row, kind `idle`, after its other rows: `+N idle worktree ledgers
-(oldest <age>)`, the age of the oldest one's latest event. Root ledgers are always listed, however
-old; so are ledgers that fail to read and ledgers with no event yet. `--all` lists every ledger.
+(oldest <age>)`, the age of the oldest one's latest event. A worktree that is an exact copy of its
+root (no event after the fork, `+0`) folds the same way however recent its events are (issue
+#608); it has no own event, so it adds to the count but not to the age. Root ledgers are always
+listed, however old; so are ledgers that fail to read and ledgers with no event yet. `--all`
+lists every ledger, an exact copy included as `+0`.
 `--json` applies the same rule: a fold row carries `"kind": "idle"`, `idle` (the count) and
 `last_age` (the oldest age, in seconds).
 

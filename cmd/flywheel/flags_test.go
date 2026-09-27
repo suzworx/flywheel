@@ -127,7 +127,7 @@ func TestFleetMainTable(t *testing.T) {
 	}
 	code, out := run("status")
 	head := strings.Fields(strings.SplitN(out, "\n", 2)[0])
-	if want := "NAME KIND RUNNING PASSED FINISHED ANDON STATE HEALTH LAST"; code != 0 || strings.Join(head, " ") != want {
+	if want := "NAME KIND EVENTS RUNNING PASSED FINISHED ANDON STATE HEALTH LAST"; code != 0 || strings.Join(head, " ") != want {
 		t.Errorf("fleet status = %d, header %v, want %s\n%s", code, head, want, out)
 	}
 	if !strings.Contains(out, "a1") || !strings.Contains(out, "running") {
@@ -151,15 +151,18 @@ func TestFleetMainTable(t *testing.T) {
 // TestFleetIdleFoldCLI: fleet status folds each root's idle worktree ledgers
 // into one "+N idle worktree ledgers (oldest <age>)" row and keeps both roots
 // (b's own ledger is idle); --all lists every ledger; --idle-after moves the
-// line; a negative --idle-after is usage.
+// line; a negative --idle-after is usage. Each ledger's event is its own
+// (its session is its directory's base), except a/copy, a byte-identical copy
+// of root a's event: it has no event after the fork, so it folds though 1h
+// old and --all lists it with EVENTS +0 (issue #608).
 func TestFleetIdleFoldCLI(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)
-	ledger := func(dir string, age time.Duration) {
+	ledger := func(dir string, age time.Duration, session string) {
 		if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(flywheel.Event{TS: now.Add(-age).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: "s"})
+		b, _ := json.Marshal(flywheel.Event{TS: now.Add(-age).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: session})
 		if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), append(b, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -167,10 +170,14 @@ func TestFleetIdleFoldCLI(t *testing.T) {
 	var f flywheel.Fleet
 	for _, name := range []string{"a", "b"} {
 		root := filepath.Join(t.TempDir(), name)
-		ledger(root, map[string]time.Duration{"a": time.Hour, "b": 300 * time.Hour}[name])
-		ledger(filepath.Join(root, ".flywheel", "worktrees", "live"), time.Hour)
-		ledger(filepath.Join(root, ".flywheel", "worktrees", "old1"), 100*time.Hour)
-		ledger(filepath.Join(root, ".flywheel", "worktrees", "old2"), 200*time.Hour)
+		rootAge := map[string]time.Duration{"a": time.Hour, "b": 300 * time.Hour}[name]
+		ledger(root, rootAge, name)
+		for unit, age := range map[string]time.Duration{"live": time.Hour, "old1": 100 * time.Hour, "old2": 200 * time.Hour} {
+			ledger(filepath.Join(root, ".flywheel", "worktrees", unit), age, unit)
+		}
+		if name == "a" {
+			ledger(filepath.Join(root, ".flywheel", "worktrees", "copy"), rootAge, name)
+		}
 		f.Roots = append(f.Roots, flywheel.FleetRoot{Name: name, Path: root})
 	}
 	file := filepath.Join(t.TempDir(), "fleet.json")
@@ -190,23 +197,28 @@ func TestFleetIdleFoldCLI(t *testing.T) {
 		return strings.Join(s, " ")
 	}
 	code, out := run("status")
-	if want := "a a/live +2 b b/live +2"; code != 0 || names(out) != want {
-		t.Errorf("fleet status = %d, names %q, want %q\n%s", code, names(out), want, out)
+	if want := "a a/live +3 b b/live +2"; code != 0 || names(out) != want {
+		t.Errorf("fleet status = %d, names %q, want %q (a/copy folded)\n%s", code, names(out), want, out)
 	}
-	if strings.Count(out, "+2 idle worktree ledgers (oldest 8d)") != 2 {
-		t.Errorf("fleet status lacks two per-root fold lines with the oldest age:\n%s", out)
+	if !strings.Contains(out, "+3 idle worktree ledgers (oldest 8d)") || !strings.Contains(out, "+2 idle worktree ledgers (oldest 8d)") {
+		t.Errorf("fleet status lacks the per-root fold lines (+3 for a, +2 for b) with the oldest age:\n%s", out)
 	}
 	code, out = run("status", "--all")
-	if want := "a a/live a/old1 a/old2 b b/live b/old1 b/old2"; code != 0 || names(out) != want {
+	if want := "a a/copy a/live a/old1 a/old2 b b/live b/old1 b/old2"; code != 0 || names(out) != want {
 		t.Errorf("fleet status --all = %d, names %q, want %q\n%s", code, names(out), want, out)
 	}
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) > 2 && fields[0] == "a/copy" && fields[2] != "+0" {
+			t.Errorf("fleet status --all a/copy EVENTS = %q, want +0\n%s", fields[2], out)
+		}
+	}
 	code, out = run("status", "--idle-after", "150h")
-	if want := "a a/live a/old1 +1 b b/live b/old1 +1"; code != 0 || names(out) != want {
+	if want := "a a/live a/old1 +2 b b/live b/old1 +1"; code != 0 || names(out) != want {
 		t.Errorf("fleet status --idle-after 150h = %d, names %q, want %q\n%s", code, names(out), want, out)
 	}
 	var rows []flywheel.FleetRow
-	if code, out := run("status", "--json"); code != 0 || json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 6 || rows[2].Idle != 2 {
-		t.Errorf("fleet status --json = %d, %d rows, want 6 with a fold row of 2\n%s", code, len(rows), out)
+	if code, out := run("status", "--json"); code != 0 || json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 6 || rows[2].Idle != 3 || rows[5].Idle != 2 {
+		t.Errorf("fleet status --json = %d, %d rows, want 6 with fold rows of 3 and 2\n%s", code, len(rows), out)
 	}
 	if code, out := run("status", "--idle-after", "-1h"); code != 2 {
 		t.Errorf("fleet status --idle-after -1h = %d, want 2 (usage)\n%s", code, out)
