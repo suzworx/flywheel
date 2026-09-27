@@ -358,7 +358,8 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel factory [--once\|--json\|--plain]` | Interactive, k9s-style view of the floor; `--plain` keeps the plain redraw, `--once` renders once. |
 | `flywheel watch [--once] [--last N]` | A readable live stream of the log, one line per event. Read-only. |
 | `flywheel next` | Print the reconciler's next actions read-only: lost attempts, inspections, blocks, waits, dispatches, or HOLD on a spent budget, open breaker or rate limit. |
-| `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. |
+| `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. `flywheel schedule install` keeps it waking even when no process is running. |
+| `flywheel schedule install [--every D] \| status \| remove` | Register, inspect or delete an OS scheduled task (Task Scheduler, crontab or launchd) that runs `flywheel controller --once` every `--every` (default 15m), one task per repository. |
 | `flywheel explain <task>` | One task's whole story from the ledger as Markdown or JSON. Read-only. |
 | `flywheel trace <session>` | Everything one session did, across tasks. |
 | `flywheel context [--role R]` | A compact pack of the factory's state for a joining agent. Read-only. |

@@ -61,6 +61,80 @@ var allFlagsFuncs = map[string]flagsAny{
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
 	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
 	"ship":       func() (*flag.FlagSet, any) { fs, o := shipFlags(); return fs, o },
+	"schedule":   func() (*flag.FlagSet, any) { fs, o := scheduleFlags(true); return fs, o },
+}
+
+// TestScheduleFlagsBind checks install's --every and --dir reach the bound
+// options, and status/remove take no --every (issue #572).
+func TestScheduleFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := scheduleFlags(true)
+	if err := fs.Parse([]string{"--every", "7m", "--dir", "D"}); err != nil {
+		t.Fatalf("scheduleFlags: %v", err)
+	}
+	if want := (scheduleOptions{dir: "D", every: 7 * time.Minute}); *o != want {
+		t.Errorf("scheduleFlags parsed = %#v, want %#v", *o, want)
+	}
+	if fs, _ := scheduleFlags(false); fs.Lookup("every") != nil {
+		t.Error("status/remove define --every")
+	}
+}
+
+// fakeScheduler records calls instead of touching the OS scheduler.
+type fakeScheduler struct{ calls []string }
+
+func (f *fakeScheduler) Install(p flywheel.SchedulePlan) error {
+	f.calls = append(f.calls, "install "+p.Name+" "+p.Every.String())
+	return nil
+}
+func (f *fakeScheduler) Remove(name string) error {
+	f.calls = append(f.calls, "remove "+name)
+	return nil
+}
+func (f *fakeScheduler) Status(name string) (bool, string, error) {
+	f.calls = append(f.calls, "status "+name)
+	return true, "next run soon", nil
+}
+
+// TestScheduleMainExitsAndOutput checks install prints the name, interval and
+// command, status prints installed plus the detail, and a bad subcommand or
+// an --every under a minute is usage (exit 2) before any scheduler call.
+func TestScheduleMainExitsAndOutput(t *testing.T) {
+	t.Parallel()
+	f := &fakeScheduler{}
+	newSched := func(flywheel.Runner) (flywheel.Scheduler, error) { return f, nil }
+	plan := func(dir string, every time.Duration) (flywheel.SchedulePlan, error) {
+		if every == 0 {
+			every = flywheel.DefaultScheduleEvery
+		}
+		return flywheel.SchedulePlan{Name: "flywheel-x-12345678", Every: every, Exe: "/bin/fw",
+			Dir: dir, Args: []string{"controller", "--once", "--dir", dir}}, nil
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	if code := scheduleMain([]string{"install", "--every", "5m", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+		t.Fatalf("install = %d; stderr %s", code, errb.String())
+	}
+	if w := "installed flywheel-x-12345678: every 5m0s runs /bin/fw controller --once --dir"; !strings.Contains(out.String(), w) {
+		t.Errorf("install output = %q, want %q", out.String(), w)
+	}
+	out.Reset()
+	if code := scheduleMain([]string{"status", "--dir", dir}, &out, &errb, newSched, plan); code != 0 ||
+		out.String() != "flywheel-x-12345678: installed\nnext run soon\n" {
+		t.Errorf("status = %d %q", code, out.String())
+	}
+	if code := scheduleMain([]string{"remove", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+		t.Errorf("remove = %d", code)
+	}
+	calls := len(f.calls)
+	for _, args := range [][]string{{}, {"bogus"}, {"install", "--every", "30s"}, {"status", "--every", "5m"}, {"remove", "extra"}} {
+		if code := scheduleMain(args, &out, &errb, newSched, plan); code != 2 {
+			t.Errorf("scheduleMain(%v) = %d, want 2", args, code)
+		}
+	}
+	if len(f.calls) != calls || calls != 3 {
+		t.Errorf("calls = %v, want exactly install, status, remove", f.calls)
+	}
 }
 
 // TestBriefFlagsBindEveryOption parses non-default values for every brief
