@@ -551,10 +551,32 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `config get/set review.panel` reads and writes a comma-separated persona list (a member keeps its
   reviewer). Unset, the panel is `correctness, tests, errors, contract, docs`; `security` and `cross-os`
   are opt-in. `review.required` (default `false`) makes a complete panel a condition of every pass.
+  `review.panel_min_lines` (default `0`, off; `config set` refuses a negative or non-integer value)
+  scopes a small unit's configured panel to one reviewer (issue #459): see `panel_scoped`.
 - Enforced: when the task has been reviewed by the panel, or `review.required` is set, `flywheel
   inspect --verdict pass` is refused (rule `panel`, exit 6) unless every configured dimension is
   `pass` on the tree being inspected, naming each `<dimension>=missing|correct` and the command; and
-  `flywheel verify` fails rule P1 for such a pass (§2).
+  `flywheel verify` fails rule P1 for such a pass (§2). "Configured" means `panelFor` below.
+
+### `panel_scoped`
+- Written by: the CLI only, via `flywheel review <task> --agent --panel` with the configured panel
+  (no explicit member list) and `review.panel_min_lines` N > 0 (issue #459). Before any member runs,
+  it counts the unit's changed lines on the tree it is about to review: added plus deleted lines of
+  `git diff --numstat <base> -- <paths>` (the unit's dispatch base and changed paths, as the review
+  diff uses; a binary file counts 0) plus the lines of each new untracked file among those paths.
+  Below N, only one member runs, the configured `correctness` member (else the first), and this event
+  is appended first; the command prints `<task> review panel: <n> changed lines <
+  review.panel_min_lines <N>; one reviewer: <persona>` and a one-line verdict matrix. At or above N,
+  or with N = 0, the full panel runs and nothing is recorded.
+- Carries: `task`, `tree` (the tree the member reviews), `panel` (the one persona), `session`, and
+  `note` (`<n> changed lines < review.panel_min_lines <N>`). Refused without `task`, `tree` or a
+  non-empty `panel`.
+- `panelFor(events, task, tree, configured)`: the `panel` of the latest `panel_scoped` event of the
+  task on exactly `tree`, else the configured dimensions. Inspect's rule `panel`, verify's P1 (over
+  the events before each pass, on its tree), `flywheel recover` and the floor's `panel` cells all use
+  it, so they agree from the ledger alone and never re-measure. A tree that changed after a scoped
+  review (a fix round) has no record and needs the full panel, unless the next panel run measures
+  it small and scopes it again.
 
 ### `group_reviewed`
 - Written by: the CLI only, via `flywheel review --group <goal|tasks:a,b> --agent --session S
@@ -1267,7 +1289,8 @@ gates (exit 5) without touching the log's legality.
   `review.required` is set, or an agent `reviewed` event carrying a dimension preceded the pass — an
   `inspected` pass fails when `VerdictMatrix` over the events BEFORE it, on the pass's tree, has a
   configured dimension that is not `pass`; the reason names each `<dimension>=missing|correct`. The
-  panel and `review.required` are read from today's configuration. Live, `InspectTask` refuses such
+  panel and `review.required` are read from today's configuration; a `panel_scoped` event on the
+  pass's tree narrows the panel to its own (`panelFor`, issue #459). Live, `InspectTask` refuses such
   a pass as rule `panel`, after T3 (the tree it checks is the one T3 measured): `the review panel is
   not complete on tree <tree>: <dimension>=<verdict>, ...; run flywheel review <task> --agent --panel
   --session <reviewer> (add --fix to correct and re-review)`.

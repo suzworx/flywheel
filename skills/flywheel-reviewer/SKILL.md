@@ -136,7 +136,8 @@ ONE dimension. Your prompt is the shared reviewer prompt plus your persona file
 - Every configured dimension must be `pass` on the exact tree before the unit can pass: the verdict
   matrix shows `pass`, `correct` or `missing` for each, `flywheel inspect --verdict pass` refuses a
   missing or correct dimension (rule `panel`), and `flywheel verify` fails P1 for one that slipped
-  through.
+  through. Under `review.panel_min_lines`, a small unit's tree is recorded `panel_scoped` and needs
+  only the `correctness` dimension; a changed tree needs the full panel again (issue #459).
 
 ## On a group
 
