@@ -97,6 +97,9 @@ summarised in full.
   there is none.
 - A ledger that fails to read shows `error: <why>` as its STATE; the other rows still print.
 
+In the factory view, `:ctx` lists the same ledgers and Enter switches the view to one;
+`flywheel factory --ctx <name>` starts there ([factory view](factory-view.md#contexts)).
+
 ### Idle worktree ledgers
 
 A ledger that is not a root (`git-worktree`, `flywheel-worktree`, `claude-worktree`) whose latest
@@ -214,7 +217,3 @@ run follows the queue's own first-sync rule, and its pending learnings stay in
 
 Exit codes: 0 ok, 1 error (unreadable registry, queue or watch state, refused add, unknown name,
 unmatched `--done`, unreadable `--import-seen` file), 2 usage.
-
-## Coming next
-
-- `:ctx` in the factory view to switch between fleet ledgers.
