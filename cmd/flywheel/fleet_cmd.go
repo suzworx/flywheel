@@ -13,21 +13,24 @@ import (
 )
 
 // fleetUsageLine is fleet's usage line, shared by help and errors.
-const fleetUsageLine = "flywheel fleet add <path> [--name N] | remove <name> | list [--json] | status [--json]"
+const fleetUsageLine = "flywheel fleet add <path> [--name N] | remove <name> | list [--json] | status [--json] [--all] [--idle-after D]"
 
 func init() {
-	register("fleet", "one merged view of every factory root and its ledgers\n    add <path>         register a root (--name, default its base)\n    remove <name>      unregister a root\n    list               the roots and the ledgers discovered under them\n    status             one row per ledger: units, andon, state, health, last event", runFleet)
+	register("fleet", "one merged view of every factory root and its ledgers\n    add <path>         register a root (--name, default its base)\n    remove <name>      unregister a root\n    list               the roots and the ledgers discovered under them\n    status             one row per ledger: units, andon, state, health, last event;\n                       idle worktree ledgers fold into one row per root (--all lists them)", runFleet)
 	registerHelp("fleet", fleetUsageLine, func() *flag.FlagSet { fs, _ := fleetFlags("add"); return fs })
 }
 
 // fleetOptions holds the parsed fleet flags.
 type fleetOptions struct {
-	name string
-	json bool
+	name      string
+	json      bool
+	all       bool
+	idleAfter time.Duration
 }
 
 // fleetFlags defines a fleet subcommand's flags once, so help and run share
-// them: add takes --name, list and status take --json.
+// them: add takes --name, list and status take --json, status also takes
+// --all and --idle-after.
 func fleetFlags(sub string) (*flag.FlagSet, *fleetOptions) {
 	fs := flag.NewFlagSet("fleet", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -37,6 +40,10 @@ func fleetFlags(sub string) (*flag.FlagSet, *fleetOptions) {
 		fs.StringVar(&o.name, "name", "", "the root's name (default the path's base, made unique)")
 	case "list", "status":
 		fs.BoolVar(&o.json, "json", false, "print JSON")
+	}
+	if sub == "status" {
+		fs.BoolVar(&o.all, "all", false, "list every ledger; do not fold idle worktree ledgers")
+		fs.DurationVar(&o.idleAfter, "idle-after", flywheel.DefaultIdleAfter, "fold a worktree ledger whose latest event is older than this")
 	}
 	return fs, o
 }
@@ -124,7 +131,13 @@ func fleetMain(args []string, stdout, stderr io.Writer, file string, now time.Ti
 		}
 		tw.Flush()
 	case "status":
+		if o.idleAfter < 0 {
+			return usage("status: --idle-after must not be negative")
+		}
 		rows := flywheel.FleetStatus(f, now)
+		if !o.all {
+			rows = flywheel.FoldIdle(rows, o.idleAfter)
+		}
 		if o.json {
 			return fleetJSON(stdout, stderr, rows)
 		}
@@ -151,6 +164,10 @@ func writeFleetTable(w io.Writer, rows []flywheel.FleetRow) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tKIND\tRUNNING\tPASSED\tFINISHED\tANDON\tSTATE\tHEALTH\tLAST")
 	for _, r := range rows {
+		if r.Kind == flywheel.FleetKindIdle {
+			fmt.Fprintf(tw, "%s (oldest %s)\t%s\t\t\t\t\t\t\t\n", r.Name, fleetAge(r.LastAge), r.Kind)
+			continue
+		}
 		state := r.State()
 		if r.Error != "" {
 			state = "error: " + r.Error
