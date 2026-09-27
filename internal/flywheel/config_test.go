@@ -1788,3 +1788,36 @@ func TestPermissionModeValidate(t *testing.T) {
 		t.Errorf("opencode without mode: Validate() = %v, want nil", err)
 	}
 }
+
+// TestPanelMinLinesConfig covers review.panel_min_lines (issue #459): 0 by
+// default, a Set/Get round-trip listed among the keys, and a negative or
+// non-integer value refused naming the key, by Set and by Validate. On the
+// unfixed code Get and Set reject the unknown key.
+func TestPanelMinLinesConfig(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	if v, err := cfg.Get("review.panel_min_lines"); err != nil || v != "0" || cfg.ReviewPanelMinLines() != 0 {
+		t.Errorf("default Get(review.panel_min_lines) = %q, %v; want 0", v, err)
+	}
+	if err := cfg.Set("review.panel_min_lines", "40"); err != nil {
+		t.Fatalf("Set(review.panel_min_lines, 40) error = %v", err)
+	}
+	if v, err := cfg.Get("review.panel_min_lines"); err != nil || v != "40" || cfg.ReviewPanelMinLines() != 40 {
+		t.Errorf("Get(review.panel_min_lines) = %q, %v; want 40", v, err)
+	}
+	if !slices.Contains(cfg.validKeys(), "review.panel_min_lines") || !slices.Contains(cfg.settableKeys(), "review.panel_min_lines") {
+		t.Error("review.panel_min_lines is missing from validKeys or settableKeys")
+	}
+	for _, bad := range []string{"-1", "ten"} {
+		if err := cfg.Set("review.panel_min_lines", bad); err == nil || !strings.Contains(err.Error(), "review.panel_min_lines") {
+			t.Errorf("Set(review.panel_min_lines, %s) = %v, want refused naming the key", bad, err)
+		}
+	}
+	if cfg.ReviewPanelMinLines() != 40 {
+		t.Errorf("a refused Set changed the value to %d", cfg.ReviewPanelMinLines())
+	}
+	cfg.Review.PanelMinLines = -2
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "review.panel_min_lines") {
+		t.Errorf("Validate() with -2 = %v, want refused naming the key", err)
+	}
+}

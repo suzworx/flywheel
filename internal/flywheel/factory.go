@@ -460,7 +460,12 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	if cfg.Review != nil && len(cfg.Review.Panel) > 0 {
 		dims := cfg.PanelDimensions()
 		for i := range units {
-			units[i].Panel = panelCells(w.events, units[i].Task, units[i].Attempt, dims)
+			// A small unit's scoped tree needs only its panel_scoped panel (issue #459).
+			need := dims
+			if tree := measuredTree(w.events, units[i].Task, units[i].Attempt); tree != "" {
+				need = panelFor(w.events, units[i].Task, tree, dims)
+			}
+			units[i].Panel = panelCells(w.events, units[i].Task, units[i].Attempt, need)
 		}
 	}
 	fl.Units = units
