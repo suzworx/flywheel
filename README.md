@@ -304,6 +304,15 @@ starts nothing, while `flywheel status` and the floor's andon say so first. `fly
 `suspended` (exit 6) with its owned files checkpointed and its session kept, and `flywheel resume`
 continues each one in its own session (`--no-redispatch` only thaws).
 
+The controller does this by itself when the tokens run out: once every configured worker model is
+paused by a rate limit, a tick suspends the factory with `--stop` until the earliest reset
+(`froze: tokens exhausted until HH:MM`), and the first tick past that reset thaws it and resumes
+every stopped and rate-limited unit exactly once, each in its own session (`thawed: tokens
+returned; resumed <task> <attempt>`). With `flywheel schedule install` this needs no live process.
+A manual `flywheel suspend` thaws only by `flywheel resume` or its own `--until`, and the
+controller never re-dispatches its units;
+`controller.auto_freeze: false` turns the automatic freeze and thaw off.
+
 ## Drive it with a lead agent
 
 Ask your lead agent to load the `flywheel` skill and drive the loop: plan → brief → dispatch →

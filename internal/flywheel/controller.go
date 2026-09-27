@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -227,6 +228,85 @@ type TickResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 	// Health is true when the tick appended a health event.
 	Health bool `json:"health,omitempty"`
+	// Froze is set when the tick froze the factory on token exhaustion
+	// (AutoFreeze, issue #572).
+	Froze *TickFreeze `json:"froze,omitempty"`
+	// Thawed are the units the tick started after thawing an automatic
+	// suspension (AutoThaw); Thaw is true when it thawed one.
+	Thaw   bool               `json:"thaw,omitempty"`
+	Thawed []SupervisedResume `json:"thawed,omitempty"`
+}
+
+// TickFreeze is an automatic freeze: its thaw time, RFC 3339, and the live
+// units its stop sentinel stops.
+type TickFreeze struct {
+	Until string `json:"until"`
+	Live  int    `json:"live"`
+}
+
+// autoFreezeTick is TickWith's controller.auto_freeze pass: AutoThaw first,
+// starting each returned unit through o.Start (nil thaws nothing); when
+// nothing thawed, AutoFreeze. AutoThaw records each unit's auto-resume before
+// the start, so the auto-resume pass that follows never starts it again.
+func autoFreezeTick(dir string, now time.Time, o TickOptions, res *TickResult) error {
+	if o.Start != nil {
+		units, err := AutoThaw(dir, now, o.Session)
+		if err != nil {
+			return err
+		}
+		res.Thaw = units != nil // AutoThaw returns a non-nil slice when it thawed
+		events, err := ReadEvents(dir)
+		if err != nil {
+			return fmt.Errorf("read events %s: %w", dir, err)
+		}
+		stopped := SuspendedAttempts(events)
+		for _, u := range units {
+			r := SupervisedResume{Task: u.Task, Attempt: u.Attempt}
+			// A stopped unit resumes with flywheel resume's continue delta; a
+			// rate-limited one gets the limit delta from run --resume itself.
+			if slices.Contains(stopped, u) {
+				if _, err := WriteSuspendDelta(dir, u.Task); err != nil {
+					r.Reason = "delta: " + err.Error()
+					res.Thawed = append(res.Thawed, r)
+					continue
+				}
+			}
+			if err := o.Start(u.Task); err != nil {
+				r.Reason = "start: " + err.Error()
+			} else {
+				r.Started = true
+			}
+			res.Thawed = append(res.Thawed, r)
+		}
+		if res.Thaw {
+			return nil
+		}
+	}
+	acted, err := AutoFreeze(dir, now, o.Session)
+	if err != nil || !acted {
+		return err
+	}
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return fmt.Errorf("read events %s: %w", dir, err)
+	}
+	res.Froze = &TickFreeze{Until: FactorySuspended(events, now).Until, Live: liveUnits(events)}
+	return nil
+}
+
+// liveUnits counts the tasks whose latest dispatched event has no finished,
+// lost or withdrawn event after it.
+func liveUnits(events []Event) int {
+	live := map[string]bool{}
+	for _, e := range events {
+		switch e.Kind {
+		case "dispatched":
+			live[e.Task] = true
+		case "finished", "lost", "withdrawn":
+			delete(live, e.Task)
+		}
+	}
+	return len(live)
 }
 
 // TickOptions configures TickWith. The zero value only reconciles.
@@ -327,7 +407,9 @@ func runResumeNotify(command, resumed string) error {
 // WAIT and DISPATCH are reported in the result only and append nothing. The
 // tick is idempotent: the same inputs append nothing the second time. With
 // o.Start set and controller.auto_resume on, it then resumes the rate-limited
-// units whose model's reset has passed (autoResume). With o.HealthEvery set it
+// units whose model's reset has passed (autoResume); before that, with
+// controller.auto_freeze on, it thaws or freezes the factory on token
+// exhaustion (autoFreezeTick). With o.HealthEvery set it
 // last appends a health event (HealthAt) when none is at most that old.
 func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 	cfg, _, err := LoadConfig(dir)
@@ -367,6 +449,11 @@ func TickWith(dir string, now time.Time, o TickOptions) (TickResult, error) {
 			res.Actions++
 		default:
 			res.Proposed++
+		}
+	}
+	if cfg.controllerAutoFreeze() {
+		if err := autoFreezeTick(dir, now, o, &res); err != nil {
+			return res, err
 		}
 	}
 	if o.Start != nil && cfg.controllerAutoResume() {

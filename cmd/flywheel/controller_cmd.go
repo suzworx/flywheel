@@ -169,6 +169,23 @@ func controllerTickOptions(dir string, reap bool, healthEvery time.Duration) fly
 func printTick(res flywheel.TickResult) {
 	fmt.Printf("tick %s: %d actions (%d lost, %d blocked, %d proposed)\n",
 		res.TS, res.Actions, res.Lost, res.Blocked, res.Proposed)
+	if f := res.Froze; f != nil {
+		until := f.Until
+		if t, err := time.Parse(time.RFC3339, f.Until); err == nil {
+			until = t.UTC().Format("15:04") + " UTC"
+		}
+		fmt.Printf("froze: tokens exhausted until %s (stopping %d live units)\n", until, f.Live)
+	}
+	if res.Thaw && len(res.Thawed) == 0 {
+		fmt.Println("thawed: tokens returned; no unit to resume")
+	}
+	for _, r := range res.Thawed {
+		if r.Started {
+			fmt.Printf("thawed: tokens returned; resumed %s %s\n", r.Task, r.Attempt)
+		} else {
+			fmt.Printf("thawed: tokens returned; not resumed %s: %s\n", r.Task, r.Reason)
+		}
+	}
 	for _, r := range res.Resumed {
 		if r.Started {
 			fmt.Printf("resumed %s %s (log %s)\n", r.Task, r.Attempt, filepath.ToSlash(autoResumeLog(r.Task)))

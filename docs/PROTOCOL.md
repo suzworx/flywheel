@@ -893,6 +893,22 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `flywheel recover` offers such a unit `resume-session` (reason `stopped by a factory
   suspension`) with the command `flywheel resume --session <s>` while suspended and `flywheel run
   <task> --resume` once thawed; the floor shows it `suspended`, not failed.
+- Automatic freeze (`reason` `tokens-exhausted`; issue #572): the automatic mark is the event's
+  `reason` field, empty on every manual suspension. With `controller.auto_freeze` on (the
+  default; `false` turns it off), a controller tick appends a `suspended` event with session
+  `controller` (the tick's session), `stop`, `until` the earliest reset and `note` `tokens
+  exhausted: <models> paused until <HH:MM> UTC` when at least one worker is configured, every
+  configured worker's model and fallback models is paused by a rate limit (the `reset_at` /
+  `limit_reset_at` pause at `limits.rate_limit_pause_at`) and the factory is not already
+  suspended. The first tick past that `until` (with a starter configured) thaws it: it appends
+  `unsuspended` (note `tokens returned`), removes `.flywheel/suspend.stop` and, for every task
+  whose latest finished event is `suspended` or `rate-limited` with no later `dispatched` or
+  auto-resume `recovered` event, appends a `recovered` event (`auto-resume <task> <attempt> after
+  tokens returned`, `paths` the task) and then starts `flywheel run <task> --resume` through the
+  auto-resume starter (a `suspended` unit with the continue delta above). The recorded auto-resume
+  keeps the tick's auto-resume pass from starting the unit again. A tick that thaws does not
+  freeze. A manual suspension is never thawed by the controller: only by `flywheel resume` or its
+  own `until`, and then with no re-dispatch.
 
 ### `unsuspended`
 - Written by: `flywheel resume --session S [--note TEXT] [--no-redispatch]` (issue #572).
