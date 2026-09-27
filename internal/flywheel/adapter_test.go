@@ -1186,6 +1186,55 @@ func TestClaudeMaxTurns(t *testing.T) {
 	}
 }
 
+// TestClaudeMaxBudget checks the claude dispatch passes --max-budget-usd with
+// the request's remaining unit budget, four decimals, only when it is > 0
+// (issue #459).
+func TestClaudeMaxBudget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		budget float64
+		want   string
+	}{{0, ""}, {-1, ""}, {1.5, "1.5000"}, {0.12345, "0.1235"}} {
+		_, args := claudeAdapter{}.Command(RunRequest{Task: "T1", Model: "m", MaxBudgetUSD: tc.budget})
+		n, at := 0, -1
+		for i, a := range args {
+			if a == "--max-budget-usd" {
+				n, at = n+1, i
+			}
+		}
+		if tc.want == "" {
+			if n != 0 {
+				t.Errorf("MaxBudgetUSD %v: args %v carry --max-budget-usd, want none", tc.budget, args)
+			}
+			continue
+		}
+		if n != 1 || at+1 >= len(args) || args[at+1] != tc.want {
+			t.Errorf("MaxBudgetUSD %v: args %v, want exactly one --max-budget-usd %s", tc.budget, args, tc.want)
+		}
+	}
+}
+
+// TestClaudeBudgetResultCapped checks claude's max-budget result line (the
+// shape claude 2.1.281 prints) parses to a step with reason capped, never
+// error or rate-limited, keeping its session cost (issue #459).
+func TestClaudeBudgetResultCapped(t *testing.T) {
+	t.Parallel()
+	if got := claudeReason("", "error_max_budget_usd", true); got != "capped" {
+		t.Errorf("claudeReason(budget subtype, is_error) = %q, want capped", got)
+	}
+	if got := claudeReason("", "error_during_execution", true); got != "error" {
+		t.Errorf("claudeReason(other error subtype) = %q, want error", got)
+	}
+	line := `{"type":"result","subtype":"error_max_budget_usd","is_error":true,"total_cost_usd":0.5123,"errors":["Reached maximum budget ($0.5)"]}`
+	obs, ok := claudeAdapter{}.Parse([]byte(line))
+	if !ok || obs.Kind != "step" || obs.Reason != "capped" {
+		t.Fatalf("Parse(budget result) = %+v, %v; want a step with reason capped", obs, ok)
+	}
+	if obs.Cost != 0.5123 {
+		t.Errorf("Parse(budget result).Cost = %v, want 0.5123", obs.Cost)
+	}
+}
+
 // TestClaudeLiveDenialFixture parses testdata/claude-denied-live.jsonl, a
 // HAND-BUILT fixture: only the user tool_result line reporting "requested
 // permissions to use WebSearch" is a live denial, naming WebSearch and the

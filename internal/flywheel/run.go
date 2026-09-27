@@ -441,6 +441,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			}
 		}
 	}
+	// The unit cost cap (issue #459): a unit whose attempts have already spent
+	// its cap is refused before anything is recorded; below it, what is left
+	// bounds the attempt live (claude --max-budget-usd, or the scan loop).
+	unitCap := cfg.unitCostCap(worker)
+	unitSpent := unitSpend(events, o.Task)
+	if unitCap > 0 && unitSpent >= unitCap {
+		return Result{}, &RuleRefusal{
+			Rule: "unit-cost",
+			Fix:  fmt.Sprintf("unit %s has spent $%.4f, reaching its unit cost cap $%.4f; raise it (flywheel config set limits.unit_cost_usd <usd>, or the worker's unit_cost_usd) or split the unit", o.Task, unitSpent, unitCap),
+		}
+	}
 
 	// Routing (issue #474): a worker with a routing block picks a fresh run's
 	// model from the ledger's per-model scoreboard. --model overrides it; a
@@ -963,6 +974,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
 		MaxTurns: cfg.maxTurns(worker),
 	}
+	if unitCap > 0 {
+		req.MaxBudgetUSD = unitCap - unitSpent
+	}
 	if commandHook != nil {
 		commandHook(req)
 	}
@@ -1152,9 +1166,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return nil
 	}
 
+	// capped is set when the streamed cost reaches the unit cost cap; the
+	// attempt then finishes with reason capped (issue #459).
+	var capped atomic.Bool
 	firstLine := true
 	for sc.Scan() {
-		if silent.Load() || stalled.Load() {
+		if silent.Load() || stalled.Load() || capped.Load() {
 			break
 		}
 		line := sc.Bytes()
@@ -1326,6 +1343,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 			}
 			cost += obs.Cost
+			// A per-step cost (opencode) reaching the unit cost cap stops the
+			// child the way the stall timer does (issue #459). A session-total
+			// line (claude's result, Aggregate) arrives at the end and its cap
+			// is claude's own --max-budget-usd, so it is not checked here.
+			if unitCap > 0 && !obs.Aggregate && unitSpent+cost >= unitCap {
+				capped.Store(true)
+				killChild()
+			}
 		case "error":
 			seenError = true
 			if lastReason == "" {
@@ -1487,6 +1512,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if reason == "" {
 		reason = "error"
 		note = joinNote(note, fmt.Sprintf("worker exited rc=%d with no result line (killed or crashed)", rc))
+	}
+	// The unit cost cap (issue #459): the scan loop stopped the child, or
+	// claude ended the run at --max-budget-usd. Either way the reason is
+	// capped, never an error, and the note names the cap and the unit's spend.
+	if capped.Load() || lastReason == "capped" {
+		reason = "capped"
+		note = fmt.Sprintf("unit cost cap $%.4f reached: $%.4f spent on the unit", unitCap, unitSpent+cost)
 	}
 	// A clean stop that leaves a background shell it started uncollected
 	// ended its session while the job ran, and the job died with it: the run
@@ -1658,7 +1690,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 
 	switch reason {
-	case "length":
+	case "length", "capped":
 		if err := recordSignal(dir, o.Task, attempt, session, "capped", runRel); err != nil {
 			return Result{}, err
 		}
@@ -1687,6 +1719,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	if reason == "length" {
 		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
+	}
+	if reason == "capped" {
+		progress(o.Progress, o.Task+" "+attempt+" hint: the unit reached limits.unit_cost_usd; raise it or split the unit")
 	}
 	_ = RemoveLease(dir, o.Task, attempt)
 	_, _ = WriteState(dir)
@@ -2631,6 +2666,18 @@ func recordedTokens(events []Event) int {
 		}
 	}
 	return total
+}
+
+// unitSpend sums Cost over task's finished events: everything the unit's
+// worker attempts spent, corrections included (issue #459).
+func unitSpend(events []Event, task string) float64 {
+	spent := 0.0
+	for _, e := range events {
+		if e.Kind == "finished" && e.Task == task {
+			spent += e.Cost
+		}
+	}
+	return spent
 }
 
 // rateLimited reports whether model already has limit dispatched events in

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -256,6 +257,32 @@ type Worker struct {
 	// MaxTurns is the claude adapter's --max-turns; 0 means limits.max_turns
 	// (issue #459).
 	MaxTurns int `json:"max_turns,omitempty"`
+	// UnitCostUSD caps what one unit's attempts on this worker spend, in USD;
+	// 0 means limits.unit_cost_usd (issue #459).
+	UnitCostUSD float64 `json:"unit_cost_usd,omitempty"`
+}
+
+// unitCostCap returns w's per-unit cost cap in USD: the worker's
+// unit_cost_usd when > 0, else limits.unit_cost_usd; 0 means no cap
+// (issue #459).
+func (c Config) unitCostCap(w Worker) float64 {
+	if w.UnitCostUSD > 0 {
+		return w.UnitCostUSD
+	}
+	if c.Limits.UnitCostUSD > 0 {
+		return c.Limits.UnitCostUSD
+	}
+	return 0
+}
+
+// parseUnitCost parses a unit_cost_usd value: a non-negative number, 0
+// clearing it (issue #459).
+func parseUnitCost(key, value string) (float64, error) {
+	f, err := strconv.ParseFloat(value, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("%s: value %q must be a non-negative number", key, value)
+	}
+	return f, nil
 }
 
 // defaultMaxTurns is the claude --max-turns when neither the worker nor
@@ -460,6 +487,9 @@ type Limits struct {
 	// MaxTurns is the claude --max-turns for a worker that sets no max_turns;
 	// 0 means 200 (issue #459).
 	MaxTurns int `json:"max_turns,omitempty"`
+	// UnitCostUSD caps what one unit's worker attempts spend, in USD, for a
+	// worker that sets no unit_cost_usd; 0 means no cap (issue #459).
+	UnitCostUSD float64 `json:"unit_cost_usd,omitempty"`
 }
 
 // CheckpointEveryDuration parses CheckpointEvery ("" means 10 minutes, 0
@@ -865,6 +895,9 @@ func (c Config) Validate() error {
 		if err := w.validateMaxTurns(); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 		}
+		if w.UnitCostUSD < 0 {
+			problems = append(problems, fmt.Sprintf("%s: worker %q: unit_cost_usd %v must be >= 0", where, w.Name, w.UnitCostUSD))
+		}
 		for j, f := range w.Fallbacks {
 			switch {
 			case f.Model == "":
@@ -945,6 +978,9 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.MaxTurns < 0 {
 		problems = append(problems, fmt.Sprintf("limits.max_turns %d must be >= 0", c.Limits.MaxTurns))
+	}
+	if c.Limits.UnitCostUSD < 0 {
+		problems = append(problems, fmt.Sprintf("limits.unit_cost_usd %v must be >= 0", c.Limits.UnitCostUSD))
 	}
 	if c.Limits.RatePerMinute < 0 {
 		problems = append(problems, fmt.Sprintf("limits.rate_per_minute %d must be >= 0", c.Limits.RatePerMinute))
@@ -1246,6 +1282,8 @@ func (c Config) Get(key string) (string, error) {
 			return strconv.Itoa(defaultMaxTurns), nil
 		}
 		return strconv.Itoa(c.Limits.MaxTurns), nil
+	case "limits.unit_cost_usd":
+		return strconv.FormatFloat(c.Limits.UnitCostUSD, 'g', -1, 64), nil
 	case "limits.per_host":
 		return strconv.Itoa(c.Limits.PerHost), nil
 	case "limits.rate_limit_retries":
@@ -1328,6 +1366,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return strconv.Itoa(w.StallTimeout), true
 	case "max_turns":
 		return strconv.Itoa(w.MaxTurns), true
+	case "unit_cost_usd":
+		return strconv.FormatFloat(w.UnitCostUSD, 'g', -1, 64), true
 	case "fallbacks":
 		return joinFallbacks(w.Fallbacks, true), true
 	case "fallbacks.all":
@@ -1354,7 +1394,8 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
+		"unit_cost_usd", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
@@ -1377,8 +1418,9 @@ func (c Config) validKeys() []string {
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are settableWorkerKeys (worker;
 // an empty permission_mode clears it, max_turns takes a non-negative integer
-// and 0 clears it), feedback.upstream, feedback.submit, limits.max_turns (the
-// same), limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
+// and 0 clears it, unit_cost_usd a non-negative number and 0 clears it),
+// feedback.upstream, feedback.submit, limits.max_turns and
+// limits.unit_cost_usd (the same), limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.required (true or false) and
 // review.group_gates (commands separated by ";;" or newlines) and
@@ -1439,7 +1481,7 @@ func (c *Config) Set(key, value string) error {
 		}
 	}
 	switch key {
-	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout", "max_turns":
+	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout", "max_turns", "unit_cost_usd":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -1456,6 +1498,13 @@ func (c *Config) Set(key, value string) error {
 			return err
 		}
 		c.Limits.MaxTurns = n
+		return nil
+	case "limits.unit_cost_usd":
+		f, err := parseUnitCost(key, value)
+		if err != nil {
+			return err
+		}
+		c.Limits.UnitCostUSD = f
 		return nil
 	case "limits.per_host":
 		n, err := strconv.Atoi(value)
@@ -1613,7 +1662,7 @@ func (c *Config) Set(key, value string) error {
 
 // settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
 // default worker or as workers.<name>.<key>.
-var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "permission_mode", "stall_timeout", "variant"}
+var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "permission_mode", "stall_timeout", "unit_cost_usd", "variant"}
 
 // parseMaxTurns parses a max_turns value: a non-negative integer, 0 clearing
 // it (issue #459).
@@ -1634,6 +1683,12 @@ func setWorkerValue(w *Worker, key, value string) error {
 			return err
 		}
 		w.MaxTurns = n
+	case "unit_cost_usd":
+		f, err := parseUnitCost(key, value)
+		if err != nil {
+			return err
+		}
+		w.UnitCostUSD = f
 	case "model":
 		w.Model = value
 	case "variant":
@@ -1669,8 +1724,9 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host",
-		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout", "variant",
+		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
+		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
+		"unit_cost_usd", "variant",
 		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
