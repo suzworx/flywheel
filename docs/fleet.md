@@ -53,6 +53,7 @@ Discovery is `flywheel.FleetLedgers(fleet)`, a plain function other commands reu
 | `flywheel fleet remove <name>` | Unregister the root named `name`. |
 | `flywheel fleet list [--json]` | Each root and the ledgers discovered under it. |
 | `flywheel fleet status [--json] [--all] [--idle-after D]` | One row per ledger; idle worktree ledgers fold into one row per root. |
+| `flywheel fleet learnings [--pending\|--all] [--json] [--sync=false] [--done <key\|title prefix>\|--done-all]` | Sync every ledger's learnings into the pending queue, then list it (see [Learnings queue](#learnings-queue)). |
 
 `fleet status` prints an aligned table:
 
@@ -108,10 +109,46 @@ lists every ledger, an exact copy included as `+0`.
 `--json` applies the same rule: a fold row carries `"kind": "idle"`, `idle` (the count) and
 `last_age` (the oldest age, in seconds).
 
-Exit codes: 0 ok, 1 error (unreadable registry, refused add, unknown name), 2 usage.
+## Learnings queue
+
+`flywheel fleet learnings` gathers every `learning` event across the fleet's ledgers, so a lead
+that runs several factories no longer needs a hand-written watcher script with its own seen-set
+and pending list.
+
+- **The key.** A learning's key is the hex sha256 of its title and observed text. The same
+  learning in several ledgers, a root and the worktrees that carry its committed ledger, is one
+  learning; the earliest `ts` wins as its first-seen ledger and time. A worktree's learning that
+  is also in its root's ledger is inherited (the rule `fleet status` uses) and never first-seen
+  in the worktree; a learning the worktree records after the fork is its own.
+- **Dismissed.** A learning is dismissed when a `dismissed` event in any ledger targets it (by
+  that ledger's `L-NN` id). A dismissed learning is marked seen and never becomes pending.
+- **The queue.** `fleet-learnings.json` beside the registry (the directory of `fleet.json`, or of
+  `FLYWHEEL_FLEET`) holds `{"version": 1, "seen": [keys], "pending": {key: learning}}` and is
+  written atomically (temp file plus rename), so a crash mid-write leaves the previous queue. A
+  queue that does not parse is an error, never silently reset.
+- **Sync.** Every run (unless `--sync=false`) adds each key not yet seen to `seen` and, unless
+  dismissed, to `pending`, and notes on stderr how many it added. Repeated syncs add nothing new.
+- **The first sync.** On an empty queue the first sync marks every learning seen but makes pending
+  only those newer than 7 days, so history does not flood the queue; it says so on stderr.
+- **Draining.** `--done <ref>` removes from pending every learning whose key starts with `ref`
+  (at least 6 characters; the table shows 12) or, when none does, whose title starts with `ref`
+  (case folded). `--done-all` empties pending. Neither syncs, and neither removes from `seen`,
+  so a handled learning never comes back. An unmatched `--done` exits 1.
+
+The default lists the pending queue, oldest first:
+
+```
+KEY           SEVERITY  AGE  ROOT      TASK  TITLE
+3f9a0c41be27  P1        2h   olexa     t12   gate runs twice on a resumed session
+```
+
+`--all` lists every learning in the fleet instead (a dismissed one marked `(dismissed)`); `--json`
+prints the list as JSON (`[]` when empty) for scripts.
+
+Exit codes: 0 ok, 1 error (unreadable registry or queue, refused add, unknown name, unmatched
+`--done`), 2 usage.
 
 ## Coming next
 
-- A durable learnings queue fed from every ledger in the fleet.
 - `flywheel fleet watch`: a watcher over the fleet.
 - `:ctx` in the factory view to switch between fleet ledgers.
