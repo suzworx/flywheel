@@ -10,10 +10,25 @@ import (
 // MetricsWindow is the span a MetricsReport covers (issue #583): events with
 // Since <= ts < Until count, and every per-bucket series has one value per
 // Bucket-long step from Since.
+// StaleAfter is how long a unit in progress may go without an event before
+// it counts as stale instead of WIP (issue #590); zero means
+// DefaultWIPStaleAfter.
 type MetricsWindow struct {
-	Since  time.Time     `json:"since"`
-	Until  time.Time     `json:"until"`
-	Bucket time.Duration `json:"bucket"`
+	Since      time.Time     `json:"since"`
+	Until      time.Time     `json:"until"`
+	Bucket     time.Duration `json:"bucket"`
+	StaleAfter time.Duration `json:"stale_after"`
+}
+
+// DefaultWIPStaleAfter is the stale threshold when a window sets none.
+const DefaultWIPStaleAfter = 7 * 24 * time.Hour
+
+// staleAfter is the window's effective stale threshold.
+func (w MetricsWindow) staleAfter() time.Duration {
+	if w.StaleAfter == 0 {
+		return DefaultWIPStaleAfter
+	}
+	return w.StaleAfter
 }
 
 // WindowFor is the named window ending at now: 24h in 1h buckets, 7d and 30d
@@ -33,7 +48,7 @@ func WindowFor(name string, now time.Time) (MetricsWindow, error) {
 // Previous is the equal-length window ending where w starts, for trends.
 func (w MetricsWindow) Previous() MetricsWindow {
 	d := w.Until.Sub(w.Since)
-	return MetricsWindow{Since: w.Since.Add(-d), Until: w.Since, Bucket: w.Bucket}
+	return MetricsWindow{Since: w.Since.Add(-d), Until: w.Since, Bucket: w.Bucket, StaleAfter: w.StaleAfter}
 }
 
 // in reports whether t falls in the window.
@@ -165,15 +180,17 @@ func evAt(t time.Time) string { return t.UTC().Format("01-02 15:04") }
 
 // FlowMetrics is how work moves through the factory.
 type FlowMetrics struct {
-	Throughput       int       `json:"throughput"`        // units whose first landed event is in the window
-	ThroughputSeries []float64 `json:"throughput_series"` // landed units per bucket
-	WIP              int       `json:"wip"`               // units in progress at the window's end
-	WIPSeries        []float64 `json:"wip_series"`        // units in progress at each bucket's end
-	LeadTime         Dist      `json:"lead_time"`         // first planned → landed
-	CycleTime        Dist      `json:"cycle_time"`        // first dispatched → landed
-	QueueTime        Dist      `json:"queue_time"`        // first planned → first dispatched
-	TouchTime        Dist      `json:"touch_time"`        // per unit: sum of dispatched → finished
-	FlowEfficiency   float64   `json:"flow_efficiency"`   // mean of touch / cycle
+	Throughput       int           `json:"throughput"`        // units whose first landed event is in the window
+	ThroughputSeries []float64     `json:"throughput_series"` // landed units per bucket
+	WIP              int           `json:"wip"`               // units in progress, not stale, at the window's end
+	WIPSeries        []float64     `json:"wip_series"`        // units in progress, not stale, at each bucket's end
+	Stale            int           `json:"stale"`             // units in progress with no event for StaleAfter, at the window's end
+	StaleOldest      time.Duration `json:"stale_oldest"`      // window's end minus the oldest stale unit's last event; 0 when none
+	LeadTime         Dist          `json:"lead_time"`         // first planned → landed
+	CycleTime        Dist          `json:"cycle_time"`        // first dispatched → landed
+	QueueTime        Dist          `json:"queue_time"`        // first planned → first dispatched
+	TouchTime        Dist          `json:"touch_time"`        // per unit: sum of dispatched → finished
+	FlowEfficiency   float64       `json:"flow_efficiency"`   // mean of touch / cycle
 }
 
 // wipStatuses are the derived statuses a unit is in progress in.
@@ -313,16 +330,20 @@ func flowMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow, bucke
 		if end.After(w.Until) {
 			end = w.Until
 		}
-		f.WIPSeries[i] = float64(wipAt(ev, end))
+		f.WIPSeries[i] = float64(wipAt(ev, end, w.staleAfter()))
 	}
-	f.WIP = wipAt(ev, w.Until)
+	wip, stale := wipTasks(ev, w.Until, w.staleAfter())
+	f.WIP, f.Stale = len(wip), len(stale)
+	for _, s := range stale {
+		f.StaleOldest = max(f.StaleOldest, w.Until.Sub(s.Last))
+	}
 	return f
 }
 
-// wipAt counts the units whose derived status, over the events before t, is
-// one of wipStatuses.
-func wipAt(ev []timed, t time.Time) int {
-	return len(wipTasks(ev, t))
+// wipAt counts the units in progress at t that are not stale.
+func wipAt(ev []timed, t time.Time, staleAfter time.Duration) int {
+	wip, _ := wipTasks(ev, t, staleAfter)
+	return len(wip)
 }
 
 // QualityMetrics is how often work is right the first time.
@@ -1009,32 +1030,56 @@ func (e evidence) flow(ev []timed, units map[string]*unitTimes, w MetricsWindow)
 			e.add("flow.flow_efficiency", id, fmt.Sprintf("%.0f%% (touch %s of cycle %s)", r*100, whyDur(t), whyDur(c)), "landed", 1-r)
 		}
 	}
-	for task, status := range wipTasks(ev, w.Until) {
+	wip, stale := wipTasks(ev, w.Until, w.staleAfter())
+	for task, status := range wip {
 		var age time.Duration
 		if u := units[task]; u != nil && !u.Dispatched.IsZero() {
 			age = w.Until.Sub(u.Dispatched)
 		}
 		e.add("flow.wip", task, status+" for "+whyDur(age), status, age.Seconds())
 	}
+	for task, s := range stale {
+		idle := w.Until.Sub(s.Last)
+		e.add("flow.wip", task, "stale: "+s.Status+", last event "+whyDur(idle)+" ago", "stale", idle.Seconds())
+	}
 }
 
-// wipTasks maps each task whose derived status, over the events before t,
-// is one of wipStatuses to that status.
-func wipTasks(ev []timed, t time.Time) map[string]string {
+// staleTask is a unit in progress with no event for the stale threshold:
+// its derived status and its last event's time.
+type staleTask struct {
+	Status string
+	Last   time.Time
+}
+
+// wipTasks splits the tasks whose derived status, over the events before t,
+// is one of wipStatuses: a task whose last event is at or before
+// t - staleAfter is stale (issue #590), every other one is WIP and maps to
+// its status.
+func wipTasks(ev []timed, t time.Time, staleAfter time.Duration) (map[string]string, map[string]staleTask) {
 	var prefix []Event
+	last := map[string]time.Time{}
 	for _, e := range ev {
 		if !e.At.Before(t) {
 			break
 		}
 		prefix = append(prefix, e.Event)
-	}
-	out := map[string]string{}
-	for _, ts := range Derive(prefix).Tasks {
-		if wipStatuses[ts.Status] {
-			out[ts.ID] = ts.Status
+		if e.Task != "" {
+			last[e.Task] = e.At
 		}
 	}
-	return out
+	wip, stale := map[string]string{}, map[string]staleTask{}
+	cutoff := t.Add(-staleAfter)
+	for _, ts := range Derive(prefix).Tasks {
+		if !wipStatuses[ts.Status] {
+			continue
+		}
+		if l, ok := last[ts.ID]; ok && !l.After(cutoff) {
+			stale[ts.ID] = staleTask{Status: ts.Status, Last: l}
+			continue
+		}
+		wip[ts.ID] = ts.Status
+	}
+	return wip, stale
 }
 
 // MetricsFor reads dir's event log and config and computes Metrics over w.
