@@ -203,3 +203,68 @@ func TestCostPerAttemptModel(t *testing.T) {
 		t.Errorf("models = %#v, want exactly A, B, C and unknown", rep.Models)
 	}
 }
+
+// TestCostReviewAttributed checks a reviewed event's spend lands under its
+// task, under its own model (never the worker's), in the total and in Review
+// (issue #459); a reviewed event without a Model lands under "unknown".
+func TestCostReviewAttributed(t *testing.T) {
+	t.Parallel()
+	dir := costFixture(t)
+	for _, e := range []Event{
+		{TS: "2026-09-14T10:06:00Z", Task: "t1", Kind: "reviewed", Verdict: "correct", Model: "rev", Adapter: "claude", Tokens: &Tokens{Input: 20, Output: 4}, Cost: 0.02},
+		{TS: "2026-09-14T10:07:00Z", Task: "t2", Kind: "reviewed", Verdict: "crashed", Category: "tests", Cost: 0.03},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+	rep, err := Cost(dir)
+	if err != nil {
+		t.Fatalf("Cost() error = %v", err)
+	}
+	near := func(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+	if r := costRow(t, rep.Tasks, "t1"); !near(r.Cost, 0.024) || !near(r.Review, 0.02) || r.Count() != 965+24 {
+		t.Errorf("t1 row = %+v, want cost 0.024, review 0.02, %d tokens", r, 965+24)
+	}
+	if r := costRow(t, rep.Tasks, "t2"); !near(r.Cost, 0.031) || !near(r.Review, 0.03) {
+		t.Errorf("t2 row = %+v, want cost 0.031, review 0.03", r)
+	}
+	if r := costRow(t, rep.Models, "rev"); !near(r.Cost, 0.02) || !near(r.Review, 0.02) || r.Count() != 24 {
+		t.Errorf("rev row = %+v, want the review's own spend", r)
+	}
+	if r := costRow(t, rep.Models, "m1"); !near(r.Cost, 0.004) || r.Review != 0 {
+		t.Errorf("m1 row = %+v, want only the worker's spend", r)
+	}
+	if r := costRow(t, rep.Models, "unknown"); !near(r.Cost, 0.03) || !near(r.Review, 0.03) {
+		t.Errorf("unknown row = %+v, want the crashed member's spend", r)
+	}
+	if !near(rep.Total.Cost, 0.055) || !near(rep.Total.Review, 0.05) {
+		t.Errorf("Total = %+v, want cost 0.055, review 0.05", rep.Total)
+	}
+}
+
+// TestCostReviewHandVerdict checks a reviewed event with no cost and no
+// tokens (a hand verdict) changes nothing (issue #459).
+func TestCostReviewHandVerdict(t *testing.T) {
+	t.Parallel()
+	dir := costFixture(t)
+	want, err := Cost(dir)
+	if err != nil {
+		t.Fatalf("Cost() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-14T10:06:00Z", Task: "t1", Kind: "reviewed", Verdict: "pass", Model: "rev"}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	got, err := Cost(dir)
+	if err != nil {
+		t.Fatalf("Cost() error = %v", err)
+	}
+	a, _ := json.Marshal(want)
+	b, _ := json.Marshal(got)
+	if string(a) != string(b) {
+		t.Errorf("hand verdict changed the report:\n%s\nwant\n%s", b, a)
+	}
+	if spendEvent(Event{Kind: "reviewed", Verdict: "pass"}) || !spendEvent(Event{Kind: "reviewed", Tokens: &Tokens{}}) || !spendEvent(Event{Kind: "finished"}) {
+		t.Error("spendEvent: want finished and a reviewed event with cost or tokens, never a hand verdict")
+	}
+}

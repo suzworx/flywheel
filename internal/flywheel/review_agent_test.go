@@ -599,3 +599,108 @@ func TestBuildReviewPromptIntent(t *testing.T) {
 		at += i + len(want)
 	}
 }
+
+// spendStream points the fake claude (already on PATH) at a stream whose
+// assistant message is answer and carries one call's usage, and whose result
+// line carries the session total usage and total_cost_usd cost, as claude's
+// does (issue #459).
+func spendStream(t *testing.T, answer string, cost float64) {
+	t.Helper()
+	text, _ := json.Marshal(answer)
+	stream := `{"type":"system","subtype":"init","session_id":"s"}` + "\n" +
+		`{"type":"assistant","session_id":"s","message":{"content":[{"type":"text","text":` + string(text) + `}],"usage":{"input_tokens":100,"output_tokens":20}}}` + "\n" +
+		fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":"s","total_cost_usd":%g,"usage":{"input_tokens":300,"output_tokens":60,"cache_read_input_tokens":1000}}`, cost) + "\n"
+	path := filepath.Join(t.TempDir(), "spend.jsonl")
+	if err := os.WriteFile(path, []byte(stream), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, path)
+}
+
+// TestReviewSpendRecorded checks a review --agent round records the stream's
+// cost and tokens on its reviewed event and none on its review_finding
+// events, and counts a claude result line (the session total) once, not on
+// top of the assistant message's usage (issue #459).
+func TestReviewSpendRecorded(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH
+	answer := "```json\n{\"findings\":[{\"severity\":\"major\",\"file\":\"a.go\",\"line\":3,\"claim\":\"real\",\"scenario\":\"s\"}]}\n```"
+	dir := reviewAgentRepo(t, answer)
+	spendStream(t, answer, 0.05)
+	res, err := ReviewAgent(dir, "T1", ReviewAgentOptions{Session: "rev-1"})
+	if err != nil {
+		t.Fatalf("ReviewAgent() error = %v", err)
+	}
+	want := Tokens{Input: 300, Output: 60, CacheRead: 1000}
+	if res.Cost != 0.05 || res.Tokens != want {
+		t.Errorf("result spend = %v, %+v; want 0.05, %+v", res.Cost, res.Tokens, want)
+	}
+	findings, reviewed := reviewKinds(t, dir)
+	if len(findings) != 1 || len(reviewed) != 1 {
+		t.Fatalf("events: %d review_finding, %d reviewed; want 1 and 1", len(findings), len(reviewed))
+	}
+	if r := reviewed[0]; r.Cost != 0.05 || r.Tokens == nil || *r.Tokens != want {
+		t.Errorf("reviewed spend = %v, %+v; want 0.05, %+v", r.Cost, r.Tokens, want)
+	}
+	if f := findings[0]; f.Cost != 0 || f.Tokens != nil {
+		t.Errorf("review_finding carries spend %v, %+v; want none", f.Cost, f.Tokens)
+	}
+}
+
+// TestReviewSpendRetried checks a refused-then-retried round sums both runs
+// on its reviewed event, and a round refused twice records nothing but its
+// error carries both runs' spend (issue #459).
+func TestReviewSpendRetried(t *testing.T) {
+	// not parallel: fakeClaudeAnswer sets PATH; sets the package-level commandHook
+	bad := "```json\n{\"findings\":[{\"severity\":\"major\",\"file\":\"nope.go\",\"line\":1,\"claim\":\"c\",\"scenario\":\"s\"}]}\n```"
+	good := "```json\n{\"findings\": []}\n```"
+	dir := reviewAgentRepo(t, bad) // the first run: $0.01, no usage
+	first := os.Getenv(fakeClaudeEnv)
+	spendStream(t, good, 0.05)
+	second := os.Getenv(fakeClaudeEnv)
+	_ = os.Setenv(fakeClaudeEnv, first)
+	runs := 0
+	commandHook = func(RunRequest) {
+		if runs++; runs == 2 {
+			_ = os.Setenv(fakeClaudeEnv, second)
+		}
+	}
+	defer func() { commandHook = nil }()
+	res, err := ReviewAgent(dir, "T1", ReviewAgentOptions{Session: "rev-1"})
+	commandHook = nil
+	if err != nil || runs != 2 {
+		t.Fatalf("ReviewAgent() = %v after %d runs; want a recorded retry", err, runs)
+	}
+	_, reviewed := reviewKinds(t, dir)
+	if len(reviewed) != 1 || reviewed[0].Cost < 0.0599 || reviewed[0].Cost > 0.0601 || res.Cost != reviewed[0].Cost {
+		t.Errorf("reviewed = %+v, result cost %v; want both runs' $0.06", reviewed, res.Cost)
+	}
+
+	twice := reviewAgentRepo(t, bad)
+	_, err = ReviewAgent(twice, "T1", ReviewAgentOptions{Session: "rev-1"})
+	run, ok := err.(*reviewRunError)
+	if !ok || run.spend.Cost < 0.0199 || run.spend.Cost > 0.0201 {
+		t.Errorf("refused twice: err = %#v, want a reviewRunError carrying both runs' $0.02", err)
+	}
+	if f, r := reviewKinds(t, twice); len(f)+len(r) != 0 {
+		t.Errorf("refused twice recorded %d findings and %d reviewed", len(f), len(r))
+	}
+}
+
+// TestReviewSpendUnitCap checks unitSpend counts reviewed spend, so a unit
+// whose worker spend is under limits.unit_cost_usd but whose worker and
+// review spend reach it is refused at dispatch with rule unit-cost (#459).
+func TestReviewSpendUnitCap(t *testing.T) {
+	t.Parallel()
+	dir := spentTask(t, 0.3, 0.5)
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:03:00Z", Task: "T1", Kind: "reviewed", Verdict: "correct", Model: "rev", Adapter: "claude", Cost: 0.2}); err != nil {
+		t.Fatalf("AppendEvent() error = %v", err)
+	}
+	events := mustEvents(t, dir)
+	if got := unitSpend(events, "T1"); got < 0.4999 || got > 0.5001 {
+		t.Errorf("unitSpend(T1) = %v, want the worker's 0.3 plus the review's 0.2", got)
+	}
+	_, err := Run(dir, RunOptions{Task: "T1"})
+	if rr, ok := err.(*RuleRefusal); !ok || rr.Rule != "unit-cost" {
+		t.Fatalf("Run() error = %v, want a unit-cost refusal", err)
+	}
+}

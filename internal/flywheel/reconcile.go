@@ -370,7 +370,7 @@ func Reconcile(s State, events []Event, obs Observed, p Policy, now time.Time) [
 	if p.BudgetUSD > 0 {
 		spent := 0.0
 		for _, e := range events {
-			if e.Kind == "finished" {
+			if spendEvent(e) {
 				spent += e.Cost
 			}
 		}

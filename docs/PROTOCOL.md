@@ -406,8 +406,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`). The review agent's
   event also carries `adapter` (the agent that reviewed; a verdict passed in by hand names none, and
   the next agent round is one more than the task's `reviewed` events that do), verdict `correct`
-  when any finding is a blocker or major and `pass` otherwise, and the note
-  `<n> finding(s): <b> blocker, <m> major, <k> minor`.
+  when any finding is a blocker or major and `pass` otherwise, the note
+  `<n> finding(s): <b> blocker, <m> major, <k> minor`, and `tokens` and `cost`: what every reviewer
+  run of the round spent (the first run and a retry after a refused answer), summed from the
+  stream the way a worker's are (issue #459). Its `review_finding` events carry none, so the spend
+  counts once; a hand verdict carries neither. `flywheel cost`, `limits.unit_cost_usd`,
+  `limits.budget` and the floor count a `reviewed` event with `cost` or `tokens` as spend.
 - Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`, except
   that a `reviewed` event written by the review agent (persona `reviewer` with an `adapter`) never
   sets `passed` — its `pass` leaves the status unchanged, because the agent reads and the gauges
@@ -433,7 +437,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   not trusted: an answer whose file does not exist (and is not a changed path), whose `line` is not
   0 or a real line, with an empty claim or scenario, or with more than 3 nits is refused, and the
   agent runs once more, fresh, into `<task>.<round>b.jsonl`; a second refusal records nothing and
-  `flywheel review --agent` exits 1 naming both transcripts. `flywheel review calibrate --cases FILE
+  `flywheel review --agent` exits 1 naming both transcripts (their spend is in the transcripts
+  only; a panel member records it on its crashed event). `flywheel review calibrate --cases FILE
   --session S` runs the same agent over a sample of past PR states in temporary worktrees and synthetic
   ledgers (never this ledger) and reports its recall against the case file (docs/calibration/README.md).
 - Carries: `task`, `attempt` (the unit's latest), `session` (the reviewer, never a worker session
@@ -515,8 +520,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - A crashed member (issue #469): a member whose run fails (the reviewer exits non-zero, its stream
   breaks, or its answer is refused twice) runs once more; failing again, the panel appends one
   `reviewed` event with verdict `crashed`, persona `reviewer`, the dimension in `category`, the
-  reviewed tree and the cause (the stream's error result, else the stderr tail; about 300 bytes) in
-  `note`, and goes on with the next member. `Validate` accepts `crashed` only with a `category`. It
+  reviewed tree, the cause (the stream's error result, else the stderr tail; about 300 bytes) in
+  `note`, and the `tokens` and `cost` its two failed runs spent (issue #459), and goes on with the next member. `Validate` accepts `crashed` only with a `category`. It
   names no adapter, so it closes no finding, counts as no round and changes no status. Any other
   error (persona, config, ledger, rule) still stops the panel. With `--fix`, a round with a crash
   still corrects the open blocking findings inside owns; with none open it never passes: it reviews

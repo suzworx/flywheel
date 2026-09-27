@@ -380,7 +380,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel release <task>` | Release a claimed task; refused (exit 6) for a live claim held elsewhere unless `--force`. |
 | `flywheel claims` | List every claim: task, session, note, age, live or expired. |
 | `flywheel claim-edit --paths P1,P2 --session S` | Declare a lead's own edit made after a unit's dispatch so the owns check attributes it; bound to the content declared. |
-| `flywheel cost` | Sum finished events' tokens and cost per task and per model. |
+| `flywheel cost` | Sum finished events' and agent review rounds' tokens and cost per task and per model; a row with review spend shows `review=$X`. |
 | `flywheel stats [--by model [--kind]]` | The factory's own numbers: first-pass rate, corrections, cost per landed task, review numbers; `--by model` adds a per-model scoreboard. |
 | `flywheel feedback [add\|dismiss\|regen\|export\|submit]` | Turn signals into learnings in `learnings.md`; `regen` rebuilds it from the log, `export` and `submit` send a sanitised report upstream, consent-first. |
 | Command | Status | What it does |
