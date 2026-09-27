@@ -13,11 +13,13 @@ import (
 
 // recoverWorld is the world state one Recover call shares across its
 // parallel per-task pass (issue #628): each workdir's tree hash is computed
-// once, however many units work in it.
+// once, however many units work in it, and the squash reads SquashedBase
+// repeats per unit (the integration branch, each base's log) run once.
 type recoverWorld struct {
-	mu    sync.Mutex
-	hash  func(string) (string, error)
-	trees map[string]*treeMemo
+	mu     sync.Mutex
+	hash   func(string) (string, error)
+	trees  map[string]*treeMemo
+	squash *squashCache
 }
 
 // treeMemo is one workdir's tree hash, computed once.
@@ -31,7 +33,7 @@ func newRecoverWorld(hash func(string) (string, error)) *recoverWorld {
 	if hash == nil {
 		hash = treeHash
 	}
-	return &recoverWorld{hash: hash, trees: map[string]*treeMemo{}}
+	return &recoverWorld{hash: hash, trees: map[string]*treeMemo{}, squash: newSquashCache()}
 }
 
 // tree returns wd's tree hash (or error), computing it on the first call for
@@ -380,7 +382,7 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 		f.PausedUntil = t.PausedUntil
 	}
 	if ts.Status == "finished" || ts.Status == "passed" {
-		if base, landedAs, baseTask, ok := SquashedBase(dir, events, id); ok {
+		if base, landedAs, baseTask, ok := squashedBase(dir, events, id, world.squash); ok {
 			t.Stacked = stackedFix(id, base, landedAs, baseTask)
 			f.Stacked = t.Stacked
 		}
