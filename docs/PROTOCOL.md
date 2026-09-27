@@ -281,7 +281,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `background job never collected: <cmd>`, no signal is recorded, the floor shows the unit
   `abandoned-job` on the andon, and `flywheel run` resumes the same session once, immediately,
   with `.flywheel/briefs/<task>.job-1.txt` telling the worker to run the job in the foreground; a
-  second `abandoned-job` is returned as is, issue #390; `start-failed`; `silent`;
+  second `abandoned-job` is returned as is, issue #390; `suspended` — a `flywheel suspend --stop`
+  stopped the worker at a lease tick; the note is `stopped by suspend at <ts>`, the session is kept
+  and `flywheel resume` continues it (see [`suspended`](#suspended)), issue #572; `start-failed`; `silent`;
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
   for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
@@ -365,7 +367,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
   `git` first on PATH never reaches it.
 - `checkpoint` (issue #422): on an unclean finish (`error`, `rate-limited`, `stalled`, `silent`,
-  `abandoned-job`, `length`) of an attempt that wrote files, the sha of the snapshot of its changed
+  `abandoned-job`, `length`, `suspended`) of an attempt that wrote files, the sha of the snapshot of its changed
   owned paths at `refs/flywheel/checkpoints/<task>/<attempt>` (see `recovered` below). Only a
   `finished` event may carry it.
 - Workers load no MCP servers unless the worker config lists them (issue #425). Every claude
@@ -757,6 +759,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   | dispatched/running, lost by the `lost` rules above | `mark-lost` | `flywheel recover --apply` |
   | dispatched/running, otherwise | `none` | |
   | unclean finish or `lost`, model paused | `wait-reset` | `flywheel run <task> --resume` (waits for the reset) |
+  | finished `suspended`, the factory still suspended | `resume-session` | `flywheel resume --session <s>` |
+  | finished `suspended`, the factory thawed | `resume-session` | `flywheel run <task> --resume` |
   | finished `rate-limited` or `abandoned-job` | `resume-session` | `flywheel run <task> --resume` |
   | `lost`, or any other unclean finish | `none` (dispatch or correct) | |
   | finished `stop` or `passed`, stacked | `rebase` | `flywheel rebase <task>` |
@@ -775,7 +779,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   reports no conflict (a conflict is aborted and listed). `resume-session`, `wait-reset`, `review`,
   `inspect`, `land`, `assign-owner` and `investigate` are never run; they are listed for the lead.
 - **Checkpoints.** An attempt that ends uncleanly (`error`, `rate-limited`, `stalled`, `silent`,
-  `abandoned-job`, `length`) after writing files has its changed owned paths snapshotted: a
+  `abandoned-job`, `length`, `suspended`) after writing files has its changed owned paths snapshotted: a
   temporary index reads HEAD, adds those paths, writes a tree, and `commit-tree` makes
   `checkpoint <task> <attempt>` on top of HEAD, kept at `refs/flywheel/checkpoints/<task>/<attempt>`
   — never the branch, never the real index. The `finished` event carries the sha as `checkpoint`; a
@@ -879,12 +883,28 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   reporting each unit not resumed with reason `suspended`. `flywheel status` prints a first
   `SUSPENDED since …` line (`suspended` in `--json`) and the floor lists a `factory suspended`
   andon entry first. A second `flywheel suspend` while suspended is refused (exit 6, rule `suspended`).
+- `stop` (`flywheel suspend --stop`; only `suspended` may carry it): the suspension also stops
+  every live worker. The command writes the sentinel `.flywheel/suspend.stop` (content: the event's
+  ts). A running `flywheel run` stats it on every lease tick (`lease.renew_interval`) and, only
+  when it exists, reads the ledger and confirms the suspension carries `stop`; it then kills the
+  worker the way the stall watchdog does and finishes the attempt with reason `suspended`, note
+  `stopped by suspend at <ts>`: the finished event keeps the session, the written owned files are
+  checkpointed, a worktree's changes stay in the worktree (no attempt commit), and the run exits 6.
+  `flywheel recover` offers such a unit `resume-session` (reason `stopped by a factory
+  suspension`) with the command `flywheel resume --session <s>` while suspended and `flywheel run
+  <task> --resume` once thawed; the floor shows it `suspended`, not failed.
 
 ### `unsuspended`
-- Written by: `flywheel resume --session S [--note TEXT]` (issue #572).
+- Written by: `flywheel resume --session S [--note TEXT] [--no-redispatch]` (issue #572).
 - Floor level: carries no `task`.
 - Carries: `session` (who thawed the factory) and `note`. `Validate` requires the session and no task.
 - Effect: thaws a suspended factory; refused (exit 6, rule `suspended`) when it is not suspended.
+  The command removes `.flywheel/suspend.stop` and re-dispatches every task whose latest finished
+  event has reason `suspended` and no later `dispatched` event: it writes the continue delta
+  `.flywheel/briefs/<task>.delta.txt` (the brief's owns, needs and gates, then "You were stopped by
+  a factory suspension; …") and starts `flywheel run <task> --resume --dir <dir> --session <s>`
+  detached, as `supervise --resume-limited` does (log `.flywheel/runs/<task>.autoresume.log`),
+  printing `resumed <task> <attempt> (log <path>)`. `--no-redispatch` only thaws.
 
 ### `probed`
 - Written by: `flywheel doctor --record`.
@@ -1408,9 +1428,9 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 | 2 usage (e.g., --exception without --session), 1 other error |
-| `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
+| `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **6** suspended (a `flywheel suspend --stop` stopped the worker, issue #572); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
-`flywheel run`'s own three codes (3, 4, 7) are not part of the repo-wide list: they are
+`flywheel run`'s own codes (3, 4, 7, and 6 for `suspended`) are not part of the repo-wide list: they are
 `ExitCode`'s reading of one `Result`, keyed by exit number instead of by command, and `AGENTS.md`
 records them as `run`-specific. Exit 7 means **stalled** — a mid-stream gap — and nothing else, so
 a consumer scripts exit codes per command, never globally:
@@ -1419,6 +1439,7 @@ a consumer scripts exit codes per command, never globally:
 | --- | --- |
 | 3 | `silent` — no stdout line arrived within the start timeout |
 | 4 | any other non-clean outcome — nonzero `rc`, or finish `reason` `length`, `error`, `rate-limited` (after any resumes), `abandoned-job` (after its one resume), or `start-failed` |
+| 6 | `suspended` — a `flywheel suspend --stop` stopped the worker at a lease tick (issue #572); `flywheel resume` continues it |
 | 7 | `stalled` — the run had started but the run file stopped growing for the stall timeout (issue #158) |
 
 Everything upstream of these five commands — writing a brief, deciding what belongs in `owns:`,

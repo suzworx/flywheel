@@ -209,6 +209,11 @@ type Event struct {
 	// the factory is no longer suspended, without an unsuspended event. Empty
 	// when the suspension lasts until flywheel resume; only suspended carries it.
 	Until string `json:"until,omitempty"`
+	// Stop marks a suspended event that also stops every live worker at its
+	// next lease tick (flywheel suspend --stop, issue #572): each attempt ends
+	// with finished reason "suspended", checkpointed and its session kept, and
+	// flywheel resume re-dispatches it. Only suspended carries it.
+	Stop bool `json:"stop,omitempty"`
 	// Step and Result are a shipped event's ship step (one of ShipSteps) and
 	// its outcome (ok, skip or fail) (issue #457); only the shipped kind may
 	// carry them. The event reuses Attempt, Commit (fw/<task>'s HEAD after the
@@ -503,6 +508,9 @@ func Validate(e Event) error {
 		if _, err := time.Parse(time.RFC3339, e.Until); err != nil {
 			return fmt.Errorf("suspended until %q is not RFC 3339", e.Until)
 		}
+	}
+	if e.Stop && e.Kind != "suspended" {
+		return fmt.Errorf("event kind %q cannot carry stop", e.Kind)
 	}
 	if e.Kind == "shipped" {
 		if !slices.Contains(ShipSteps, e.Step) {

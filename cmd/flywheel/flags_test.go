@@ -145,17 +145,17 @@ func TestScheduleMainExitsAndOutput(t *testing.T) {
 func TestSuspendFlagsBind(t *testing.T) {
 	t.Parallel()
 	fs, o := suspendFlags()
-	if err := fs.Parse([]string{"--reason", "r", "--until", "18:00", "--session", "s", "--dir", "D"}); err != nil {
+	if err := fs.Parse([]string{"--reason", "r", "--until", "18:00", "--stop", "--session", "s", "--dir", "D"}); err != nil {
 		t.Fatalf("suspendFlags: %v", err)
 	}
-	if want := (suspendOptions{dir: "D", session: "s", reason: "r", until: "18:00"}); *o != want {
+	if want := (suspendOptions{dir: "D", session: "s", reason: "r", until: "18:00", stop: true}); *o != want {
 		t.Errorf("suspendFlags parsed = %#v, want %#v", *o, want)
 	}
 	fs, o = resumeFlags()
-	if err := fs.Parse([]string{"--note", "n", "--session", "s", "--dir", "D"}); err != nil {
+	if err := fs.Parse([]string{"--note", "n", "--no-redispatch", "--session", "s", "--dir", "D"}); err != nil {
 		t.Fatalf("resumeFlags: %v", err)
 	}
-	if want := (suspendOptions{dir: "D", session: "s", note: "n"}); *o != want {
+	if want := (suspendOptions{dir: "D", session: "s", note: "n", noRedispatch: true}); *o != want {
 		t.Errorf("resumeFlags parsed = %#v, want %#v", *o, want)
 	}
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
@@ -170,6 +170,80 @@ func TestSuspendFlagsBind(t *testing.T) {
 	}
 	if _, err := parseUntil("6pm", now); err == nil {
 		t.Error("parseUntil(6pm) = nil error, want one")
+	}
+}
+
+// stoppedFactory is a ledger frozen by a stopping suspension: A's latest
+// finish is suspended, B's was re-dispatched since, C finished clean and D
+// finished suspended before a later clean attempt.
+func stoppedFactory(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := flywheel.Init(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.md"), []byte("owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var evs []flywheel.Event
+	unit := func(task string, reasons ...string) {
+		evs = append(evs, flywheel.Event{Task: task, Kind: "planned", Brief: "b.md"})
+		for i, r := range reasons {
+			a := "r" + string(rune('1'+i))
+			evs = append(evs, flywheel.Event{Task: task, Kind: "dispatched", Attempt: a, Model: "m"})
+			if r != "" {
+				evs = append(evs, flywheel.Event{Task: task, Kind: "finished", Attempt: a, Model: "m", Reason: r, Session: "ses_" + task})
+			}
+		}
+	}
+	unit("A", "suspended")
+	unit("B", "suspended", "")
+	unit("C", "stop")
+	unit("D", "suspended", "stop")
+	evs = append(evs, flywheel.Event{Kind: "suspended", Session: "lead", Note: "freeze", Stop: true})
+	for _, e := range evs {
+		if err := flywheel.AppendEvent(dir, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestResumeRedispatchStopped: resume thaws and starts `flywheel run <task>
+// --resume` for exactly the unit a stopping suspension stopped and not
+// re-dispatched since, after writing its continue delta; --no-redispatch
+// only thaws (issue #572).
+func TestResumeRedispatchStopped(t *testing.T) {
+	t.Parallel()
+	for _, noRedispatch := range []bool{false, true} {
+		dir := stoppedFactory(t)
+		var started []string
+		var out strings.Builder
+		o := &suspendOptions{dir: dir, session: "lead", noRedispatch: noRedispatch}
+		err := resumeFactory(o, func(task string) error { started = append(started, task); return nil }, &out)
+		if err != nil {
+			t.Fatalf("resumeFactory(noRedispatch=%v): %v", noRedispatch, err)
+		}
+		evs, _ := flywheel.ReadEvents(dir)
+		if s := flywheel.FactorySuspended(evs, time.Now()); s.Suspended {
+			t.Errorf("noRedispatch=%v: still suspended %+v", noRedispatch, s)
+		}
+		delta, derr := os.ReadFile(filepath.Join(dir, ".flywheel", "briefs", "A.delta.txt"))
+		if noRedispatch {
+			if len(started) != 0 || derr == nil || out.String() != "factory resumed\n" {
+				t.Errorf("--no-redispatch started %q, delta err %v, out %q; want nothing started", started, derr, out.String())
+			}
+			continue
+		}
+		if !reflect.DeepEqual(started, []string{"A"}) {
+			t.Errorf("started = %q, want [A]", started)
+		}
+		if !strings.HasPrefix(string(delta), "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK: continue") || !strings.Contains(string(delta), "stopped by a factory suspension") {
+			t.Errorf("A.delta.txt = %q, %v; want the header then the continue text", delta, derr)
+		}
+		if want := "factory resumed\nresumed A r1 (log .flywheel/runs/A.autoresume.log)\n"; out.String() != want {
+			t.Errorf("out = %q, want %q", out.String(), want)
+		}
 	}
 }
 
