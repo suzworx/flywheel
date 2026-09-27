@@ -312,6 +312,91 @@ func TestOwnsBaseUnusualNames(t *testing.T) {
 	}
 }
 
+// fastForwardedToMain makes a repo whose unit branch fast-forwarded to a main
+// commit touching docs/x.md that origin/main points at (issue #581), and
+// returns the repo dir and the dispatch base.
+func fastForwardedToMain(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	initRepo(t, dir)
+	base := git(t, dir, []string{"rev-parse", "HEAD"})
+	git(t, dir, []string{"checkout", "-b", "unit"})
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "x.md"), []byte("main\n"), 0o644); err != nil {
+		t.Fatalf("write docs/x.md: %v", err)
+	}
+	git(t, dir, []string{"add", "docs/x.md"})
+	git(t, dir, []string{"commit", "-m", "main renormalises docs"})
+	git(t, dir, []string{"update-ref", "refs/remotes/origin/main", "HEAD"})
+	return dir, base
+}
+
+// TestOwnsBaseFastForwardedMainExcluded checks that main's commits a unit
+// branch fast-forwarded to are not the unit's, while its uncommitted edit is.
+func TestOwnsBaseFastForwardedMainExcluded(t *testing.T) {
+	t.Parallel()
+	dir, base := fastForwardedToMain(t)
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("modified\n"), 0o644); err != nil {
+		t.Fatalf("modify a.go: %v", err)
+	}
+	changed, err := unitChangedPaths(dir, base, "T1")
+	if err != nil {
+		t.Fatalf("unitChangedPaths() error = %v", err)
+	}
+	if !hasPath(changed, "a.go") {
+		t.Errorf("changed = %v, want a.go", changed)
+	}
+	if hasPath(changed, "docs/x.md") {
+		t.Errorf("changed = %v, want docs/x.md excluded (reachable from origin/main)", changed)
+	}
+}
+
+// TestOwnsBaseOwnCommitAfterFastForwardCounts checks that the unit's own
+// commit on top of a fast-forwarded main still counts.
+func TestOwnsBaseOwnCommitAfterFastForwardCounts(t *testing.T) {
+	t.Parallel()
+	dir, base := fastForwardedToMain(t)
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	git(t, dir, []string{"add", "b.go"})
+	git(t, dir, []string{"commit", "-m", "add b"})
+	changed, err := unitChangedPaths(dir, base, "T1")
+	if err != nil {
+		t.Fatalf("unitChangedPaths() error = %v", err)
+	}
+	if !hasPath(changed, "b.go") {
+		t.Errorf("changed = %v, want b.go (the unit's own commit)", changed)
+	}
+	if hasPath(changed, "docs/x.md") {
+		t.Errorf("changed = %v, want docs/x.md excluded (reachable from origin/main)", changed)
+	}
+}
+
+// TestOwnsBaseNoOriginCommitCounts checks that without an origin ref a unit
+// branch's commit since base still counts, even with a local main present.
+func TestOwnsBaseNoOriginCommitCounts(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initRepo(t, dir)
+	base := git(t, dir, []string{"rev-parse", "HEAD"})
+	git(t, dir, []string{"checkout", "-b", "unit"})
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	git(t, dir, []string{"add", "b.go"})
+	git(t, dir, []string{"commit", "-m", "add b"})
+	changed, err := unitChangedPaths(dir, base, "T1")
+	if err != nil {
+		t.Fatalf("unitChangedPaths() error = %v", err)
+	}
+	if !hasPath(changed, "b.go") {
+		t.Errorf("changed = %v, want b.go", changed)
+	}
+}
+
 // gitMayFail runs git in dir and ignores its exit status (a merge that stops
 // on a conflict).
 func gitMayFail(t *testing.T, dir string, args []string) {
