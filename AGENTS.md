@@ -24,7 +24,8 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
 
 - `go build ./...`
 - `go vet ./...`
-- `go test ./...`
+- `go test -timeout 20m ./...` — the internal/flywheel package runs minutes on a loaded Windows host,
+  close to the 10m default (#619)
 - Cross-OS vet: `GOOS=linux go vet ./...`
 - Cross-OS vet: `GOOS=darwin go vet ./...` — files behind `//go:build !windows` never compile on
   Windows; a missing import there once passed every local gate and failed CI.
