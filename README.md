@@ -308,6 +308,15 @@ starts nothing, while `flywheel status` and the floor's andon say so first. `fly
 `suspended` (exit 6) with its owned files checkpointed and its session kept, and `flywheel resume`
 continues each one in its own session (`--no-redispatch` only thaws).
 
+The controller does this by itself when the tokens run out: once every configured worker model is
+paused by a rate limit, a tick suspends the factory with `--stop` until the earliest reset
+(`froze: tokens exhausted until HH:MM`), and the first tick past that reset thaws it and resumes
+every stopped and rate-limited unit exactly once, each in its own session (`thawed: tokens
+returned; resumed <task> <attempt>`). With `flywheel schedule install` this needs no live process.
+A manual `flywheel suspend` thaws only by `flywheel resume` or its own `--until`, and the
+controller never re-dispatches its units;
+`controller.auto_freeze: false` turns the automatic freeze and thaw off.
+
 ## Drive it with a lead agent
 
 Ask your lead agent to load the `flywheel` skill and drive the loop: plan → brief → dispatch →
@@ -372,6 +381,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel next` | Print the reconciler's next actions read-only: lost attempts, inspections, blocks, waits, dispatches, or HOLD on a spent budget, open breaker or rate limit. |
 | `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. `flywheel schedule install` keeps it waking even when no process is running. |
 | `flywheel schedule install [--every D] \| status \| remove` | Register, inspect or delete an OS scheduled task (Task Scheduler, crontab or launchd) that runs `flywheel controller --once` every `--every` (default 15m), one task per repository. |
+| `flywheel fleet add <path> [--name N] \| remove <name> \| list [--json] \| status [--json]` | One merged view across factory roots: a user-level registry (`fleet.json` under the user config directory, or `$FLYWHEEL_FLEET`) of roots, discovery of every ledger under them (the root, its git worktrees, `.flywheel/worktrees/*`, `.claude/worktrees/*`), and one status table (NAME, KIND, RUNNING, PASSED, FINISHED, ANDON, STATE, HEALTH, LAST). See [docs/fleet.md](docs/fleet.md). |
 | `flywheel suspend --session S [--reason TEXT] [--until TIME] [--stop]` | Freeze the factory: `run` refuses (exit 6, rule `suspended`), `next` dispatches nothing and auto-resume stops until `flywheel resume` or `--until` (RFC3339 or HH:MM). `--stop` also stops every live worker at its next lease tick: finished reason `suspended`, owned files checkpointed, session kept; its `flywheel run` exits 6. |
 | `flywheel resume --session S [--note TEXT] [--no-redispatch]` | Thaw a suspended factory (exit 6 when it is not suspended) and continue every unit a `--stop` stopped: `flywheel run <task> --resume` in the background with a continue delta, one `resumed <task> <attempt> (log <path>)` line each. `--no-redispatch` only thaws. |
 | `flywheel explain <task>` | One task's whole story from the ledger as Markdown or JSON. Read-only. |

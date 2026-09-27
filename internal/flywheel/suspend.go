@@ -20,7 +20,14 @@ type SuspendState struct {
 	Until     string `json:"until,omitempty"`
 	// Stop is set when the suspension also stops every live worker.
 	Stop bool `json:"stop,omitempty"`
+	// Auto is set when the controller froze the factory on token exhaustion
+	// (AutoFreeze): the event's reason is autoFreezeReason.
+	Auto bool `json:"auto,omitempty"`
 }
+
+// autoFreezeReason is the reason field of a suspended event AutoFreeze
+// appended: it marks the suspension automatic, so AutoThaw may thaw it.
+const autoFreezeReason = "tokens-exhausted"
 
 // FactorySuspended derives the freeze at now: the factory is suspended when
 // its latest suspended event comes after its latest unsuspended event and
@@ -45,7 +52,8 @@ func FactorySuspended(events []Event, now time.Time) SuspendState {
 			return SuspendState{}
 		}
 	}
-	return SuspendState{Suspended: true, Since: e.TS, By: e.Session, Reason: e.Note, Until: e.Until, Stop: e.Stop}
+	return SuspendState{Suspended: true, Since: e.TS, By: e.Session, Reason: e.Note, Until: e.Until, Stop: e.Stop,
+		Auto: e.Reason == autoFreezeReason}
 }
 
 // suspendedRefusal is the refusal every dispatch path returns while s holds.
@@ -95,6 +103,11 @@ type SuspendOptions struct {
 	Reason string
 	Until  time.Time
 	Stop   bool
+	// Auto marks the suspension automatic (AutoFreeze): the event carries
+	// reason autoFreezeReason.
+	Auto bool
+	// Now is the instant the suspension is judged at; zero is time.Now().
+	Now time.Time
 }
 
 // Suspend appends a suspended event: session froze the factory for reason,
@@ -116,11 +129,17 @@ func SuspendWith(dir, session string, o SuspendOptions) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now()
+	now := o.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	if s := FactorySuspended(events, now); s.Suspended {
 		return &RuleRefusal{Rule: "suspended", Fix: fmt.Sprintf("the factory is already suspended since %s by %s: %s", s.Since, s.By, s.Reason)}
 	}
 	e := Event{Kind: "suspended", Session: session, Note: reason, Stop: o.Stop}
+	if o.Auto {
+		e.Reason = autoFreezeReason
+	}
 	if !until.IsZero() {
 		if !until.After(now) {
 			return fmt.Errorf("--until %s is not in the future", until.Format(time.RFC3339))
@@ -134,7 +153,7 @@ func SuspendWith(dir, session string, o SuspendOptions) error {
 		if events, err = ReadEvents(dir); err != nil {
 			return err
 		}
-		ts := FactorySuspended(events, time.Now()).Since
+		ts := FactorySuspended(events, now).Since
 		if err := atomicWrite(filepath.Join(dir, ".flywheel"), "suspend.stop", "suspend.stop-*", []byte(ts+"\n")); err != nil {
 			return err
 		}
