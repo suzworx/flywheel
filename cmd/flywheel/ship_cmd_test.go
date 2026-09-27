@@ -25,3 +25,24 @@ func TestShipRequeueFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestShipSignatureOffFlag: --no-signature parses to noSignature for one run,
+// absent it stays false (the signature on, unless config turns it off).
+func TestShipSignatureOffFlag(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"T", "--no-signature"}, true},
+		{[]string{"T"}, false},
+	} {
+		fs, o := shipFlags()
+		if _, err := parseArgs(fs, c.args); err != nil {
+			t.Fatalf("parse %v: %v", c.args, err)
+		}
+		if o.noSignature != c.want {
+			t.Errorf("%v: noSignature = %v, want %v", c.args, o.noSignature, c.want)
+		}
+	}
+}

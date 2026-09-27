@@ -12,7 +12,7 @@ import (
 )
 
 // shipUsageLine is ship's usage, shared by help and the usage error.
-const shipUsageLine = "flywheel ship <task> [--integration BRANCH] [--workdir PATH] [--remote NAME] [--message TEXT] [--title TEXT] [--body-file PATH] [--no-merge] [--ci-timeout DUR] [--poll DUR] [--ignore-check NAME]... [--requeue N] [--repo OWNER/REPO] [--dir DIR]"
+const shipUsageLine = "flywheel ship <task> [--integration BRANCH] [--workdir PATH] [--remote NAME] [--message TEXT] [--title TEXT] [--body-file PATH] [--no-merge] [--ci-timeout DUR] [--poll DUR] [--ignore-check NAME]... [--requeue N] [--no-signature] [--repo OWNER/REPO] [--dir DIR]"
 
 func init() {
 	register("ship", "take a passed unit to landed: commit its leftovers, merge the integration branch into fw/<task>, re-run its gates, push, open or reuse the PR, wait for CI, squash merge, record the landing and close the issue", runShip)
@@ -34,6 +34,7 @@ type shipOptions struct {
 	ignoreChecks repeatable
 	repo         string
 	requeue      int
+	noSignature  bool
 }
 
 // shipFlags defines ship's flags once, so help and run share them.
@@ -54,6 +55,7 @@ func shipFlags() (*flag.FlagSet, *shipOptions) {
 	fs.Var(&o.ignoreChecks, "ignore-check", "a check name ci disregards (repeatable)")
 	fs.StringVar(&o.repo, "repo", "", "OWNER/REPO for gh (default gh's own repository resolution)")
 	fs.IntVar(&o.requeue, "requeue", 0, "times to re-merge and re-run CI when the integration branch moves before merge (default 2, 0 never)")
+	fs.BoolVar(&o.noSignature, "no-signature", false, "leave flywheel's signature (the Shipped-by: trailer and the PR footer) out of this run; config ship.signature false turns it off always")
 	return fs, o
 }
 
@@ -108,7 +110,7 @@ func shipMain(args []string, stdout, stderr io.Writer) int {
 	_, err = flywheel.Ship(o.dir, pos[0], flywheel.ShipOptions{
 		Integration: o.integration, Workdir: o.workdir, Message: o.message, Remote: o.remote, Progress: stdout,
 		Repo: o.repo, Title: o.title, Body: body, NoMerge: o.noMerge, CITimeout: o.ciTimeout, Poll: o.poll,
-		IgnoreChecks: o.ignoreChecks, Requeue: shipRequeue(fs, o.requeue),
+		IgnoreChecks: o.ignoreChecks, Requeue: shipRequeue(fs, o.requeue), Version: version, NoSignature: o.noSignature,
 	})
 	if err == nil {
 		return 0
