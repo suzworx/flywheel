@@ -74,7 +74,7 @@ func GitGuardRefused(args []string) (refused bool, sub string) {
 	case "tag":
 		return !listOnly(rest, "-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--column", "--no-column", "-i", "--ignore-case"), sub
 	case "config":
-		return !hasAny(rest, "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "get", "list"), sub
+		return !configReadOnly(rest), sub
 	case "remote":
 		return !(len(rest) == 0 || (len(rest) == 1 && (rest[0] == "-v" || rest[0] == "--verbose")) || (len(rest) >= 1 && (rest[0] == "show" || rest[0] == "get-url"))), sub
 	case "reflog":
@@ -112,6 +112,45 @@ func branchReadOnly(args []string) bool {
 		}
 	}
 	return true
+}
+
+// configReadOnly reports whether git config's arguments only read (#621): no
+// write flag or write subcommand (set, unset, rename-section, remove-section,
+// edit), and either a read flag or subcommand (--get*, --list/-l, get, list)
+// or a single key with no value ("git config user.name"). The values of
+// --file/-f, --blob, --type, --default and --comment are not positionals.
+func configReadOnly(args []string) bool {
+	write := map[string]bool{"--add": true, "--unset": true, "--unset-all": true, "--replace-all": true,
+		"--rename-section": true, "--remove-section": true, "--edit": true, "-e": true}
+	read := map[string]bool{"--get": true, "--get-all": true, "--get-regexp": true, "--get-urlmatch": true,
+		"--get-color": true, "--get-colorbool": true, "--list": true, "-l": true}
+	valued := map[string]bool{"--file": true, "-f": true, "--blob": true, "--type": true, "--default": true, "--comment": true}
+	reading := false
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+			continue
+		}
+		switch {
+		case write[a]:
+			return false
+		case read[a]:
+			reading = true
+		case valued[a]:
+			i++ // the option's value
+		}
+	}
+	if len(positional) > 0 {
+		switch positional[0] {
+		case "get", "list":
+			return true
+		case "set", "unset", "rename-section", "remove-section", "edit":
+			return false
+		}
+	}
+	return reading || len(positional) == 1
 }
 
 // listOnly reports whether args hold no positional argument, or a listing
