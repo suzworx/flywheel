@@ -33,6 +33,62 @@ func dashData(t *testing.T) TUIData {
 	return d
 }
 
+// TestTUIPolishPulseAndSpend checks the lead's k4 polish list (issue #583
+// k6): at 110 and 120 columns no pulse panel draws past its column and the
+// BY MODEL rows never show an amount cut in two; a model with no landed
+// unit shows "–", not "$0.00/unit"; the header formats large spend
+// compactly ($711, $1.2k) instead of cutting it.
+func TestTUIPolishPulseAndSpend(t *testing.T) {
+	t.Parallel()
+	d := dashData(t)
+	tm := d.Metrics["24h"]
+	tm.Cur.Cost.Spend = 711.23
+	tm.Cur.Cost.ByModel = []StatsModel{
+		{Model: "claude-opus-5-5-20260901", Accepted: 3, Spend: 711.23, CostPerAccepted: 237.08},
+		{Model: "gpt-5-codex-high-reasoning", Accepted: 0, Spend: 1234.5},
+		{Model: "sim", Accepted: 12, Spend: 7.25, CostPerAccepted: 0.6},
+	}
+	d.Metrics["24h"] = tm
+	d.Floor.Output.Cost = 1234.5
+	m := NewTUI()
+	typed(m, d, ":p")
+	for _, width := range []int{110, 120} {
+		pw := (width - 4) / 3
+		for i := range pulsePanels {
+			for _, l := range m.pulsePanel(i, tm, pw) {
+				if cellCount(l) > pw {
+					t.Errorf("%d cols: panel %s line %q is %d cells, over its column's %d", width, pulsePanels[i].title, l, cellCount(l), pw)
+				}
+			}
+		}
+		for _, l := range strings.Split(m.View(d, width, 60, false), "\n") {
+			if cellCount(l) > width {
+				t.Errorf("%d cols: line over the frame: %q", width, l)
+			}
+		}
+		byModel := m.pulsePanel(5, tm, pw)[1:]
+		for _, l := range byModel {
+			if !strings.HasSuffix(l, "spent") && !strings.HasSuffix(l, "/unit") && !strings.HasSuffix(l, "–") {
+				t.Errorf("%d cols: BY MODEL row %q ends in a cut amount", width, l)
+			}
+		}
+		if l := lineWith(strings.Join(byModel, "\n"), "gpt-5-codex"); !strings.Contains(l, "–") || strings.Contains(l, "$0.00") {
+			t.Errorf("%d cols: the model with no landed unit reads %q, want –", width, l)
+		}
+	}
+	for v, want := range map[float64]string{0: "$0.00", 7.25: "$7.25", 99.99: "$99.99", 711.23: "$711", 1234.5: "$1.2k", 3.4e6: "$3.4M", -12: "-$12.00"} {
+		if got := fmtUSD(v); got != want {
+			t.Errorf("fmtUSD(%v) = %q, want %q", v, got, want)
+		}
+	}
+	if s := strings.Join(headerStats(d), "\n"); !strings.Contains(s, "spend 24h $711\n") {
+		t.Errorf("header stats spend not compact:\n%s", s)
+	}
+	if c := strings.Join(contextLines(d), "\n"); !strings.Contains(c, " · $1.2k\n") {
+		t.Errorf("header context spend not compact:\n%s", c)
+	}
+}
+
 // lineWith is the first line of view holding every one of words, "" when none.
 func lineWith(view string, words ...string) string {
 	for _, l := range strings.Split(view, "\n") {

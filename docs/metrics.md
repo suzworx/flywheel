@@ -31,13 +31,19 @@ the percentiles by nearest rank.
 |---|---|---|
 | `throughput` | landed units | units |
 | `throughput_series` | landed units per bucket, by the landing's bucket | units per bucket |
-| `wip` | tasks whose derived status (as `flywheel state` derives it from the events before the window's end) is `dispatched`, `running`, `finished` or `passed` | units |
+| `wip` | tasks whose derived status (as `flywheel state` derives it from the events before the window's end) is `dispatched`, `running`, `finished` or `passed`, and that are not stale | units |
 | `wip_series` | `wip` at each bucket's end | units |
+| `stale` | tasks with one of those statuses whose last event before the window's end is at or before the window's end minus the stale threshold | units |
+| `stale_oldest` | the window's end minus the oldest stale task's last event; 0 when none | duration |
 | `lead_time` | per landed unit: first `planned` to first `landed` | Dist |
 | `cycle_time` | per landed unit: first `dispatched` to first `landed` | Dist |
 | `queue_time` | per landed unit: first `planned` to first `dispatched` | Dist |
 | `touch_time` | per landed unit: the sum of its attempt spans closed by a `finished` event | Dist |
 | `flow_efficiency` | mean over landed units with a positive cycle time of touch time / cycle time | ratio 0..1 |
+
+A unit in progress with no event for the stale threshold is stale, not WIP, so a unit finished or
+passed long ago and never landed or withdrawn stops inflating `wip`; the threshold is 7d by default
+and `flywheel stats --metrics --wip-stale-after <d>` sets it (issue #590).
 
 ## Quality
 
@@ -102,7 +108,7 @@ task. Times in a `value` are UTC, `MM-DD HH:MM`.
 | Id | Covers | Units | `value` | `group` | `sort` |
 |---|---|---|---|---|---|
 | `flow.throughput` | `throughput` | landed units | `landed <time>` | `landed` | the landing (Unix seconds) |
-| `flow.wip` | `wip` | units in progress at the window's end | `<status> for <since dispatch>` | the status | seconds since the first dispatch |
+| `flow.wip` | `wip` | units in progress at the window's end; stale units too, apart | `<status> for <since dispatch>`; a stale unit `stale: <status>, last event <age> ago` | the status; `stale` for a stale unit | seconds since the first dispatch; for a stale unit seconds since its last event |
 | `flow.lead_time`, `flow.cycle_time`, `flow.queue_time`, `flow.touch_time` | the Dist of that name | landed units with that time | `lead 9h12m`, `cycle …`, `queued …`, `touch …` | `landed` | the time in seconds |
 | `flow.flow_efficiency` | `flow_efficiency` | landed units with a positive cycle time | `33% (touch 30m of cycle 1h30m)` | `landed` | 1 - touch / cycle |
 | `quality.first_pass_yield` | `landed`, `first_pass`, `first_pass_yield` | landed units | `first pass`, `corrected x<n>`, `sent back by a verdict`, `no r1 attempt` | `first pass` or `corrected` | 0 first pass, else corrections + 1 |

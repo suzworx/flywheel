@@ -189,6 +189,72 @@ func TestMetricsEmptyLedger(t *testing.T) {
 	_ = Metrics(nil, Config{}, MetricsWindow{}) // a zero window must not panic
 }
 
+// staleFixture is a 10-day window in 1d buckets ending at until and three
+// units at its end: run started 1h before, fin finished 8d before with no
+// later event, pas passed 2d before (issue #590).
+func staleFixture(t *testing.T) ([]Event, MetricsWindow) {
+	until := metricsTS(t, "2026-09-20T00:00:00Z")
+	ts := func(d time.Duration) string { return until.Add(-d).Format(time.RFC3339) }
+	h, d := time.Hour, 24*time.Hour
+	events := []Event{
+		{TS: ts(9 * d), Task: "fin", Kind: "planned"},
+		{TS: ts(8*d + h), Task: "fin", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts(8 * d), Task: "fin", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{TS: ts(3 * d), Task: "pas", Kind: "planned"},
+		{TS: ts(2*d + 2*h), Task: "pas", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts(2*d + h), Task: "pas", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{TS: ts(2 * d), Task: "pas", Kind: "inspected", Verdict: "pass", Persona: "supervisor"},
+		{TS: ts(2 * h), Task: "run", Kind: "planned"},
+		{TS: ts(h), Task: "run", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts(h), Task: "run", Kind: "started", Attempt: "r1"},
+	}
+	return events, MetricsWindow{Since: until.Add(-10 * d), Until: until, Bucket: d}
+}
+
+// TestMetricsWIPLeavesOutStale fails on the unfixed code at the WIP
+// assertion: it counted fin, WIP 3 and no stale.
+func TestMetricsWIPLeavesOutStale(t *testing.T) {
+	t.Parallel()
+	events, w := staleFixture(t)
+	rep := Metrics(events, Config{}, w)
+	f := rep.Flow
+	if f.WIP != 2 || f.Stale != 1 || f.StaleOldest != 8*24*time.Hour {
+		t.Errorf("wip %d stale %d oldest %v, want 2 1 192h", f.WIP, f.Stale, f.StaleOldest)
+	}
+	groups := map[string]string{}
+	for _, u := range rep.Evidence["flow.wip"] {
+		groups[u.Task] = u.Group
+	}
+	if groups["fin"] != "stale" || groups["pas"] != "passed" || groups["run"] != "running" {
+		t.Errorf("flow.wip evidence groups = %v, want fin stale, pas passed, run running", groups)
+	}
+}
+
+// TestMetricsStaleAfterWindow fails on the unfixed code at the WIP assertion
+// (WIP 3, no StaleAfter to honour).
+func TestMetricsStaleAfterWindow(t *testing.T) {
+	t.Parallel()
+	events, w := staleFixture(t)
+	w.StaleAfter = 24 * time.Hour
+	f := Metrics(events, Config{}, w).Flow
+	if f.WIP != 1 || f.Stale != 2 || f.StaleOldest != 8*24*time.Hour {
+		t.Errorf("wip %d stale %d oldest %v, want 1 2 192h", f.WIP, f.Stale, f.StaleOldest)
+	}
+}
+
+// TestMetricsWIPSeriesStaleAtBucketEnd: fin counts in WIP at the bucket
+// ending 2d before until (last event 6d earlier) and is stale at the one
+// ending 1d before (7d). Fails on the unfixed code at the series assertion
+// (the 1d bucket counts fin: 2, and the last bucket 3).
+func TestMetricsWIPSeriesStaleAtBucketEnd(t *testing.T) {
+	t.Parallel()
+	events, w := staleFixture(t)
+	f := Metrics(events, Config{}, w).Flow
+	if want := []float64{0, 1, 1, 1, 1, 1, 1, 2, 1, 2}; !slices.Equal(f.WIPSeries, want) {
+		t.Errorf("wip series = %v, want %v", f.WIPSeries, want)
+	}
+}
+
 func TestMetricsDeterministic(t *testing.T) {
 	t.Parallel()
 	events := metricsFixture(t)
