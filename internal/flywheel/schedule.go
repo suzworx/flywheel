@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type SchedulePlan struct {
 	Exe   string        // absolute path of the flywheel binary
 	Dir   string        // absolute repository root
 	Args  []string      // controller --once --dir Dir
+	Log   string        // where a run's output goes; empty is Dir/.flywheel/schedule.log
 }
 
 // Scheduler registers, removes and inspects a SchedulePlan with the host's
@@ -61,14 +63,18 @@ func runSched(r Runner, name string, args ...string) ([]byte, error) {
 // [A-Za-z0-9._-] so every scheduler accepts it.
 func ScheduleName(absDir string) string {
 	sum := sha256.Sum256([]byte(absDir))
-	base := strings.Map(func(r rune) rune {
+	return "flywheel-" + taskWord(filepath.Base(absDir)) + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// taskWord keeps only [A-Za-z0-9._-] of s, every other rune becoming '_'.
+func taskWord(s string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
 			return r
 		}
 		return '_'
-	}, filepath.Base(absDir))
-	return "flywheel-" + base + "-" + hex.EncodeToString(sum[:])[:8]
+	}, s)
 }
 
 // NewSchedulePlan builds the plan for the repository at dir with the running
@@ -113,7 +119,70 @@ func (p SchedulePlan) minutes() int { return int(p.Every / time.Minute) }
 
 // scheduleLog is where a cron run's output goes.
 func (p SchedulePlan) scheduleLog() string {
+	if p.Log != "" {
+		return p.Log
+	}
 	return filepath.Join(p.Dir, ".flywheel", "schedule.log")
+}
+
+// DefaultFleetWatchEvery is how often the fleet watcher's task runs when
+// `flywheel schedule install --fleet` is given no --every.
+const DefaultFleetWatchEvery = 5 * time.Minute
+
+// FleetScheduleName is the fleet watcher's task name for user:
+// flywheel-fleet-<user>, one per user whatever the repositories; a domain
+// prefix (DOMAIN\user) is dropped.
+func FleetScheduleName(user string) string {
+	if i := strings.LastIndexAny(user, `\/`); i >= 0 {
+		user = user[i+1:]
+	}
+	return "flywheel-fleet-" + taskWord(user)
+}
+
+// NewFleetSchedulePlan builds the fleet watcher's plan for the current user,
+// the running binary and the registry at FleetPath; every 0 means
+// DefaultFleetWatchEvery; notify, when set, is passed as --notify.
+func NewFleetSchedulePlan(every time.Duration, notify string) (SchedulePlan, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return SchedulePlan{}, fmt.Errorf("schedule: locate the flywheel binary: %v", err)
+	}
+	u, err := user.Current()
+	if err != nil {
+		return SchedulePlan{}, fmt.Errorf("schedule: %v", err)
+	}
+	file, err := FleetPath()
+	if err != nil {
+		return SchedulePlan{}, fmt.Errorf("schedule: %v", err)
+	}
+	return fleetPlanFor(file, exe, u.Username, every, notify)
+}
+
+// fleetPlanFor is NewFleetSchedulePlan with the registry, binary and user
+// given: the task runs `fleet watch --once --registry <file>` (plus --notify)
+// and logs to fleet-watch.log beside the registry.
+func fleetPlanFor(fleetFile, exe, userName string, every time.Duration, notify string) (SchedulePlan, error) {
+	if every == 0 {
+		every = DefaultFleetWatchEvery
+	}
+	if every < time.Minute {
+		return SchedulePlan{}, fmt.Errorf("schedule: --every must be at least 1m, got %v", every)
+	}
+	absFile, err := filepath.Abs(fleetFile)
+	if err != nil {
+		return SchedulePlan{}, fmt.Errorf("schedule: %v", err)
+	}
+	absExe, err := filepath.Abs(exe)
+	if err != nil {
+		return SchedulePlan{}, fmt.Errorf("schedule: %v", err)
+	}
+	args := []string{"fleet", "watch", "--once", "--registry", absFile}
+	if notify != "" {
+		args = append(args, "--notify", notify)
+	}
+	dir := filepath.Dir(absFile)
+	return SchedulePlan{Name: FleetScheduleName(userName), Every: every.Truncate(time.Minute), Exe: absExe, Dir: dir,
+		Args: args, Log: filepath.Join(dir, "fleet-watch.log")}, nil
 }
 
 // schtasksTR is the /TR command line Task Scheduler runs: each word holding

@@ -180,6 +180,15 @@ func SaveLearningsQueue(file string, q LearningsQueue) error {
 // it marks everything seen but makes pending only the learnings newer than
 // FirstSyncWindow, so history does not flood the queue.
 func SyncLearnings(file string, f Fleet, now time.Time) (newly []FleetLearning, first bool, err error) {
+	return SyncLearningsSince(file, f, now, FirstSyncWindow)
+}
+
+// SyncLearningsSince is SyncLearnings with the first-sync window given:
+// window 0 means FirstSyncWindow.
+func SyncLearningsSince(file string, f Fleet, now time.Time, window time.Duration) (newly []FleetLearning, first bool, err error) {
+	if window == 0 {
+		window = FirstSyncWindow
+	}
 	q, err := LoadLearningsQueue(file)
 	if err != nil {
 		return nil, false, err
@@ -195,13 +204,66 @@ func SyncLearnings(file string, f Fleet, now time.Time) (newly []FleetLearning, 
 		}
 		seen[l.Key] = true
 		q.Seen = append(q.Seen, l.Key)
-		if l.Dismissed || first && now.Sub(learningTime(l.TS)) > FirstSyncWindow {
+		if l.Dismissed || first && now.Sub(learningTime(l.TS)) > window {
 			continue
 		}
 		q.Pending[l.Key] = l
 		newly = append(newly, l)
 	}
 	return newly, first, SaveLearningsQueue(file, q)
+}
+
+// ImportSeenLearnings seeds the queue at file from what a person already
+// triaged: data is a JSON array of titles, or of {"title": ...} objects (the
+// shape a hand-written watcher keeps). It first syncs (SyncLearningsSince
+// with window), so an import into an empty queue still gets the first-sync
+// window, then marks seen every current learning whose title is in data and
+// removes it from pending. It returns how many current learnings matched.
+func ImportSeenLearnings(file string, f Fleet, now time.Time, window time.Duration, data []byte) (int, error) {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return 0, fmt.Errorf("import seen: want a JSON array of titles or {title} objects: %w", err)
+	}
+	want := map[string]bool{}
+	for _, r := range raw {
+		var title string
+		if json.Unmarshal(r, &title) != nil {
+			var o struct {
+				Title string `json:"title"`
+			}
+			if err := json.Unmarshal(r, &o); err != nil {
+				return 0, fmt.Errorf("import seen: %s is neither a title nor a {title} object", r)
+			}
+			title = o.Title
+		}
+		if title != "" {
+			want[title] = true
+		}
+	}
+	if _, _, err := SyncLearningsSince(file, f, now, window); err != nil {
+		return 0, err
+	}
+	q, err := LoadLearningsQueue(file)
+	if err != nil {
+		return 0, err
+	}
+	seen := map[string]bool{}
+	for _, k := range q.Seen {
+		seen[k] = true
+	}
+	n := 0
+	for _, l := range FleetLearnings(f, now) {
+		if !want[l.Title] {
+			continue
+		}
+		n++
+		if !seen[l.Key] {
+			seen[l.Key] = true
+			q.Seen = append(q.Seen, l.Key)
+		}
+		delete(q.Pending, l.Key)
+	}
+	return n, SaveLearningsQueue(file, q)
 }
 
 // DoneLearning removes from the queue's pending every learning whose key

@@ -4,10 +4,53 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
+
+// recoverWorld is the world state one Recover call shares across its
+// parallel per-task pass (issue #628): each workdir's tree hash is computed
+// once, however many units work in it.
+type recoverWorld struct {
+	mu    sync.Mutex
+	hash  func(string) (string, error)
+	trees map[string]*treeMemo
+}
+
+// treeMemo is one workdir's tree hash, computed once.
+type treeMemo struct {
+	once sync.Once
+	hash string
+	err  error
+}
+
+func newRecoverWorld(hash func(string) (string, error)) *recoverWorld {
+	if hash == nil {
+		hash = treeHash
+	}
+	return &recoverWorld{hash: hash, trees: map[string]*treeMemo{}}
+}
+
+// tree returns wd's tree hash (or error), computing it on the first call for
+// the cleaned absolute wd only; other workdirs hash in parallel.
+func (w *recoverWorld) tree(wd string) (string, error) {
+	if abs, err := filepath.Abs(wd); err == nil {
+		wd = abs
+	}
+	wd = filepath.Clean(wd)
+	w.mu.Lock()
+	m, ok := w.trees[wd]
+	if !ok {
+		m = &treeMemo{}
+		w.trees[wd] = m
+	}
+	w.mu.Unlock()
+	m.once.Do(func() { m.hash, m.err = w.hash(wd) })
+	return m.hash, m.err
+}
 
 // RecoverReport is `flywheel recover`'s one deterministic answer (issue
 // #422): whether the ledger is intact, where every unit is, whether the world
@@ -35,6 +78,9 @@ type RecoverOptions struct {
 	// Session is the current lead session (issue #472): its integrity
 	// failures are grouped first, and Text marks units other leads dispatched.
 	Session string
+	// treeHash replaces the tree hash so tests can count calls; nil means the
+	// real treeHash. Production never sets it.
+	treeHash func(string) (string, error)
 }
 
 // RecoverIntegrity is the log chain and the verify rules over every task.
@@ -264,8 +310,38 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 		return rep, err
 	}
 	suspended := FactorySuspended(events, now).Suspended
-	for _, ts := range state.Tasks {
-		t, f := recoverTask(dir, ts, events, obs, cfg, now)
+	world := newRecoverWorld(o.treeHash)
+	rows := make([]RecoverTask, len(state.Tasks))
+	facts := make([]recoverFacts, len(state.Tasks))
+	var pending []int
+	for i, ts := range state.Tasks {
+		if ts.Status == "landed" {
+			// Settled (issue #628): nextAction reads no world fact for a landed
+			// unit, so its row comes from the ledger alone.
+			rows[i] = RecoverTask{Task: ts.ID, Status: ts.Status, Attempt: ts.Attempt, Model: ts.Model, Lease: "none"}
+			facts[i] = recoverFacts{Task: ts.ID, Status: ts.Status, Attempt: ts.Attempt}
+			continue
+		}
+		pending = append(pending, i)
+	}
+	// events, obs and cfg are only read; world is the one shared mutable
+	// state. Each result lands at its own index, so the order is the ledger's.
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), 8, len(pending)) {
+		wg.Go(func() {
+			for i := range next {
+				rows[i], facts[i] = recoverTask(dir, state.Tasks[i], events, obs, cfg, now, world)
+			}
+		})
+	}
+	for _, i := range pending {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	for i, ts := range state.Tasks {
+		t, f := rows[i], facts[i]
 		f.Suspended = suspended
 		t.Next = nextAction(f)
 		t.Lead = leads[ts.ID]
@@ -284,7 +360,7 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 
 // recoverTask measures one unit's world and returns its report row (Next
 // unset) and the facts nextAction decides from.
-func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Config, now time.Time) (RecoverTask, recoverFacts) {
+func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Config, now time.Time, world *recoverWorld) (RecoverTask, recoverFacts) {
 	id, att := ts.ID, ts.Attempt
 	t := RecoverTask{Task: id, Status: ts.Status, Attempt: att, Model: ts.Model, Lease: "none", RunFile: runFileState(dir, id, att)}
 	f := recoverFacts{Task: id, Status: ts.Status, Attempt: att}
@@ -331,7 +407,9 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 	if ts.Status != "landed" {
 		f.NeedsOwner = needsOwnerFindings(dir, events, id)
 	}
-	if fin != nil && fin.Reason == "stop" {
+	// nextAction reads the reading facts only for a finished unit: any other
+	// status returns before them, so they cost no git reads (issue #628).
+	if ts.Status == "finished" && fin != nil && fin.Reason == "stop" {
 		oh, ot, tree, _ := latestReading(events, id, "owns_checked", att)
 		ft, _ := time.Parse(time.RFC3339Nano, fin.TS)
 		f.HaveReading = oh && ot.After(ft)
@@ -339,8 +417,10 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 		if wd == "" {
 			wd = dir
 		}
-		if cur, err := treeHash(wd); f.HaveReading && err == nil && cur != tree {
-			f.TreeChanged = true
+		if f.HaveReading {
+			if cur, err := world.tree(wd); err == nil && cur != tree {
+				f.TreeChanged = true
+			}
 		}
 		f.InspectReady = inspectionReady(events, id, att)
 		if panel := panelFor(events, id, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(events, id, cfg.ReviewRequired()) {
