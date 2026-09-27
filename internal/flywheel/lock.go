@@ -38,6 +38,11 @@ type repoLockTimings struct {
 	wait       time.Duration
 	retry      time.Duration
 	heartbeat  time.Duration
+	// poll, when non-nil, is called once at the top of every acquire-loop
+	// iteration, before the O_EXCL create. It is nil in production; tests use
+	// it to change holders in lockstep with the waiter's polls, so no
+	// scheduling delay can decide them (issue #603).
+	poll func()
 }
 
 // defaultRepoLockTimings are the timings Run's dispatch lock keeps: the
@@ -103,6 +108,9 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 	holder, handovers := "", 0
 	var seenMod time.Time
 	for {
+		if timings.poll != nil {
+			timings.poll()
+		}
 		f, oerr := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if oerr == nil {
 			host, _ := os.Hostname()
