@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -174,8 +175,8 @@ func TestTUIUnknownCommandMessage(t *testing.T) {
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
 
 	view := m.View(d, 100, 20, false)
-	if !strings.Contains(view, "unknown view: xy") {
-		t.Errorf("expected 'unknown view: xy' in last line of view")
+	if !strings.Contains(view, "unknown view :xy (Ctrl-A lists them)") {
+		t.Errorf("expected 'unknown view :xy (Ctrl-A lists them)' in the view")
 	}
 }
 
@@ -225,7 +226,7 @@ func TestTUIFilter(t *testing.T) {
 	}
 }
 
-func TestTUIEnterWantsExplain(t *testing.T) {
+func TestTUIEnterWantsWhy(t *testing.T) {
 	t.Parallel()
 	m := NewTUI()
 	d := makeTestTUIData()
@@ -244,8 +245,8 @@ func TestTUIEnterWantsExplain(t *testing.T) {
 	if !ok {
 		t.Errorf("Wants should return ok=true")
 	}
-	if kind != "explain" {
-		t.Errorf("expected kind 'explain', got %q", kind)
+	if kind != "why" {
+		t.Errorf("expected kind 'why', got %q", kind)
 	}
 	if task != "T2" {
 		t.Errorf("expected task 'T2', got %q", task)
@@ -257,10 +258,10 @@ func TestTUIEnterWantsExplain(t *testing.T) {
 	if !strings.Contains(view, "line a") || !strings.Contains(view, "line b") {
 		t.Errorf("expected detail lines in view")
 	}
-	if !strings.Contains(view, "Explain") {
-		t.Errorf("expected 'Explain' in title bar")
+	if !strings.Contains(view, "── Why T2") {
+		t.Errorf("expected 'Why' in title bar")
 	}
-	if !strings.Contains(view, "<units>") && !strings.Contains(view, "<T2>") && !strings.Contains(view, "<explain>") {
+	if !strings.Contains(view, "<units>") && !strings.Contains(view, "<T2>") && !strings.Contains(view, "<why>") {
 		t.Errorf("expected breadcrumbs in view")
 	}
 
@@ -325,8 +326,9 @@ func TestTUIHelp(t *testing.T) {
 		t.Errorf("expected help to be shown")
 	}
 
-	// Check the frame mentions "filter" and "explain".
-	view := m.View(d, 100, 20, false)
+	// Check the frame mentions "filter" and "explain" (tall enough for the
+	// whole help; TestTUIHelpScrolls covers a short one).
+	view := m.View(d, 100, 60, false)
 	if !strings.Contains(view, "filter") {
 		t.Errorf("expected 'filter' in help view")
 	}
@@ -683,8 +685,8 @@ func TestTUILastLineAtBottom(t *testing.T) {
 	m := NewTUI()
 	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
 	lines := strings.Split(m.View(d, 80, 40, false), "\n")
-	if len(lines) != 40 || lines[39] != "<units>" {
-		t.Errorf("help: %d lines, last %q; want 40 and <units>", len(lines), lines[len(lines)-1])
+	if len(lines) != 40 || lines[39] != "<units> <help>" {
+		t.Errorf("help: %d lines, last %q; want 40 and <units> <help>", len(lines), lines[len(lines)-1])
 	}
 	m = NewTUI()
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
@@ -730,7 +732,7 @@ func TestTUIHelpScrolls(t *testing.T) {
 	if strings.Contains(m.View(d, 80, 8, false), "q       quit") {
 		t.Fatal("an 8-line help already shows its last line; the test needs a shorter screen")
 	}
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		m.Update(term.Key{Kind: term.KeyRune, Rune: 'j'}, d)
 		m.View(d, 80, 8, false)
 	}
@@ -822,5 +824,290 @@ func TestTUICappedPeakColoured(t *testing.T) {
 	frame := NewTUI().View(d, 120, 12, true)
 	if !strings.Contains(frame, stateColor("capped")+"capped 50k") {
 		t.Errorf("frame lacks a coloured \"capped 50k\" cell:\n%q", frame)
+	}
+}
+
+// TestTUIHeader checks the header block (issue #583): the repo and branch,
+// a frozen factory with since and until, a paused model, the health age, and
+// the key menu of the view shown, which changes with the view.
+func TestTUIHeader(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	d := makeTestTUIData()
+	d.Floor.Refreshed = at
+	d.Branch = "main"
+	since, until := at.Add(-time.Hour).Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339)
+	d.Suspend = SuspendState{Suspended: true, Since: since, Until: until, By: "s9", Reason: "maintenance"}
+	d.Paused = []TUIPause{{Model: "claude-opus", Until: at.Add(30 * time.Minute)}}
+	d.HealthAt = at.Add(-2 * time.Minute)
+	d.Version = "v0.36.0"
+
+	m := NewTUI()
+	view := m.View(d, 200, 30, false)
+	for _, want := range []string{
+		"repo repo · main",
+		"factory FROZEN since " + hhmm(since) + " until " + hhmm(until) + " by s9: maintenance",
+		"paused claude-opus until " + at.Add(30*time.Minute).Local().Format("15:04"),
+		"lead test-lead",
+		"health 2m ago",
+		"flywheel v0.36.0",
+		"<:> view", "<enter> why", "<l> log", "<ctrl-e> header",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("header lacks %q:\n%s", want, view)
+		}
+	}
+	if !strings.HasPrefix(view, "repo ") {
+		t.Errorf("the frame does not start with the header:\n%s", view)
+	}
+
+	// Another view, another menu: workers has nothing to explain.
+	for _, r := range ":workers" {
+		m.Update(term.Key{Kind: term.KeyRune, Rune: r}, d)
+	}
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	view = m.View(d, 200, 30, false)
+	if strings.Contains(view, "<enter> why") || !strings.Contains(view, "<:> view") {
+		t.Errorf("workers menu should drop <enter> why and keep <:> view:\n%s", view)
+	}
+
+	// A running factory with no health event.
+	d.Suspend, d.HealthAt = SuspendState{}, time.Time{}
+	view = NewTUI().View(d, 200, 30, false)
+	if !strings.Contains(view, "factory running") || !strings.Contains(view, "health none") {
+		t.Errorf("want factory running and health none:\n%s", view)
+	}
+}
+
+// TestTUICrumbs checks the crumbs follow the drill-down and back (issue
+// #583), and the flash line shows a message that the next key or time clears.
+func TestTUICrumbs(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	clock := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	m := NewTUI()
+	m.now = func() time.Time { return clock }
+	last := func() string {
+		lines := strings.Split(m.View(d, 100, 20, false), "\n")
+		return lines[len(lines)-1]
+	}
+	flashLine := func() string {
+		lines := strings.Split(m.View(d, 100, 20, false), "\n")
+		return lines[len(lines)-2]
+	}
+
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	if got := strings.Join(m.Crumbs(), " > "); got != "units > T1 > why" {
+		t.Errorf("crumbs after Enter = %q, want units > T1 > why", got)
+	}
+	if got := last(); got != "<units> <T1> <why>" {
+		t.Errorf("crumb line = %q", got)
+	}
+	m.Update(term.Key{Kind: term.KeyEsc}, d)
+	if got := strings.Join(m.Crumbs(), " > "); got != "units" || last() != "<units>" {
+		t.Errorf("crumbs after Esc = %q, line %q; want units", got, last())
+	}
+	m.Update(term.Key{Kind: term.KeyRune, Rune: 'l'}, d)
+	if got := last(); got != "<units> <T1> <log>" {
+		t.Errorf("crumb line after l = %q", got)
+	}
+	m.Update(term.Key{Kind: term.KeyEsc}, d)
+
+	// The flash: an unknown view says so; the next key clears it.
+	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'z'}, {Kind: term.KeyEnter}} {
+		m.Update(k, d)
+	}
+	if got := flashLine(); got != "unknown view :z (Ctrl-A lists them)" {
+		t.Errorf("flash line = %q, want unknown view :z (Ctrl-A lists them)", got)
+	}
+	m.Update(term.Key{Kind: term.KeyRune, Rune: 'j'}, d)
+	if got := flashLine(); got != "" {
+		t.Errorf("flash line after a key = %q, want empty", got)
+	}
+	// Or it expires on its own.
+	m.flash("hello")
+	if flashLine() != "hello" {
+		t.Errorf("flash line = %q, want hello", flashLine())
+	}
+	clock = clock.Add(flashFor + time.Second)
+	if got := flashLine(); got != "" {
+		t.Errorf("flash line after %v = %q, want empty", flashFor, got)
+	}
+}
+
+// TestTUIToggles checks the layout keys (issue #583): Ctrl-E hides the
+// header and Ctrl-G the crumbs, each giving the table rows; Ctrl-W shows a
+// long cell whole; Ctrl-R asks the live loop for a reload once.
+func TestTUIToggles(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Floor.Units = nil
+	for i := 0; i < 40; i++ {
+		d.Floor.Units = append(d.Floor.Units, Unit{Task: fmt.Sprintf("T%02d", i), Stage: "building", Attempt: "1",
+			Session: fmt.Sprintf("s%d", i), Model: "claude-opus", RunState: "running"})
+	}
+	long := "session-" + strings.Repeat("x", 60)
+	d.Floor.Units[0].Session = long
+	ctrl := func(r rune) term.Key { return term.Key{Kind: term.KeyCtrl, Rune: r} }
+	m := NewTUI()
+	rowsShown := func() (n int, view string) {
+		view = m.View(d, 250, 30, false)
+		for _, l := range strings.Split(view, "\n") {
+			if strings.HasPrefix(l, "  T") || strings.HasPrefix(l, "> T") {
+				n++
+			}
+		}
+		return n, view
+	}
+
+	withHeader, view := rowsShown()
+	if !strings.Contains(view, "repo repo") {
+		t.Fatalf("no header to hide:\n%s", view)
+	}
+	m.Update(ctrl('e'), d)
+	noHeader, view := rowsShown()
+	if strings.Contains(view, "repo repo") || noHeader <= withHeader {
+		t.Errorf("Ctrl-E: rows %d -> %d, header still shown %v", withHeader, noHeader, strings.Contains(view, "repo repo"))
+	}
+	m.Update(ctrl('e'), d)
+	if again, _ := rowsShown(); again != withHeader {
+		t.Errorf("Ctrl-E twice: %d rows, want %d", again, withHeader)
+	}
+
+	m.Update(ctrl('g'), d)
+	noCrumbs, view := rowsShown()
+	if strings.Contains(view, "<units>") || noCrumbs != withHeader+1 {
+		t.Errorf("Ctrl-G: rows %d -> %d, crumbs still shown %v", withHeader, noCrumbs, strings.Contains(view, "<units>"))
+	}
+	m.Update(ctrl('g'), d)
+
+	_, view = rowsShown()
+	if strings.Contains(view, long) || !strings.Contains(view, cutRunes(long, maxCell)) {
+		t.Errorf("normal mode should cut %q to %q:\n%s", long, cutRunes(long, maxCell), view)
+	}
+	m.Update(ctrl('w'), d)
+	if _, view = rowsShown(); !strings.Contains(view, long) {
+		t.Errorf("Ctrl-W should show %q whole:\n%s", long, view)
+	}
+
+	if m.TakeRefresh() {
+		t.Error("a reload requested before Ctrl-R")
+	}
+	m.Update(ctrl('r'), d)
+	if !m.TakeRefresh() {
+		t.Error("Ctrl-R did not request a reload")
+	}
+	if m.TakeRefresh() {
+		t.Error("the reload request was not consumed")
+	}
+}
+
+// TestTUIUnitTabs checks the unit detail (issue #583 k3): Enter opens the
+// why tab, each tab key switches the tab and its title, Shift-J opens the
+// first unmet need, and Esc returns to the list with the cursor kept.
+func TestTUIUnitTabs(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Needs = map[string][]string{"T2": {"T1"}}
+	d.Why = map[string]string{"T2": "blocked: needs T1, which has not landed.", "T1": "building: attempt 1."}
+	m := NewTUI()
+	m.Update(term.Key{Kind: term.KeyDown}, d)
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	if kind, task, ok := m.Wants(); !ok || kind != "why" || task != "T2" {
+		t.Fatalf("Enter wants %q %q %v, want why T2", kind, task, ok)
+	}
+	view := m.View(d, 200, 30, false)
+	for _, want := range []string{"── Why T2 ──", "why: blocked: needs T1, which has not landed.", "<F> findings", "<J> need"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the why tab lacks %q:\n%s", want, view)
+		}
+	}
+	for _, tab := range []struct {
+		key         rune
+		kind, title string
+	}{{'d', "explain", "Explain"}, {'y', "brief", "Brief"}, {'l', "log", "Log"}, {'c', "unitcp", "Checkpoints"},
+		{'F', "findings", "Findings"}, {'e', "unitevents", "Events"}, {'w', "why", "Why"}} {
+		press(m, d, string(tab.key))
+		if kind, task, _ := m.Wants(); kind != tab.kind || task != "T2" {
+			t.Errorf("%c: wants %q %q, want %q T2", tab.key, kind, task, tab.kind)
+		}
+		if view := m.View(d, 200, 30, false); !strings.Contains(view, "── "+tab.title+" T2 ──") || !strings.Contains(view, "why: blocked") {
+			t.Errorf("%c: title or why line missing:\n%s", tab.key, view)
+		}
+		if c := m.Crumbs(); c[len(c)-1] != tab.kind {
+			t.Errorf("%c: crumbs %v", tab.key, c)
+		}
+	}
+	press(m, d, "J")
+	if kind, task, _ := m.Wants(); kind != "why" || task != "T1" {
+		t.Errorf("Shift-J wants %q %q, want why T1", kind, task)
+	}
+	press(m, d, "J")
+	if flash := m.flashLine(); !strings.Contains(flash, "T1 has no unmet need") {
+		t.Errorf("Shift-J on a unit without needs flashes %q", flash)
+	}
+	esc(m, d)
+	if _, _, ok := m.Wants(); ok || m.cursor != 1 {
+		t.Errorf("Esc: drill-down open %v, cursor %d, want the list at 1", ok, m.cursor)
+	}
+	if view := m.View(d, 200, 30, false); !strings.Contains(view, "── Units(") {
+		t.Errorf("Esc does not return to the units:\n%s", view)
+	}
+}
+
+// TestTUIHintsWrap checks the header's key menu never cuts a hint: at every
+// width each hint shown is whole, and "<?> help" is always there.
+func TestTUIHintsWrap(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Branch = "main"
+	d.Suspend = SuspendState{Suspended: true, Since: "2026-09-26T09:00:00Z", By: "lead-session", Reason: "maintenance window"}
+	for _, width := range []int{80, 110, 160} {
+		for _, drill := range []bool{false, true} {
+			m := NewTUI()
+			if drill {
+				m.Update(term.Key{Kind: term.KeyEnter}, d)
+			}
+			var header []string
+			for _, l := range strings.Split(m.View(d, width, 40, false), "\n") {
+				if strings.HasPrefix(l, "──") {
+					break
+				}
+				header = append(header, l)
+			}
+			all := strings.Join(header, "\n")
+			for _, l := range header {
+				if n := utf8.RuneCountInString(l); n > width {
+					t.Errorf("%d: header line of %d runes: %q", width, n, l)
+				}
+				if strings.Count(l, "<") != strings.Count(l, ">") {
+					t.Errorf("%d: a hint is cut: %q", width, l)
+				}
+			}
+			for _, h := range m.hintsFor() {
+				if strings.Contains(all, "<"+h.key+">") && !strings.Contains(all, "<"+h.key+"> "+h.label) {
+					t.Errorf("%d: hint <%s> %s is cut:\n%s", width, h.key, h.label, all)
+				}
+			}
+			if !strings.Contains(all, "<?> help") {
+				t.Errorf("%d: no <?> help:\n%s", width, all)
+			}
+		}
+	}
+}
+
+// TestTUIWhyColumn checks the units table ends with a WHY column holding
+// each unit's why.
+func TestTUIWhyColumn(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Why = map[string]string{"T1": "building: attempt 1, 5 steps, running for 3m."}
+	header, rows := NewTUI().Rows(d)
+	if header[len(header)-1] != "WHY" || rows[0][len(rows[0])-1] != d.Why["T1"] {
+		t.Fatalf("header %v, first row %v: want WHY last with T1's why", header, rows[0])
+	}
+	view := NewTUI().View(d, 250, 20, false)
+	if !regexp.MustCompile(`STATE +WHY\n> T1 .* running +building: attempt 1, 5 steps, running for 3m\.\n`).MatchString(view) {
+		t.Errorf("the table lacks the WHY column:\n%s", view)
 	}
 }

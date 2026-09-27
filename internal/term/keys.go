@@ -28,12 +28,13 @@ const (
 	KeyEnd
 	KeyDelete
 	KeyCtrlC
+	KeyCtrl // a control key other than those above; Key.Rune holds its lowercase letter, ' ' or '\\'
 )
 
 // Key is one decoded key press.
 type Key struct {
 	Kind KeyKind
-	Rune rune // for KeyRune
+	Rune rune // for KeyRune and KeyCtrl
 	// Alt marks a key that arrived prefixed by ESC in the same burst (Alt-x
 	// on most terminals): Kind and Rune are the key itself, never KeyEsc.
 	Alt bool
@@ -58,8 +59,12 @@ func (s bufferedSource) More() bool { return s.Buffered() > 0 }
 // ESC [ 4~ / ESC [ 8~ (End), ESC [ 5~ (PgUp), ESC [ 6~ (PgDn), ESC [ 3~
 // (Delete). A lone ESC — nothing buffered after it — is KeyEsc; an unknown
 // sequence is consumed and reported as KeyEsc. 13 or 10 is KeyEnter, 127 or 8
-// KeyBackspace, 9 KeyTab, 3 KeyCtrlC; any other byte starts a UTF-8 rune
-// (KeyRune). ESC followed by any other key in the same burst is that key
+// KeyBackspace, 9 KeyTab, 3 KeyCtrlC; every other byte from 1 to 26 is
+// KeyCtrl with Rune its lowercase letter (1 Ctrl-A … 26 Ctrl-Z), 0 KeyCtrl
+// ' ' (Ctrl-Space) and 0x1c KeyCtrl '\\' (Ctrl-\); any other byte starts a
+// UTF-8 rune (KeyRune), space included. The Windows console, in the raw mode
+// MakeRaw sets (virtual terminal input, processed input off), delivers the
+// same bytes through the same read. ESC followed by any other key in the same burst is that key
 // with Alt set. io errors are returned as is. A terminal delivering an
 // escape sequence in pieces (a slow link) needs a Reader, which waits a
 // moment for the rest; ReadKey only sees what r already buffered.
@@ -87,9 +92,15 @@ func readKey(r byteSource) (Key, error) {
 			return Key{Kind: KeyEsc}, nil
 		}
 		return readEscapeSeq(r)
-	default:
-		return readRune(r, b)
+	case 0: // Ctrl-Space (Ctrl-@)
+		return Key{Kind: KeyCtrl, Rune: ' '}, nil
+	case 0x1c: // Ctrl-\
+		return Key{Kind: KeyCtrl, Rune: '\\'}, nil
 	}
+	if b <= 26 { // Ctrl-A … Ctrl-Z, those above excepted
+		return Key{Kind: KeyCtrl, Rune: rune('a' + b - 1)}, nil
+	}
+	return readRune(r, b)
 }
 
 // readRune decodes the UTF-8 rune whose first byte is b.

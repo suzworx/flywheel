@@ -3,6 +3,9 @@ package flywheel
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +47,28 @@ func TestTUILiveQuitKey(t *testing.T) {
 	}
 	if fetchCount < 1 {
 		t.Errorf("fetch not called, count = %d", fetchCount)
+	}
+}
+
+// TestTUILiveCtrlRReloads checks that the fetch right after Ctrl-R, not the
+// next tick, receives the reload request (issue #583).
+func TestTUILiveCtrlRReloads(t *testing.T) {
+	t.Parallel()
+	keys := make(chan term.Key, 2)
+	keys <- term.Key{Kind: term.KeyCtrl, Rune: 'r'}
+	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+	close(keys)
+	var reloads []bool
+	fetch := func(m *TUI) (TUIData, error) {
+		reloads = append(reloads, m.TakeRefresh())
+		return makeTestTUIData(), nil
+	}
+	tio := TUIIO{Keys: keys, Ticks: make(chan time.Time), Size: func() (int, int) { return 100, 20 }, Out: &bytes.Buffer{}}
+	if err := RunTUILoop(tio, fetch); err != nil {
+		t.Fatalf("RunTUILoop: %v", err)
+	}
+	if len(reloads) != 2 || reloads[0] || !reloads[1] {
+		t.Errorf("reload requests seen by the fetches = %v, want [false true]", reloads)
 	}
 }
 
@@ -110,7 +135,7 @@ func TestTUILiveTickRefetches(t *testing.T) {
 	}
 }
 
-func TestTUILiveEnterFetchesExplain(t *testing.T) {
+func TestTUILiveEnterFetchesWhy(t *testing.T) {
 	t.Parallel()
 	keys := make(chan term.Key, 2)
 	ticks := make(chan time.Time)
@@ -149,16 +174,16 @@ func TestTUILiveEnterFetchesExplain(t *testing.T) {
 		t.Errorf("RunTUILoop returned error: %v", err)
 	}
 
-	// Expect at least one fetch after Enter, which should Wants explain.
+	// Expect at least one fetch after Enter, which should Want the why tab.
 	foundExplain := false
 	for _, w := range wantsList {
-		if w.kind == "explain" && w.ok && w.task == "T1" {
+		if w.kind == "why" && w.ok && w.task == "T1" {
 			foundExplain = true
 			break
 		}
 	}
 	if !foundExplain {
-		t.Errorf("no Wants(explain, T1, true) found in %d fetches", len(wantsList))
+		t.Errorf("no Wants(why, T1, true) found in %d fetches", len(wantsList))
 	}
 }
 
@@ -232,6 +257,65 @@ func TestTUILiveFetcherLog(t *testing.T) {
 	// Check Events has at least 3 (our 3 events; Init may add more).
 	if len(data.Events) < 3 {
 		t.Errorf("Events has %d lines, want >= 3", len(data.Events))
+	}
+}
+
+// TestTUILiveFetcherSearch checks the live fetch (issue #583 k2): the needs
+// and learnings come from the ledger, and `:s` searches the events, a run
+// log, a report and a brief, naming each file's task and attempt.
+func TestTUILiveFetcherSearch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	for _, e := range []Event{
+		{TS: now.Format(time.RFC3339), Task: "T2", Kind: "planned", Needs: []string{"T1"}},
+		{TS: now.Format(time.RFC3339), Task: "T2", Kind: "learning", Severity: "P2", Title: "Quota gone", Observed: "o", Evidence: "e", Ask: "a"},
+	} {
+		if err := AppendEvent(dir, e); err != nil {
+			t.Fatalf("AppendEvent failed: %v", err)
+		}
+	}
+	files := map[string]string{
+		"runs/T2.3.jsonl":     "{\"a\":1}\r\n{\"text\":\"quota gone at step 4\"}\r\n",
+		"runs/T2.3.report.md": "# report\nquota gone\n",
+		"briefs/T2.txt":       "owns: x\n\nwhen the QUOTA GONE, stop\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, ".flywheel", filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewTUI()
+	m.runCommand("s quota gone")
+	data, err := TUIFetcher(dir, func() time.Time { return now })(m)
+	if err != nil {
+		t.Fatalf("TUIFetcher failed: %v", err)
+	}
+	if got := data.Needs["T2"]; len(got) != 1 || got[0] != "T1" {
+		t.Errorf("needs of T2 = %v, want [T1]", got)
+	}
+	if len(data.Learnings) != 1 || data.Learnings[0].Title != "Quota gone" {
+		t.Errorf("learnings = %+v", data.Learnings)
+	}
+	var got []string
+	for _, h := range data.Search {
+		got = append(got, fmt.Sprintf("%s %s %s %d", h.Source, h.Task, h.Attempt, h.Line))
+	}
+	joined := strings.Join(got, ", ")
+	for _, want := range []string{"log T2 3 2", "report T2 3 2", "brief T2  3"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("search results %q lack %q", joined, want)
+		}
+	}
+	if !strings.HasPrefix(joined, "event T2 ") {
+		t.Errorf("search results %q do not start with the learning event", joined)
 	}
 }
 

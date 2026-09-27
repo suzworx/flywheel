@@ -17,6 +17,8 @@ implements; `flywheel help <command>` prints any command's flags.
 - [Routing, budgets and rate limits](#routing-budgets-and-rate-limits)
 - [Controller and health](#controller-and-health)
 - [Recover and checkpoints](#recover-and-checkpoints)
+- [Freeze and resume](#freeze-and-resume)
+- [Wake by schedule](#wake-by-schedule)
 - [Offline](#offline)
 - [Worktrees and needs-state](#worktrees-and-needs-state)
 - [Product lines and staffing](#product-lines-and-staffing)
@@ -187,6 +189,32 @@ The controller records the factory's health in the ledger: `flywheel controller 
 
 Work is never lost when an attempt is interrupted: an attempt that ends uncleanly after writing owned files, or one marked lost, is snapshotted to `refs/flywheel/checkpoints/<task>/<attempt>` without touching the branch or the index, and `flywheel checkpoint list|diff|restore|drop` brings it back ([#422](https://github.com/suzworx/flywheel/issues/422)). `limits.checkpoint_every` (a Go duration, default `10m`; `"0"` off) also checkpoints an attempt running in its task worktree on that interval, only when its owned files changed.
 
+## Freeze and resume
+
+**Suspend.** `flywheel suspend --session S [--reason TEXT] [--until TIME]` freezes the whole factory ([#578](https://github.com/suzworx/flywheel/pull/578)). It records a `suspended` event carrying the session, the reason and, with `--until`, the thaw time (RFC 3339, or `HH:MM` local: today, or tomorrow once that time has passed). Past `--until` the factory thaws by itself, with no event. A second `flywheel suspend` while suspended is refused (exit 6, rule `suspended`).
+
+**The refusal rule.** While suspended every dispatch path refuses and appends nothing: `flywheel run` exits 6 with rule `suspended` (`the factory is suspended since <ts> by <session>: <reason>; flywheel resume --session <s> to thaw`), `flywheel next` turns each `DISPATCH` into a `WAIT` naming the suspension, and the controller's and `flywheel supervise --resume-limited`'s auto-resume start nothing, reporting each unit not resumed with reason `suspended`. `flywheel status` prints a `SUSPENDED since …` line first (`suspended` in `--json`), and the floor lists a `factory suspended` andon entry first.
+
+**Stop the live workers.** `flywheel suspend --stop` also stops every worker that is running ([#584](https://github.com/suzworx/flywheel/pull/584)). It writes the sentinel `.flywheel/suspend.stop`; each running `flywheel run` checks it on every lease tick (`lease.renew_interval`), kills its worker the way the stall watchdog does, and finishes the attempt with reason `suspended` and note `stopped by suspend at <ts>`. The finished event keeps the session, the owned files the worker wrote are checkpointed, a worktree's changes stay in the worktree, and that `flywheel run` exits 6. The floor shows the unit `suspended`, not failed.
+
+**Resume exactly.** `flywheel resume --session S [--note TEXT]` thaws the factory (exit 6 when it is not suspended), removes the sentinel and continues every unit a `--stop` stopped, each in its own session: it writes the continue delta `.flywheel/briefs/<task>.delta.txt` (the brief's owns, needs and gates, then the note that the worker was stopped by a factory suspension) and starts `flywheel run <task> --resume` in the background, printing `resumed <task> <attempt> (log .flywheel/runs/<task>.autoresume.log)` for each. `--no-redispatch` only thaws.
+
+**In recover.** `flywheel recover` offers a stopped unit `resume-session` with the reason `stopped by a factory suspension`: the command is `flywheel resume --session <s>` while the factory is still suspended, and `flywheel run <task> --resume` once it has thawed.
+
+In progress: the factory will freeze itself when every model's tokens run out, and thaw at the reset ([#572](https://github.com/suzworx/flywheel/issues/572)).
+
+## Wake by schedule
+
+The controller only acts while something runs it. `flywheel schedule install [--every D]` registers an OS scheduled task that runs `flywheel controller --once --dir <repo>` every `--every` (default `15m`, at least `1m`, whole minutes), so the factory wakes with no flywheel process running ([#582](https://github.com/suzworx/flywheel/pull/582)). Each run of `controller --once` marks lost attempts, blocks scrapped needs, records health and, with `controller.auto_resume` on (the default), resumes the rate-limited units whose reset has passed; a suspended factory resumes nothing.
+
+- **Windows** — a Task Scheduler task (`schtasks /Create /SC MINUTE /MO <n>`).
+- **Linux** — an entry in the user crontab, marked by a `# flywheel-schedule <name>` line above it; its output goes to `.flywheel/schedule.log`. Cron can run under an hour, or whole hours under a day.
+- **macOS** — a launchd LaunchAgent in `~/Library/LaunchAgents`, labelled `io.github.suzworx.<name>`.
+
+There is one task per repository, named `flywheel-<directory name>-<first 8 hex of the sha256 of its absolute path>`, so two checkouts with the same name never share one. `flywheel schedule status` says whether it is installed (with the scheduler's detail), `flywheel schedule remove` deletes it, and a re-install replaces it. The task runs the binary that installed it, by its absolute path.
+
+In progress: `flywheel fleet`, one view of every factory on the machine ([#585](https://github.com/suzworx/flywheel/issues/585)).
+
 ## Offline
 
 `flywheel init --local <model> [--local-url URL]` points OpenCode workers at a local OpenAI-compatible server (Ollama at `http://localhost:11434/v1` by default; LM Studio or a llama.cpp server with `--local-url`): it adds an OpenCode provider `flywheel-local` to `.flywheel/opencode-worker.json` and a worker named `local`, so `flywheel run <task> --worker local` dispatches to the local model. Run each provider once while online (OpenCode may fetch its provider package on first use). A local model is weaker than an online one: keep briefs small and let the signals show where it is not good enough. `flywheel doctor --worker local` asks the server first: `local endpoint down` when it does not answer, `model not pulled` when it does not serve the model. It contacts a loopback server only (`localhost`, `127.0.0.1`); any other host is left to the ordinary probe, so `doctor` on an unfamiliar checkout never reaches hosts its config names.
@@ -243,4 +271,4 @@ Floor legend for review:
 
 ## Ship
 
-`flywheel ship <task>` runs a passed unit's local shipping steps in its task worktree: a preflight, a commit of any leftover owned changes (`--message`, default `<task> ship`), a merge of the integration branch (`--integration`, default `integration.branch`, else `main`, fetched from `--remote`) into `fw/<task>`, and a re-run of its gates on the merged tree. Each step records one `shipped` event, so a re-run resumes where it stopped. Exit 0 every step ok or skipped, 1 an error (git, fetch, a merge conflict), 5 the gates failed on the merged tree, 6 a preflight refusal. The remote half (push, PR, CI, merge, land, close) is not in this version yet.
+`flywheel ship <task>` runs a passed unit's local shipping steps in its task worktree: a preflight, a commit of any leftover owned changes (`--message`, default `<task> ship`), a merge of the integration branch (`--integration`, default `integration.branch`, else `main`, fetched from `--remote`) into `fw/<task>`, and a re-run of its gates on the merged tree. Each step records one `shipped` event, so a re-run resumes where it stopped; until merge ran, a re-run whose `<remote>/<integration>` moved since merge-base recorded it runs merge-base and every later step again, and name-resolution failures are retried as transient network errors (issue #577). Exit 0 every step ok or skipped, 1 an error (git, fetch, a merge conflict), 5 the gates failed on the merged tree, 6 a preflight refusal. The remote half (push, PR, CI, merge, land, close) is not in this version yet.
