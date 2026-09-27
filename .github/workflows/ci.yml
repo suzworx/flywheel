@@ -120,6 +120,17 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      # .gitattributes stores every text file with LF; a CRLF one in the index
+      # turns a later normalising commit into a whole-file diff (issue #571).
+      - name: Line endings (LF in the index)
+        run: |
+          set -euo pipefail
+          crlf="$(git ls-files --eol | awk '$1 == "i/crlf" {print $NF}')"
+          if [ -n "$crlf" ]; then
+            echo "$crlf"
+            echo "these tracked files are stored with CRLF; run 'git add --renormalize .' and commit (issue #571)" >&2
+            exit 1
+          fi
       - name: Cross-compile release targets
         run: |
           set -euo pipefail

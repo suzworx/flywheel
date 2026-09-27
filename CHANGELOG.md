@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.36.0](https://github.com/suzworx/flywheel/compare/v0.35.0...v0.36.0) (2026-09-27)
+
+
+### Features
+
+* agent review spend is attributed to the unit: flywheel cost, the unit cost cap, the wave budget and the floor count it ([#580](https://github.com/suzworx/flywheel/issues/580)) ([4ef1088](https://github.com/suzworx/flywheel/commit/4ef1088c3f1eb8d150a6c49e7be552a978d9951c))
+* flywheel factory gets a k9s-style layout: a header with context, state and a per-view key menu, breadcrumbs, a flash line, and Ctrl-E/G/W/R ([#587](https://github.com/suzworx/flywheel/issues/587)) ([577f3ea](https://github.com/suzworx/flywheel/commit/577f3eabc260f205bc7474f4078b46cdcef719fe))
+* flywheel schedule installs an OS scheduled task that runs the controller, so the factory wakes with no process running ([#582](https://github.com/suzworx/flywheel/issues/582)) ([06cb911](https://github.com/suzworx/flywheel/commit/06cb9113eb55f97aa71272798d4ca200e4bd5ed5))
+* flywheel suspend --stop stops live workers with their work checkpointed and sessions kept, and resume continues each exactly ([#584](https://github.com/suzworx/flywheel/issues/584)) ([154e556](https://github.com/suzworx/flywheel/commit/154e556b0c1dd097fc6b43df636185d443776890))
+* flywheel suspend and resume freeze and thaw the factory; while suspended every dispatch path refuses ([#578](https://github.com/suzworx/flywheel/issues/578)) ([d0e2c44](https://github.com/suzworx/flywheel/commit/d0e2c44e924fda91017a10b4042311606a8b2eb6))
+
+
+### Documentation
+
+* the site covers freeze and schedule, and a Screens page shows the planned factory view with each screen's status ([#589](https://github.com/suzworx/flywheel/issues/589)) ([b23ebdc](https://github.com/suzworx/flywheel/commit/b23ebdc90aa238deb2118939d96f76521704571a))
+
 ## [0.35.0](https://github.com/suzworx/flywheel/compare/v0.34.0...v0.35.0) (2026-09-27)
 
 
