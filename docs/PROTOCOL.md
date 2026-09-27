@@ -225,7 +225,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `worker_plan`
 - Written by: the CLI, the first time the run's text output has a line that, after stripping leading whitespace, list/quote markers (-, *, +, >, #) and markdown emphasis (*, _, `), starts with `PLAN ` (issue #284).
-- Carries: `task`, `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file. The recorded plan is the text from that matched line onward, with leading whitespace and list markers stripped but emphasis markers preserved.
+- Carries: `task`, `attempt` (set on every `worker_plan` since issue #592; older events have none and are matched by their path), `path` (`.flywheel/runs/<id>.<attempt>.plan.md`), `sha256` of that file. The recorded plan is the text from that matched line onward, with leading whitespace and list markers stripped but emphasis markers preserved.
+- Carried over on `--resume` (issue #592): a resumed session is the same conversation and never
+  repeats its first message, so when an attempt of the session being resumed already checked in,
+  the CLI appends, before the stream starts, a `worker_plan` for the new attempt with the latest
+  such plan's `path` and `sha256` (the plan file is not copied), `attempt` the new attempt and
+  `note` "carried over from <attempt> (resumed session <first 8 chars of the session>)".
 - Effect: no status change. Its presence before step 20 is what a missing `no-plan` event
   certifies.
 
@@ -233,7 +238,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: the CLI, at most once per attempt, at the 20th completed step, or at finish (a
   normal or stalled end after at least one completed step, before that `finished` event), only if
   neither a `PLAN `-prefixed line (as detected above) nor an earlier `no-plan` has appeared (issue
-  #65, #284, #533). Ends with no worker output (silent, start failed) write none. Each one is followed by a
+  #65, #284, #533). Not written on a `--resume` whose session already checked in: that attempt
+  carries the session's `worker_plan` over (issue #592). Ends with no worker output (silent, start failed) write none. Each one is followed by a
   `no-plan` `signal`.
 - Carries: `task`, `attempt`; the finish-time one also carries `note` ("finished after N steps
   with no PLAN check-in").
@@ -551,10 +557,32 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `config get/set review.panel` reads and writes a comma-separated persona list (a member keeps its
   reviewer). Unset, the panel is `correctness, tests, errors, contract, docs`; `security` and `cross-os`
   are opt-in. `review.required` (default `false`) makes a complete panel a condition of every pass.
+  `review.panel_min_lines` (default `0`, off; `config set` refuses a negative or non-integer value)
+  scopes a small unit's configured panel to one reviewer (issue #459): see `panel_scoped`.
 - Enforced: when the task has been reviewed by the panel, or `review.required` is set, `flywheel
   inspect --verdict pass` is refused (rule `panel`, exit 6) unless every configured dimension is
   `pass` on the tree being inspected, naming each `<dimension>=missing|correct` and the command; and
-  `flywheel verify` fails rule P1 for such a pass (§2).
+  `flywheel verify` fails rule P1 for such a pass (§2). "Configured" means `panelFor` below.
+
+### `panel_scoped`
+- Written by: the CLI only, via `flywheel review <task> --agent --panel` with the configured panel
+  (no explicit member list) and `review.panel_min_lines` N > 0 (issue #459). Before any member runs,
+  it counts the unit's changed lines on the tree it is about to review: added plus deleted lines of
+  `git diff --numstat <base> -- <paths>` (the unit's dispatch base and changed paths, as the review
+  diff uses; a binary file counts 0) plus the lines of each new untracked file among those paths.
+  Below N, only one member runs, the configured `correctness` member (else the first), and this event
+  is appended first; the command prints `<task> review panel: <n> changed lines <
+  review.panel_min_lines <N>; one reviewer: <persona>` and a one-line verdict matrix. At or above N,
+  or with N = 0, the full panel runs and nothing is recorded.
+- Carries: `task`, `tree` (the tree the member reviews), `panel` (the one persona), `session`, and
+  `note` (`<n> changed lines < review.panel_min_lines <N>`). Refused without `task`, `tree` or a
+  non-empty `panel`.
+- `panelFor(events, task, tree, configured)`: the `panel` of the latest `panel_scoped` event of the
+  task on exactly `tree`, else the configured dimensions. Inspect's rule `panel`, verify's P1 (over
+  the events before each pass, on its tree), `flywheel recover` and the floor's `panel` cells all use
+  it, so they agree from the ledger alone and never re-measure. A tree that changed after a scoped
+  review (a fix round) has no record and needs the full panel, unless the next panel run measures
+  it small and scopes it again.
 
 ### `group_reviewed`
 - Written by: the CLI only, via `flywheel review --group <goal|tasks:a,b> --agent --session S
@@ -1267,7 +1295,8 @@ gates (exit 5) without touching the log's legality.
   `review.required` is set, or an agent `reviewed` event carrying a dimension preceded the pass — an
   `inspected` pass fails when `VerdictMatrix` over the events BEFORE it, on the pass's tree, has a
   configured dimension that is not `pass`; the reason names each `<dimension>=missing|correct`. The
-  panel and `review.required` are read from today's configuration. Live, `InspectTask` refuses such
+  panel and `review.required` are read from today's configuration; a `panel_scoped` event on the
+  pass's tree narrows the panel to its own (`panelFor`, issue #459). Live, `InspectTask` refuses such
   a pass as rule `panel`, after T3 (the tree it checks is the one T3 measured): `the review panel is
   not complete on tree <tree>: <dimension>=<verdict>, ...; run flywheel review <task> --agent --panel
   --session <reviewer> (add --fix to correct and re-review)`.

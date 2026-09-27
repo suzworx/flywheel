@@ -133,7 +133,9 @@ func ruleP1(task string, events []Event, panel []string, required bool) []Verify
 		if e.Task != task || e.Kind != "inspected" || e.Verdict != "pass" || !panelApplies(events[:i], task, required) {
 			continue
 		}
-		if bad := panelIncomplete(VerdictMatrix(events[:i], task, e.Tree, panel), panel); len(bad) > 0 {
+		// A panel_scoped record for that tree (issue #459) narrows the panel.
+		need := panelFor(events[:i], task, e.Tree, panel)
+		if bad := panelIncomplete(VerdictMatrix(events[:i], task, e.Tree, need), need); len(bad) > 0 {
 			items = append(items, VerifyItem{Task: task, Rule: "P1", Pass: false,
 				Reason: fmt.Sprintf("inspected pass by %q on tree %s recorded without a complete review panel: %s", e.Session, e.Tree, strings.Join(bad, ", "))})
 		}

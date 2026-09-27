@@ -343,7 +343,7 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 			f.TreeChanged = true
 		}
 		f.InspectReady = inspectionReady(events, id, att)
-		if panel := cfg.PanelDimensions(); f.InspectReady && len(panel) > 0 && panelApplies(events, id, cfg.ReviewRequired()) {
+		if panel := panelFor(events, id, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(events, id, cfg.ReviewRequired()) {
 			f.PanelPending = panelIncomplete(VerdictMatrix(events, id, tree, panel), panel)
 		}
 	}

@@ -116,6 +116,8 @@ type Event struct {
 	// recorded command contains (issue #365).
 	GatesUnrun []string `json:"gates_unrun,omitempty"`
 	Tree       string   `json:"tree,omitempty"`
+	// Panel is the panel a panel_scoped event scopes its tree to (issue #459).
+	Panel []string `json:"panel,omitempty"`
 	// ResetAt is a rate-limited finished event's parsed reset time, RFC 3339
 	// (issue #383): the model is paused for every unit until then.
 	ResetAt string `json:"reset_at,omitempty"`
@@ -301,6 +303,11 @@ var kinds = map[string]bool{
 	// DurationMS, Reason (the first output line) and Commit. Informational: it
 	// may precede the task's planned event and never changes a task's state.
 	"gate_probed": true,
+	// panel_scoped records that a small unit's tree needs only Panel, not the
+	// configured review panel (issue #459): Task, Tree (the tree the members
+	// review), Panel and Note (the changed lines against
+	// review.panel_min_lines). panelFor reads it for exactly that tree.
+	"panel_scoped": true,
 	// suspended freezes the whole factory (issue #572): no task, Session who
 	// froze it, Note the reason, Until the optional thaw time. Every dispatch
 	// path refuses while it holds (FactorySuspended).
@@ -493,10 +500,13 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, suspended, unsuspended", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, panel_scoped, suspended, unsuspended", e.Kind)
 	}
 	if e.Kind == "gate_probed" && (e.Task == "" || e.Gate == "" || e.Command == "" || e.RC == nil) {
 		return fmt.Errorf("gate_probed event must carry a task, gate, command and rc")
+	}
+	if e.Kind == "panel_scoped" && (e.Task == "" || e.Tree == "" || len(e.Panel) == 0) {
+		return fmt.Errorf("panel_scoped event must carry a task, tree and a non-empty panel")
 	}
 	if (e.Kind == "suspended" || e.Kind == "unsuspended") && (e.Session == "" || e.Task != "") {
 		return fmt.Errorf("%s event must carry a session and no task", e.Kind)

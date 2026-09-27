@@ -1,11 +1,15 @@
 package flywheel
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -183,18 +187,28 @@ func recordCrashed(dir, task, dimension string, o ReviewPanelOptions, res *Panel
 // ledger after the last member, on the tree they reviewed.
 func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 	panel := o.Panel
+	minLines := 0
 	if len(panel) == 0 {
 		cfg, _, err := LoadConfig(dir)
 		if err != nil {
 			return PanelResult{}, err
 		}
 		panel = cfg.ReviewPanel()
+		minLines = cfg.ReviewPanelMinLines()
 	}
-	res := PanelResult{Round: o.Round}
 	for _, m := range panel {
 		if !personaKnown(m.Persona) {
 			return PanelResult{}, fmt.Errorf("review panel: no persona %q; known: %s", m.Persona, strings.Join(PanelPersonas(), ", "))
 		}
+	}
+	if minLines > 0 {
+		var err error
+		if panel, err = scopePanel(dir, task, panel, minLines, o); err != nil {
+			return PanelResult{}, err
+		}
+	}
+	res := PanelResult{Round: o.Round}
+	for _, m := range panel {
 		res.Panel = append(res.Panel, m.Persona)
 	}
 	if res.Round <= 0 {
@@ -241,6 +255,112 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 	}
 	res.Matrix = VerdictMatrix(events, task, res.Tree, res.Panel)
 	return res, nil
+}
+
+// scopePanel applies review.panel_min_lines (issue #459): it counts the
+// unit's changed lines on the tree the members are about to review
+// (unitChangedLines, from the unit's dispatch base, as reviewDiff does) and,
+// below minLines, returns only the correctness member (else the first),
+// after recording a panel_scoped event for that tree. Otherwise it returns
+// panel unchanged and records nothing.
+func scopePanel(dir, task string, panel []PanelMember, minLines int, o ReviewPanelOptions) ([]PanelMember, error) {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return nil, err
+	}
+	workdir := wd(o.Workdir, dir, events, task)
+	n, err := unitChangedLines(workdir, dispatchBase(events, task, ""), task)
+	if err != nil {
+		return nil, err
+	}
+	if n >= minLines {
+		return panel, nil
+	}
+	tree, err := treeHash(workdir)
+	if err != nil {
+		return nil, err
+	}
+	one := panel[0]
+	for _, m := range panel {
+		if m.Persona == "correctness" {
+			one = m
+			break
+		}
+	}
+	why := fmt.Sprintf("%d changed lines < review.panel_min_lines %d", n, minLines)
+	if err := AppendEvent(dir, Event{Task: task, Kind: "panel_scoped", Session: o.Session, Tree: tree,
+		Panel: []string{one.Persona}, Note: why}); err != nil {
+		return nil, err
+	}
+	progress(o.Progress, fmt.Sprintf("%s review panel: %s; one reviewer: %s", task, why, one.Persona))
+	return []PanelMember{one}, nil
+}
+
+// unitChangedLines counts the unit's changed lines (issue #459): added plus
+// deleted lines of git diff --numstat from base (HEAD when none; HEAD again
+// when git cannot use base) over unitChangedPaths, plus the lines of each new
+// untracked file among those paths. A binary file ("-") counts 0.
+func unitChangedLines(workdir, base, task string) (int, error) {
+	paths, err := unitChangedPaths(workdir, base, task)
+	if err != nil || len(paths) == 0 {
+		return 0, err
+	}
+	from := base
+	if from == "" {
+		from = "HEAD"
+	}
+	stat, err := gitRead(workdir, append([]string{"diff", "--numstat", from, "--"}, paths...))
+	if err != nil && from != "HEAD" {
+		stat, err = gitRead(workdir, append([]string{"diff", "--numstat", "HEAD", "--"}, paths...))
+	}
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, line := range strings.Split(stat, "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) < 3 {
+			continue
+		}
+		added, _ := strconv.Atoi(f[0]) // "-" (binary) parses to 0
+		deleted, _ := strconv.Atoi(f[1])
+		n += added + deleted
+	}
+	untracked, err := gitRead(workdir, []string{"ls-files", "-z", "--others", "--exclude-standard"})
+	if err != nil {
+		return 0, err
+	}
+	changed := map[string]bool{}
+	for _, p := range paths {
+		changed[p] = true
+	}
+	for _, p := range strings.Split(untracked, "\x00") {
+		if p = filepath.ToSlash(p); p == "" || !changed[p] {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(workdir, filepath.FromSlash(p)))
+		if err != nil {
+			return 0, fmt.Errorf("read new file %s: %w", p, err)
+		}
+		n += bytes.Count(data, []byte("\n"))
+		if len(data) > 0 && data[len(data)-1] != '\n' {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// panelFor is the panel task's tree needs (issue #459): the Panel of the
+// latest panel_scoped event of task on exactly tree, else configured. A tree
+// that changed after a scoped review has no such record: the full panel.
+func panelFor(events []Event, task, tree string, configured []string) []string {
+	out := configured
+	for _, e := range events {
+		if e.Kind == "panel_scoped" && e.Task == task && e.Tree == tree && len(e.Panel) > 0 {
+			out = e.Panel
+		}
+	}
+	return out
 }
 
 // FormatMatrix renders a verdict matrix one "<dimension>  <verdict>" line per
