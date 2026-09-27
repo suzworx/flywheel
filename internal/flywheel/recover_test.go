@@ -1,10 +1,12 @@
 package flywheel
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -385,6 +387,94 @@ func TestRecoverGroupsByLead(t *testing.T) {
 	}
 	if text := rep.Text(); !strings.Contains(text, want) || strings.Contains(text, "lead ") {
 		t.Errorf("no lead recorded: want the flat lines\n%s\ngot:\n%s", want, text)
+	}
+}
+
+// countingTreeHash wraps the real treeHash and counts its calls.
+func countingTreeHash(n *atomic.Int32) func(string) (string, error) {
+	return func(wd string) (string, error) {
+		n.Add(1)
+		return treeHash(wd)
+	}
+}
+
+// TestRecoverSkipsSettledWorld checks recover on a large ledger (issue #628):
+// 200 landed units read no world, the three finished units working in the
+// main checkout share one tree hash, and the rows keep the ledger's order.
+func TestRecoverSkipsSettledWorld(t *testing.T) {
+	t.Parallel()
+	dir := newRepo(t)
+	var evs []Event
+	add := func(e Event) {
+		e.TS = recoverNow.Add(-72*time.Hour + time.Duration(len(evs))*time.Second).Format(time.RFC3339)
+		evs = append(evs, e)
+	}
+	var order []string
+	unit := func(id string, landed bool) {
+		order = append(order, id)
+		add(Event{Task: id, Kind: "planned", Brief: "brief.txt"})
+		add(Event{Task: id, Kind: "dispatched", Attempt: "r1"})
+		add(Event{Task: id, Kind: "finished", Attempt: "r1", Reason: "stop"})
+		add(Event{Task: id, Kind: "owns_checked", Attempt: "r1", Tree: "stale"})
+		if landed {
+			for range 30 { // filler readings: a ledger the size of a real one
+				add(Event{Task: id, Kind: "owns_checked", Attempt: "r1", Tree: "stale"})
+			}
+			add(Event{Task: id, Kind: "landed", Commit: "abcdef1"})
+		}
+	}
+	for i := range 200 {
+		unit(fmt.Sprintf("L%03d", i), true)
+	}
+	for i := range 3 {
+		unit(fmt.Sprintf("U%d", i), false)
+	}
+	if err := AppendEvents(dir, evs); err != nil {
+		t.Fatal(err)
+	}
+	var n atomic.Int32
+	start := time.Now()
+	rep, err := Recover(dir, recoverNow, RecoverOptions{treeHash: countingTreeHash(&n)})
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	t.Logf("Recover over %d events, %d units: %s", len(evs), len(order), time.Since(start))
+	if got := n.Load(); got != 1 {
+		t.Errorf("tree hashes = %d, want 1 (the three units share the main checkout)", got)
+	}
+	if len(rep.Tasks) != len(order) {
+		t.Fatalf("tasks = %d, want %d", len(rep.Tasks), len(order))
+	}
+	for i, tk := range rep.Tasks {
+		switch {
+		case tk.Task != order[i]:
+			t.Errorf("row %d = %s, want %s (ledger order)", i, tk.Task, order[i])
+		case tk.Status == "landed" && tk.Next != Next{Action: "none", Reason: "landed"}:
+			t.Errorf("%s: next = %+v, want none/landed", tk.Task, tk.Next)
+		case tk.Status != "landed" && (tk.Next.Action != "re-validate" || tk.Next.Reason != "the tree changed since the last reading"):
+			t.Errorf("%s: next = %+v, want re-validate: the tree changed", tk.Task, tk.Next)
+		}
+	}
+}
+
+// TestRecoverNoReadingNoTreeHash checks a finished unit with no reading since
+// its finish is re-validate without hashing its tree (issue #628).
+func TestRecoverNoReadingNoTreeHash(t *testing.T) {
+	t.Parallel()
+	dir := newRepo(t)
+	recoverLedger(t, dir, Event{Task: "T", Kind: "planned", Brief: "brief.txt"},
+		Event{Task: "T", Kind: "dispatched", Attempt: "r1"},
+		Event{Task: "T", Kind: "finished", Attempt: "r1", Reason: "stop"})
+	var n atomic.Int32
+	rep, err := Recover(dir, recoverNow, RecoverOptions{treeHash: countingTreeHash(&n)})
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if nx := rep.Tasks[0].Next; nx.Action != "re-validate" || nx.Reason != "no reading since the finish" {
+		t.Errorf("next = %+v, want re-validate: no reading since the finish", nx)
+	}
+	if got := n.Load(); got != 0 {
+		t.Errorf("tree hashes = %d, want 0", got)
 	}
 }
 

@@ -762,6 +762,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   - the run file (`complete` when its last byte is a newline, `torn`, `missing`).
   - a stacked base, a paused model, and the task's checkpoints.
 
+  A `landed` task is reported from the ledger alone (no worktree, lease, run-file or tree reads),
+  and the tree hash is computed once per workdir, so recover stays fast on a large ledger (#628).
+
   A task not `landed` whose latest event is older than `--dormant-after` (default `168h`; `0`
   disables) is **dormant** (JSON `dormant: true`). Its next action is still computed, but the text
   shows dormant tasks as one summary line (count and ids) unless `--all`, and `--apply` never acts
