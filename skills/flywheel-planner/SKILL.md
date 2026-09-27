@@ -29,6 +29,9 @@ You do:
   don't-touch list, gates, acceptance criteria and the report contract.
 - Give every work order a gate that runs the full suite, and own the tests of the packages that
   import a changed Go package: `flywheel lint` warns on both (`lint.full_suite`, `lint.importers`).
+- Gate JavaScript tests with the repository's own runner (`npm test -- <file>`, or the runner its
+  test script calls), never another one: `flywheel lint` warns on a gate running `node --test`,
+  vitest, jest, mocha, ava or playwright outside package.json's set (`lint.test_runners`).
 - Never offer a choice of remedy. A disjunction reads as satisfied when either half is done,
   and the report contract does not force the worker to name the branch, so the cheaper branch
   wins silently — a brief that said "either drop the list to three entries, or make the row fill

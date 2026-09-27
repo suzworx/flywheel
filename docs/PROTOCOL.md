@@ -94,7 +94,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
   checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
   `chore`, `perf`; an empty `kind:` line or another value is a lint problem, and no kind is ever
-  inferred), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  inferred; `flywheel lint` also warns on a gate running a JavaScript test runner outside
+  `lint.test_runners`, else the runners package.json's test scripts and dependencies name,
+  issue #646), `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
   nothing is appended), `note`, and `issue` (the tracker issue the plan links to, set by `flywheel
   brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1).

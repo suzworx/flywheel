@@ -119,6 +119,10 @@ type LintConfig struct {
 	// Kinds lists the values a brief's kind: line may take (issue #475);
 	// empty means DefaultKinds.
 	Kinds []string `json:"kinds,omitempty"`
+	// TestRunners names the JavaScript test runners the repository uses
+	// (issue #646): node:test, vitest, jest, mocha, ava, playwright. Non-empty
+	// replaces the set flywheel lint detects in package.json.
+	TestRunners []string `json:"test_runners,omitempty"`
 }
 
 // DefaultKinds is the kind: values flywheel lint allows when lint.kinds is
