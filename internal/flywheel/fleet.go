@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -254,10 +255,12 @@ func isDir(p string) bool {
 }
 
 // FleetRow is one ledger's line in the fleet status (issue #585): its
-// discovery entry, its units by stage and andon count from Status, whether
-// it is suspended, the models a rate limit pauses, and the ages in whole
-// seconds of its latest health and latest events (nil when none). Error is
-// set when the ledger fails to read; the other fields are then zero.
+// discovery entry, its units by stage and event-derived andon count
+// (ledgerSummary), whether it is suspended, the models a rate limit pauses,
+// and the ages in whole seconds of its latest health and latest events (nil
+// when none). Error is set when the ledger fails to read; the other fields
+// are then zero. A FoldIdle row has Kind FleetKindIdle, Idle the number of
+// ledgers it stands for and LastAge the oldest of their latest-event ages.
 type FleetRow struct {
 	FleetLedger
 	Tasks     StatusTasks `json:"tasks"`
@@ -266,6 +269,46 @@ type FleetRow struct {
 	Paused    []string    `json:"paused,omitempty"`
 	HealthAge *int        `json:"health_age,omitempty"`
 	LastAge   *int        `json:"last_age,omitempty"`
+	Idle      int         `json:"idle,omitempty"`
+}
+
+// FleetKindIdle is the kind of a FoldIdle row.
+const FleetKindIdle = "idle"
+
+// DefaultIdleAfter is how long a worktree ledger's latest event may be old
+// before FoldIdle folds it away (issue #605).
+const DefaultIdleAfter = 72 * time.Hour
+
+// FoldIdle drops each non-root ledger whose latest event is older than
+// idleAfter and appends, after the last row of each root that lost any, one
+// FleetKindIdle row counting them with the oldest age. Root ledgers, rows
+// carrying Error and ledgers with no event are always kept.
+func FoldIdle(rows []FleetRow, idleAfter time.Duration) []FleetRow {
+	idle := func(r FleetRow) bool {
+		return r.Kind != FleetKindRoot && r.Error == "" && r.LastAge != nil &&
+			time.Duration(*r.LastAge)*time.Second > idleAfter
+	}
+	var out []FleetRow
+	for i := 0; i < len(rows); {
+		root := rows[i].Root
+		fold := FleetRow{FleetLedger: FleetLedger{Root: root, Kind: FleetKindIdle}}
+		for ; i < len(rows) && rows[i].Root == root; i++ {
+			if !idle(rows[i]) {
+				out = append(out, rows[i])
+				continue
+			}
+			fold.Idle++
+			if fold.LastAge == nil || *rows[i].LastAge > *fold.LastAge {
+				age := *rows[i].LastAge
+				fold.LastAge = &age
+			}
+		}
+		if fold.Idle > 0 {
+			fold.Name = fmt.Sprintf("+%d idle worktree ledgers", fold.Idle)
+			out = append(out, fold)
+		}
+	}
+	return out
 }
 
 // State is the row's factory state: SUSPENDED, "paused: m1,m2" or running.
@@ -279,50 +322,120 @@ func (r FleetRow) State() string {
 	return "running"
 }
 
-// FleetStatus reads every ledger FleetLedgers finds in f at now. A ledger
-// that fails to read is a row carrying Error; it never fails the rest.
+// FleetStatus summarises every ledger FleetLedgers finds in f at now with
+// ledgerSummary, runtime.GOMAXPROCS(0) ledgers at a time, returning the rows
+// in discovery order. A ledger that fails to read is a row carrying Error; it
+// never fails the rest.
 func FleetStatus(f Fleet, now time.Time) []FleetRow {
 	ledgers := FleetLedgers(f)
-	rows := make([]FleetRow, 0, len(ledgers))
-	for _, l := range ledgers {
-		row := FleetRow{FleetLedger: l}
-		if l.Error == "" {
-			if err := fleetRow(&row, now); err != nil {
-				row = FleetRow{FleetLedger: l}
-				row.Error = err.Error()
+	rows := make([]FleetRow, len(ledgers))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(ledgers)) {
+		wg.Go(func() {
+			for i := range next {
+				rows[i] = FleetRow{FleetLedger: ledgers[i]}
+				if ledgers[i].Error != "" {
+					continue
+				}
+				row, err := ledgerSummary(ledgers[i].Path, now)
+				row.FleetLedger = ledgers[i]
+				if err != nil {
+					row = FleetRow{FleetLedger: ledgers[i]}
+					row.Error = err.Error()
+				}
+				rows[i] = row
 			}
-		}
-		rows = append(rows, row)
+		})
 	}
+	for i := range ledgers {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 	return rows
 }
 
-// fleetRow fills row from its ledger: Status for the units, andon, freeze
-// and latest event; the events again for paused models and latest health.
-func fleetRow(row *FleetRow, now time.Time) error {
-	rep, err := Status(row.Path, now)
+// ledgerSummary is dir's fleet row from one read of its events (issue #605):
+// stage counts from Derive, the event-derivable andon count (summaryAndon),
+// the freeze, the paused models, and the ages of the latest health and the
+// latest event. It builds no floor, runs no git and reads no run file; the
+// returned row's FleetLedger is left zero for the caller to fill.
+func ledgerSummary(dir string, now time.Time) (FleetRow, error) {
+	events, err := ReadEvents(dir)
 	if err != nil {
-		return err
-	}
-	events, err := ReadEvents(row.Path)
-	if err != nil {
-		return err
+		return FleetRow{}, fmt.Errorf("read events %s: %w", dir, err)
 	}
 	pauseAt := Limits{}.RateLimitPauseThreshold()
-	if cfg, _, err := LoadConfig(row.Path); err == nil {
+	if cfg, _, err := LoadConfig(dir); err == nil {
 		pauseAt = cfg.Limits.RateLimitPauseThreshold()
 	}
-	row.Tasks = rep.Tasks
-	row.Andon = rep.Andon
-	row.Suspended = rep.Suspended != nil
+	st := Derive(events)
+	var row FleetRow
+	for _, ts := range st.Tasks {
+		countStage(&row.Tasks, ts.Status)
+	}
+	row.Suspended = FactorySuspended(events, now).Suspended
 	row.Paused, _ = pausedModels(events, now, pauseAt)
-	if rep.LastEventAt != nil {
-		age := rep.LastEventAt.Age
+	row.Andon = summaryAndon(events, st, now, len(row.Paused), row.Suspended)
+	if last := latestEvent(events, now, func(Event) bool { return true }); last != nil {
+		age := last.Age
 		row.LastAge = &age
 	}
 	if _, at, ok := LatestHealth(events); ok {
 		age := ageOfTime(at, now)
 		row.HealthAge = &age
 	}
-	return nil
+	return row, nil
+}
+
+// countStage adds one task in status to t, as Status counts it.
+func countStage(t *StatusTasks, status string) {
+	t.Total++
+	switch status {
+	case "planned":
+		t.Planned++
+	case "dispatched":
+		t.Dispatched++
+	case "running":
+		t.Running++
+	case "finished":
+		t.Finished++
+	case "passed":
+		t.Passed++
+	case "needs-correction":
+		t.NeedsCorrection++
+	case "rejected":
+		t.Rejected++
+	case "blocked":
+		t.Blocked++
+	case "lost":
+		t.Lost++
+	case "withdrawn":
+		t.Withdrawn++
+	case "landed":
+		t.Landed++
+	}
+}
+
+// summaryAndon counts the floor's andon kinds that the events alone decide:
+// the freeze, each paused model, each group with open blocking findings, a
+// stale health event, and each task with an attempt that is blocked or
+// finished for a reason other than a clean stop (the floor, too, judges only
+// tasks with an attempt). Run-file states (silent, stalled, no-writes),
+// review findings and staffing mismatches need the floor and are left out.
+func summaryAndon(events []Event, st State, now time.Time, paused int, suspended bool) int {
+	n := paused + len(groupAndon(st.Groups, now)) + len(healthAndon(events, now))
+	if suspended {
+		n++
+	}
+	for _, ts := range st.Tasks {
+		if ts.Attempt == "" {
+			continue
+		}
+		if ts.Status == "blocked" || ts.Status == "finished" && ts.Reason != "" && ts.Reason != "stop" {
+			n++
+		}
+	}
+	return n
 }

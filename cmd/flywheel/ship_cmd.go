@@ -12,7 +12,7 @@ import (
 )
 
 // shipUsageLine is ship's usage, shared by help and the usage error.
-const shipUsageLine = "flywheel ship <task> [--integration BRANCH] [--workdir PATH] [--remote NAME] [--message TEXT] [--title TEXT] [--body-file PATH] [--no-merge] [--ci-timeout DUR] [--poll DUR] [--ignore-check NAME]... [--repo OWNER/REPO] [--dir DIR]"
+const shipUsageLine = "flywheel ship <task> [--integration BRANCH] [--workdir PATH] [--remote NAME] [--message TEXT] [--title TEXT] [--body-file PATH] [--no-merge] [--ci-timeout DUR] [--poll DUR] [--ignore-check NAME]... [--requeue N] [--repo OWNER/REPO] [--dir DIR]"
 
 func init() {
 	register("ship", "take a passed unit to landed: commit its leftovers, merge the integration branch into fw/<task>, re-run its gates, push, open or reuse the PR, wait for CI, squash merge, record the landing and close the issue", runShip)
@@ -33,6 +33,7 @@ type shipOptions struct {
 	poll         time.Duration
 	ignoreChecks repeatable
 	repo         string
+	requeue      int
 }
 
 // shipFlags defines ship's flags once, so help and run share them.
@@ -52,13 +53,25 @@ func shipFlags() (*flag.FlagSet, *shipOptions) {
 	fs.DurationVar(&o.poll, "poll", 30*time.Second, "how often ci reads the PR's checks")
 	fs.Var(&o.ignoreChecks, "ignore-check", "a check name ci disregards (repeatable)")
 	fs.StringVar(&o.repo, "repo", "", "OWNER/REPO for gh (default gh's own repository resolution)")
+	fs.IntVar(&o.requeue, "requeue", 0, "times to re-merge and re-run CI when the integration branch moves before merge (default 2, 0 never)")
 	return fs, o
+}
+
+// shipRequeue maps --requeue to ShipOptions.Requeue, where 0 is the default
+// 2: the flag absent stays 0, an explicit 0 (or less) is never, -1.
+func shipRequeue(fs *flag.FlagSet, n int) int {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "requeue" })
+	if set && n <= 0 {
+		return -1
+	}
+	return n
 }
 
 // shipUsage prints the usage line and the exit codes.
 func shipUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: "+shipUsageLine)
-	fmt.Fprintln(w, "exit: 0 ok, 1 error, 5 gates or CI failed, 6 rule refusal")
+	fmt.Fprintln(w, "exit: 0 ok, 1 error, 5 gates or CI failed or the integration branch kept moving, 6 rule refusal")
 }
 
 // runShip implements `flywheel ship <task>` (issue #457).
@@ -68,7 +81,8 @@ func runShip(args []string) {
 
 // shipMain runs the ship steps and returns the exit code: 0 every step ok or
 // skip, 1 an error (git, fetch, a merge conflict, gh, a merge not MERGED), 2
-// usage, 5 the gates failed on the merged tree or CI failed, 6 a rule refusal.
+// usage, 5 the gates failed on the merged tree, CI failed or the integration
+// branch still moved after the last requeue, 6 a rule refusal.
 func shipMain(args []string, stdout, stderr io.Writer) int {
 	fs, o := shipFlags()
 	pos, err := parseArgs(fs, args)
@@ -94,7 +108,7 @@ func shipMain(args []string, stdout, stderr io.Writer) int {
 	_, err = flywheel.Ship(o.dir, pos[0], flywheel.ShipOptions{
 		Integration: o.integration, Workdir: o.workdir, Message: o.message, Remote: o.remote, Progress: stdout,
 		Repo: o.repo, Title: o.title, Body: body, NoMerge: o.noMerge, CITimeout: o.ciTimeout, Poll: o.poll,
-		IgnoreChecks: o.ignoreChecks,
+		IgnoreChecks: o.ignoreChecks, Requeue: shipRequeue(fs, o.requeue),
 	})
 	if err == nil {
 		return 0
@@ -104,7 +118,7 @@ func shipMain(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case errors.As(err, &rr):
 		return 6
-	case errors.Is(err, flywheel.ErrShipGates), errors.Is(err, flywheel.ErrShipCI):
+	case errors.Is(err, flywheel.ErrShipGates), errors.Is(err, flywheel.ErrShipCI), errors.Is(err, flywheel.ErrShipStale):
 		return 5
 	}
 	return 1

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -155,16 +156,37 @@ func progressLockTimings() repoLockTimings {
 	return repoLockTimings{staleAfter: 15 * time.Second, wait: 150 * time.Millisecond, retry: time.Millisecond, heartbeat: 40 * time.Millisecond}
 }
 
-// churnRepoLock hands the lock at p from holder to holder in place — a new
-// token rewritten every few milliseconds, the file never absent — for d, so a
-// waiter never gets a chance at it, then calls last with the file still held.
-func churnRepoLock(p string, d time.Duration, last func()) {
-	end := time.Now().Add(d)
-	for i := 0; time.Now().Before(end); i++ {
-		_ = os.WriteFile(p, []byte(fmt.Sprintf("churn-%d\npid 1 host test\n", i)), 0o644)
-		time.Sleep(5 * time.Millisecond)
-	}
-	last()
+// churnPolls handovers of churnPollSleep each last 800ms: more than four of
+// progressLockTimings' 150ms waits.
+const (
+	churnPolls     = 40
+	churnPollSleep = 20 * time.Millisecond
+)
+
+// lockstepChurn returns a poll hook for repoLockTimings that hands the lock at
+// p from holder to holder in lockstep with the waiter's polls (issue #603), so
+// no scheduling delay decides the test. Each of the first n polls rewrites the
+// file in place with a new token (churn-<i>) and an mtime different from the
+// previous poll's — a few seconds in the past, well inside staleAfter — so the
+// waiter sees every handover whatever the filesystem's timestamp granularity,
+// then sleeps churnPollSleep so the churn outlasts several waits. Poll n+1
+// runs last with the file still held; later polls do nothing. calls counts
+// the polls.
+func lockstepChurn(p string, n int, last func()) (poll func(), calls *atomic.Int32) {
+	calls = new(atomic.Int32)
+	base := time.Now().Add(-4 * time.Second)
+	return func() {
+		i := int(calls.Add(1)) - 1
+		switch {
+		case i < n:
+			_ = os.WriteFile(p, []byte(fmt.Sprintf("churn-%d\npid 1 host test\n", i)), 0o644)
+			mod := base.Add(time.Duration(i%3) * time.Second)
+			_ = os.Chtimes(p, mod, mod)
+			time.Sleep(churnPollSleep)
+		case i == n:
+			last()
+		}
+	}, calls
 }
 
 // acquireWithGuard runs acquireRepoLock and fails the test if it hangs.
@@ -203,24 +225,30 @@ func seedRepoLock(t *testing.T, dir string) string {
 }
 
 // TestRepoLockProgressWaitsWhileLockChangesHands: other holders take the lock
-// in turn for 600ms, four times the wait; the waiter keeps waiting and gets
-// the lock once they stop. On a fixed deadline it gave up at 150ms.
+// in turn, one per waiter poll, for more than four waits; the waiter keeps
+// waiting and gets the lock once they stop. On a fixed deadline it gave up
+// after one wait.
 func TestRepoLockProgressWaitsWhileLockChangesHands(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := seedRepoLock(t, dir)
-	go churnRepoLock(p, 600*time.Millisecond, func() {
+	timings := progressLockTimings()
+	poll, calls := lockstepChurn(p, churnPolls, func() {
 		for err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist); err = os.Remove(p) {
 			time.Sleep(time.Millisecond)
 		}
 	})
-	release, err, waited := acquireWithGuard(t, dir, progressLockTimings())
+	timings.poll = poll
+	release, err, waited := acquireWithGuard(t, dir, timings)
 	if err != nil {
 		t.Fatalf("acquire while the lock changes hands error = %v, want it to wait and acquire", err)
 	}
 	defer release()
-	if waited < 600*time.Millisecond {
-		t.Errorf("acquired after %s, want after the churn ended (600ms)", waited)
+	if c := calls.Load(); c <= churnPolls {
+		t.Errorf("poll hook ran %d times, want more than %d (every handover, then the release)", c, churnPolls)
+	}
+	if waited < 4*timings.wait {
+		t.Errorf("acquired after %s, want after more than four waits (%s)", waited, 4*timings.wait)
 	}
 }
 
@@ -253,13 +281,14 @@ func TestRepoLockProgressStaleTakeover(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := seedRepoLock(t, dir)
-	go churnRepoLock(p, 400*time.Millisecond, func() {
+	timings := progressLockTimings()
+	timings.poll, _ = lockstepChurn(p, churnPolls, func() {
 		past := time.Now().Add(-10 * time.Minute)
 		for os.WriteFile(p, []byte("dead\npid 1 host test\n"), 0o644) != nil || os.Chtimes(p, past, past) != nil {
 			time.Sleep(time.Millisecond)
 		}
 	})
-	release, err, _ := acquireWithGuard(t, dir, progressLockTimings())
+	release, err, _ := acquireWithGuard(t, dir, timings)
 	if err != nil {
 		t.Fatalf("acquire past a stale lock after handovers error = %v, want a takeover", err)
 	}

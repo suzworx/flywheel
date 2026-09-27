@@ -87,6 +87,16 @@ func TestFleetFlagsBind(t *testing.T) {
 	if fs, _ := fleetFlags("remove"); fs.Lookup("json") != nil || fs.Lookup("name") != nil {
 		t.Error("fleet remove defines flags, want none")
 	}
+	fs, o = fleetFlags("status")
+	if o.idleAfter != flywheel.DefaultIdleAfter {
+		t.Errorf("fleet status --idle-after default = %v, want %v", o.idleAfter, flywheel.DefaultIdleAfter)
+	}
+	if err := fs.Parse([]string{"--all", "--idle-after", "24h"}); err != nil || !o.all || o.idleAfter != 24*time.Hour {
+		t.Errorf("fleet status --all --idle-after 24h: parsed %#v, err %v", *o, err)
+	}
+	if fs, _ := fleetFlags("list"); fs.Lookup("all") != nil || fs.Lookup("idle-after") != nil {
+		t.Error("fleet list defines --all or --idle-after, want status only")
+	}
 }
 
 // TestFleetMainTable drives fleetMain against a temp registry: usage exits
@@ -135,6 +145,71 @@ func TestFleetMainTable(t *testing.T) {
 	}
 	if code, out := run("remove", "a1"); code != 1 {
 		t.Errorf("fleet remove twice = %d, want 1\n%s", code, out)
+	}
+}
+
+// TestFleetIdleFoldCLI: fleet status folds each root's idle worktree ledgers
+// into one "+N idle worktree ledgers (oldest <age>)" row and keeps both roots
+// (b's own ledger is idle); --all lists every ledger; --idle-after moves the
+// line; a negative --idle-after is usage.
+func TestFleetIdleFoldCLI(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	ledger := func(dir string, age time.Duration) {
+		if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(flywheel.Event{TS: now.Add(-age).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: "s"})
+		if err := os.WriteFile(filepath.Join(dir, ".flywheel", "events.jsonl"), append(b, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var f flywheel.Fleet
+	for _, name := range []string{"a", "b"} {
+		root := filepath.Join(t.TempDir(), name)
+		ledger(root, map[string]time.Duration{"a": time.Hour, "b": 300 * time.Hour}[name])
+		ledger(filepath.Join(root, ".flywheel", "worktrees", "live"), time.Hour)
+		ledger(filepath.Join(root, ".flywheel", "worktrees", "old1"), 100*time.Hour)
+		ledger(filepath.Join(root, ".flywheel", "worktrees", "old2"), 200*time.Hour)
+		f.Roots = append(f.Roots, flywheel.FleetRoot{Name: name, Path: root})
+	}
+	file := filepath.Join(t.TempDir(), "fleet.json")
+	if err := flywheel.SaveFleet(file, f); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (int, string) {
+		var out, errb strings.Builder
+		code := fleetMain(args, &out, &errb, file, now)
+		return code, out.String() + errb.String()
+	}
+	names := func(out string) string {
+		var s []string
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n")[1:] {
+			s = append(s, strings.Fields(line)[0])
+		}
+		return strings.Join(s, " ")
+	}
+	code, out := run("status")
+	if want := "a a/live +2 b b/live +2"; code != 0 || names(out) != want {
+		t.Errorf("fleet status = %d, names %q, want %q\n%s", code, names(out), want, out)
+	}
+	if strings.Count(out, "+2 idle worktree ledgers (oldest 8d)") != 2 {
+		t.Errorf("fleet status lacks two per-root fold lines with the oldest age:\n%s", out)
+	}
+	code, out = run("status", "--all")
+	if want := "a a/live a/old1 a/old2 b b/live b/old1 b/old2"; code != 0 || names(out) != want {
+		t.Errorf("fleet status --all = %d, names %q, want %q\n%s", code, names(out), want, out)
+	}
+	code, out = run("status", "--idle-after", "150h")
+	if want := "a a/live a/old1 +1 b b/live b/old1 +1"; code != 0 || names(out) != want {
+		t.Errorf("fleet status --idle-after 150h = %d, names %q, want %q\n%s", code, names(out), want, out)
+	}
+	var rows []flywheel.FleetRow
+	if code, out := run("status", "--json"); code != 0 || json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 6 || rows[2].Idle != 2 {
+		t.Errorf("fleet status --json = %d, %d rows, want 6 with a fold row of 2\n%s", code, len(rows), out)
+	}
+	if code, out := run("status", "--idle-after", "-1h"); code != 2 {
+		t.Errorf("fleet status --idle-after -1h = %d, want 2 (usage)\n%s", code, out)
 	}
 }
 
