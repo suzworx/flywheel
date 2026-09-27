@@ -26,14 +26,42 @@ type TUIIO struct {
 	// Stop ends the loop cleanly when it is closed or receives (a signal
 	// from another process, #346 review); nil never stops.
 	Stop <-chan struct{}
+	// Ctx is the fetch for the context the ctx view switches to (issue #585
+	// f4; TUIReroot), or why that context cannot be shown; nil switches
+	// nowhere.
+	Ctx func(c TUICtx) (func(m *TUI) (TUIData, error), error)
 }
 
 // fetchResult is what a background fetch hands the loop: the data, the
-// fetchKey of the model it was fetched for, and its error.
+// fetchKey of the model it was fetched for, the context it read (gen) and
+// its error.
 type fetchResult struct {
 	data TUIData
 	key  string
+	gen  int
 	err  error
+}
+
+// switchCtx re-roots the view at c: the fetch tio.Ctx makes for it, and its
+// first data, fetched for m as the new context starts it (ctxReset). On
+// success m is that model; on failure m is unchanged and the error says why.
+func (m *TUI) switchCtx(tio TUIIO, c TUICtx) (func(m *TUI) (TUIData, error), TUIData, error) {
+	if tio.Ctx == nil {
+		return nil, TUIData{}, fmt.Errorf("this view cannot switch context")
+	}
+	fetch, err := tio.Ctx(c)
+	if err != nil {
+		return nil, TUIData{}, err
+	}
+	next := *m
+	next.ctxReset()
+	d, err := fetch(&next)
+	if err != nil {
+		return nil, TUIData{}, err
+	}
+	*m = next
+	m.Observe(d)
+	return fetch, d, nil
 }
 
 // fetchKey names what a fetch for the model reads beyond the floor: the
@@ -72,6 +100,9 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	// Buffered, so a fetch still running when the loop returns never blocks.
 	results := make(chan fetchResult, 1)
 	running, again := false, false
+	// gen counts the context switches: a fetch of an older context is
+	// dropped when it ends.
+	gen := 0
 	start := func() {
 		if running {
 			again = true
@@ -80,9 +111,10 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 		running = true
 		snap := *m // the fetch reads its copy; the model stays this goroutine's
 		m.refresh = false
+		f, g := fetch, gen
 		go func() {
-			d, err := fetch(&snap)
-			results <- fetchResult{data: d, key: snap.fetchKey(), err: err}
+			d, err := f(&snap)
+			results <- fetchResult{data: d, key: snap.fetchKey(), gen: g, err: err}
 		}()
 	}
 
@@ -115,6 +147,20 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 				// clean quit into an error (#346 review).
 				return nil
 			}
+			// Enter in the ctx view (issue #585 f4): the new context's first
+			// fetch runs here, so a ledger that fails to load keeps the old
+			// one and says why.
+			if c, ok := m.TakeCtx(); ok {
+				f, d, err := m.switchCtx(tio, c)
+				if err != nil {
+					m.flash("ctx " + c.Name + ": " + err.Error())
+					continue
+				}
+				fetch, data, dataKey = f, d, m.fetchKey()
+				gen++
+				m.flash("switched to " + c.Name)
+				continue
+			}
 			if m.refresh || m.fetchKey() != before {
 				start()
 			}
@@ -126,6 +172,14 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 			start()
 		case r := <-results:
 			running = false
+			if r.gen != gen {
+				// Read before a context switch: the view shows another ledger.
+				if again {
+					again = false
+					start()
+				}
+				continue
+			}
 			if r.err != nil {
 				return r.err
 			}
@@ -153,6 +207,71 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 // and tuiVersion. A reload (m.TakeRefresh, Ctrl-R) starts a new Watcher, so
 // the whole ledger is read afresh.
 func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) {
+	return TUIFetcherIn(dir, now, TUIFetchOptions{})
+}
+
+// TUIFetchOptions place a live fetch in the fleet (issue #585 f4).
+type TUIFetchOptions struct {
+	FleetFile  string        // the registry the ctx view lists; "" is FleetPath()
+	Name, Kind string        // the ledger's fleet name and kind; "" takes them from the registry's row for dir
+	Every      time.Duration // how long the ctx view's rows are kept; 0 is 2s
+}
+
+// TUIReroot is the fetch of each context the ctx view switches to: a
+// TUIFetcherIn for its directory with base's registry and interval, or an
+// error when the directory holds no ledger.
+func TUIReroot(now func() time.Time, base TUIFetchOptions) func(c TUICtx) (func(m *TUI) (TUIData, error), error) {
+	return func(c TUICtx) (func(m *TUI) (TUIData, error), error) {
+		if !hasLedger(c.Dir) {
+			return nil, fmt.Errorf("no flywheel ledger at %s", c.Dir)
+		}
+		o := base
+		o.Name, o.Kind = c.Name, c.Kind
+		return TUIFetcherIn(c.Dir, now, o), nil
+	}
+}
+
+// TUIFetcherIn is TUIFetcher placed in the fleet by o: the header names the
+// ledger's context, and while the ctx view is shown the fetch lists the
+// fleet (FleetStatus folded by FoldIdle, as fleet status shows it), read
+// again at most every o.Every, the ledger it shows marked.
+func TUIFetcherIn(dir string, now func() time.Time, o TUIFetchOptions) func(m *TUI) (TUIData, error) {
+	if o.Every <= 0 {
+		o.Every = 2 * time.Second
+	}
+	self := fleetKey(dir)
+	var (
+		fleetRows []FleetRow
+		fleetErr  string
+		fleetCur  string
+		fleetAt   time.Time // real time: a --now clock never moves
+	)
+	fleet := func(at time.Time) {
+		fleetRows, fleetErr, fleetCur, fleetAt = nil, "", "", time.Now()
+		file := o.FleetFile
+		if file == "" {
+			p, err := FleetPath()
+			if err != nil {
+				fleetErr = err.Error()
+				return
+			}
+			file = p
+		}
+		f, err := LoadFleet(file)
+		if err != nil {
+			fleetErr = err.Error()
+			return
+		}
+		fleetRows = FoldIdle(FleetStatus(f, at), DefaultIdleAfter)
+		for _, r := range fleetRows {
+			if r.Kind != FleetKindIdle && fleetKey(r.Path) == self {
+				fleetCur = r.Path
+				if o.Name == "" {
+					o.Name, o.Kind = r.Name, r.Kind
+				}
+			}
+		}
+	}
 	w := NewWatcher()
 	var branch string
 	var pauseAt float64
@@ -177,6 +296,7 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			w = NewWatcher()
 			loaded, cpLoaded, searchDone, cpTask = false, false, false, ""
 			metrics = metricsCache{}
+			fleetAt = time.Time{}
 		}
 		if !loaded {
 			branch, _ = IntegrationBranch(dir)
@@ -266,6 +386,15 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			}
 			data.Next = eventNext(events, cfg, at, pauseAt, andon, owners)
 		}
+		// The fleet (issue #585 f4) only while :ctx shows it: FleetStatus
+		// reads every ledger.
+		if view == "ctx" {
+			if fleetAt.IsZero() || time.Since(fleetAt) >= o.Every {
+				fleet(at)
+			}
+			data.Fleet, data.FleetErr, data.FleetCur = fleetRows, fleetErr, fleetCur
+		}
+		data.CtxName, data.CtxKind = o.Name, o.Kind
 		lastView = view
 		data.Checkpoints = cpCache
 		if q := m.SearchQuery(); q != "" && (q != searchQ || !searchDone) {
@@ -551,8 +680,12 @@ func searchDocs(dir string, events []Event) ([]SearchDoc, error) {
 // cursor and screen on every return path, a panic included (defer), and on
 // SIGINT or SIGTERM from another process, which stop the loop instead of
 // killing the process with the terminal still raw (#346 review). A failed
-// restoration is returned when nothing else failed first.
-func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time) (err error) {
+// restoration is returned when nothing else failed first. o places dir in
+// the fleet (issue #585 f4); its rows are kept for interval unless it says.
+func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time, o TUIFetchOptions) (err error) {
+	if o.Every <= 0 {
+		o.Every = interval
+	}
 	restore, err := term.MakeRaw(stdin)
 	if err != nil {
 		return fmt.Errorf("raw mode on %s: %w", stdin.Name(), err)
@@ -626,6 +759,7 @@ func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func
 		Out:   stdout,
 		Color: term.EnableVT(stdout),
 		Stop:  stop,
+		Ctx:   TUIReroot(now, o),
 	}
-	return RunTUILoop(tio, TUIFetcher(dir, now))
+	return RunTUILoop(tio, TUIFetcherIn(dir, now, o))
 }
