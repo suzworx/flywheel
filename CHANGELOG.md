@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.39.0](https://github.com/suzworx/flywheel/compare/v0.38.0...v0.39.0) (2026-09-27)
+
+
+### Features
+
+* review.panel_min_lines gives a small diff one reviewer instead of the full panel, recorded in the ledger ([#616](https://github.com/suzworx/flywheel/issues/616)) ([69cae49](https://github.com/suzworx/flywheel/commit/69cae49981aee8b096225a8c5aac3b8853c2b2d4)), closes [#459](https://github.com/suzworx/flywheel/issues/459)
+
+
+### Bug Fixes
+
+* a resumed session carries its PLAN check-in over instead of raising a false no-plan ([#613](https://github.com/suzworx/flywheel/issues/613)) ([764b355](https://github.com/suzworx/flywheel/commit/764b355b0304014b0c3831e708732f914beaebb1))
+* fleet status shows a git worktree's own activity, not a copy of its root's history ([#618](https://github.com/suzworx/flywheel/issues/618)) ([ee0e9ae](https://github.com/suzworx/flywheel/commit/ee0e9ae57b061c70455929a4299a32526576b7c5)), closes [#608](https://github.com/suzworx/flywheel/issues/608)
+
 ## [0.38.0](https://github.com/suzworx/flywheel/compare/v0.37.0...v0.38.0) (2026-09-27)
 
 
