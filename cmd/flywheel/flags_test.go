@@ -982,3 +982,76 @@ func TestShipRemoteFlags(t *testing.T) {
 		t.Errorf("shipMain with a missing --body-file = %d, %q; want 2", code, errb.String())
 	}
 }
+
+// TestFleetLearningsFlagsBind: fleet learnings binds --pending, --all,
+// --json, --sync (default true), --done and --done-all (issue #585).
+func TestFleetLearningsFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := fleetFlags("learnings")
+	if !o.sync {
+		t.Error("fleet learnings --sync defaults to false, want true")
+	}
+	if err := fs.Parse([]string{"--pending", "--all", "--json", "--sync=false", "--done", "K", "--done-all"}); err != nil ||
+		!o.pending || !o.all || !o.json || o.sync || o.done != "K" || !o.doneAll {
+		t.Errorf("fleet learnings flags: parsed %#v, err %v", *o, err)
+	}
+	if fs, _ := fleetFlags("status"); fs.Lookup("done") != nil || fs.Lookup("sync") != nil {
+		t.Error("fleet status defines learnings flags")
+	}
+}
+
+// TestFleetLearningsCLI drives fleet learnings against a temp registry: the
+// first sync says so and lists only the recent learning, --json parses,
+// --all --json lists both, --done drains by title prefix, an unmatched
+// --done exits 1 and conflicting flags are usage.
+func TestFleetLearningsCLI(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	root := filepath.Join(t.TempDir(), "a")
+	if err := os.MkdirAll(filepath.Join(root, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var lines []byte
+	for title, age := range map[string]time.Duration{"old": 400 * time.Hour, "recent": time.Hour} {
+		b, _ := json.Marshal(flywheel.Event{TS: now.Add(-age).Format(time.RFC3339Nano), Task: "t1", Kind: "learning", Severity: "P1", Title: title, Observed: "o"})
+		lines = append(append(lines, b...), '\n')
+	}
+	if err := os.WriteFile(filepath.Join(root, ".flywheel", "events.jsonl"), lines, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "fleet.json")
+	if err := flywheel.SaveFleet(file, flywheel.Fleet{Roots: []flywheel.FleetRoot{{Name: "a", Path: root}}}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (int, string, string) {
+		var out, errb strings.Builder
+		code := fleetMain(append([]string{"learnings"}, args...), &out, &errb, file, now)
+		return code, out.String(), errb.String()
+	}
+	code, out, errs := run()
+	if head := strings.Join(strings.Fields(strings.SplitN(out, "\n", 2)[0]), " "); code != 0 || head != "KEY SEVERITY AGE ROOT TASK TITLE" ||
+		!strings.Contains(out, "recent") || strings.Contains(out, "old") || !strings.Contains(errs, "first sync") {
+		t.Errorf("fleet learnings = %d, want the header, recent only and a first-sync note\n%s%s", code, out, errs)
+	}
+	var ls []flywheel.FleetLearning
+	if code, out, _ := run("--json"); code != 0 || json.Unmarshal([]byte(out), &ls) != nil || len(ls) != 1 || ls[0].Title != "recent" {
+		t.Errorf("fleet learnings --json = %d, %d learnings\n%s", code, len(ls), out)
+	}
+	if code, out, _ := run("--all", "--json"); code != 0 || json.Unmarshal([]byte(out), &ls) != nil || len(ls) != 2 {
+		t.Errorf("fleet learnings --all --json = %d, %d learnings\n%s", code, len(ls), out)
+	}
+	if code, out, errs := run("--done", "REC"); code != 0 || out != "done 1\n" {
+		t.Errorf("fleet learnings --done REC = %d %q %s", code, out, errs)
+	}
+	if code, _, _ := run("--done", "nope"); code != 1 {
+		t.Errorf("fleet learnings --done nope = %d, want 1", code)
+	}
+	for _, args := range [][]string{{"--done", "x", "--done-all"}, {"--all", "--pending"}, {"extra"}} {
+		if code, _, errs := run(args...); code != 2 {
+			t.Errorf("fleet learnings %v = %d, want 2 (usage)\n%s", args, code, errs)
+		}
+	}
+	if code, out, _ := run("--json"); code != 0 || strings.TrimSpace(out) != "[]" {
+		t.Errorf("fleet learnings --json after done = %d %q, want []", code, out)
+	}
+}

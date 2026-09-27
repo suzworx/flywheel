@@ -1,11 +1,15 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -13,10 +17,10 @@ import (
 )
 
 // fleetUsageLine is fleet's usage line, shared by help and errors.
-const fleetUsageLine = "flywheel fleet add <path> [--name N] | remove <name> | list [--json] | status [--json] [--all] [--idle-after D]"
+const fleetUsageLine = "flywheel fleet add <path> [--name N] | remove <name> | list [--json] | status [--json] [--all] [--idle-after D] | learnings [--pending|--all] [--json] [--sync=false] [--done K|--done-all]"
 
 func init() {
-	register("fleet", "one merged view of every factory root and its ledgers\n    add <path>         register a root (--name, default its base)\n    remove <name>      unregister a root\n    list               the roots and the ledgers discovered under them\n    status             one row per ledger: units, andon, state, health, last event;\n                       idle worktree ledgers fold into one row per root (--all lists them)", runFleet)
+	register("fleet", "one merged view of every factory root and its ledgers\n    add <path>         register a root (--name, default its base)\n    remove <name>      unregister a root\n    list               the roots and the ledgers discovered under them\n    status             one row per ledger: units, andon, state, health, last event;\n                       idle worktree ledgers fold into one row per root (--all lists them)\n    learnings          sync every ledger's learnings into the pending queue, then list it;\n                       --all lists every learning, --done <key|title prefix> / --done-all drain", runFleet)
 	registerHelp("fleet", fleetUsageLine, func() *flag.FlagSet { fs, _ := fleetFlags("add"); return fs })
 }
 
@@ -26,11 +30,16 @@ type fleetOptions struct {
 	json      bool
 	all       bool
 	idleAfter time.Duration
+	pending   bool
+	sync      bool
+	done      string
+	doneAll   bool
 }
 
 // fleetFlags defines a fleet subcommand's flags once, so help and run share
-// them: add takes --name, list and status take --json, status also takes
-// --all and --idle-after.
+// them: add takes --name, list, status and learnings take --json, status
+// also takes --all and --idle-after, and learnings --all, --pending, --sync,
+// --done and --done-all.
 func fleetFlags(sub string) (*flag.FlagSet, *fleetOptions) {
 	fs := flag.NewFlagSet("fleet", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -38,8 +47,15 @@ func fleetFlags(sub string) (*flag.FlagSet, *fleetOptions) {
 	switch sub {
 	case "add":
 		fs.StringVar(&o.name, "name", "", "the root's name (default the path's base, made unique)")
-	case "list", "status":
+	case "list", "status", "learnings":
 		fs.BoolVar(&o.json, "json", false, "print JSON")
+	}
+	if sub == "learnings" {
+		fs.BoolVar(&o.all, "all", false, "list every learning across the fleet, not the pending queue")
+		fs.BoolVar(&o.pending, "pending", false, "list the pending queue (the default)")
+		fs.BoolVar(&o.sync, "sync", true, "sync the queue with every ledger first")
+		fs.StringVar(&o.done, "done", "", "remove the pending learnings whose key or title starts with this")
+		fs.BoolVar(&o.doneAll, "done-all", false, "empty the pending queue")
 	}
 	if sub == "status" {
 		fs.BoolVar(&o.all, "all", false, "list every ledger; do not fold idle worktree ledgers")
@@ -48,7 +64,7 @@ func fleetFlags(sub string) (*flag.FlagSet, *fleetOptions) {
 	return fs, o
 }
 
-// runFleet implements `flywheel fleet <add|remove|list|status>` against the
+// runFleet implements `flywheel fleet <add|remove|list|status|learnings>` against the
 // registry at FleetPath.
 func runFleet(args []string) {
 	file, err := flywheel.FleetPath()
@@ -68,10 +84,10 @@ func fleetMain(args []string, stdout, stderr io.Writer, file string, now time.Ti
 		return 2
 	}
 	if len(args) == 0 {
-		return usage("missing subcommand (add, remove, list or status)")
+		return usage("missing subcommand (add, remove, list, status or learnings)")
 	}
 	sub := args[0]
-	want := map[string]int{"add": 1, "remove": 1, "list": 0, "status": 0}
+	want := map[string]int{"add": 1, "remove": 1, "list": 0, "status": 0, "learnings": 0}
 	n, ok := want[sub]
 	if !ok {
 		return usage("unknown subcommand %q", sub)
@@ -142,6 +158,8 @@ func fleetMain(args []string, stdout, stderr io.Writer, file string, now time.Ti
 			return fleetJSON(stdout, stderr, rows)
 		}
 		writeFleetTable(stdout, rows)
+	case "learnings":
+		return fleetLearnings(stdout, stderr, file, f, o, now, fail, usage)
 	}
 	return 0
 }
@@ -199,4 +217,81 @@ func fleetAge(sec *int) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// fleetLearnings runs `fleet learnings` against the queue beside the registry
+// at file: --done and --done-all drain pending and sync nothing; otherwise it
+// syncs (unless --sync=false), noting on stderr what the sync added, then
+// lists the pending queue, or with --all every learning, oldest first.
+func fleetLearnings(stdout, stderr io.Writer, file string, f flywheel.Fleet, o *fleetOptions, now time.Time,
+	fail func(error) int, usage func(string, ...any) int) int {
+	queue := flywheel.LearningsQueuePath(file)
+	switch {
+	case o.done != "" && o.doneAll:
+		return usage("learnings: --done and --done-all are exclusive")
+	case o.all && o.pending:
+		return usage("learnings: --all and --pending are exclusive")
+	case o.doneAll:
+		n, err := flywheel.DoneAllLearnings(queue)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stdout, "done %d\n", n)
+		return 0
+	case o.done != "":
+		n, err := flywheel.DoneLearning(queue, o.done)
+		if err != nil {
+			return fail(err)
+		}
+		if n == 0 {
+			return fail(fmt.Errorf("no pending learning's key or title starts with %q", o.done))
+		}
+		fmt.Fprintf(stdout, "done %d\n", n)
+		return 0
+	}
+	if o.sync {
+		newly, first, err := flywheel.SyncLearnings(queue, f, now)
+		if err != nil {
+			return fail(err)
+		}
+		if first {
+			fmt.Fprintf(stderr, "first sync: every learning marked seen; only the %d newer than %s are pending\n", len(newly), flywheel.FirstSyncWindow)
+		} else if len(newly) > 0 {
+			fmt.Fprintf(stderr, "synced: %d new pending\n", len(newly))
+		}
+	}
+	var ls []flywheel.FleetLearning
+	if o.all {
+		ls = flywheel.FleetLearnings(f, now)
+	} else {
+		q, err := flywheel.LoadLearningsQueue(queue)
+		if err != nil {
+			return fail(err)
+		}
+		ls = slices.SortedFunc(maps.Values(q.Pending), func(a, b flywheel.FleetLearning) int {
+			return cmp.Or(strings.Compare(a.TS, b.TS), strings.Compare(a.Key, b.Key))
+		})
+	}
+	if ls == nil {
+		ls = []flywheel.FleetLearning{}
+	}
+	if o.json {
+		return fleetJSON(stdout, stderr, ls)
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "KEY\tSEVERITY\tAGE\tROOT\tTASK\tTITLE")
+	for _, l := range ls {
+		var age *int
+		if t, err := time.Parse(time.RFC3339Nano, l.TS); err == nil {
+			sec := int(now.Sub(t).Seconds())
+			age = &sec
+		}
+		title := l.Title
+		if l.Dismissed {
+			title += " (dismissed)"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", l.Key[:12], l.Severity, fleetAge(age), l.Root, l.Task, title)
+	}
+	tw.Flush()
+	return 0
 }
