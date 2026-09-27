@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/suzworx/flywheel/compare/v0.42.0...v0.43.0) (2026-09-27)
+
+
+### Features
+
+* flywheel factory's :ctx view lists every factory in the fleet, and Enter or --ctx switches the view to one ([#644](https://github.com/suzworx/flywheel/issues/644)) ([de7187b](https://github.com/suzworx/flywheel/commit/de7187b96da0e958baa84b33968ad8494564beac))
+
 ## [0.42.0](https://github.com/suzworx/flywheel/compare/v0.41.0...v0.42.0) (2026-09-27)
 
 
