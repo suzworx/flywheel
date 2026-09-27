@@ -116,7 +116,10 @@ The site renders all of these: **[suzworx.github.io/flywheel](https://suzworx.gi
 - [Concepts](docs/concepts.md) — work orders, `owns:`, gates, the event log, the poka-yoke rules.
 - [Protocol](docs/PROTOCOL.md) — the normative contract: every event kind, rule and exit code.
 - [Features](docs/features.md) — the long walkthrough: adapters, routing, limits, recover,
-  worktrees, the review agent and panel, ship.
+  worktrees, the review agent and panel, freeze and resume, the wake schedule, ship.
+- [Factory screens](https://suzworx.github.io/flywheel/screens.html) ([docs/screens.html](docs/screens.html))
+  — the approved k9s-style design for `flywheel factory`, each screen marked shipped, building or
+  planned.
 - [HUMAN.md](HUMAN.md) — leading the agents yourself from the terminal.
 - Design docs:
   - [Autonomous shipping](docs/design/autonomous-shipping.md) — the factory model, the required
@@ -204,7 +207,8 @@ flowchart LR
   `flywheel wait <task>...` blocks until the named units finish.
 
 The details (bases, `--notify`, the TREE column, withdrawing a plan) are in
-[docs/features.md](docs/features.md#dispatch-watch-and-wait).
+[docs/features.md](docs/features.md#dispatch-watch-and-wait). The planned screens of the factory
+view, each marked with what exists today, are on the [screens page](https://suzworx.github.io/flywheel/screens.html).
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files
   (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
