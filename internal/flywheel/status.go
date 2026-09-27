@@ -21,6 +21,9 @@ type StatusReport struct {
 	LastProgressAt *LastEvent      `json:"last_progress_at,omitempty"`
 	Andon          int             `json:"andon"`
 	Attention      []AttentionLine `json:"attention,omitempty"`
+	// Suspended is the factory's freeze at now (issue #572); nil when it is
+	// not suspended.
+	Suspended *SuspendState `json:"suspended,omitempty"`
 }
 
 // AttentionLine is one task whose current attempt ended for a reason other
@@ -114,6 +117,9 @@ func Status(dir string, now time.Time) (StatusReport, error) {
 	st := Derive(w.events)
 	var rep StatusReport
 	rep.Factory = filepath.Base(dir)
+	if s := FactorySuspended(w.events, now); s.Suspended {
+		rep.Suspended = &s
+	}
 	cur := map[string]TaskState{}
 	for _, ts := range st.Tasks {
 		cur[ts.ID] = ts
