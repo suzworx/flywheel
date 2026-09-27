@@ -347,7 +347,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `Bash: unattributed (<command>)` when no pattern matches (issue #497). Otherwise, when
   `wrote` is empty, no signal is recorded (an untriaged signal blocks landing, and some units
   legitimately write nothing): the factory view derives the floor state **no-writes** from the
-  `finished` event alone. Both states apply only while the unit is awaiting judgement (status
+  `finished` event alone. An attempt that resumed the same agent session as an earlier attempt
+  that wrote files is not no-writes: it wraps up that work (issue #592). Both states apply only while the unit is awaiting judgement (status
   `finished`); once passed, rejected or landed it shows done. Both reach the andon; no-writes
   blocks nothing.
 - A non-empty `gates_unrun` adds `gates never run by the worker: <ids>` to `note` and prints a
