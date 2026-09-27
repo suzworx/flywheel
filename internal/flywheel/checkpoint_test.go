@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,10 +76,11 @@ func TestCheckpointUnclean(t *testing.T) {
 }
 
 // timedCheckpointRun starts a clean-stopping sim Run of T1 in its worktree
-// with limits.checkpoint_every set to every and the sim held for simDelay;
-// a.go is written before dispatch. It returns the flywheel dir, the worktree,
-// the tick counter and a channel closed when Run returns.
-func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration) (dir, wt string, ticks *atomic.Int64, done chan struct{}) {
+// with limits.checkpoint_every set to every and the sim held for simDelay, or,
+// with hold, until release is called (issue #619); a.go is written before
+// dispatch. It returns the flywheel dir, the worktree, the tick counter, a
+// channel closed when Run returns and release (a no-op without hold).
+func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration, hold bool) (dir, wt string, ticks *atomic.Int64, done chan struct{}, release func()) {
 	t.Helper()
 	dir = worktreeRepo(t) // T1 owns a.go
 	wt, err := TaskWorktree(dir, "T1")
@@ -103,13 +105,27 @@ func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration) (dir
 	ticks = new(atomic.Int64)
 	done = make(chan struct{})
 	t.Cleanup(func() { <-done }) // a failed test still waits for Run before its temp dirs go
+	var gate chan struct{}
+	release = func() {}
+	if hold {
+		gate = make(chan struct{})
+		var once sync.Once
+		release = func() { once.Do(func() { close(gate) }) }
+		// Registered after the wait on done, so it runs first (last in, first
+		// out): a test that failed mid-way still lets Run finish.
+		t.Cleanup(release)
+	}
 	go func() {
 		defer close(done)
-		if res, err := Run(dir, RunOptions{Task: "T1", Worktree: true, SimDelay: simDelay, checkpointTicks: ticks}); err != nil || res.Reason != "stop" {
+		o := RunOptions{Task: "T1", Worktree: true, SimDelay: simDelay, checkpointTicks: ticks}
+		if gate != nil {
+			o.simRelease = gate
+		}
+		if res, err := Run(dir, o); err != nil || res.Reason != "stop" {
 			t.Errorf("Run() = %+v, %v; want reason stop", res, err)
 		}
 	}()
-	return dir, wt, ticks, done
+	return dir, wt, ticks, done, release
 }
 
 // waitMidRun polls cond until it holds; it fails when Run finished first (the
@@ -134,7 +150,7 @@ func waitMidRun(t *testing.T, done chan struct{}, what string, cond func() bool)
 // commit, and a later change moves the ref.
 func TestTimedCheckpoint(t *testing.T) {
 	t.Parallel()
-	dir, wt, ticks, done := timedCheckpointRun(t, "20ms", 45*time.Second) // long enough for every wait on a loaded host; the waits are hang guards
+	dir, wt, ticks, done, release := timedCheckpointRun(t, "20ms", 0, true) // the sim holds until release; the waits are hang guards
 	ref := checkpointRef("T1", "r1")
 	refSHA := func() string { sha, _ := gitWith(dir, nil, "rev-parse", "--verify", "-q", ref); return sha }
 	waitMidRun(t, done, "a timed checkpoint", func() bool { return refSHA() != "" })
@@ -158,6 +174,7 @@ func TestTimedCheckpoint(t *testing.T) {
 		body, _ := gitWith(dir, nil, "show", ref+":a.go")
 		return body == "package a // two"
 	})
+	release()
 	<-done
 }
 
@@ -165,7 +182,7 @@ func TestTimedCheckpoint(t *testing.T) {
 // checkpoint: a clean run leaves no ref and the timer never ticked.
 func TestTimedCheckpointDisabled(t *testing.T) {
 	t.Parallel()
-	dir, _, ticks, done := timedCheckpointRun(t, "0", 500*time.Millisecond)
+	dir, _, ticks, done, _ := timedCheckpointRun(t, "0", 500*time.Millisecond, false)
 	<-done
 	if sha, err := gitWith(dir, nil, "rev-parse", "--verify", "-q", checkpointRef("T1", "r1")); err == nil {
 		t.Errorf("checkpoint ref = %s, want none with checkpoint_every 0", sha)
