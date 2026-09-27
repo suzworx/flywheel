@@ -5,30 +5,33 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 const (
-	suspendUsageLine = "flywheel suspend --session S [--reason TEXT] [--until TIME] [--dir DIR]"
-	resumeUsageLine  = "flywheel resume --session S [--note TEXT] [--dir DIR]"
+	suspendUsageLine = "flywheel suspend --session S [--reason TEXT] [--until TIME] [--stop] [--dir DIR]"
+	resumeUsageLine  = "flywheel resume --session S [--note TEXT] [--no-redispatch] [--dir DIR]"
 )
 
 func init() {
-	register("suspend", "freeze the factory: every dispatch refuses until flywheel resume", runSuspend)
+	register("suspend", "freeze the factory: every dispatch refuses until flywheel resume; --stop also stops every live worker", runSuspend)
 	registerHelp("suspend", suspendUsageLine, func() *flag.FlagSet { fs, _ := suspendFlags(); return fs })
-	register("resume", "thaw a suspended factory", runResume)
+	register("resume", "thaw a suspended factory and re-dispatch every unit a --stop suspension stopped", runResume)
 	registerHelp("resume", resumeUsageLine, func() *flag.FlagSet { fs, _ := resumeFlags(); return fs })
 }
 
 // suspendOptions holds the parsed suspend and resume flags.
 type suspendOptions struct {
-	dir     string
-	session string
-	reason  string
-	until   string
-	note    string
+	dir          string
+	session      string
+	reason       string
+	until        string
+	note         string
+	stop         bool
+	noRedispatch bool
 }
 
 // suspendFlags defines suspend's flags once, so help and run share them.
@@ -40,6 +43,7 @@ func suspendFlags() (*flag.FlagSet, *suspendOptions) {
 	fs.StringVar(&o.session, "session", "", "session id of whoever freezes the factory (required)")
 	fs.StringVar(&o.reason, "reason", "", "why the factory is frozen")
 	fs.StringVar(&o.until, "until", "", "thaw time: RFC3339, or HH:MM local (today, or tomorrow once past)")
+	fs.BoolVar(&o.stop, "stop", false, "also stop every live worker at its next lease tick, checkpointed with its session kept (finished reason suspended); flywheel resume continues each")
 	return fs, o
 }
 
@@ -51,6 +55,7 @@ func resumeFlags() (*flag.FlagSet, *suspendOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.session, "session", "", "session id of whoever thaws the factory (required)")
 	fs.StringVar(&o.note, "note", "", "free-form note")
+	fs.BoolVar(&o.noRedispatch, "no-redispatch", false, "only thaw: do not re-dispatch the units a --stop suspension stopped")
 	return fs, o
 }
 
@@ -112,19 +117,63 @@ func runSuspend(args []string) {
 		}
 		until = t
 	}
-	if err := flywheel.Suspend(o.dir, o.session, o.reason, until); err != nil {
+	if err := flywheel.SuspendWith(o.dir, o.session, flywheel.SuspendOptions{Reason: o.reason, Until: until, Stop: o.stop}); err != nil {
 		exitSuspend("suspend", err)
+	}
+	if o.stop {
+		fmt.Println("factory suspended; every live worker stops at its next lease tick")
+		return
 	}
 	fmt.Println("factory suspended")
 }
 
-// runResume implements `flywheel resume`: it appends an unsuspended event.
-// Exit 0 ok, 1 error, 2 usage, 6 refusal (not suspended).
+// runResume implements `flywheel resume`: it appends an unsuspended event
+// and, unless --no-redispatch, re-dispatches every unit a --stop suspension
+// stopped. Exit 0 ok, 1 error, 2 usage, 6 refusal (not suspended).
 func runResume(args []string) {
 	fs, o := resumeFlags()
 	suspendArgs("resume", resumeUsageLine, fs, o, args)
-	if err := flywheel.Unsuspend(o.dir, o.session, o.note); err != nil {
+	if err := resumeFactory(o, superviseStarter(o.dir, o.session, false), os.Stdout); err != nil {
 		exitSuspend("resume", err)
 	}
-	fmt.Println("factory resumed")
+}
+
+// resumeFactory thaws the factory and, unless o.noRedispatch, continues
+// every unit a stopping suspension stopped through start (supervise's
+// detached `flywheel run <task> --resume` starter; tests inject their own).
+func resumeFactory(o *suspendOptions, start func(string) error, w io.Writer) error {
+	units, err := flywheel.Unsuspend(o.dir, o.session, o.note)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "factory resumed")
+	if o.noRedispatch {
+		return nil
+	}
+	return redispatchSuspended(o.dir, units, start, w)
+}
+
+// redispatchSuspended continues each unit a stopping suspension stopped:
+// it writes the unit's continue delta (.flywheel/briefs/<task>.delta.txt,
+// the default prompt of flywheel run --resume) and starts `flywheel run
+// <task> --resume` detached through start, printing one line per unit. A
+// unit that fails is reported and the rest still start; the first error is
+// returned.
+func redispatchSuspended(dir string, units []flywheel.TaskAttempt, start func(string) error, w io.Writer) error {
+	var first error
+	for _, u := range units {
+		_, err := flywheel.WriteSuspendDelta(dir, u.Task)
+		if err == nil {
+			err = start(u.Task)
+		}
+		if err != nil {
+			fmt.Fprintf(w, "%s %s not resumed: %v\n", u.Task, u.Attempt, err)
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		fmt.Fprintf(w, "resumed %s %s (log %s)\n", u.Task, u.Attempt, filepath.ToSlash(autoResumeLog(u.Task)))
+	}
+	return first
 }

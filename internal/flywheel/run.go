@@ -426,7 +426,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if b := cfg.Limits.Budget; b != nil && b.WaveCostUSD > 0 {
 		spent := 0.0
 		for _, e := range events {
-			if e.Kind == "finished" {
+			if spendEvent(e) {
 				spent += e.Cost
 			}
 		}
@@ -870,6 +870,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			}
 		}()
 	}
+	// A stopping factory suspension (issue #572) is seen on a lease tick: the
+	// renewer stats the sentinel and, only when it exists, confirms the
+	// ledger's suspension carries stop; it then records the suspended event's
+	// ts and closes suspendStop, which kills the worker the way the stall
+	// timer does and cuts a sim's delay short. suspendSince is read only after
+	// stopRenewer has waited for the renewer to exit.
+	var suspendStopped atomic.Bool
+	var suspendSince string
+	suspendStop := make(chan struct{})
 	if renewInterval > 0 {
 		renewDone = make(chan struct{})
 		renewerExited = make(chan struct{})
@@ -883,6 +892,13 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					l.RenewedAt = now().UTC().Format(time.RFC3339Nano)
 					l.ExpiresAt = now().UTC().Add(ttl).Format(time.RFC3339Nano)
 					_ = WriteLease(dir, l)
+					if !suspendStopped.Load() {
+						if since, stop := suspendStopSince(dir, now()); stop {
+							suspendSince = since
+							suspendStopped.Store(true)
+							close(suspendStop)
+						}
+					}
 				case <-renewDone:
 					return
 				}
@@ -1040,6 +1056,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// killChild is final here: a stopping suspension kills the worker now.
+	suspendWatchDone := make(chan struct{})
+	defer close(suspendWatchDone)
+	go func() {
+		select {
+		case <-suspendStop:
+			killChild()
+		case <-suspendWatchDone:
+		}
+	}()
+
 	// Start check: no stdout line within the timeout is a silent run. The
 	// watchdog is stopped when the first line arrives; if Stop reports the
 	// timer already fired, the run is silent.
@@ -1080,7 +1107,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	if worker.Adapter == "sim" {
 		if o.SimDelay > 0 {
-			time.Sleep(o.SimDelay)
+			simSleep(o.SimDelay, suspendStop)
 		}
 		src := worker.Model
 		if !filepath.IsAbs(src) {
@@ -1176,7 +1203,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	var capped atomic.Bool
 	firstLine := true
 	for sc.Scan() {
-		if silent.Load() || stalled.Load() || capped.Load() {
+		if silent.Load() || stalled.Load() || capped.Load() || suspendStopped.Load() {
 			break
 		}
 		line := sc.Bytes()
@@ -1363,9 +1390,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			}
 		}
 		if worker.Adapter == "sim" && o.SimLineDelay > 0 {
-			time.Sleep(o.SimLineDelay)
+			simSleep(o.SimLineDelay, suspendStop)
 		}
 	}
+	// Read before stopRenewer: a stop the renewer sees after the stream ended
+	// does not turn a finished worker into a suspended one.
+	stoppedBySuspend := suspendStopped.Load()
 	watchdog.Stop()
 	if stallTimer != nil {
 		stallTimer.Stop()
@@ -1394,6 +1424,46 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	outsideNote := ""
 	if len(outsideWrote) > 0 {
 		outsideNote = "wrote outside the worktree: " + clipNote(strings.Join(outsideWrote, ", "))
+	}
+
+	// Suspended: a stopping factory suspension killed the worker (issue #572).
+	// The finished event keeps the session so flywheel resume continues it,
+	// the written owned files are checkpointed, and a worktree's changes stay
+	// in the worktree: no attempt commit, as for every other unclean stop.
+	if stoppedBySuspend {
+		runFile.Close()
+		if errFile != nil {
+			errFile.Close()
+		}
+		if fixture != nil {
+			fixture.Close()
+		}
+		if cmd != nil {
+			_ = cmd.Wait()
+		}
+		runSHA := hex.EncodeToString(hasher.Sum(nil))
+		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
+		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "suspended", wrote, attemptOwns)
+		note := "stopped by suspend at " + suspendSince
+		if err := AppendEvent(dir, Event{
+			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
+			Model: model, Reason: "suspended", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), Steps: steps, SHA256: runSHA,
+			Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, Checkpoint: checkpoint,
+		}); err != nil {
+			return Result{}, err
+		}
+		if gitWrote {
+			if err := flagGitWrite(dir, o.Task, attempt, session, runRel, gitNote, o.Progress); err != nil {
+				return Result{}, err
+			}
+		}
+		progress(o.Progress, fmt.Sprintf("%s %s finished rc=-1 reason=suspended model=%s steps=%d note=%s", o.Task, attempt, model, steps, note))
+		if wl := wroteProgressLine(o.Task, attempt, "suspended", wrote); wl != "" {
+			progress(o.Progress, wl)
+		}
+		_ = RemoveLease(dir, o.Task, attempt)
+		_, _ = WriteState(dir)
+		return Result{Attempt: attempt, Session: session, RC: -1, Reason: "suspended", Steps: steps}, nil
 	}
 
 	// Silent: no output within the start timeout; we already killed the process
@@ -2109,10 +2179,14 @@ func recordSignal(dir, task, attempt, session, condition, runRel string) error {
 
 // ExitCode maps a result to the CLI exit code: 0 when the worker exited 0
 // with reason stop, 4 when it exited nonzero or ended capped or with an
-// error, 3 on a start timeout, 7 on a mid-stream stall.
+// error, 3 on a start timeout, 7 on a mid-stream stall, 6 when a stopping
+// factory suspension stopped the worker (issue #572).
 func ExitCode(r Result) int {
 	if r.Reason == "silent" {
 		return 3
+	}
+	if r.Reason == "suspended" {
+		return 6
 	}
 	if r.Reason == "stalled" {
 		return 7
@@ -2121,6 +2195,17 @@ func ExitCode(r Result) int {
 		return 0
 	}
 	return 4
+}
+
+// simSleep is the sim adapter's delay: d, cut short when stop closes (a
+// stopping suspension, issue #572), as a killed child's stream would end.
+func simSleep(d time.Duration, stop <-chan struct{}) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-stop:
+	}
 }
 
 // promptSource resolves the absolute path of the file to attach: the --delta
@@ -2662,23 +2747,25 @@ func approvedFallbackHint(w Worker) string {
 	return fmt.Sprintf(" (approved fallbacks: %s)", strings.Join(approved, ", "))
 }
 
-// recordedTokens sums input, output and reasoning tokens over finished events.
+// recordedTokens sums input, output and reasoning tokens over spend events
+// (spendEvent): worker attempts and agent reviews.
 func recordedTokens(events []Event) int {
 	total := 0
 	for _, e := range events {
-		if e.Kind == "finished" && e.Tokens != nil {
+		if spendEvent(e) && e.Tokens != nil {
 			total += e.Tokens.Input + e.Tokens.Output + e.Tokens.Reasoning
 		}
 	}
 	return total
 }
 
-// unitSpend sums Cost over task's finished events: everything the unit's
-// worker attempts spent, corrections included (issue #459).
+// unitSpend sums Cost over task's spend events (spendEvent): everything the
+// unit's worker attempts spent, corrections included, and its agent review
+// rounds (issue #459).
 func unitSpend(events []Event, task string) float64 {
 	spent := 0.0
 	for _, e := range events {
-		if e.Kind == "finished" && e.Task == task {
+		if spendEvent(e) && e.Task == task {
 			spent += e.Cost
 		}
 	}

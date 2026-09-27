@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,17 +44,18 @@ func TestSuspendThawCycle(t *testing.T) {
 	if !strings.Contains(err.Error(), "by lead") || !strings.Contains(err.Error(), s.Since) {
 		t.Errorf("second Suspend = %v, want it to name since and by", err)
 	}
-	if err := Unsuspend(dir, "", "x"); err == nil {
+	if _, err := Unsuspend(dir, "", "x"); err == nil {
 		t.Error("Unsuspend with no session succeeded, want a refusal")
 	}
-	if err := Unsuspend(dir, "lead", "thaw"); err != nil {
+	if _, err := Unsuspend(dir, "lead", "thaw"); err != nil {
 		t.Fatalf("Unsuspend: %v", err)
 	}
 	events, _ = ReadEvents(dir)
 	if s := FactorySuspended(events, time.Now()); s.Suspended {
 		t.Errorf("after Unsuspend FactorySuspended = %+v, want thawed", s)
 	}
-	wantSuspendedRefusal(t, Unsuspend(dir, "lead", "again"), "Unsuspend when not suspended")
+	_, err = Unsuspend(dir, "lead", "again")
+	wantSuspendedRefusal(t, err, "Unsuspend when not suspended")
 }
 
 // TestSuspendUntilExpiresWithoutEvent: a suspension whose Until has passed at
@@ -163,5 +165,103 @@ func TestSuspendNextAndAndon(t *testing.T) {
 		!strings.HasPrefix(fl.Andon[0].State, "factory suspended since ") ||
 		!strings.Contains(fl.Andon[0].State, "by lead: freeze until ") {
 		t.Errorf("Andon = %+v, want the suspension first, ahead of L", fl.Andon)
+	}
+}
+
+// TestSuspendStopEndsLiveRun: a worktree Run whose sim worker started a
+// session and is held for ten minutes keeps running through a suspension
+// without stop (lease ticks pass, no sentinel); a stopping suspension writes
+// the sentinel and ends it with reason suspended well before the delay (a
+// hang guard, not a window): exit 6, the finished event keeps the session and
+// names the suspension, and the owned file it wrote is checkpointed. Unsuspend
+// removes the sentinel and returns the stopped attempt (issue #572).
+func TestSuspendStopEndsLiveRun(t *testing.T) {
+	t.Parallel()
+	dir := worktreeRepo(t) // T1 owns a.go
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(t.TempDir(), "long.jsonl")
+	lines := `{"type":"step_start","sessionID":"ses_ss","part":{"type":"step_start","step":1}}
+{"type":"step_finish","sessionID":"ses_ss","part":{"type":"step_finish","reason":"stop","tokens":{"input":1,"output":1}}}
+`
+	if err := os.WriteFile(fixture, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := simConfig(fixture)
+	cfg.Lease = &LeaseConfig{RenewInterval: "20ms", TTL: "2s"}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var res Result
+	var runErr error
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done }) // a failed test still waits for Run before its temp dirs go
+	go func() {
+		defer close(done)
+		res, runErr = Run(dir, RunOptions{Task: "T1", Worktree: true, SimLineDelay: 10 * time.Minute})
+	}()
+	waitMidRun(t, done, "the worker's session", func() bool {
+		evs, _ := ReadEvents(dir)
+		return slices.ContainsFunc(evs, func(e Event) bool { return e.Kind == "started" && e.Session == "ses_ss" })
+	})
+	if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a // mid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	renewed := func() string {
+		ls, _ := ReadLeases(dir)
+		if len(ls) != 1 {
+			return ""
+		}
+		return ls[0].RenewedAt
+	}
+	if err := Suspend(dir, "lead", "freeze", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ { // lease ticks after the suspension: each would have stopped it
+		prev := renewed()
+		waitMidRun(t, done, "a lease tick", func() bool { r := renewed(); return r != "" && r != prev })
+	}
+	if _, err := os.Stat(suspendStopPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("sentinel after Suspend without stop: %v, want none", err)
+	}
+	if _, err := Unsuspend(dir, "lead", "thaw"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SuspendWith(dir, "lead", SuspendOptions{Reason: "freeze", Stop: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(suspendStopPath(dir)); err != nil {
+		t.Fatalf("sentinel after Suspend with stop: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Minute):
+		t.Fatal("hang guard: Run did not stop on a stopping suspension")
+	}
+	if runErr != nil || res.Reason != "suspended" || res.Session != "ses_ss" || ExitCode(res) != 6 {
+		t.Fatalf("Run() = %+v, %v (exit %d); want reason suspended, session ses_ss, exit 6", res, runErr, ExitCode(res))
+	}
+	evs, _ := ReadEvents(dir)
+	since := FactorySuspended(evs, time.Now()).Since
+	var fin Event
+	for _, e := range evs {
+		if e.Task == "T1" && e.Kind == "finished" {
+			fin = e
+		}
+	}
+	if fin.Reason != "suspended" || fin.Session != "ses_ss" || !strings.Contains(fin.Note, "stopped by suspend at "+since) || fin.Checkpoint == "" {
+		t.Fatalf("finished = %+v, want reason suspended, session ses_ss, the suspension's ts %s and a checkpoint", fin, since)
+	}
+	if body, err := gitWith(dir, nil, "show", checkpointRef("T1", "r1")+":a.go"); err != nil || body != "package a // mid" {
+		t.Errorf("checkpoint a.go = %q, %v", body, err)
+	}
+	units, err := Unsuspend(dir, "lead", "thaw")
+	if err != nil || !slices.Equal(units, []TaskAttempt{{Task: "T1", Attempt: "r1", Session: "ses_ss"}}) {
+		t.Errorf("Unsuspend = %+v, %v; want T1 r1 ses_ss", units, err)
+	}
+	if _, err := os.Stat(suspendStopPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("sentinel after Unsuspend: %v, want removed", err)
 	}
 }

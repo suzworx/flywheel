@@ -78,7 +78,7 @@ type Unit struct {
 	Model    string
 	Steps    int
 	LastAge  int       // seconds since the unit's last event
-	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, abandoned-job, failed, failed-dirty, stacked, done
+	RunState string    // silent, running, exploring, long-step, stalled, no-writes, blocked, capped, provider-error, rate-limited, abandoned-job, suspended, failed, failed-dirty, stacked, done
 	Peak     int       // largest single-step reasoning figure, from the latest finished event; 0 when none
 	Line     string    // the product line from the latest dispatched event (issue #69); "" when none
 	Station  string    // where the unit stands on its line (issue #69 follow-up)
@@ -285,6 +285,9 @@ func stageOf(status, reason string) string {
 		switch reason {
 		case "length":
 			return "cut-off"
+		case "suspended":
+			// Stopped by a factory suspension (issue #572), not failed.
+			return "suspended"
 		case "", "stop":
 			return "finished"
 		default:
@@ -363,6 +366,10 @@ func classifyRun(done bool, steps int, files int, edits int, hasError bool, last
 			// Ended its session while a background job it started ran,
 			// files or not: the resume re-runs the job (issue #390).
 			return "abandoned-job"
+		case "suspended":
+			// Stopped by a factory suspension, files or not: flywheel
+			// resume continues the same session (issue #572).
+			return "suspended"
 		case "", "stop":
 			if stopState != "" {
 				return stopState
@@ -989,6 +996,9 @@ func buildOutput(events []Event, now time.Time) Output {
 	for _, e := range events {
 		if e.Kind == "finished" {
 			finished[e.Task] = true
+		}
+		// Spend counts agent review rounds too (issue #459).
+		if spendEvent(e) {
 			if e.Tokens != nil {
 				tokens += e.Tokens.Input + e.Tokens.Output + e.Tokens.Reasoning
 			}

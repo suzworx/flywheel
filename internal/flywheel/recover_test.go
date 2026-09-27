@@ -25,6 +25,42 @@ func recoverLedger(t *testing.T, dir string, evs ...Event) {
 	}
 }
 
+// TestRecoverSuspendedUnit checks a unit a stopping suspension stopped
+// (issue #572): recover offers resume-session through flywheel resume while
+// the factory is suspended and through flywheel run --resume once thawed, and
+// the floor shows it suspended, not failed.
+func TestRecoverSuspendedUnit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir,
+		Event{Task: "T", Kind: "planned", Brief: "brief.txt"},
+		Event{Task: "T", Kind: "dispatched", Attempt: "r1", Model: "m"},
+		Event{Task: "T", Kind: "finished", Attempt: "r1", Model: "m", Session: "ses_t", Reason: "suspended", Note: "stopped by suspend at x"},
+		Event{Kind: "suspended", Session: "lead", Note: "freeze", Stop: true})
+	for _, c := range []struct{ when, command string }{
+		{"suspended", "flywheel resume --session <s>"},
+		{"thawed", "flywheel run T --resume"},
+	} {
+		if c.when == "thawed" {
+			recoverLedger(t, dir, Event{TS: recoverNow.Add(-time.Hour).Format(time.RFC3339), Kind: "unsuspended", Session: "lead"})
+		}
+		rep, err := Recover(dir, recoverNow, RecoverOptions{})
+		if err != nil {
+			t.Fatalf("%s: Recover: %v", c.when, err)
+		}
+		want := Next{Action: "resume-session", Reason: "stopped by a factory suspension", Command: c.command}
+		if len(rep.Tasks) != 1 || rep.Tasks[0].Next != want {
+			t.Errorf("%s: tasks = %+v, want next %+v", c.when, rep.Tasks, want)
+		}
+	}
+	if s := stageOf("finished", "suspended"); s != "suspended" {
+		t.Errorf("stageOf(finished, suspended) = %q, want suspended", s)
+	}
+	if r := classifyRun(true, 3, 1, 1, false, "suspended", 100, 0, 600, false, true, ""); r != "suspended" {
+		t.Errorf("classifyRun(suspended, wrote) = %q, want suspended", r)
+	}
+}
+
 // TestRecoverNextActions checks nextAction per status on one synthetic
 // ledger each (issue #422).
 func TestRecoverNextActions(t *testing.T) {
