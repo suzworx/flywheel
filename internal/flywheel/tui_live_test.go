@@ -527,8 +527,8 @@ func TestTUIAndonNextFetchFast(t *testing.T) {
 	var r res
 	select {
 	case r = <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the andon fetch did not end within 10s on a 5,000-event ledger")
+	case <-time.After(budget(10 * time.Second)):
+		t.Fatalf("the andon fetch did not end within %s (race %v) on a 5,000-event ledger", budget(10*time.Second), raceEnabled)
 	}
 	if r.err != nil {
 		t.Fatalf("fetch: %v", r.err)

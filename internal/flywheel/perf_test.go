@@ -113,8 +113,8 @@ func TestPerfDeriveBudget(t *testing.T) {
 	events := perfLedger(200)
 	start := time.Now()
 	st := Derive(events)
-	if d := time.Since(start); d > time.Second || len(st.Tasks) != 200 {
-		t.Errorf("Derive of %d events: %s and %d tasks, want under 1s and 200", len(events), d, len(st.Tasks))
+	if d, limit := time.Since(start), budget(time.Second); d > limit || len(st.Tasks) != 200 {
+		t.Errorf("Derive of %d events: %s and %d tasks, want under %s (race %v) and 200", len(events), d, len(st.Tasks), limit, raceEnabled)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestPerfTUIFetchUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if took := time.Since(start); took > 5*time.Second || len(d.Floor.Units) != 200 || len(d.Why) != 200 {
-		t.Errorf("units fetch: %s, %d units, %d whys; want under 5s and 200 of each", took, len(d.Floor.Units), len(d.Why))
+	if took, limit := time.Since(start), budget(5*time.Second); took > limit || len(d.Floor.Units) != 200 || len(d.Why) != 200 {
+		t.Errorf("units fetch: %s, %d units, %d whys; want under %s (race %v) and 200 of each", took, len(d.Floor.Units), len(d.Why), limit, raceEnabled)
 	}
 }
