@@ -989,6 +989,9 @@ func buildOutput(events []Event, now time.Time) Output {
 	for _, e := range events {
 		if e.Kind == "finished" {
 			finished[e.Task] = true
+		}
+		// Spend counts agent review rounds too (issue #459).
+		if spendEvent(e) {
 			if e.Tokens != nil {
 				tokens += e.Tokens.Input + e.Tokens.Output + e.Tokens.Reasoning
 			}

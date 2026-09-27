@@ -179,6 +179,11 @@ type ReviewAgentResult struct {
 	// Crashed lists the panel dimensions whose run crashed in this round
 	// (issue #469); a review loop never passes a round with one.
 	Crashed []string
+	// Tokens and Cost are what every reviewer run of the round spent (the
+	// first run and a retry after a refused answer), recorded on the
+	// reviewed event (issue #459).
+	Tokens Tokens
+	Cost   float64
 }
 
 // reviewWorker resolves who runs the review: the named worker; else the
@@ -610,7 +615,10 @@ func dimensionReviewEvents(task, attempt string, round int, session, model, adap
 // (validateFindings) is refused and the reviewer runs once more, fresh, with
 // the violations appended to the prompt file and streaming to
 // <task>.<round>b.jsonl; a second refusal or a failed run records nothing and
-// returns an error naming the transcripts.
+// returns an error naming the transcripts. The spend of every run of the
+// round is recorded on the reviewed event (issue #459); a round that records
+// nothing leaves its spend in the transcripts only, and in the returned
+// reviewRunError, which a panel records on its crashed event.
 func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, error) {
 	if o.Session == "" {
 		return ReviewAgentResult{}, &RuleRefusal{Rule: "T4", Fix: "a reviewer --session is required"}
@@ -676,7 +684,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		return ReviewAgentResult{}, err
 	}
 	progress(o.Progress, fmt.Sprintf("%s review round %d: %s %s", task, res.Round, worker.Adapter, worker.Model))
-	answer, err := runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem, res.Transcript, o)
+	answer, spent, err := runReviewerSpend(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem, res.Transcript, o)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
@@ -692,14 +700,21 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		}
 		res.Transcript = stem + "b.jsonl"
 		progress(o.Progress, fmt.Sprintf("%s review round %d: answer refused (%d violation(s)); asking once more", task, res.Round, len(problems)))
-		answer, err = runReviewer(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem+"b", res.Transcript, o)
+		var again reviewSpend
+		answer, again, err = runReviewerSpend(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem+"b", res.Transcript, o)
+		spent.plus(again)
+		var run *reviewRunError
+		if errors.As(err, &run) {
+			run.spend = spent
+		}
 		if err != nil {
 			return ReviewAgentResult{}, err
 		}
 		if findings, problems = checkReviewAnswer(workdir, changed, answer, o.Dimension); len(problems) > 0 {
-			return ReviewAgentResult{}, &reviewRunError{fmt.Sprintf("review answer refused twice:\n%s\nnothing recorded, transcripts %s and %s", strings.Join(problems, "\n"), first, res.Transcript)}
+			return ReviewAgentResult{}, &reviewRunError{msg: fmt.Sprintf("review answer refused twice:\n%s\nnothing recorded, transcripts %s and %s", strings.Join(problems, "\n"), first, res.Transcript), spend: spent}
 		}
 	}
+	res.Tokens, res.Cost = spent.Tokens, spent.Cost
 	res, err = recordReview(dir, task, events, workdir, worker, o.Session, o.Dimension, findings, res)
 	if err == nil {
 		refreshReviewThread(dir, task, o.Progress)
@@ -725,6 +740,17 @@ func checkReviewAnswer(workdir string, changed []string, answer, category string
 // streaming to transcriptPath and stderr to <stem>.err, and returns the last
 // assistant text. A failed run returns an error naming the transcript.
 func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, transcriptPath string, o ReviewAgentOptions) (string, error) {
+	text, _, err := runReviewerSpend(dir, workdir, task, adap, req, stem, transcriptPath, o)
+	return text, err
+}
+
+// runReviewerSpend is runReviewer that also returns what the run spent,
+// summed over the adapter's step observations the way run's stream loop
+// does (issue #459): a claude result line (Aggregate) is the only step of
+// its stream, so it is counted once. A failed run's reviewRunError carries
+// the spend too.
+func runReviewerSpend(dir, workdir, task string, adap Adapter, req RunRequest, stem, transcriptPath string, o ReviewAgentOptions) (string, reviewSpend, error) {
+	var spent reviewSpend
 	if commandHook != nil {
 		commandHook(req)
 	}
@@ -738,13 +764,13 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 	}
 	guard, guardEnv, err := installGitGuard(workdir, task, req.Attempt)
 	if err != nil {
-		return "", fmt.Errorf("git guard not installed (%w); a reviewer never runs git unguarded", err)
+		return "", spent, fmt.Errorf("git guard not installed (%w); a reviewer never runs git unguarded", err)
 	}
 	defer os.RemoveAll(guard)
 	cmd.Env = append(workerEnv(dir), guardEnv...)
 	errFile, err := os.Create(stem + ".err")
 	if err != nil {
-		return "", err
+		return "", spent, err
 	}
 	defer errFile.Close()
 	cmd.Stderr = errFile
@@ -753,15 +779,15 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 	}
 	transcript, err := os.Create(transcriptPath)
 	if err != nil {
-		return "", err
+		return "", spent, err
 	}
 	defer transcript.Close()
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("stdout pipe: %w", err)
+		return "", spent, fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", &reviewRunError{fmt.Sprintf("start %s: %v", bin, err)}
+		return "", spent, &reviewRunError{msg: fmt.Sprintf("start %s: %v", bin, err)}
 	}
 	lastText, lastResult := "", ""
 	sc := bufio.NewScanner(out)
@@ -773,6 +799,9 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 			lastResult = text
 		}
 		obs, ok := adap.Parse(line)
+		if ok && obs.Kind == "step" {
+			spent.add(obs.Tokens, obs.Cost)
+		}
 		if ok && obs.Kind == "error" && obs.Error != "" {
 			lastResult = obs.Error
 		}
@@ -790,16 +819,49 @@ func runReviewer(dir, workdir, task string, adap Adapter, req RunRequest, stem, 
 		if cause != "" {
 			cause = ": " + cause
 		}
-		return "", &reviewRunError{fmt.Sprintf("review agent %s failed (%v, stream %v)%s; transcript %s", bin, werr, scanErr, cause, transcriptPath)}
+		return "", spent, &reviewRunError{msg: fmt.Sprintf("review agent %s failed (%v, stream %v)%s; transcript %s", bin, werr, scanErr, cause, transcriptPath), spend: spent}
 	}
-	return lastText, nil
+	return lastText, spent, nil
 }
 
 // reviewRunError is a reviewer run that failed or whose answer was refused
 // twice (issue #469): the member's review did not happen, as opposed to a
 // config, ledger or rule error. A panel retries it once, then records the
-// dimension crashed.
-type reviewRunError struct{ msg string }
+// dimension crashed. spend is what the round's runs spent (issue #459).
+type reviewRunError struct {
+	msg   string
+	spend reviewSpend
+}
+
+// reviewSpend is what reviewer runs spent: the summed Tokens and cost.
+type reviewSpend struct {
+	Tokens Tokens
+	Cost   float64
+}
+
+// add sums one step observation's tokens (nil for none) and cost into s.
+func (s *reviewSpend) add(t *Tokens, cost float64) {
+	if t != nil {
+		s.Tokens.Input += t.Input
+		s.Tokens.Output += t.Output
+		s.Tokens.Reasoning += t.Reasoning
+		s.Tokens.CacheRead += t.CacheRead
+		s.Tokens.CacheWrite += t.CacheWrite
+	}
+	s.Cost += cost
+}
+
+// plus sums o into s.
+func (s *reviewSpend) plus(o reviewSpend) { s.add(&o.Tokens, o.Cost) }
+
+// tokens returns s's Tokens for an event, nil when all are zero.
+func (s reviewSpend) tokens() *Tokens {
+	if s.Tokens == (Tokens{}) {
+		return nil
+	}
+	t := s.Tokens
+	return &t
+}
 
 func (e *reviewRunError) Error() string { return e.msg }
 
@@ -875,6 +937,10 @@ func recordReview(dir, task string, events []Event, workdir string, worker Worke
 		}
 	}
 	evs, verdict, note := dimensionReviewEvents(task, attempt, res.Round, session, worker.Model, worker.Adapter, tree, dimension, findings)
+	// The round's spend rides on the closing reviewed event only, never on a
+	// review_finding event, so it is counted once (issue #459).
+	spent := reviewSpend{Tokens: res.Tokens, Cost: res.Cost}
+	evs[len(evs)-1].Tokens, evs[len(evs)-1].Cost = spent.tokens(), spent.Cost
 	if err := AppendEvents(dir, evs); err != nil {
 		return ReviewAgentResult{}, err
 	}

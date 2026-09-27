@@ -426,7 +426,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if b := cfg.Limits.Budget; b != nil && b.WaveCostUSD > 0 {
 		spent := 0.0
 		for _, e := range events {
-			if e.Kind == "finished" {
+			if spendEvent(e) {
 				spent += e.Cost
 			}
 		}
@@ -2662,23 +2662,25 @@ func approvedFallbackHint(w Worker) string {
 	return fmt.Sprintf(" (approved fallbacks: %s)", strings.Join(approved, ", "))
 }
 
-// recordedTokens sums input, output and reasoning tokens over finished events.
+// recordedTokens sums input, output and reasoning tokens over spend events
+// (spendEvent): worker attempts and agent reviews.
 func recordedTokens(events []Event) int {
 	total := 0
 	for _, e := range events {
-		if e.Kind == "finished" && e.Tokens != nil {
+		if spendEvent(e) && e.Tokens != nil {
 			total += e.Tokens.Input + e.Tokens.Output + e.Tokens.Reasoning
 		}
 	}
 	return total
 }
 
-// unitSpend sums Cost over task's finished events: everything the unit's
-// worker attempts spent, corrections included (issue #459).
+// unitSpend sums Cost over task's spend events (spendEvent): everything the
+// unit's worker attempts spent, corrections included, and its agent review
+// rounds (issue #459).
 func unitSpend(events []Event, task string) float64 {
 	spent := 0.0
 	for _, e := range events {
-		if e.Kind == "finished" && e.Task == task {
+		if spendEvent(e) && e.Task == task {
 			spent += e.Cost
 		}
 	}

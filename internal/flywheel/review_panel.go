@@ -149,8 +149,9 @@ func crashedReview(e Event) bool {
 }
 
 // recordCrashed appends the reviewed crashed event of dimension, on the tree
-// the other members reviewed (else the workdir's tree), noted with cause.
-func recordCrashed(dir, task, dimension string, o ReviewPanelOptions, res *PanelResult, cause error) error {
+// the other members reviewed (else the workdir's tree), noted with cause and
+// carrying spent, what the member's failed runs spent (issue #459).
+func recordCrashed(dir, task, dimension string, o ReviewPanelOptions, res *PanelResult, cause error, spent reviewSpend) error {
 	if res.Tree == "" {
 		events, err := ReadEvents(dir)
 		if err != nil {
@@ -162,7 +163,7 @@ func recordCrashed(dir, task, dimension string, o ReviewPanelOptions, res *Panel
 	}
 	note := clipLine(cause.Error(), maxFailureCause)
 	if err := AppendEvent(dir, Event{Task: task, Kind: "reviewed", Verdict: "crashed", Persona: "reviewer",
-		Session: o.Session, Category: dimension, Tree: res.Tree, Note: note}); err != nil {
+		Session: o.Session, Category: dimension, Tree: res.Tree, Note: note, Tokens: spent.tokens(), Cost: spent.Cost}); err != nil {
 		return err
 	}
 	_, _ = WriteState(dir)
@@ -215,12 +216,15 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 		}
 		r, err := review(dir, task, ao)
 		var run *reviewRunError
+		var spent reviewSpend
 		if errors.As(err, &run) {
+			spent = run.spend
 			progress(o.Progress, fmt.Sprintf("%s review panel %s: run failed; retrying once: %s", task, m.Persona, clipLine(err.Error(), maxFailureCause)))
 			r, err = review(dir, task, ao)
 		}
 		if errors.As(err, &run) {
-			if err := recordCrashed(dir, task, m.Persona, o, &res, err); err != nil {
+			spent.plus(run.spend)
+			if err := recordCrashed(dir, task, m.Persona, o, &res, err, spent); err != nil {
 				return res, fmt.Errorf("review panel %s: %w", m.Persona, err)
 			}
 			continue
