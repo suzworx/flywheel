@@ -705,6 +705,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `origin/<branch>`, `origin/main` when none) and `flywheel init --ci` (the audit workflow's push
   `branches`) read it; `flywheel doctor` prints `integration branch: <b> (integration.branch)` or
   `(detected)` on stderr and warns when a configured branch does not resolve.
+- The **ship signature** is `.flywheel/config.json` `"ship": {"signature": false}` to turn it off
+  (absent or `true` means on; `flywheel ship --no-signature` turns it off for one run). When on,
+  `flywheel ship` adds `Shipped-by: flywheel <version> (unit <task>, attempt <attempt>, <passed>/<total> gates)`
+  to its ship commit (beside `Flywheel-Task:`) and to the squash-merge message's final trailer
+  paragraph, and a `Shipped by [flywheel](...) <version> · unit ... · <passed>/<total> gates · <n> correction(s)`
+  footer to the PR body; each once, all built from the ledger and the binary's version.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least

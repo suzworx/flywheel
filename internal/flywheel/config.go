@@ -69,6 +69,20 @@ type Config struct {
 	Lint        *LintConfig        `json:"lint,omitempty"`
 	Integration *IntegrationConfig `json:"integration,omitempty"`
 	Factory     *FactoryConfig     `json:"factory,omitempty"`
+	Ship        *ShipConfig        `json:"ship,omitempty"`
+}
+
+// ShipConfig tunes flywheel ship.
+type ShipConfig struct {
+	// Signature adds flywheel's signature to what ship lands: a Shipped-by:
+	// trailer on its commits and squash merge, and a footer on the PR body.
+	// nil means on; false turns it off.
+	Signature *bool `json:"signature,omitempty"`
+}
+
+// ShipSignature is ship.signature, true when unset.
+func (c Config) ShipSignature() bool {
+	return c.Ship == nil || c.Ship.Signature == nil || *c.Ship.Signature
 }
 
 // FactoryConfig tunes the interactive factory view (issue #583 k6).
