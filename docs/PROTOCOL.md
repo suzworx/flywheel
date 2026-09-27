@@ -1021,7 +1021,9 @@ working exactly as before.
   dispatched event, or of its latest `rebased` event (issue #414) (a correction attempt's check still
   counts what an earlier attempt committed)
   (files merged in from another branch are not the unit's) — so committing a stray edit does not hide
-  it (issue #332).
+  it (issue #332). Commits reachable from the integration branch (`origin/<integration.branch>`, else
+  origin/main or origin/master, else the local branch) are never the unit's, so a branch that
+  fast-forwarded to main is not charged with main's files (issue #581).
 - A changed path outside `owns:` and not baselined is **attributed** rather than outside when some
   other task's brief `owns:` it (`ownsContains`, the matching `flywheel validate` already uses) and
   that task is currently in flight (`Derive` status `dispatched`, `running`, or `finished` — never
