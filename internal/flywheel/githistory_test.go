@@ -351,10 +351,11 @@ func TestGitStateDetectsIndexWrite(t *testing.T) {
 	}
 }
 
-// TestGitStateFetchedTagShared checks that a tag on a commit a remote-tracking
-// ref contains (a fetch by another process, #442) needs guard evidence, while
-// a local-only tag and a deleted tag stay the worker's (#423).
-func TestGitStateFetchedTagShared(t *testing.T) {
+// TestGitWriteFetchedTag checks that a tag on a commit a remote-tracking ref
+// contains (a fetch by another process, #442) never signals, even beside a
+// refused write, and the note says it was fetched (#621), while a local-only
+// tag and a deleted tag stay the worker's (#423).
+func TestGitWriteFetchedTag(t *testing.T) {
 	t.Parallel()
 	dir, origin := t.TempDir(), t.TempDir()
 	gitRepoWithCommit(t, dir)
@@ -384,17 +385,18 @@ func TestGitStateFetchedTagShared(t *testing.T) {
 	}
 
 	ch := tag("v0.21.1", "HEAD~1")
-	if !ch.changed || ch.worker || !strings.Contains(ch.note, "tags: +v0.21.1 (on a remote-tracking commit)") {
-		t.Errorf("fetched tag: %+v, want a shared change naming +v0.21.1 on a remote-tracking commit", ch)
+	const fetched = "(changed by another process: fetched, its commit is on a remote-tracking ref)"
+	if !ch.changed || ch.worker || !strings.Contains(ch.note, "tags: +v0.21.1 "+fetched) {
+		t.Errorf("fetched tag: %+v, want a change by another process naming +v0.21.1 as fetched", ch)
 	}
 	if signal, note := gitWriteVerdict(ch, nil); signal {
 		t.Errorf("fetched tag without guard evidence raised a signal: %q", note)
 	}
-	if signal, _ := gitWriteVerdict(ch, []string{"tag"}); !signal {
-		t.Error("fetched tag with a refused git tag raised no signal")
+	if signal, note := gitWriteVerdict(ch, []string{"commit"}); signal || !strings.Contains(note, fetched) {
+		t.Errorf("fetched tag beside a refused git commit: %v %q, want no signal, the tag fetched", signal, note)
 	}
 
-	if ch = tag("-a", "-m", "release", "v0.21.2", "HEAD~1"); !ch.changed || ch.worker || !strings.Contains(ch.note, "+v0.21.2 (on a remote-tracking commit)") {
+	if ch = tag("-a", "-m", "release", "v0.21.2", "HEAD~1"); !ch.changed || ch.worker || !strings.Contains(ch.note, "+v0.21.2 "+fetched) {
 		t.Errorf("annotated fetched tag: %+v, want a shared change", ch)
 	}
 
@@ -475,5 +477,50 @@ func TestGitWriteSharedWorktreeNoSignal(t *testing.T) {
 	}
 	if !noted {
 		t.Error("finished note does not say no worker git write was recorded")
+	}
+}
+
+// TestGitWriteOtherProcess checks that the worktree's branch renamed during
+// the attempt (the lead renaming it, #621) never signals, even beside a
+// refused write, and the note says another process changed it, while a staged
+// index change still signals without guard evidence (#423).
+func TestGitWriteOtherProcess(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	gitRepoWithCommit(t, dir)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("checkout", "-q", "-b", "fw/i-f2")
+	before, ok := readGitState(dir)
+	if !ok {
+		t.Fatal("readGitState: not ok")
+	}
+	run("branch", "-m", "fw/i-f2", "fw/f2")
+	ch := gitWriteNote(dir, before, true)
+	const renamed = "branch: refs/heads/fw/i-f2 -> refs/heads/fw/f2 (changed by another process:"
+	if !ch.changed || ch.worker || !strings.Contains(ch.note, renamed) {
+		t.Errorf("renamed branch: %+v, want a change by another process naming the rename", ch)
+	}
+	for _, refused := range [][]string{nil, {"commit"}} {
+		if signal, note := gitWriteVerdict(ch, refused); signal || !strings.Contains(note, renamed) {
+			t.Errorf("renamed branch, refused %v: %v %q, want no signal, the rename by another process", refused, signal, note)
+		}
+	}
+
+	before, _ = readGitState(dir)
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "new.txt")
+	ch = gitWriteNote(dir, before, true)
+	signal, note := gitWriteVerdict(ch, nil)
+	if !signal || !strings.Contains(note, "index: staged new.txt (the worker's: an index write)") {
+		t.Errorf("staged index change: %v %q, want a signal naming the worker's index write", signal, note)
 	}
 }

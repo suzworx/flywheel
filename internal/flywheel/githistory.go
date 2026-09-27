@@ -105,30 +105,33 @@ func gitQuery(dir string, args ...string) (out string, absent bool, err error) {
 
 // gitChange is what moved between the dispatch state and the final one.
 type gitChange struct {
-	changed bool     // anything moved, or the final state is unreadable
-	worker  bool     // the index or a local-only/deleted tag moved: the worker's write, guard log or not (#423, #442)
-	staged  []string // paths staged during the attempt, for flywheel to unstage
-	note    string   // names what changed
+	changed bool      // anything moved, or the final state is unreadable
+	worker  bool      // a part is the worker's write, guard log or not (#423)
+	staged  []string  // paths staged during the attempt, for flywheel to unstage
+	parts   []gitPart // what changed, each attributed (#621)
+	note    string    // names what changed, as text(nil)
 }
 
 // gitWriteNote compares dir's git state with before, the state captured at
 // dispatch (issue #314, #423). Nothing captured (captured false) or nothing
 // moved is no change; a final state that cannot be read counts as a change
-// (#318 review). The note names each part: "HEAD: <old> -> <new>", "branch:
+// (#318 review). The note names each part — "HEAD: <old> -> <new>", "branch:
 // ...", "stash", "index: staged <paths>", "index: unstaged <paths>", "tags:
-// +<name>/-<name>", a tag on a remote-tracking commit marked "(on a
-// remote-tracking commit)".
+// +<name>" or "tags: -<name>" — and whose it is (#621).
 //
 // It compares end points only: a push, or a write undone before the attempt
 // ends, leaves them equal. Concurrent attempts in one worktree share HEAD, and
 // every worktree of a repository shares refs/stash and the tags, so a history
-// change is seen by each attempt that overlapped it; gitWriteVerdict charges
-// HEAD and stash moves, and a tag added or moved onto a commit a
-// remote-tracking ref contains (a fetch, #442), to the worker only with guard
-// evidence (#361). An index change, a local-only tag or a deleted tag needs
-// none: the guard may never be reached (#423). An unstaged path
-// counts only while HEAD stayed put (a commit by another process empties the
-// staged list too).
+// change is seen by each attempt that overlapped it. Attribution:
+//   - the worker's whatever the guard logged (#423: the guard may never be
+//     reached): a staged path, an unstaged path while HEAD stayed put, a tag
+//     added or moved onto a local-only commit, a deleted tag;
+//   - the worker's only with a guard-logged write (#361): a HEAD or stash
+//     move, a branch change that moved HEAD (a checkout);
+//   - another process's, never charged (#442, #621): a tag on a commit a
+//     remote-tracking ref contains (fetched), the worktree's branch renamed
+//     with HEAD unchanged, an unstaged path when HEAD moved. Other branches
+//     and refs/remotes are not compared at all.
 func gitWriteNote(dir string, before gitState, captured bool) gitChange {
 	if !captured {
 		return gitChange{}
@@ -137,63 +140,124 @@ func gitWriteNote(dir string, before gitState, captured bool) gitChange {
 	if !ok {
 		return gitChange{changed: true, note: "git history changed during the attempt: " + before.String() + " -> (unreadable)"}
 	}
-	var parts []string
+	var parts []gitPart
 	var ch gitChange
-	if after.head != before.head {
-		parts = append(parts, "HEAD: "+before.head+" -> "+after.head)
+	headMoved := after.head != before.head
+	if headMoved {
+		parts = append(parts, gitPart{text: "HEAD: " + before.head + " -> " + after.head})
 	}
 	if after.branch != before.branch {
-		parts = append(parts, "branch: "+before.branch+" -> "+after.branch)
+		if headMoved {
+			parts = append(parts, gitPart{text: "branch: " + before.branch + " -> " + after.branch})
+		} else {
+			parts = append(parts, gitPart{text: "branch: " + before.branch + " -> " + after.branch, who: gitByOther,
+				why: "a rename that keeps HEAD's commit, and the guard refuses a worker's git branch"})
+		}
 	}
 	if after.stash != before.stash {
-		parts = append(parts, "stash")
+		parts = append(parts, gitPart{text: "stash"})
 	}
 	ch.staged = setMinus(after.index, before.index)
 	if len(ch.staged) > 0 {
-		parts = append(parts, "index: staged "+listClip(ch.staged))
-		ch.worker = true
+		parts = append(parts, gitPart{text: "index: staged " + listClip(ch.staged), who: gitByWorker, why: "an index write"})
 	}
 	if unstaged := setMinus(before.index, after.index); len(unstaged) > 0 {
-		parts = append(parts, "index: unstaged "+listClip(unstaged))
-		ch.worker = ch.worker || after.head == before.head
+		if headMoved {
+			parts = append(parts, gitPart{text: "index: unstaged " + listClip(unstaged), who: gitByOther,
+				why: "the commit that moved HEAD emptied the staged list"})
+		} else {
+			parts = append(parts, gitPart{text: "index: unstaged " + listClip(unstaged), who: gitByWorker, why: "an index write"})
+		}
 	}
 	if tags := tagDelta(before.tags, after.tags); len(tags) > 0 {
 		shared := sharedTags(dir, setMinus(after.tags, before.tags))
-		for i, t := range tags {
-			if shared[t] {
-				tags[i] = t + " (on a remote-tracking commit)"
-			} else {
-				ch.worker = true
+		for _, t := range tags {
+			switch {
+			case shared[t]:
+				parts = append(parts, gitPart{text: "tags: " + t, who: gitByOther, why: "fetched, its commit is on a remote-tracking ref"})
+			case strings.HasPrefix(t, "-"):
+				parts = append(parts, gitPart{text: "tags: " + t, who: gitByWorker, why: "a deleted tag"})
+			default:
+				parts = append(parts, gitPart{text: "tags: " + t, who: gitByWorker, why: "a tag on a local-only commit"})
 			}
 		}
-		parts = append(parts, "tags: "+listClip(tags))
 	}
 	if len(parts) == 0 {
 		return gitChange{}
 	}
 	ch.changed = true
-	ch.note = "git history changed during the attempt: " + strings.Join(parts, "; ")
+	ch.parts = parts
+	for _, p := range parts {
+		ch.worker = ch.worker || p.who == gitByWorker
+	}
+	ch.note = ch.text(nil)
 	return ch
 }
 
+// gitPart is one change gitWriteNote found and whose it is: the worker's
+// (gitByWorker), another process's (gitByOther), or, with who empty, the
+// worker's only when the guard logged a write it tried (#361).
+type gitPart struct {
+	text, who, why string
+}
+
+const (
+	gitByWorker = "worker"
+	gitByOther  = "other"
+)
+
+// text is the change's note with each part attributed given the writes the
+// guard refused: "<part> (the worker's: <why>)" or "<part> (changed by
+// another process: <why>)". A change without parts (an unreadable final
+// state) is its note alone.
+func (ch gitChange) text(refused []string) string {
+	if len(ch.parts) == 0 {
+		return ch.note
+	}
+	out := make([]string, 0, len(ch.parts))
+	for _, p := range ch.parts {
+		who, why := p.who, p.why
+		if who == "" {
+			who, why = gitByOther, "no worker git write was recorded by the guard"
+			if len(refused) > 0 {
+				who, why = gitByWorker, "it tried git "+strings.Join(refused, ", ")
+			}
+		}
+		if who == gitByWorker {
+			out = append(out, p.text+" (the worker's: "+why+")")
+		} else {
+			out = append(out, p.text+" (changed by another process: "+why+")")
+		}
+	}
+	return "git history changed during the attempt: " + strings.Join(out, "; ")
+}
+
 // gitWriteVerdict decides the git-write signal from gitWriteNote's result and
-// the write subcommands the git guard refused during the attempt (#361): a
-// moved HEAD or stash, or a tag on a remote-tracking commit (tags are shared
-// refs, #442), is charged to the worker only with evidence that it tried a
-// write; otherwise another process moved it and the note says so. An index
-// write, a local-only tag or a deleted tag is the worker's without that
-// evidence (#423).
+// the write subcommands the git guard refused during the attempt (#361; the
+// guard lets reads such as git config --get through unlogged, #621). It
+// signals when a part is the worker's (#423), or when the guard refused a
+// write and a part is the worker's only with that evidence (a HEAD, stash or
+// branch-with-HEAD move, or a change without parts). A part another process
+// made — a fetched tag, a branch rename — never signals (#442, #621). The
+// note attributes each part (gitChange.text).
 func gitWriteVerdict(ch gitChange, refused []string) (signal bool, outNote string) {
 	if !ch.changed {
 		return false, ""
 	}
-	if len(refused) > 0 {
-		return true, ch.note + "; the worker tried: " + strings.Join(refused, ", ")
+	evidenced := len(ch.parts) == 0
+	for _, p := range ch.parts {
+		evidenced = evidenced || p.who == ""
 	}
-	if ch.worker {
-		return true, ch.note + "; an index or tag write is the worker's whether or not the guard saw it (#423)"
+	note := ch.text(refused)
+	switch {
+	case len(refused) > 0 && (ch.worker || evidenced):
+		return true, note + "; the worker tried: " + strings.Join(refused, ", ")
+	case ch.worker:
+		return true, note + "; an index or tag write is the worker's whether or not the guard saw it (#423)"
+	case len(refused) > 0:
+		return false, note + "; the worker tried: " + strings.Join(refused, ", ") + ", but only changes another process makes moved"
 	}
-	return false, ch.note + "; no worker git write was recorded by the guard (another process moved it, e.g. the lead committing in a shared worktree)"
+	return false, note + "; no worker git write was recorded by the guard (another process moved it, e.g. the lead committing in a shared worktree)"
 }
 
 // restoreIndex unstages paths in wt (#423) with flywheel's own git, never the
