@@ -1191,11 +1191,29 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			return err
 		}
 		planSum := sha256.Sum256([]byte(plan))
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Attempt: attempt, Path: ".flywheel/runs/" + o.Task + "." + attempt + ".plan.md", SHA256: hex.EncodeToString(planSum[:])}); err != nil {
 			return err
 		}
 		progress(o.Progress, o.Task+" "+attempt+" plan recorded")
 		return nil
+	}
+
+	// A resumed session is the same conversation: it never repeats its first
+	// message, so its earlier PLAN check-in carries over to this attempt
+	// instead of a false no-plan (issue #592).
+	if o.Resume && lastSession != "" {
+		if prev, ok := sessionPlan(events, o.Task, lastSession); ok {
+			short := lastSession
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "worker_plan", Attempt: attempt, Path: prev.Path, SHA256: prev.SHA256,
+				Note: fmt.Sprintf("carried over from %s (resumed session %s)", prev.Attempt, short)}); err != nil {
+				return Result{}, err
+			}
+			planRecorded = true
+			progress(o.Progress, o.Task+" "+attempt+" plan carried over from "+prev.Attempt)
+		}
 	}
 
 	// capped is set when the streamed cost reaches the unit cost cap; the
@@ -2168,6 +2186,37 @@ func gitWriteCheck(wt string, before gitState, captured bool, guardBin string) (
 		}
 	}
 	return signal, note
+}
+
+// sessionPlan returns the latest worker_plan of task recorded by an attempt of
+// session (issue #592), with Attempt set to that attempt. A session's attempts
+// are the Attempt of every task event carrying that Session; a worker_plan
+// belongs to attempt A by its Attempt field or, on older ledgers without one,
+// by its Path .flywheel/runs/<task>.<A>.plan.md.
+func sessionPlan(events []Event, task, session string) (Event, bool) {
+	attempts := map[string]bool{}
+	for _, e := range events {
+		if e.Task == task && e.Session == session && e.Attempt != "" {
+			attempts[e.Attempt] = true
+		}
+	}
+	var plan Event
+	found := false
+	prefix, suffix := ".flywheel/runs/"+task+".", ".plan.md"
+	for _, e := range events {
+		if e.Task != task || e.Kind != "worker_plan" {
+			continue
+		}
+		a := e.Attempt
+		if a == "" && strings.HasPrefix(e.Path, prefix) && strings.HasSuffix(e.Path, suffix) {
+			a = strings.TrimSuffix(strings.TrimPrefix(e.Path, prefix), suffix)
+		}
+		if a != "" && attempts[a] {
+			plan, found = e, true
+			plan.Attempt = a
+		}
+	}
+	return plan, found
 }
 
 func recordSignal(dir, task, attempt, session, condition, runRel string) error {
