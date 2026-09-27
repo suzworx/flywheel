@@ -291,6 +291,11 @@ var kinds = map[string]bool{
 	// shipped records one step of `flywheel ship` (issue #457): Step, Result,
 	// Attempt, Commit (fw/<task>'s HEAD after the step) and Note.
 	"shipped": true,
+	// gate_probed records one gate run on the base tree by `flywheel lint
+	// --probe --task` (issue #544): Gate (the 1-based index), Command, RC,
+	// DurationMS, Reason (the first output line) and Commit. Informational: it
+	// may precede the task's planned event and never changes a task's state.
+	"gate_probed": true,
 	// suspended freezes the whole factory (issue #572): no task, Session who
 	// froze it, Note the reason, Until the optional thaw time. Every dispatch
 	// path refuses while it holds (FactorySuspended).
@@ -483,7 +488,10 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, suspended, unsuspended", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, suspended, unsuspended", e.Kind)
+	}
+	if e.Kind == "gate_probed" && (e.Task == "" || e.Gate == "" || e.Command == "" || e.RC == nil) {
+		return fmt.Errorf("gate_probed event must carry a task, gate, command and rc")
 	}
 	if (e.Kind == "suspended" || e.Kind == "unsuspended") && (e.Session == "" || e.Task != "") {
 		return fmt.Errorf("%s event must carry a session and no task", e.Kind)

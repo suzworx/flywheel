@@ -86,8 +86,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
   for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
   `flywheel lint` warns on a `git diff --check` gate with no revision. Run `flywheel lint <brief>
-  --probe` in the base checkout before `log --kind planned`: it runs each gate once there, so a
-  wrong runner, path or missing tool is caught before a paid attempt (#544).
+  --probe --task <id>` in the base checkout before `log --kind planned`: it runs each gate once
+  there, so a wrong runner, path or missing tool is caught before a paid attempt, and `--task`
+  records each probe as a `gate_probed` event so `validate` and `explain` can tell a broken gate
+  (it already failed on the base tree) from broken work (#544).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
   provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
@@ -290,7 +292,7 @@ output cap was hit), `part.tokens` `{total, input, output, reasoning, cache: {re
 | off-course | reads or greps of paths outside the task's worktree (library source), or probe files written outside `owns:` | unlike `exploring` (relevant files inside the worktree), stop it by PID and resume with a delta that lists the APIs it needs. |
 | long step | events stop for 5-10 min during a large generation | not a stall; do not kill it. |
 | read loop | the same file read again and again, no edits (compare `"tool":"read"` with `"tool":"edit"`/`"tool":"write"` counts in the run file) | stop it by PID, check which agent the opencode log shows for the session (`agent=` on its lines), and re-dispatch with `--pure`. |
-| capped | rc 0 and the last reason is `length` | rerun fresh with `--variant low` and the file in named parts (the default reasoning variant plans so hard it caps with nothing written — see §2). |
+| capped | a `capped` signal: the length cap (rc 0 and the last reason is `length`) or the unit cost cap (finish reason `capped`, note `unit cost cap $<cap> reached: $<spent> spent on the unit`, a checkpoint kept) — the note says which | length cap: rerun fresh with `--variant low` and the file in named parts (the default reasoning variant plans so hard it caps with nothing written — see §2). Unit cost cap: raise the limit (`flywheel config set limits.unit_cost_usd <usd>`, or the worker's `unit_cost_usd`) or split the unit; until then the unit is refused at dispatch (rule `unit-cost`). |
 | provider error | an `error` event in the JSONL, or errors only in the opencode log | see §8. |
 | rate-limited | finish reason `rate-limited` (a claude 429 or rate/usage/session-limit message); the note names `limit resets <time>` | `flywheel run` already waits for the reset and resumes the same session (`limits.rate_limit_retries`, default 3; `limits.rate_limit_max_wait`, default 5h); if it gave up, resume it yourself after the reset. |
 | abandoned-job | finish reason `abandoned-job`: a clean stop that left a background shell it started (Bash `run_in_background`) uncollected, so the job died with the session; the note names `background job never collected: <cmd>` | `flywheel run` already resumed the same session once with `.flywheel/briefs/<task>.job-1.txt` (run the job in the foreground and wait); if it is abandoned again, resume with a delta naming the command and a foreground timeout, or re-run the job yourself. |
