@@ -374,6 +374,37 @@ func TestGitGuardAllowListRefusesTheRest(t *testing.T) {
 	}
 }
 
+// TestGitGuardConfigRead checks that git config's read forms pass the guard —
+// a single key with no value included, which the guard refused and logged as
+// a write (#621) — and its writes stay refused.
+func TestGitGuardConfigRead(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"config", "--get", "user.name"}, {"config", "-l"}, {"config", "user.name"},
+		{"config", "--list", "--show-origin"}, {"config", "--show-origin", "--get", "user.name"},
+		{"config", "--type=bool", "--get", "core.bare"}, {"config", "--type", "bool", "core.bare"},
+		{"config", "--get-all", "remote.origin.fetch"}, {"config", "--get-regexp", "^user"},
+		{"config", "--global", "user.name"}, {"config", "-f", ".gitmodules", "submodule.x.path"},
+		{"config", "get", "user.name"}, {"config", "list"}, {"-C", "/x", "config", "user.email"},
+	} {
+		if r, sub := GitGuardRefused(args); r || sub != "config" {
+			t.Errorf("GitGuardRefused(%v) = %v %q, want allowed config", args, r, sub)
+		}
+	}
+	for _, args := range [][]string{
+		{"config", "user.name", "x"}, {"config", "--unset", "user.name"}, {"config", "--add", "a.b", "c"},
+		{"config", "--unset-all", "a.b"}, {"config", "--replace-all", "a.b", "c"},
+		{"config", "--rename-section", "a", "b"}, {"config", "--remove-section", "a"},
+		{"config", "--edit"}, {"config", "-e"}, {"config", "--global", "user.name", "x"},
+		{"config", "--system", "--unset", "a.b"}, {"config", "set", "a.b", "c"}, {"config", "unset", "a.b"},
+		{"config", "--type", "bool", "a.b", "true"}, {"config"},
+	} {
+		if r, _ := GitGuardRefused(args); !r {
+			t.Errorf("GitGuardRefused(%v) allowed, want refused", args)
+		}
+	}
+}
+
 // TestGitGuardIndexWrites checks that every index write a worker could leave
 // behind (#391: intent-to-add entries it could not undo) is refused.
 func TestGitGuardIndexWrites(t *testing.T) {
