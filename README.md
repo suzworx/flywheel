@@ -116,7 +116,10 @@ The site renders all of these: **[suzworx.github.io/flywheel](https://suzworx.gi
 - [Concepts](docs/concepts.md) — work orders, `owns:`, gates, the event log, the poka-yoke rules.
 - [Protocol](docs/PROTOCOL.md) — the normative contract: every event kind, rule and exit code.
 - [Features](docs/features.md) — the long walkthrough: adapters, routing, limits, recover,
-  worktrees, the review agent and panel, ship.
+  worktrees, the review agent and panel, freeze and resume, the wake schedule, ship.
+- [Factory screens](https://suzworx.github.io/flywheel/screens.html) ([docs/screens.html](docs/screens.html))
+  — the approved k9s-style design for `flywheel factory`, each screen marked shipped, building or
+  planned.
 - [HUMAN.md](HUMAN.md) — leading the agents yourself from the terminal.
 - Design docs:
   - [Autonomous shipping](docs/design/autonomous-shipping.md) — the factory model, the required
@@ -204,7 +207,8 @@ flowchart LR
   `flywheel wait <task>...` blocks until the named units finish.
 
 The details (bases, `--notify`, the TREE column, withdrawing a plan) are in
-[docs/features.md](docs/features.md#dispatch-watch-and-wait).
+[docs/features.md](docs/features.md#dispatch-watch-and-wait). The planned screens of the factory
+view, each marked with what exists today, are on the [screens page](https://suzworx.github.io/flywheel/screens.html).
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files
   (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
@@ -299,7 +303,10 @@ worktree setup, the review panel and more, with screenshots, are in
 To stop the whole factory, `flywheel suspend --session S --reason TEXT` freezes it: every dispatch
 refuses, `flywheel next` offers no dispatch, and the controller's auto-resume of rate-limited units
 starts nothing, while `flywheel status` and the floor's andon say so first. `flywheel resume
---session S` thaws it (or `--until` thaws it at a set time); the ledger keeps both records.
+--session S` thaws it (or `--until` thaws it at a set time); the ledger keeps both records. With
+`--stop` the running workers stop too, each at its next lease tick: the attempt finishes
+`suspended` (exit 6) with its owned files checkpointed and its session kept, and `flywheel resume`
+continues each one in its own session (`--no-redispatch` only thaws).
 
 ## Drive it with a lead agent
 
@@ -339,7 +346,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel lint <brief> [--probe [--task ID]]` | Check a brief for problems and warnings (problems exit 1); `--probe` runs each `gate:` once on the base tree before dispatch, and `--task` records each probe so validate and explain can tell a broken gate from broken work. |
 | `flywheel log --task T --kind K` | Append an event and re-derive state: `planned`, `withdrawn` (refused while an attempt is live, rule W1), `amended`, `rebased`, `note`, …; `--shard` switches to per-task shards. |
 | `flywheel goal` | Manage the factory's goals: add, list, show and set. |
-| `flywheel run <task>` | Dispatch a worker (`--worker`, `--model`, `--worktree [--base REF]`, `--workdir PATH`, `--delta`, `--resume`, `--notify CMD`) and record the run; exit 0 clean, 3 silent start, 4 unclean, 7 stall. |
+| `flywheel run <task>` | Dispatch a worker (`--worker`, `--model`, `--worktree [--base REF]`, `--workdir PATH`, `--delta`, `--resume`, `--notify CMD`) and record the run; exit 0 clean, 3 silent start, 4 unclean, 6 stopped by `flywheel suspend --stop`, 7 stall. |
 | `flywheel wait <task>... [--timeout D]` | Block until each named task finishes its current attempt; exit 0 all clean, 4 any unclean, 8 timeout. |
 | `flywheel validate <task> [--workdir PATH] [--carry PATH]... [--live]` | Machine gauges: run a task's gates on the exact tree and check owns (exit 0/5); `--carry` copies a path in first, `--live` adds the `live-gate:` lines. |
 | `flywheel supervise [--once] [--resume-limited]` | Validate every finished unit nobody has measured yet (exit 5 if any fails); `--resume-limited` resumes rate-limited units once their reset passes. Never inspects or lands. |
@@ -365,8 +372,8 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel next` | Print the reconciler's next actions read-only: lost attempts, inspections, blocks, waits, dispatches, or HOLD on a spent budget, open breaker or rate limit. |
 | `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. `flywheel schedule install` keeps it waking even when no process is running. |
 | `flywheel schedule install [--every D] \| status \| remove` | Register, inspect or delete an OS scheduled task (Task Scheduler, crontab or launchd) that runs `flywheel controller --once` every `--every` (default 15m), one task per repository. |
-| `flywheel suspend --session S [--reason TEXT] [--until TIME]` | Freeze the factory: `run` refuses (exit 6, rule `suspended`), `next` dispatches nothing and auto-resume stops until `flywheel resume` or `--until` (RFC3339 or HH:MM). |
-| `flywheel resume --session S [--note TEXT]` | Thaw a suspended factory (exit 6 when it is not suspended). Not `flywheel run --resume`, which resumes one unit's session. |
+| `flywheel suspend --session S [--reason TEXT] [--until TIME] [--stop]` | Freeze the factory: `run` refuses (exit 6, rule `suspended`), `next` dispatches nothing and auto-resume stops until `flywheel resume` or `--until` (RFC3339 or HH:MM). `--stop` also stops every live worker at its next lease tick: finished reason `suspended`, owned files checkpointed, session kept; its `flywheel run` exits 6. |
+| `flywheel resume --session S [--note TEXT] [--no-redispatch]` | Thaw a suspended factory (exit 6 when it is not suspended) and continue every unit a `--stop` stopped: `flywheel run <task> --resume` in the background with a continue delta, one `resumed <task> <attempt> (log <path>)` line each. `--no-redispatch` only thaws. |
 | `flywheel explain <task>` | One task's whole story from the ledger as Markdown or JSON. Read-only. |
 | `flywheel trace <session>` | Everything one session did, across tasks. |
 | `flywheel context [--role R]` | A compact pack of the factory's state for a joining agent. Read-only. |
@@ -377,7 +384,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel release <task>` | Release a claimed task; refused (exit 6) for a live claim held elsewhere unless `--force`. |
 | `flywheel claims` | List every claim: task, session, note, age, live or expired. |
 | `flywheel claim-edit --paths P1,P2 --session S` | Declare a lead's own edit made after a unit's dispatch so the owns check attributes it; bound to the content declared. |
-| `flywheel cost` | Sum finished events' tokens and cost per task and per model. |
+| `flywheel cost` | Sum finished events' and agent review rounds' tokens and cost per task and per model; a row with review spend shows `review=$X`. |
 | `flywheel stats [--by model [--kind]]` | The factory's own numbers: first-pass rate, corrections, cost per landed task, review numbers; `--by model` adds a per-model scoreboard. |
 | `flywheel feedback [add\|dismiss\|regen\|export\|submit]` | Turn signals into learnings in `learnings.md`; `regen` rebuilds it from the log, `export` and `submit` send a sanitised report upstream, consent-first. |
 | Command | Status | What it does |

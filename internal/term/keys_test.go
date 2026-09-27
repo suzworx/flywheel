@@ -294,3 +294,46 @@ func TestReaderEOF(t *testing.T) {
 		t.Errorf("ReadKey() at end: err = %v, want io.EOF", err)
 	}
 }
+
+// TestKeyCtrl checks the control bytes (issue #583): a letter's byte is
+// KeyCtrl with the lowercase letter, 0 is Ctrl-Space, 0x1c Ctrl-\, and the
+// bytes that already had a meaning keep it.
+func TestKeyCtrl(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in   byte
+		kind KeyKind
+		r    rune
+	}{
+		{1, KeyCtrl, 'a'},
+		{2, KeyCtrl, 'b'},
+		{5, KeyCtrl, 'e'},
+		{7, KeyCtrl, 'g'},
+		{18, KeyCtrl, 'r'},
+		{23, KeyCtrl, 'w'},
+		{26, KeyCtrl, 'z'},
+		{0, KeyCtrl, ' '},
+		{0x1c, KeyCtrl, '\\'},
+		{3, KeyCtrlC, 0},
+		{8, KeyBackspace, 0},
+		{127, KeyBackspace, 0},
+		{9, KeyTab, 0},
+		{10, KeyEnter, 0},
+		{13, KeyEnter, 0},
+		{' ', KeyRune, ' '},
+	}
+	for _, tt := range tests {
+		k, err := ReadKey(bufio.NewReader(strings.NewReader(string([]byte{tt.in}))))
+		if err != nil {
+			t.Fatalf("byte %d: %v", tt.in, err)
+		}
+		if k.Kind != tt.kind || k.Rune != tt.r || k.Alt {
+			t.Errorf("byte %d = %+v, want kind %v rune %q", tt.in, k, tt.kind, tt.r)
+		}
+	}
+	// Alt-Ctrl-E: ESC then 5 in one burst.
+	k, err := ReadKey(bufio.NewReader(strings.NewReader("\x1b\x05")))
+	if err != nil || k.Kind != KeyCtrl || k.Rune != 'e' || !k.Alt {
+		t.Errorf("ESC 5 = %+v, %v; want Alt Ctrl-E", k, err)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -31,7 +33,9 @@ type TUIIO struct {
 // and draw again. Each frame is written as "\x1b[H" + View(...) with every
 // line ended by "\x1b[K" (clear to end of line) and the frame followed by
 // "\x1b[J" (clear below). A fetch error ends the loop with that error; a
-// quit key or Stop ends it at once, without another fetch.
+// quit key or Stop ends it at once, without another fetch. Every key is
+// followed by a fetch, so Ctrl-R's reload request (TakeRefresh, consumed by
+// the fetch) is honoured at once, not at the next tick.
 func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	m := NewTUI()
 	for {
@@ -84,11 +88,40 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 // and Detail when m.Wants(): "explain" → RenderExplanation(Explain(events,
 // task)) into a buffer, split into lines (an Explain error becomes the one
 // line "explain: <error>"); "log" → HumanLine of every event of that task,
-// in order.
+// in order. The header's context (issue #583) comes from the same events —
+// FactorySuspended, the paused models, LatestHealth — plus IntegrationBranch
+// and the pause threshold from the config, read once and again on a reload,
+// and tuiVersion. A reload (m.TakeRefresh, Ctrl-R) starts a new Watcher, so
+// the whole ledger is read afresh.
 func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) {
 	w := NewWatcher()
+	var branch string
+	var pauseAt float64
+	loaded := false
+	var (
+		lastView   string
+		cpCache    []TUICheckpoint
+		cpLoaded   bool
+		searchQ    string
+		searchDone bool
+		hits       []SearchHit
+		capped     bool
+	)
 	return func(m *TUI) (TUIData, error) {
-		floor, err := w.Refresh(dir, now())
+		if m.TakeRefresh() {
+			w = NewWatcher()
+			loaded, cpLoaded, searchDone = false, false, false
+		}
+		if !loaded {
+			branch, _ = IntegrationBranch(dir)
+			pauseAt = Limits{}.RateLimitPauseThreshold()
+			if cfg, _, err := LoadConfig(dir); err == nil {
+				pauseAt = cfg.Limits.RateLimitPauseThreshold()
+			}
+			loaded = true
+		}
+		at := now()
+		floor, err := w.Refresh(dir, at)
 		if err != nil {
 			return TUIData{}, err
 		}
@@ -108,10 +141,51 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		}
 
 		data := TUIData{
-			Floor:  floor,
-			Events: eventLines,
-			Detail: nil,
+			Floor:   floor,
+			Events:  eventLines,
+			Detail:  nil,
+			Branch:  branch,
+			Suspend: FactorySuspended(events, at),
+			Version: tuiVersion(),
 		}
+		models, pauses := pausedModels(events, at, pauseAt)
+		for _, model := range models {
+			data.Paused = append(data.Paused, TUIPause{Model: model, Until: pauses[model].Until})
+		}
+		if _, t, ok := LatestHealth(events); ok {
+			data.HealthAt = t
+		}
+
+		// The navigation views (issue #583 k2). The checkpoints are read
+		// from git as the view opens (and on a reload), the search runs as
+		// its query changes (and on a reload): never on every key press.
+		data.Needs = unitNeeds(events)
+		data.Learnings = Learnings(events)
+		for _, e := range events {
+			if e.Kind == "health" && e.Health != nil {
+				data.Health = append(data.Health, TUIHealth{TS: e.TS, Snap: *e.Health})
+			}
+		}
+		data.Health = data.Health[max(0, len(data.Health)-200):]
+		view := m.ViewName()
+		if view == "checkpoints" && (lastView != "checkpoints" || !cpLoaded) {
+			cps, err := ListCheckpoints(dir, "")
+			if err != nil {
+				return TUIData{}, fmt.Errorf("list checkpoints: %w", err)
+			}
+			cpCache, cpLoaded = checkpointAges(cps, events, at), true
+		}
+		lastView = view
+		data.Checkpoints = cpCache
+		if q := m.SearchQuery(); q != "" && (q != searchQ || !searchDone) {
+			docs, err := searchDocs(dir, events)
+			if err != nil {
+				return TUIData{}, err
+			}
+			hits, capped = SearchDocs(docs, q, searchLimit)
+			searchQ, searchDone = q, true
+		}
+		data.Search, data.SearchCapped = hits, capped
 
 		// Fill Detail if Wants drill-down.
 		kind, task, ok := m.Wants()
@@ -144,6 +218,116 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 
 		return data, nil
 	}
+}
+
+// tuiVersion is the running binary's module version as the build stamped
+// it (a tagged build or go install), "dev" for a local build.
+func tuiVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
+
+// unitNeeds is each unit's needs, from its latest planned, amended or
+// dispatched event (the parsed brief header when it carries one).
+func unitNeeds(events []Event) map[string][]string {
+	needs := map[string][]string{}
+	for _, e := range events {
+		switch e.Kind {
+		case "planned", "amended", "dispatched":
+			if e.Header != nil {
+				needs[e.Task] = e.Header.Needs
+			} else {
+				needs[e.Task] = e.Needs
+			}
+		}
+	}
+	return needs
+}
+
+// checkpointAges pairs each checkpoint with its age at now: the time of the
+// event that recorded its commit, -1 when none did.
+func checkpointAges(cps []Checkpoint, events []Event, now time.Time) []TUICheckpoint {
+	taken := map[string]time.Time{}
+	for _, e := range events {
+		if e.Checkpoint == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil {
+			taken[e.Checkpoint] = t
+		}
+	}
+	out := make([]TUICheckpoint, len(cps))
+	for i, c := range cps {
+		out[i] = TUICheckpoint{Checkpoint: c, Age: -1}
+		if t, ok := taken[c.SHA]; ok {
+			out[i].Age = max(0, int(now.Sub(t).Seconds()))
+		}
+	}
+	return out
+}
+
+// searchDocs gathers what `:s` searches: every event (its line number in
+// the ledger), the run logs (.flywheel/runs/<task>.<attempt>.jsonl), the
+// reports (<task>.<attempt>.report.md) and the briefs (.flywheel/briefs/
+// <task>*.txt). A missing directory has nothing; a file removed since the
+// listing is skipped.
+func searchDocs(dir string, events []Event) ([]SearchDoc, error) {
+	var docs []SearchDoc
+	for i, e := range events {
+		docs = append(docs, SearchDoc{Source: "event", Task: e.Task, Attempt: e.Attempt, First: i + 1, Lines: []string{HumanLine(e)}})
+	}
+	read := func(sub string, doc func(name string) (SearchDoc, bool)) error {
+		path := filepath.Join(dir, ".flywheel", sub)
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("search %s: %w", path, err)
+		}
+		for _, ent := range entries {
+			d, ok := doc(ent.Name())
+			if ent.IsDir() || !ok {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(path, ent.Name()))
+			if err != nil {
+				continue
+			}
+			d.First = 1
+			d.Lines = strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+			docs = append(docs, d)
+		}
+		return nil
+	}
+	err := read("runs", func(name string) (SearchDoc, bool) {
+		source := "report"
+		stem, ok := strings.CutSuffix(name, ".report.md")
+		if !ok {
+			source = "log"
+			if stem, ok = strings.CutSuffix(name, ".jsonl"); !ok {
+				return SearchDoc{}, false
+			}
+		}
+		task, attempt := stem, ""
+		if i := strings.LastIndex(stem, "."); i > 0 {
+			task, attempt = stem[:i], stem[i+1:]
+		}
+		return SearchDoc{Source: source, Task: task, Attempt: attempt}, true
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = read("briefs", func(name string) (SearchDoc, bool) {
+		if !strings.HasSuffix(name, ".txt") {
+			return SearchDoc{}, false
+		}
+		task, _, _ := strings.Cut(name, ".")
+		return SearchDoc{Source: "brief", Task: task}, true
+	})
+	return docs, err
 }
 
 // RunTUI runs the interactive factory on a real terminal: MakeRaw(stdin),
