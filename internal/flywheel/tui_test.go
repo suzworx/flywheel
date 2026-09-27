@@ -174,8 +174,8 @@ func TestTUIUnknownCommandMessage(t *testing.T) {
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
 
 	view := m.View(d, 100, 20, false)
-	if !strings.Contains(view, "unknown view: xy") {
-		t.Errorf("expected 'unknown view: xy' in last line of view")
+	if !strings.Contains(view, "unknown view :xy (Ctrl-A lists them)") {
+		t.Errorf("expected 'unknown view :xy (Ctrl-A lists them)' in the view")
 	}
 }
 
@@ -325,8 +325,9 @@ func TestTUIHelp(t *testing.T) {
 		t.Errorf("expected help to be shown")
 	}
 
-	// Check the frame mentions "filter" and "explain".
-	view := m.View(d, 100, 20, false)
+	// Check the frame mentions "filter" and "explain" (tall enough for the
+	// whole help; TestTUIHelpScrolls covers a short one).
+	view := m.View(d, 100, 60, false)
 	if !strings.Contains(view, "filter") {
 		t.Errorf("expected 'filter' in help view")
 	}
@@ -683,8 +684,8 @@ func TestTUILastLineAtBottom(t *testing.T) {
 	m := NewTUI()
 	m.Update(term.Key{Kind: term.KeyRune, Rune: '?'}, d)
 	lines := strings.Split(m.View(d, 80, 40, false), "\n")
-	if len(lines) != 40 || lines[39] != "<units>" {
-		t.Errorf("help: %d lines, last %q; want 40 and <units>", len(lines), lines[len(lines)-1])
+	if len(lines) != 40 || lines[39] != "<units> <help>" {
+		t.Errorf("help: %d lines, last %q; want 40 and <units> <help>", len(lines), lines[len(lines)-1])
 	}
 	m = NewTUI()
 	m.Update(term.Key{Kind: term.KeyEnter}, d)
@@ -822,5 +823,180 @@ func TestTUICappedPeakColoured(t *testing.T) {
 	frame := NewTUI().View(d, 120, 12, true)
 	if !strings.Contains(frame, stateColor("capped")+"capped 50k") {
 		t.Errorf("frame lacks a coloured \"capped 50k\" cell:\n%q", frame)
+	}
+}
+
+// TestTUIHeader checks the header block (issue #583): the repo and branch,
+// a frozen factory with since and until, a paused model, the health age, and
+// the key menu of the view shown, which changes with the view.
+func TestTUIHeader(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	d := makeTestTUIData()
+	d.Floor.Refreshed = at
+	d.Branch = "main"
+	since, until := at.Add(-time.Hour).Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339)
+	d.Suspend = SuspendState{Suspended: true, Since: since, Until: until, By: "s9", Reason: "maintenance"}
+	d.Paused = []TUIPause{{Model: "claude-opus", Until: at.Add(30 * time.Minute)}}
+	d.HealthAt = at.Add(-2 * time.Minute)
+	d.Version = "v0.36.0"
+
+	m := NewTUI()
+	view := m.View(d, 200, 30, false)
+	for _, want := range []string{
+		"repo repo · main",
+		"factory FROZEN since " + hhmm(since) + " until " + hhmm(until) + " by s9: maintenance",
+		"paused claude-opus until " + at.Add(30*time.Minute).Local().Format("15:04"),
+		"lead test-lead",
+		"health 2m ago",
+		"flywheel v0.36.0",
+		"<:> view", "<enter> explain", "<l> log", "<ctrl-e> header",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("header lacks %q:\n%s", want, view)
+		}
+	}
+	if !strings.HasPrefix(view, "repo ") {
+		t.Errorf("the frame does not start with the header:\n%s", view)
+	}
+
+	// Another view, another menu: workers has nothing to explain.
+	for _, r := range ":workers" {
+		m.Update(term.Key{Kind: term.KeyRune, Rune: r}, d)
+	}
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	view = m.View(d, 200, 30, false)
+	if strings.Contains(view, "<enter> explain") || !strings.Contains(view, "<:> view") {
+		t.Errorf("workers menu should drop <enter> explain and keep <:> view:\n%s", view)
+	}
+
+	// A running factory with no health event.
+	d.Suspend, d.HealthAt = SuspendState{}, time.Time{}
+	view = NewTUI().View(d, 200, 30, false)
+	if !strings.Contains(view, "factory running") || !strings.Contains(view, "health none") {
+		t.Errorf("want factory running and health none:\n%s", view)
+	}
+}
+
+// TestTUICrumbs checks the crumbs follow the drill-down and back (issue
+// #583), and the flash line shows a message that the next key or time clears.
+func TestTUICrumbs(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	clock := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	m := NewTUI()
+	m.now = func() time.Time { return clock }
+	last := func() string {
+		lines := strings.Split(m.View(d, 100, 20, false), "\n")
+		return lines[len(lines)-1]
+	}
+	flashLine := func() string {
+		lines := strings.Split(m.View(d, 100, 20, false), "\n")
+		return lines[len(lines)-2]
+	}
+
+	m.Update(term.Key{Kind: term.KeyEnter}, d)
+	if got := strings.Join(m.Crumbs(), " > "); got != "units > T1 > explain" {
+		t.Errorf("crumbs after Enter = %q, want units > T1 > explain", got)
+	}
+	if got := last(); got != "<units> <T1> <explain>" {
+		t.Errorf("crumb line = %q", got)
+	}
+	m.Update(term.Key{Kind: term.KeyEsc}, d)
+	if got := strings.Join(m.Crumbs(), " > "); got != "units" || last() != "<units>" {
+		t.Errorf("crumbs after Esc = %q, line %q; want units", got, last())
+	}
+	m.Update(term.Key{Kind: term.KeyRune, Rune: 'l'}, d)
+	if got := last(); got != "<units> <T1> <log>" {
+		t.Errorf("crumb line after l = %q", got)
+	}
+	m.Update(term.Key{Kind: term.KeyEsc}, d)
+
+	// The flash: an unknown view says so; the next key clears it.
+	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'z'}, {Kind: term.KeyEnter}} {
+		m.Update(k, d)
+	}
+	if got := flashLine(); got != "unknown view :z (Ctrl-A lists them)" {
+		t.Errorf("flash line = %q, want unknown view :z (Ctrl-A lists them)", got)
+	}
+	m.Update(term.Key{Kind: term.KeyRune, Rune: 'j'}, d)
+	if got := flashLine(); got != "" {
+		t.Errorf("flash line after a key = %q, want empty", got)
+	}
+	// Or it expires on its own.
+	m.flash("hello")
+	if flashLine() != "hello" {
+		t.Errorf("flash line = %q, want hello", flashLine())
+	}
+	clock = clock.Add(flashFor + time.Second)
+	if got := flashLine(); got != "" {
+		t.Errorf("flash line after %v = %q, want empty", flashFor, got)
+	}
+}
+
+// TestTUIToggles checks the layout keys (issue #583): Ctrl-E hides the
+// header and Ctrl-G the crumbs, each giving the table rows; Ctrl-W shows a
+// long cell whole; Ctrl-R asks the live loop for a reload once.
+func TestTUIToggles(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	d.Floor.Units = nil
+	for i := 0; i < 40; i++ {
+		d.Floor.Units = append(d.Floor.Units, Unit{Task: fmt.Sprintf("T%02d", i), Stage: "building", Attempt: "1",
+			Session: fmt.Sprintf("s%d", i), Model: "claude-opus", RunState: "running"})
+	}
+	long := "session-" + strings.Repeat("x", 60)
+	d.Floor.Units[0].Session = long
+	ctrl := func(r rune) term.Key { return term.Key{Kind: term.KeyCtrl, Rune: r} }
+	m := NewTUI()
+	rowsShown := func() (n int, view string) {
+		view = m.View(d, 250, 30, false)
+		for _, l := range strings.Split(view, "\n") {
+			if strings.HasPrefix(l, "  T") || strings.HasPrefix(l, "> T") {
+				n++
+			}
+		}
+		return n, view
+	}
+
+	withHeader, view := rowsShown()
+	if !strings.Contains(view, "repo repo") {
+		t.Fatalf("no header to hide:\n%s", view)
+	}
+	m.Update(ctrl('e'), d)
+	noHeader, view := rowsShown()
+	if strings.Contains(view, "repo repo") || noHeader <= withHeader {
+		t.Errorf("Ctrl-E: rows %d -> %d, header still shown %v", withHeader, noHeader, strings.Contains(view, "repo repo"))
+	}
+	m.Update(ctrl('e'), d)
+	if again, _ := rowsShown(); again != withHeader {
+		t.Errorf("Ctrl-E twice: %d rows, want %d", again, withHeader)
+	}
+
+	m.Update(ctrl('g'), d)
+	noCrumbs, view := rowsShown()
+	if strings.Contains(view, "<units>") || noCrumbs != withHeader+1 {
+		t.Errorf("Ctrl-G: rows %d -> %d, crumbs still shown %v", withHeader, noCrumbs, strings.Contains(view, "<units>"))
+	}
+	m.Update(ctrl('g'), d)
+
+	_, view = rowsShown()
+	if strings.Contains(view, long) || !strings.Contains(view, cutRunes(long, maxCell)) {
+		t.Errorf("normal mode should cut %q to %q:\n%s", long, cutRunes(long, maxCell), view)
+	}
+	m.Update(ctrl('w'), d)
+	if _, view = rowsShown(); !strings.Contains(view, long) {
+		t.Errorf("Ctrl-W should show %q whole:\n%s", long, view)
+	}
+
+	if m.TakeRefresh() {
+		t.Error("a reload requested before Ctrl-R")
+	}
+	m.Update(ctrl('r'), d)
+	if !m.TakeRefresh() {
+		t.Error("Ctrl-R did not request a reload")
+	}
+	if m.TakeRefresh() {
+		t.Error("the reload request was not consumed")
 	}
 }

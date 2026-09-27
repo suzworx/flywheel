@@ -33,8 +33,8 @@ into every worker's context; Claude Code reads CLAUDE.md, which imports this fil
 
 ## Windows hosts
 
-- `core.autocrlf=true` checks text files out with CRLF (.gitattributes keeps *.go, *.jsonl and *.sh
-  LF); so check gofmt with `for f in <files>; do tr -d '\r' < "$f" | go run cmd/gofmt -l; done`
+- .gitattributes `* text=auto eol=lf` stores every text file with LF (CI refuses a CRLF one), but
+  with `core.autocrlf=true` the working tree can still hold CRLF; so check gofmt with `for f in <files>; do tr -d '\r' < "$f" | go run cmd/gofmt -l; done`
   (`go run cmd/gofmt`, because gofmt.exe may be blocked), and compare text files with `\r` stripped.
 - Smart App Control sometimes blocks a freshly built binary ("An Application Control policy has
   blocked this file"): that is the host, not the code; rerun. Never change the security setting.
