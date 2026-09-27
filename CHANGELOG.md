@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.0](https://github.com/suzworx/flywheel/compare/v0.40.0...v0.41.0) (2026-09-27)
+
+
+### Features
+
+* flywheel fleet watch reports what is new across the fleet, baselines its first run, runs from the OS scheduler, and seeds the learnings queue ([#633](https://github.com/suzworx/flywheel/issues/633)) ([208404d](https://github.com/suzworx/flywheel/commit/208404d1810d5abe15a2fa88485994a09d7dd4fd))
+
+
+### Bug Fixes
+
+* flywheel recover reads no world for landed units and hashes each workdir's tree once ([#634](https://github.com/suzworx/flywheel/issues/634)) ([4f5c165](https://github.com/suzworx/flywheel/commit/4f5c16558e23e3e0ba6e8e256b249ed1bebef197))
+* git-write blames a worker only for its own git writes: fetched tags and another process's renames are informational, and config reads pass the guard ([#629](https://github.com/suzworx/flywheel/issues/629)) ([5202551](https://github.com/suzworx/flywheel/commit/5202551acf9eecc958b832b1da65a3c08156b618))
+
 ## [0.40.0](https://github.com/suzworx/flywheel/compare/v0.39.0...v0.40.0) (2026-09-27)
 
 
