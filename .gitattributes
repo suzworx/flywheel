@@ -1,3 +1,12 @@
+# Store every text file with LF line endings, whatever the author's OS (core.autocrlf=true on
+# Windows still checks them out as CRLF). A CRLF blob makes `git diff --check` report every line
+# as trailing whitespace, which failed diff-based gates after a merge.
+* text=auto eol=lf
 *.jsonl text eol=lf
 *.sh text eol=lf
 *.go text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.exe binary
