@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.37.0](https://github.com/suzworx/flywheel/compare/v0.36.0...v0.37.0) (2026-09-27)
+
+
+### Features
+
+* a factory metrics engine over the ledger (flow, quality, reliability, cost, capacity) and flywheel stats --metrics ([#598](https://github.com/suzworx/flywheel/issues/598)) ([c2ebe34](https://github.com/suzworx/flywheel/commit/c2ebe341702e2e82963c100f805ddbf69614462f))
+* flywheel factory navigation: history, filter modes, sorting, tree, health, learnings and checkpoints views, and search across the ledger and logs ([#596](https://github.com/suzworx/flywheel/issues/596)) ([196f889](https://github.com/suzworx/flywheel/commit/196f889046427c72d1431b9d4bc814564cfb2cbf))
+* flywheel factory unit detail answers why: a plain why line, a timeline with labelled gaps, tabs, a WHY column and a key menu that wraps ([#601](https://github.com/suzworx/flywheel/issues/601)) ([853c4fc](https://github.com/suzworx/flywheel/commit/853c4fc339e69d6c690eaacfc0c0fe099c1a51e0))
+* flywheel fleet add, remove, list and status: a registry of factory roots, discovery of every ledger under them, and one merged status table ([#604](https://github.com/suzworx/flywheel/issues/604)) ([81d9159](https://github.com/suzworx/flywheel/commit/81d91597ab62689d76d4bf3b27a145a999ab2b8d))
+* terminal chart primitives for the factory dashboards: sparkline, bars, cumulative flow, histogram, control chart and heatmap ([#606](https://github.com/suzworx/flywheel/issues/606)) ([346349f](https://github.com/suzworx/flywheel/commit/346349f65c09161c1d88501d23aecde285ea6cd2))
+* the factory freezes itself when every model's tokens run out and thaws and resumes each stopped unit in its own session when they return ([#600](https://github.com/suzworx/flywheel/issues/600)) ([79e41af](https://github.com/suzworx/flywheel/commit/79e41afb5e495b8e30136017c5bd626c2876d522))
+
+
+### Bug Fixes
+
+* a repo lock waiter keeps waiting while the lock changes hands, and fails only when one holder keeps it for the whole wait ([#593](https://github.com/suzworx/flywheel/issues/593)) ([553ce2e](https://github.com/suzworx/flywheel/commit/553ce2e7846bf9c30482c26437b33cdfcd18a51d))
+* a ship rerun re-merges when the integration branch moved, and name-resolution failures are retried ([#599](https://github.com/suzworx/flywheel/issues/599)) ([e38ccf9](https://github.com/suzworx/flywheel/commit/e38ccf93ae21794d12e7cbf3bb13542dd047df46)), closes [#577](https://github.com/suzworx/flywheel/issues/577)
+* ship never merges a PR whose CI ran on an integration commit that is no longer the tip ([#610](https://github.com/suzworx/flywheel/issues/610)) ([a533edc](https://github.com/suzworx/flywheel/commit/a533edc182acbb0f7f8a7a5870ce454847062e69)), closes [#591](https://github.com/suzworx/flywheel/issues/591)
+* the owns check never charges a unit with commits reachable from the integration branch ([#597](https://github.com/suzworx/flywheel/issues/597)) ([e645e44](https://github.com/suzworx/flywheel/commit/e645e4479783e4b75341c5d4eeeb71a4c6fd37eb)), closes [#581](https://github.com/suzworx/flywheel/issues/581)
+
+
+### Performance
+
+* fleet status summarises each ledger in one pass, in parallel, and folds idle worktree ledgers ([#609](https://github.com/suzworx/flywheel/issues/609)) ([548f08c](https://github.com/suzworx/flywheel/commit/548f08cf8c3ce6c8b52cc0b8f7e6435fd4fe17e0))
+
 ## [0.36.0](https://github.com/suzworx/flywheel/compare/v0.35.0...v0.36.0) (2026-09-27)
 
 
