@@ -7,20 +7,26 @@ import (
 	"io"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
 
 func init() {
 	register("stats", "print the factory's own numbers: rates, corrections, cost", runStats)
-	registerHelp("stats", "flywheel stats [--dir DIR] [--by model [--kind]] [--json]", func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
+	registerHelp("stats", statsUsageLine, func() *flag.FlagSet { fs, _ := statsFlags(); return fs })
 }
+
+// statsUsageLine is flywheel stats's usage.
+const statsUsageLine = "flywheel stats [--dir DIR] [--by model [--kind]] [--metrics [--window 24h|7d|30d]] [--json]"
 
 // statsOptions holds the parsed stats flags.
 type statsOptions struct {
 	dir     string
 	by      string
 	kind    bool
+	metrics bool
+	window  string
 	jsonOut bool
 }
 
@@ -32,13 +38,15 @@ func statsFlags() (*flag.FlagSet, *statsOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.StringVar(&o.by, "by", "", `break the numbers down: "model" adds the per-model scoreboard`)
 	fs.BoolVar(&o.kind, "kind", false, "with --by model, also break the scoreboard down per task kind (a brief's kind: header)")
+	fs.BoolVar(&o.metrics, "metrics", false, "print the factory metrics over a window: flow, quality, reliability, cost, capacity (docs/metrics.md)")
+	fs.StringVar(&o.window, "window", "24h", `with --metrics, the window ending now: "24h", "7d" or "30d"`)
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
 	return fs, o
 }
 
 // statsUsage prints the flywheel stats usage line.
 func statsUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel stats [--dir DIR] [--by model [--kind]] [--json]")
+	fmt.Fprintln(w, "usage: "+statsUsageLine)
 }
 
 // runStats implements `flywheel stats`: the factory's health as numbers that
@@ -66,6 +74,23 @@ func runStats(args []string) {
 		fmt.Fprintln(os.Stderr, "flywheel stats: --kind needs --by model")
 		statsUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.metrics {
+		if o.by != "" {
+			fmt.Fprintln(os.Stderr, "flywheel stats: --metrics does not take --by")
+			statsUsage(os.Stderr)
+			os.Exit(2)
+		}
+		if _, err := flywheel.WindowFor(o.window, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel stats: --%v\n", err)
+			statsUsage(os.Stderr)
+			os.Exit(2)
+		}
+		if err := runStatsMetrics(os.Stdout, o.dir, o.window, o.jsonOut, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	rep, err := flywheel.StatsWith(o.dir, flywheel.StatsOptions{ByModel: o.by == "model", ByKind: o.kind})
 	if err != nil {
@@ -173,6 +198,108 @@ func printStats(rep flywheel.StatsReport) {
 			fmt.Printf("  %-12s %-5s %7d %8d %5d %8d %9d %s\n", p.Persona, p.Level, p.Reviews, p.Findings, p.Fixed, p.Disputed, p.Dismissed, countLine(p.BySeverity))
 		}
 	}
+}
+
+// runStatsMetrics writes flywheel stats --metrics for dir to out: the report
+// over the named window ending at now, as JSON (every series included), or
+// as the family table with a trend arrow against the previous equal window.
+func runStatsMetrics(out io.Writer, dir, window string, jsonOut bool, now time.Time) error {
+	w, err := flywheel.WindowFor(window, now)
+	if err != nil {
+		return err
+	}
+	cur, err := flywheel.MetricsFor(dir, w)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		b, err := json.MarshalIndent(cur, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, string(b))
+		return err
+	}
+	prev, err := flywheel.MetricsFor(dir, w.Previous())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Metrics over the last %s (%s to %s); trend vs the previous %s\n",
+		window, w.Since.UTC().Format(time.RFC3339), w.Until.UTC().Format(time.RFC3339), window)
+	pf := metricFamilies(prev)
+	for i, f := range metricFamilies(cur) {
+		fmt.Fprintf(out, "%s:\n", f.name)
+		for j, r := range f.rows {
+			fmt.Fprintf(out, "  %-22s %-32s %s\n", r.name, r.value, trendArrow(r.num, pf[i].rows[j].num))
+		}
+	}
+	return nil
+}
+
+// metricFamily is one group of the metrics table.
+type metricFamily struct {
+	name string
+	rows []metricRow
+}
+
+// metricRow is one metric: its label, rendered value and the number its trend
+// compares.
+type metricRow struct {
+	name, value string
+	num         float64
+}
+
+// metricFamilies lays rep out as the table's families, in docs/metrics.md order.
+func metricFamilies(rep flywheel.MetricsReport) []metricFamily {
+	dur := func(name string, d time.Duration) metricRow {
+		return metricRow{name, d.Round(time.Second).String(), d.Seconds()}
+	}
+	count := func(name string, n int) metricRow { return metricRow{name, fmt.Sprintf("%d", n), float64(n)} }
+	pct := func(name string, x float64) metricRow { return metricRow{name, fmt.Sprintf("%.1f%%", x*100), x} }
+	num := func(name, format string, x float64) metricRow { return metricRow{name, fmt.Sprintf(format, x), x} }
+	fl, q, rl, c, cp := rep.Flow, rep.Quality, rep.Reliability, rep.Cost, rep.Capacity
+	pass, total := 0, 0
+	for _, g := range q.Gates {
+		pass, total = pass+g.Pass, total+g.Total
+	}
+	gateRate := 0.0
+	if total > 0 {
+		gateRate = float64(pass) / float64(total)
+	}
+	var paused time.Duration
+	for _, p := range rl.Paused {
+		paused += p.Paused
+	}
+	andons := count("andons", rl.AndonTotal)
+	if rl.AndonTotal > 0 {
+		andons.value += " (" + countLine(rl.Andons)[1:] + ")"
+	}
+	return []metricFamily{
+		{"Flow", []metricRow{count("throughput", fl.Throughput), count("wip", fl.WIP),
+			dur("lead time p50", fl.LeadTime.P50), dur("lead time p90", fl.LeadTime.P90),
+			dur("cycle time p50", fl.CycleTime.P50), dur("cycle time p90", fl.CycleTime.P90),
+			dur("queue time p50", fl.QueueTime.P50), dur("touch time mean", fl.TouchTime.Mean),
+			pct("flow efficiency", fl.FlowEfficiency)}},
+		{"Quality", []metricRow{pct("first-pass yield", q.FirstPassYield), num("rework rate", "%.2f", q.ReworkRate),
+			pct("gate pass rate", gateRate), num("review find rate", "%.2f", q.ReviewFindRate),
+			pct("blocking share", q.BlockingShare), count("escapes", q.Escapes)}},
+		{"Reliability", []metricRow{andons, count("andons cleared", rl.Cleared), dur("mttr p50", rl.MTTR.P50),
+			dur("frozen", rl.Frozen.Total), dur("rate-limit paused", paused)}},
+		{"Cost", []metricRow{num("spend", "$%.4f", c.Spend), num("cost per unit", "$%.4f", c.CostPerUnit),
+			num("cost per landed", "$%.4f", c.CostPerLanded), num("tokens per step", "%.1f", c.TokensPerStep)}},
+		{"Capacity", []metricRow{pct("utilization", cp.Utilization), pct("idle share", cp.IdleShare)}},
+	}
+}
+
+// trendArrow is ↑ when cur is above prev, ↓ when below, → when equal.
+func trendArrow(cur, prev float64) string {
+	switch {
+	case cur > prev:
+		return "↑"
+	case cur < prev:
+		return "↓"
+	}
+	return "→"
 }
 
 // countLine renders counts as " k=v ..." in key order, or " none".
