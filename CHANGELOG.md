@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/suzworx/flywheel/compare/v0.37.0...v0.38.0) (2026-09-27)
+
+
+### Features
+
+* flywheel factory shows header stats, a :pulse dashboard and a :metrics table, and every number drills to its chart and the units behind it ([#611](https://github.com/suzworx/flywheel/issues/611)) ([3c63a64](https://github.com/suzworx/flywheel/commit/3c63a647ead3b3335000c1828773a76217108679))
+
 ## [0.37.0](https://github.com/suzworx/flywheel/compare/v0.36.0...v0.37.0) (2026-09-27)
 
 
