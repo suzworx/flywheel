@@ -2325,6 +2325,82 @@ func TestRunBriefDriftWarnsOnResume(t *testing.T) {
 	}
 }
 
+// amendAfterDrift dispatches r1, edits the brief and records the edit with an
+// amended event, as briefDriftAdvice tells the lead to (issue #617).
+func amendAfterDrift(t *testing.T) string {
+	t.Helper()
+	dir := setupTask(t)
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("Run() first error = %v", err)
+	}
+	edited := []byte("one line brief\nedited after dispatch\n")
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), edited, 0o644); err != nil {
+		t.Fatalf("write edited brief: %v", err)
+	}
+	// The header is what flywheel log --kind amended records with the brief.
+	h, err := ParseBriefHeaderBytes(edited)
+	if err != nil {
+		t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{Task: "T1", Kind: "amended", Brief: "b.txt", Header: &h, Note: "widen"}); err != nil {
+		t.Fatalf("AppendEvent(amended) error = %v", err)
+	}
+	return dir
+}
+
+// TestRunBriefDriftQuietAfterAmended checks an amended event whose brief
+// matches the file on disk records the drift like a planned one: the delta
+// dispatched after it warns nothing (issue #617).
+func TestRunBriefDriftQuietAfterAmended(t *testing.T) {
+	t.Parallel()
+	dir := amendAfterDrift(t)
+	writeDelta(t, dir, "T1")
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Resume: true, Progress: &buf}); err != nil {
+		t.Fatalf("Run() resume error = %v", err)
+	}
+	if out := buf.String(); strings.Contains(out, "brief-drift") {
+		t.Errorf("resume after amended output = %q, want no brief-drift line", out)
+	}
+}
+
+// TestRunStrictBriefPassesAfterAmended checks --strict-brief dispatches once
+// an amended event recorded the edited brief (issue #617).
+func TestRunStrictBriefPassesAfterAmended(t *testing.T) {
+	t.Parallel()
+	dir := amendAfterDrift(t)
+	writeDelta(t, dir, "T1")
+	res, err := Run(dir, RunOptions{Task: "T1", Resume: true, StrictBrief: true, Progress: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatalf("Run() strict resume error = %v, want no T1 refusal", err)
+	}
+	if res.Attempt != "c1" {
+		t.Errorf("strict resume attempt = %q, want c1", res.Attempt)
+	}
+}
+
+// TestRunBriefDriftWarnsAfterStaleAmended checks an amended event whose brief
+// was edited again afterwards records nothing: the next dispatch still warns
+// (issue #617).
+func TestRunBriefDriftWarnsAfterStaleAmended(t *testing.T) {
+	t.Parallel()
+	dir := amendAfterDrift(t)
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("one line brief\nedited again\n"), 0o644); err != nil {
+		t.Fatalf("write re-edited brief: %v", err)
+	}
+	writeDelta(t, dir, "T1")
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Resume: true, Progress: &buf}); err != nil {
+		t.Fatalf("Run() resume error = %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "brief-drift") {
+		t.Errorf("resume after stale amended output = %q, want a brief-drift line", out)
+	}
+}
+
 // leaseFor returns the lease of one attempt from .flywheel/leases.
 func leaseFor(t *testing.T, dir, task, attempt string) (Lease, bool) {
 	t.Helper()
