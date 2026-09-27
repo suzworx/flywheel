@@ -296,6 +296,11 @@ one next action per unit. Adapters, routing, budgets and rate limits, the contro
 worktree setup, the review panel and more, with screenshots, are in
 **[docs/features.md](docs/features.md)**.
 
+To stop the whole factory, `flywheel suspend --session S --reason TEXT` freezes it: every dispatch
+refuses, `flywheel next` offers no dispatch, and the controller's auto-resume of rate-limited units
+starts nothing, while `flywheel status` and the floor's andon say so first. `flywheel resume
+--session S` thaws it (or `--until` thaws it at a set time); the ledger keeps both records.
+
 ## Drive it with a lead agent
 
 Ask your lead agent to load the `flywheel` skill and drive the loop: plan → brief → dispatch →
@@ -358,7 +363,10 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel factory [--once\|--json\|--plain]` | Interactive, k9s-style view of the floor; `--plain` keeps the plain redraw, `--once` renders once. |
 | `flywheel watch [--once] [--last N]` | A readable live stream of the log, one line per event. Read-only. |
 | `flywheel next` | Print the reconciler's next actions read-only: lost attempts, inspections, blocks, waits, dispatches, or HOLD on a spent budget, open breaker or rate limit. |
-| `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. |
+| `flywheel controller [--once] [--health-every D]` | The controller loop: mark lost attempts, block scrapped needs, resume rate-limited units, record `health` events. `flywheel schedule install` keeps it waking even when no process is running. |
+| `flywheel schedule install [--every D] \| status \| remove` | Register, inspect or delete an OS scheduled task (Task Scheduler, crontab or launchd) that runs `flywheel controller --once` every `--every` (default 15m), one task per repository. |
+| `flywheel suspend --session S [--reason TEXT] [--until TIME]` | Freeze the factory: `run` refuses (exit 6, rule `suspended`), `next` dispatches nothing and auto-resume stops until `flywheel resume` or `--until` (RFC3339 or HH:MM). |
+| `flywheel resume --session S [--note TEXT]` | Thaw a suspended factory (exit 6 when it is not suspended). Not `flywheel run --resume`, which resumes one unit's session. |
 | `flywheel explain <task>` | One task's whole story from the ledger as Markdown or JSON. Read-only. |
 | `flywheel trace <session>` | Everything one session did, across tasks. |
 | `flywheel context [--role R]` | A compact pack of the factory's state for a joining agent. Read-only. |

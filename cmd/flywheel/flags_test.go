@@ -61,6 +61,116 @@ var allFlagsFuncs = map[string]flagsAny{
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
 	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
 	"ship":       func() (*flag.FlagSet, any) { fs, o := shipFlags(); return fs, o },
+	"schedule":   func() (*flag.FlagSet, any) { fs, o := scheduleFlags(true); return fs, o },
+	"suspend":    func() (*flag.FlagSet, any) { fs, o := suspendFlags(); return fs, o },
+	"resume":     func() (*flag.FlagSet, any) { fs, o := resumeFlags(); return fs, o },
+}
+
+// TestScheduleFlagsBind checks install's --every and --dir reach the bound
+// options, and status/remove take no --every (issue #572).
+func TestScheduleFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := scheduleFlags(true)
+	if err := fs.Parse([]string{"--every", "7m", "--dir", "D"}); err != nil {
+		t.Fatalf("scheduleFlags: %v", err)
+	}
+	if want := (scheduleOptions{dir: "D", every: 7 * time.Minute}); *o != want {
+		t.Errorf("scheduleFlags parsed = %#v, want %#v", *o, want)
+	}
+	if fs, _ := scheduleFlags(false); fs.Lookup("every") != nil {
+		t.Error("status/remove define --every")
+	}
+}
+
+// fakeScheduler records calls instead of touching the OS scheduler.
+type fakeScheduler struct{ calls []string }
+
+func (f *fakeScheduler) Install(p flywheel.SchedulePlan) error {
+	f.calls = append(f.calls, "install "+p.Name+" "+p.Every.String())
+	return nil
+}
+func (f *fakeScheduler) Remove(name string) error {
+	f.calls = append(f.calls, "remove "+name)
+	return nil
+}
+func (f *fakeScheduler) Status(name string) (bool, string, error) {
+	f.calls = append(f.calls, "status "+name)
+	return true, "next run soon", nil
+}
+
+// TestScheduleMainExitsAndOutput checks install prints the name, interval and
+// command, status prints installed plus the detail, and a bad subcommand or
+// an --every under a minute is usage (exit 2) before any scheduler call.
+func TestScheduleMainExitsAndOutput(t *testing.T) {
+	t.Parallel()
+	f := &fakeScheduler{}
+	newSched := func(flywheel.Runner) (flywheel.Scheduler, error) { return f, nil }
+	plan := func(dir string, every time.Duration) (flywheel.SchedulePlan, error) {
+		if every == 0 {
+			every = flywheel.DefaultScheduleEvery
+		}
+		return flywheel.SchedulePlan{Name: "flywheel-x-12345678", Every: every, Exe: "/bin/fw",
+			Dir: dir, Args: []string{"controller", "--once", "--dir", dir}}, nil
+	}
+	dir := t.TempDir()
+	var out, errb strings.Builder
+	if code := scheduleMain([]string{"install", "--every", "5m", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+		t.Fatalf("install = %d; stderr %s", code, errb.String())
+	}
+	if w := "installed flywheel-x-12345678: every 5m0s runs /bin/fw controller --once --dir"; !strings.Contains(out.String(), w) {
+		t.Errorf("install output = %q, want %q", out.String(), w)
+	}
+	out.Reset()
+	if code := scheduleMain([]string{"status", "--dir", dir}, &out, &errb, newSched, plan); code != 0 ||
+		out.String() != "flywheel-x-12345678: installed\nnext run soon\n" {
+		t.Errorf("status = %d %q", code, out.String())
+	}
+	if code := scheduleMain([]string{"remove", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+		t.Errorf("remove = %d", code)
+	}
+	calls := len(f.calls)
+	for _, args := range [][]string{{}, {"bogus"}, {"install", "--every", "30s"}, {"status", "--every", "5m"}, {"remove", "extra"}} {
+		if code := scheduleMain(args, &out, &errb, newSched, plan); code != 2 {
+			t.Errorf("scheduleMain(%v) = %d, want 2", args, code)
+		}
+	}
+	if len(f.calls) != calls || calls != 3 {
+		t.Errorf("calls = %v, want exactly install, status, remove", f.calls)
+	}
+}
+
+// TestSuspendFlagsBind parses every suspend and resume flag and asserts the
+// bound options hold them, and --until reads HH:MM as today or tomorrow
+// (issue #572).
+func TestSuspendFlagsBind(t *testing.T) {
+	t.Parallel()
+	fs, o := suspendFlags()
+	if err := fs.Parse([]string{"--reason", "r", "--until", "18:00", "--session", "s", "--dir", "D"}); err != nil {
+		t.Fatalf("suspendFlags: %v", err)
+	}
+	if want := (suspendOptions{dir: "D", session: "s", reason: "r", until: "18:00"}); *o != want {
+		t.Errorf("suspendFlags parsed = %#v, want %#v", *o, want)
+	}
+	fs, o = resumeFlags()
+	if err := fs.Parse([]string{"--note", "n", "--session", "s", "--dir", "D"}); err != nil {
+		t.Fatalf("resumeFlags: %v", err)
+	}
+	if want := (suspendOptions{dir: "D", session: "s", note: "n"}); *o != want {
+		t.Errorf("resumeFlags parsed = %#v, want %#v", *o, want)
+	}
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	for in, want := range map[string]time.Time{
+		"18:00":                now.Add(6 * time.Hour),
+		"09:30":                now.Add(21*time.Hour + 30*time.Minute),
+		"2026-09-27T01:00:00Z": now.Add(13 * time.Hour),
+	} {
+		if got, err := parseUntil(in, now); err != nil || !got.Equal(want) {
+			t.Errorf("parseUntil(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := parseUntil("6pm", now); err == nil {
+		t.Error("parseUntil(6pm) = nil error, want one")
+	}
 }
 
 // TestBriefFlagsBindEveryOption parses non-default values for every brief
