@@ -10,10 +10,11 @@ import (
 
 // checkpointReasons are the finished reasons after which an attempt's
 // written owned files are snapshotted (issue #422); length is the length cap,
-// capped the unit cost cap (issue #459).
+// capped the unit cost cap (issue #459), suspended a stopping factory
+// suspension (issue #572).
 var checkpointReasons = map[string]bool{
 	"error": true, "rate-limited": true, "stalled": true, "silent": true,
-	"abandoned-job": true, "length": true, "capped": true,
+	"abandoned-job": true, "length": true, "capped": true, "suspended": true,
 }
 
 // checkpointRef is the ref one attempt's checkpoint lives under.
