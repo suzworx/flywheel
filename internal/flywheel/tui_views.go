@@ -218,6 +218,50 @@ func healthRows(d TUIData) (header []string, rows [][]string) {
 	return header, rows
 }
 
+// ctxHeader is the ctx view's header; PATH stays last, where Enter reads it.
+var ctxHeader = []string{"NAME", "KIND", "STATE", "RUNNING", "ANDON", "PAUSED", "HEALTH", "LAST", "PATH"}
+
+// ctxRows are the fleet's ledgers (issue #585 f4), as fleet status folds
+// them: the one the view shows marked (*) in NAME, a ledger that failed to
+// read with its error as STATE. No registry, or an empty one, is one line
+// naming how to register a root; a registry that did not read, its error.
+func ctxRows(d TUIData) (header []string, rows [][]string) {
+	if d.FleetErr != "" {
+		return []string{"FLEET"}, [][]string{{"fleet: " + d.FleetErr}}
+	}
+	if len(d.Fleet) == 0 {
+		return []string{"FLEET"}, [][]string{{"no factory registered: flywheel fleet add <path> registers a root"}}
+	}
+	age := func(sec *int) string {
+		if sec == nil {
+			return "-"
+		}
+		return HumanAge(*sec)
+	}
+	for _, r := range d.Fleet {
+		if r.Kind == FleetKindIdle {
+			rows = append(rows, []string{r.Name, r.Kind, "", "", "", "", "", age(r.LastAge), ""})
+			continue
+		}
+		name := r.Name
+		if r.Path == d.FleetCur {
+			name += "(*)"
+		}
+		state := "running"
+		switch {
+		case r.Error != "":
+			state = "error: " + r.Error
+		case r.Suspended:
+			state = "SUSPENDED"
+		case len(r.Paused) > 0:
+			state = "paused"
+		}
+		rows = append(rows, []string{name, r.Kind, state, strconv.Itoa(r.Tasks.Dispatched + r.Tasks.Running),
+			strconv.Itoa(r.Andon), strings.Join(r.Paused, ","), age(r.HealthAge), age(r.LastAge), r.Path})
+	}
+	return ctxHeader, rows
+}
+
 // andonSeverities rank the andon's signals: high stops the line, medium
 // holds it, anything else is low.
 var andonSeverities = map[string]string{

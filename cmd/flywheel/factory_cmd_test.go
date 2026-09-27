@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +46,59 @@ func TestClockForRejectsBadFlag(t *testing.T) {
 	t.Parallel()
 	if _, err := clockFor("nope"); err == nil {
 		t.Fatal("clockFor(\"nope\"): expected an error, got nil")
+	}
+}
+
+// factoryHelperEnv carries runFactory's arguments to the re-executed test
+// binary, separated by \x1f.
+const factoryHelperEnv = "FLYWHEEL_TEST_RUNFACTORY_ARGS"
+
+// TestFactoryCtxFlag checks --ctx (issue #585 f4): `factory --once --ctx
+// beta` renders beta's ledger, and an unknown name exits 2 naming the known
+// ones. Each run is a child with its own FLYWHEEL_FLEET.
+func TestFactoryCtxFlag(t *testing.T) {
+	t.Parallel()
+	if v, ok := os.LookupEnv(factoryHelperEnv); ok {
+		runFactory(strings.Split(v, "\x1f"))
+		os.Exit(0)
+	}
+	var fleet flywheel.Fleet
+	for _, r := range []struct{ name, task string }{{"alpha", "A1"}, {"beta", "B1"}} {
+		dir := t.TempDir()
+		if _, err := flywheel.Init(dir, false); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		if err := flywheel.AppendEvent(dir, flywheel.Event{TS: "2026-09-27T12:00:00Z", Task: r.task, Kind: "planned"}); err != nil {
+			t.Fatalf("AppendEvent: %v", err)
+		}
+		fleet.Roots = append(fleet.Roots, flywheel.FleetRoot{Name: r.name, Path: dir})
+	}
+	file := filepath.Join(t.TempDir(), "fleet.json")
+	if err := flywheel.SaveFleet(file, fleet); err != nil {
+		t.Fatalf("SaveFleet: %v", err)
+	}
+	run := func(args ...string) (string, string, int) {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestFactoryCtxFlag$")
+		cmd.Env = append(os.Environ(), factoryHelperEnv+"="+strings.Join(args, "\x1f"), "FLYWHEEL_FLEET="+file)
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		var e *exec.ExitError
+		if errors.As(err, &e) {
+			return stdout.String(), stderr.String(), e.ExitCode()
+		}
+		if err != nil {
+			t.Fatalf("run child: %v", err)
+		}
+		return stdout.String(), stderr.String(), 0
+	}
+	out, errOut, code := run("--once", "--ctx", "beta", "--width", "120")
+	if code != 0 || !strings.Contains(out, "B1") || strings.Contains(out, "A1") {
+		t.Errorf("factory --once --ctx beta: exit %d, stdout %q, stderr %q; want beta's B1 only", code, out, errOut)
+	}
+	_, errOut, code = run("--once", "--ctx", "gamma")
+	if code != 2 || !strings.Contains(errOut, `--ctx "gamma"`) || !strings.Contains(errOut, "alpha, beta") {
+		t.Errorf("factory --ctx gamma: exit %d, stderr %q; want 2 naming alpha, beta", code, errOut)
 	}
 }
 
