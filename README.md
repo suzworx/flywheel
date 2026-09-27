@@ -351,7 +351,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | --- | --- |
 | `flywheel init` | Scaffold `flywheel.md` and `.flywheel/`; `--hooks` agent session hooks, `--git-hooks` commit-msg and pre-push hooks, `--ci` the `flywheel-audit` workflow, `--local MODEL` an offline worker. |
 | `flywheel config <get\|set\|show\|validate>` | Read, set and validate `.flywheel/config.json`, e.g. `flywheel config set integration.branch main2`; an unknown key lists every settable key. |
-| `flywheel doctor [--worker NAME] [--record]` | Probe every configured model and classify its availability (exit 0/1); warns when the ledger is untracked or lacks `merge=union`, and names the integration branch. |
+| `flywheel doctor [--worker NAME] [--record]` | Probe every configured model and classify its availability (exit 0/1), printing why a probe is not ok; warns when the ledger is untracked or lacks `merge=union`, and names the integration branch. |
 | `flywheel version` | Print the flywheel version. |
 | `flywheel upgrade [--check] [--to VERSION] [--force]` | Self-update to a release, checksum-verified; refuses (exit 6) while a run's lease is live unless `--force`. |
 | `flywheel brief <task> --from-issue N --owns a,b` | Turn a tracker issue into a linted brief at `.flywheel/briefs/<task>.txt` and record it `planned` with the issue number. |
@@ -372,7 +372,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel audit (<task>\|--sample R\|--first-article\|--wave\|--release V) --session S` | Independent audit: re-run a unit's gates in a clean copy and check its record (exit 0/5), or audit a published release (exit 8 inconclusive). |
 | `flywheel land <task> [--merge [--onto BRANCH]] [--commit SHA] [--note TEXT]` | Land a passed unit: `--merge` rebases its worktree onto the integration branch, re-runs gates and fast-forwards; refused without a passing inspection (T5). |
 | `flywheel land <task> --commit SHA --by-lead --reason TEXT` | Record a unit the lead implemented itself; `--exception TEXT --session S` lands a hand-verified unit, `--allow-untriaged REASON` past untriaged signals (T9). |
-| `flywheel ship <task> [--integration BRANCH]` | Local shipping steps: preflight, commit leftovers, merge the integration branch into `fw/<task>`, re-run gates; one `shipped` event each, resumable. |
+| `flywheel ship <task> [--integration BRANCH]` | Local shipping steps: preflight, commit leftovers, merge the integration branch into `fw/<task>`, re-run gates; one `shipped` event each, resumable; signs what it lands with a `Shipped-by:` trailer and a PR footer (off: `ship.signature` false or `--no-signature`). |
 | `flywheel rebase <task> [--onto REF]` | Move a `stacked` unit's `fw/<task>` onto the integration branch and record the new base (exit 1 on conflicts, aborted). |
 | `flywheel recover [--apply] [--json]` | After a crash or a new session: integrity plus every unit's world against the ledger, with one next action and command each; `--apply` runs only the safe ones. |
 | `flywheel checkpoint list\|diff\|restore\|drop` | The snapshots of interrupted attempts at `refs/flywheel/checkpoints/<task>/<attempt>`. |

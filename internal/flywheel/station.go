@@ -77,7 +77,16 @@ func LineOf(cfg Config, dir string, events []Event, task string) string {
 			break
 		}
 	}
-	if ts.ID == "" {
+	return lineOfTask(cfg, dir, events, ts)
+}
+
+// lineOfTask is LineOf for a task whose state the caller already derived
+// (issue #630): a floor refresh derives the ledger once, not once per unit.
+// events may be the whole ledger or only ts's own events (every read here
+// filters by the task); a zero ts has no line.
+func lineOfTask(cfg Config, dir string, events []Event, ts TaskState) string {
+	task := ts.ID
+	if task == "" {
 		return ""
 	}
 	if attempt := currentAttempt(ts, events); attempt != "" {

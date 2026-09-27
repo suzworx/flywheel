@@ -68,6 +68,7 @@ Hiding the header or the crumbs gives their lines to the table.
 | `1` `2` `3` | pulse, metrics | the window: 24h, 7d, 30d |
 | arrows, `h` `j` `k` `l` | pulse | move between the panels |
 | Enter | pulse, metrics | the metric's drill-down: the panel's first metric, the row's metric (see [Metric drill-down](#metric-drill-down)) |
+| `M` `W` (Shift) | metrics | split the metric under the cursor by model, by worker; the same key again, or Esc, returns (see [Split by model or worker](#split-by-model-or-worker)) |
 | `h` `u` | metric drill-down | the chart, the units behind the number |
 | Enter | metric drill-down, units | the unit's detail at its why; Esc comes back to the units |
 | Esc | everywhere | leave the drill-down, help or prompt; in a table, clear the filter, else go back to the previous view |
@@ -94,7 +95,7 @@ for the keys to come.
 | --- | --- | --- |
 | `units` | `u` | every unit: stage, attempt, session, model, steps, age, state, and last its why (see [Unit detail](#unit-detail)) |
 | `workers` | `w` | the worker lines and the staffed roles |
-| `andon` | `a` | the units that stopped the line |
+| `andon` | `a` | what stopped or holds the line, worst first, each with its next step (see [Andon](#andon)) |
 | `events` | `e` | the recent events, newest first |
 | `lines` | `l` | the product lines |
 | `tree` | `t` | the `needs` tree of every unit not landed, like k9s xray: each unit no other open unit needs is a root, its needs are its children (`├─`, `└─`), each node `task stage`; a landed need is a leaf, a cycle is cut and marked `cycle` |
@@ -140,7 +141,7 @@ key switches the tab, and the crumbs name it (`<units> <T3> <brief>`):
 | `w` | why | the why and the timeline (the tab Enter opens) |
 | `d` | explain | `flywheel explain` of the unit |
 | `y` | brief | the brief's text, the file its latest planned, amended or dispatched event names |
-| `l` | log | the unit's events as readable lines |
+| `l` | log | the worker's run: one line per tool call of its latest attempt (see [The log tab](#the-log-tab)) |
 | `c` | checkpoints | its `refs/flywheel/checkpoints/<task>/<attempt>` and their changed paths (read from git as the tab opens and on Ctrl-R) |
 | `F` | findings | its review findings, `OPEN` or `closed`, each followed by the responses to it |
 | `e` | events | its events as the ledger records them |
@@ -228,6 +229,21 @@ metric has a series, and the arrow), Δ PREV (the change from the previous windo
 and DEFINITION (its one line from [metrics.md](metrics.md)). Shift-N sorts by METRIC; `/` filters.
 Enter opens the metric's drill-down.
 
+### Split by model or worker
+
+Shift-M on a metric splits the window by model, Shift-W by worker; the title names the split,
+`── Metrics 24h · spend by model(all)[2] ──`. Each row is MODEL (or WORKER), SPEND, LANDED,
+FIRST-PASS and PER LANDED:
+
+- by model, from the metrics' by-model scoreboard: landed is the model's accepted units,
+  first-pass its accepted share of the inspected ones
+- by worker, from the dispatched events' worker (`-` for an older dispatch that names none): spend
+  is its attempts' finishes in the window, landed the units landed in the window whose latest
+  dispatch was its, first-pass those landed on their first attempt
+
+`–` marks a share or cost with nothing to divide by. The other key switches the split; the same
+key again, or Esc, returns to every metric with the cursor on the metric split.
+
 ### Metric drill-down
 
 The value, its trend and change, and its definition, then one of two parts; the crumbs name it,
@@ -288,7 +304,49 @@ included). Any other value is refused when the config is read.
 
 `flywheel factory --plain`, `--once` and `--json` do not use the skin.
 
+## Andon
+
+`:andon` (`:a`) lists what stopped or holds the line, worst first (entries of one severity
+newest first):
+
+- UNIT: the unit, or a factory-wide entry: `model/<model>` (a rate limit pauses it), `health` (the
+  controller stopped recording), `factory` (suspended), `staffing/<role>`, `group:<id>`
+- SEVERITY: `high` for failed, stalled, silent, git-write and permission-denied; `medium` for
+  rate-limited, a paused model, stale health and no-plan; `low` for the rest
+- SIGNAL: the condition as the floor names it (`stalled`, `capped`, `paused until 13:00`, …); the
+  row takes its colour
+- SINCE: the clock time it began, so a refresh leaves it unchanged
+- WHAT HAPPENED: the unit's why on one line, or what the factory-wide entry means
+- NEXT: `flywheel recover`'s next command for the unit (its action and reason when it has no
+  command), decided from the ledger alone: the view never runs recover's world checks (worktrees,
+  leases, run files, git), which take minutes on a large ledger, so it assumes the worktree matches
+  the ledger. Where only those checks can decide — an attempt still in flight (lost or live), a
+  `failed-dirty` unit's uncommitted changes — NEXT reads `flywheel recover`; a `stacked` unit's is
+  `flywheel rebase <task>`. A paused model's is `wait for the reset, then flywheel supervise
+  --resume-limited`, stale health's `flywheel controller`, a suspended factory's
+  `flywheel resume --session <s>`.
+
+UNIT leads the row: Enter and `l` open that unit, and it keys the changed-row marks.
+
 ## The log tab
+
+The log tab is the worker's run: the latest attempt's run file (`.flywheel/runs/<task>.<attempt>.jsonl`)
+read through the adapter its dispatched event names. The first line is the dispatch
+(`10:00:00 dispatched T1 attempt r1 on claude-opus-5-5 (claude)`), then one line per tool call:
+
+```
+--:--:-- #3 edit internal/flywheel/tui.go +12 −4
+--:--:-- #4 bash go test ./internal/flywheel/ rc=1
+--:--:--      ↳ --- FAIL: TestTUIRunLog (0.00s)
+10:05:00 ended stop $0.42
+```
+
+the step number, the tool and its target (the file, or the command), `+N −M` for an edit whose
+input names its old and new text, `rc=N` once a command's result arrives, and under a failed
+command its first failing test or compile line. A run stream carries no time per line, so a step's
+clock reads `--:--:--`; the last line is how the run ended, at the finished event's time. A torn
+last line waits for the next read, and the file is read again only when it grows. The unit's
+ledger events are the events tab (`e`).
 
 A running unit's log follows it: the last line stays in sight as lines arrive. Scrolling up (`k`,
 Up, PgUp) pauses that and the title says `paused; G to follow`; `G` follows again. A unit that

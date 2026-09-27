@@ -36,6 +36,8 @@ type ShipOptions struct {
 	IgnoreChecks []string              // check names ci disregards
 	Sleep        func(d time.Duration) // default time.Sleep
 	Requeue      int                   // re-runs from merge-base on ErrShipStale; 0 = 2, negative = never (issue #591)
+	Version      string                // the binary's version for the signature; "" = "dev"
+	NoSignature  bool                  // leave the signature out this run; config ship.signature false does it always
 }
 
 // ShipStep is one step's outcome: Result ok, skip or fail, Commit fw/<task>'s
@@ -68,6 +70,7 @@ type shipRun struct {
 	pr                     PullRequest // the unit's PR once pr ran or was looked up
 	issue                  int         // the planned event's issue, 0 without one
 	base                   string      // <remote>/<integration>'s commit merge-base saw, recorded on its event
+	trailer                string      // the Shipped-by: trailer, "" with the signature off
 }
 
 // shipStepFuncs runs each of ShipSteps: the outcome (ok or skip), a note, and
@@ -138,8 +141,17 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 			attempt = currentAttempt(ts, events)
 		}
 	}
+	cfg, _, err := LoadConfig(abs)
+	if err != nil {
+		return ShipResult{}, err
+	}
 	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events}
 	r.remoteDefaults()
+	if !o.NoSignature && cfg.ShipSignature() {
+		var footer string
+		r.trailer, footer = shipSignature(events, task, attempt, o.Version)
+		r.o.Body = withFooter(r.o.Body, footer)
+	}
 	res := ShipResult{Task: task, Attempt: attempt, Workdir: wt, Integration: o.Integration}
 	n := o.Requeue
 	if n == 0 {
@@ -383,7 +395,11 @@ func shipCommit(r *shipRun) (string, string, error) {
 	if headTree, err := gitWith(r.wt, env, "rev-parse", "HEAD^{tree}"); err == nil && headTree == tree {
 		return "skip", "nothing to commit", nil
 	}
-	sha, err := gitWith(r.wt, env, "commit-tree", tree, "-p", old, "-m", r.o.Message, "-m", "Flywheel-Task: "+r.task)
+	trailers := "Flywheel-Task: " + r.task
+	if r.trailer != "" {
+		trailers += "\n" + r.trailer
+	}
+	sha, err := gitWith(r.wt, env, "commit-tree", tree, "-p", old, "-m", r.o.Message, "-m", trailers)
 	if err != nil {
 		return "", "", err
 	}
@@ -563,6 +579,114 @@ func scrubMessage(s string) string {
 	return strings.Join(keep, "\n")
 }
 
+// shipSignature is flywheel's mark on what ship lands, built from the ledger
+// and the binary's version ("" is "dev"), never from the brief's prose: the
+// Shipped-by: trailer for its commits and squash merge, and the PR footer.
+// The gate counts are the latest reading per gate on the tree of attempt's
+// latest validated event, left out when it has none; corrections count the
+// task's c* attempts, left out when there are none.
+func shipSignature(events []Event, task, attempt, version string) (trailer, footer string) {
+	if version == "" {
+		version = "dev"
+	}
+	tree, found := "", false
+	for _, e := range events {
+		if e.Task == task && e.Kind == "validated" && (e.Attempt == "" || e.Attempt == attempt) {
+			tree, found = e.Tree, true
+		}
+	}
+	ok := map[string]bool{}
+	corrections := map[string]bool{}
+	for _, e := range events {
+		if e.Task != task {
+			continue
+		}
+		if isCorrection(e.Attempt) {
+			corrections[e.Attempt] = true
+		}
+		if found && e.Kind == "validated" && (e.Attempt == "" || e.Attempt == attempt) && e.Tree == tree {
+			ok[e.Gate] = e.Reason != "host-blocked" && e.RC != nil && *e.RC == 0
+		}
+	}
+	passed := 0
+	for _, v := range ok {
+		if v {
+			passed++
+		}
+	}
+	gates := ""
+	if found {
+		gates = fmt.Sprintf("%d/%d gates", passed, len(ok))
+	}
+	var tp []string
+	tp = append(tp, "unit "+task)
+	if attempt != "" {
+		tp = append(tp, "attempt "+attempt)
+	}
+	fp := []string{"Shipped by [flywheel](https://github.com/suzworx/flywheel) " + version, "unit `" + task + "`"}
+	if gates != "" {
+		tp = append(tp, gates)
+		fp = append(fp, gates)
+	}
+	if n := len(corrections); n > 0 {
+		fp = append(fp, fmt.Sprintf("%d correction(s)", n))
+	}
+	return fmt.Sprintf("Shipped-by: flywheel %s (%s)", version, strings.Join(tp, ", ")), strings.Join(fp, " · ")
+}
+
+// trailerLine matches a git trailer line, "Key: value" with no space in Key.
+var trailerLine = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*: \S`)
+
+// splitTrailers splits s, its trailing blank lines dropped, into the text
+// before its final paragraph and that paragraph when every line of it is a
+// trailer line; otherwise rest is all of it and trailers is "".
+func splitTrailers(s string) (rest, trailers string) {
+	s = strings.TrimRight(s, " \t\r\n")
+	i := strings.LastIndex(s, "\n\n")
+	last := s[i+1:]
+	for _, l := range strings.Split(strings.TrimLeft(last, "\n"), "\n") {
+		if !trailerLine.MatchString(strings.TrimRight(l, "\r")) {
+			return s, ""
+		}
+	}
+	if i < 0 {
+		return "", strings.TrimLeft(last, "\n")
+	}
+	return s[:i], strings.TrimLeft(last, "\n")
+}
+
+// withFooter adds footer to body as its own paragraph, above a final trailer
+// paragraph (Co-Authored-By: and the like) so that stays the last one. A body
+// already carrying a "Shipped by [flywheel]" line is returned as is.
+func withFooter(body, footer string) string {
+	if strings.Contains(body, "Shipped by [flywheel]") {
+		return body
+	}
+	rest, trailers := splitTrailers(body)
+	if trailers == "" {
+		return rest + "\n\n" + footer + "\n"
+	}
+	if rest == "" {
+		return footer + "\n\n" + trailers + "\n"
+	}
+	return rest + "\n\n" + footer + "\n\n" + trailers + "\n"
+}
+
+// withTrailer appends trailer to msg's final trailer paragraph, or as a new
+// paragraph when msg does not end in one. A message already carrying a
+// "Shipped-by: flywheel" line is returned as is.
+func withTrailer(msg, trailer string) string {
+	for _, l := range strings.Split(msg, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "Shipped-by: flywheel") {
+			return msg
+		}
+	}
+	if _, trailers := splitTrailers(msg); trailers != "" {
+		return strings.TrimRight(msg, " \t\r\n") + "\n" + trailer + "\n"
+	}
+	return strings.TrimRight(msg, " \t\r\n") + "\n\n" + trailer + "\n"
+}
+
 // transientErr reports whether err is a network blip worth retrying,
 // name-resolution failures included (issue #577).
 func transientErr(err error) bool {
@@ -686,7 +810,7 @@ func shipCI(r *shipRun) (string, string, error) {
 }
 
 // shipMerge squash merges the PR with the title "<Title> (#<n>)" and the
-// scrubbed Body, then re-reads the PR and requires MERGED: a merge call's
+// scrubbed Body ending in the Shipped-by: trailer (unless it is off), then re-reads the PR and requires MERGED: a merge call's
 // success is not proof. An already merged PR is skip, with no merge call.
 func shipMerge(r *shipRun) (string, string, error) {
 	if err := r.needPR(); err != nil {
@@ -715,7 +839,11 @@ func shipMerge(r *shipRun) (string, string, error) {
 		return "", note, fmt.Errorf("%w: %s", ErrShipStale, note)
 	}
 	title := fmt.Sprintf("%s (#%d)", r.o.Title, n)
-	merr := r.retry("merge", func() error { return r.o.Forge.Merge(n, title, scrubMessage(r.o.Body)) })
+	msg := scrubMessage(r.o.Body)
+	if r.trailer != "" {
+		msg = withTrailer(msg, r.trailer)
+	}
+	merr := r.retry("merge", func() error { return r.o.Forge.Merge(n, title, msg) })
 	state, commit, err = r.prState()
 	if err != nil {
 		return "", "", err

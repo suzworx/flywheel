@@ -668,7 +668,8 @@ func TestTUIAndonStateColored(t *testing.T) {
 	d := makeTestTUIData()
 	d.Floor.Andon = append(d.Floor.Andon, Andon{Task: "T9", State: "stalled", Age: 5})
 	m := NewTUI()
-	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'a'}, {Kind: term.KeyEnter}} {
+	// T9 (stalled, high) sorts first; j moves the cursor off it.
+	for _, k := range []term.Key{{Kind: term.KeyRune, Rune: ':'}, {Kind: term.KeyRune, Rune: 'a'}, {Kind: term.KeyEnter}, {Kind: term.KeyRune, Rune: 'j'}} {
 		m.Update(k, d)
 	}
 	frame := m.View(d, 80, 12, true)

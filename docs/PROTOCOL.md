@@ -89,7 +89,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
-  needs, needs-state, needs-env, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
+  needs, needs-state, needs-env, preflight, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
   event was appended; `Kind` is the optional `kind:` line, issue #475, trimmed and lowercased, the
   last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
   checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
@@ -133,6 +133,13 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   base brief's) is unset or empty in flywheel's environment: run refuses with rule `needs-env`
   (exit 6) naming the variables, never their values, before any event (issue #534);
   `flywheel validate` refuses the same way (exit 6) before any gate runs.
+- Not written when a `preflight:` command exits non-zero: each `preflight: CMD` line the prompt
+  names (a correction's unioned with the base brief's) runs in order in the repository root, as a
+  gate runs, after the needs-env check; the first that exits non-zero or cannot start refuses with
+  rule `preflight` (exit 6) naming the command, its exit code and its first output line, before any
+  event or file is written (issue #635). Each passing command prints `<task> preflight ok: <cmd>`.
+  Only `flywheel run` runs preflight; `flywheel validate` does not (it measures the deliverable,
+  not capacity).
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
@@ -705,6 +712,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `origin/<branch>`, `origin/main` when none) and `flywheel init --ci` (the audit workflow's push
   `branches`) read it; `flywheel doctor` prints `integration branch: <b> (integration.branch)` or
   `(detected)` on stderr and warns when a configured branch does not resolve.
+- The **ship signature** is `.flywheel/config.json` `"ship": {"signature": false}` to turn it off
+  (absent or `true` means on; `flywheel ship --no-signature` turns it off for one run). When on,
+  `flywheel ship` adds `Shipped-by: flywheel <version> (unit <task>, attempt <attempt>, <passed>/<total> gates)`
+  to its ship commit (beside `Flywheel-Task:`) and to the squash-merge message's final trailer
+  paragraph, and a `Shipped by [flywheel](...) <version> · unit ... · <passed>/<total> gates · <n> correction(s)`
+  footer to the PR body; each once, all built from the ledger and the binary's version.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
@@ -963,7 +976,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `probed`
 - Written by: `flywheel doctor --record`.
-- Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`).
+- Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`, or `flywheel doctor: <detail>` when the probe is not ok: the start error, the error message, or `exit N: <first stderr line>` / `no stop (...)`, cut to 200 characters; issue #637).
 - Effect: an `ok` probe newer than the model's latest provider error closes its breaker at once instead of waiting for the cooldown to expire (issue #46).
 
 ### `gate_probed`

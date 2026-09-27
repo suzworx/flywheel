@@ -170,6 +170,7 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		unitCPs    []string
 		cfg        Config
 		metrics    metricsCache // issue #583 k4: at most every metricsEvery
+		runLog     runLogCache
 	)
 	return func(m *TUI) (TUIData, error) {
 		if m.TakeRefresh() {
@@ -243,6 +244,28 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			}
 			cpCache, cpLoaded = checkpointAges(cps, events, at), true
 		}
+		// Each unit's open findings outside owns, which read its brief: once
+		// per refresh, for the whys and the andon alike (issue #630).
+		// Each unit reads only its own events from one index (#630).
+		byTask := tasksEvents(events)
+		owners := map[string][]string{}
+		for _, u := range floor.Units {
+			if u.NeedsOwner > 0 {
+				owners[u.Task] = needsOwnerFindings(dir, byTask[u.Task], u.Task)
+			}
+		}
+		// The andon's next steps (issue #583 k7 c1): recover's decision from
+		// the ledger alone (eventNext), for the andon's units only; never
+		// Recover itself, whose world checks take minutes on a large ledger.
+		if view == "andon" {
+			var andon []string
+			for _, a := range floor.Andon {
+				if unitExists(TUIData{Floor: floor}, a.Task) {
+					andon = append(andon, a.Task)
+				}
+			}
+			data.Next = eventNext(events, cfg, at, pauseAt, andon, owners)
+		}
 		lastView = view
 		data.Checkpoints = cpCache
 		if q := m.SearchQuery(); q != "" && (q != searchQ || !searchDone) {
@@ -264,14 +287,13 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			}
 		}
 
-		// Every unit's why (issue #583 k3), from what the floor measured.
+		// Every unit's why (issue #583 k3), from what the floor measured; the
+		// ledger is grouped by task once, not scanned again per unit (#630).
 		data.Why = map[string]string{}
+		whys := NewWhyIndex(events)
 		for _, u := range floor.Units {
-			ctx := WhyContext{RunState: u.RunState, Steps: u.Steps, StallTimeout: stall, PauseAt: pauseAt}
-			if u.NeedsOwner > 0 {
-				ctx.NeedsOwner = needsOwnerFindings(dir, events, u.Task)
-			}
-			data.Why[u.Task] = UnitWhy(events, u.Task, at, ctx)
+			ctx := WhyContext{RunState: u.RunState, Steps: u.Steps, StallTimeout: stall, PauseAt: pauseAt, NeedsOwner: owners[u.Task]}
+			data.Why[u.Task] = whys.UnitWhy(u.Task, at, ctx)
 		}
 
 		// Fill Detail if Wants drill-down.
@@ -294,12 +316,9 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 					}
 				}
 			case "log":
-				// All events of the task in order.
-				for _, e := range events {
-					if e.Task == task {
-						data.Detail = append(data.Detail, HumanLine(e))
-					}
-				}
+				// The worker's run (issue #583 k7), read again only when the
+				// run file changed size.
+				data.Detail = runLog.lines(dir, events, task)
 			case "why":
 				data.Detail = timelineLines(UnitTimeline(events, task))
 			case "brief":
@@ -326,6 +345,68 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 
 		return data, nil
 	}
+}
+
+// runLogCache holds the log tab's lines and the run file and size they were
+// read from.
+type runLogCache struct {
+	key   string // path, size and the finished time
+	cache []string
+}
+
+// lines is task's latest attempt's run as runLogLines draws it, read through
+// the adapter its dispatched event names (opencode when it names none).
+func (c *runLogCache) lines(dir string, events []Event, task string) []string {
+	var disp, fin *Event
+	for i := range events {
+		switch e := &events[i]; {
+		case e.Task == task && e.Kind == "dispatched":
+			disp, fin = e, nil
+		case e.Task == task && e.Kind == "finished" && disp != nil && e.Attempt == disp.Attempt:
+			fin = e
+		}
+	}
+	if disp == nil {
+		return []string{task + " has not been dispatched: no run yet"}
+	}
+	name := "opencode"
+	if disp.Adapter != "" {
+		name = disp.Adapter
+	}
+	adap, err := AdapterFor(name)
+	if err != nil {
+		return []string{"run: " + err.Error()}
+	}
+	rel := filepath.Join(".flywheel", "runs", task+"."+disp.Attempt+".jsonl")
+	info, err := os.Stat(filepath.Join(dir, rel))
+	if err != nil {
+		return []string{fmt.Sprintf("run: no run file %s yet", filepath.ToSlash(rel))}
+	}
+	ended := ""
+	if fin != nil {
+		ended = clockOf(fin.TS)
+	}
+	key := fmt.Sprintf("%s\x00%d\x00%s", rel, info.Size(), ended)
+	if key == c.key {
+		return c.cache
+	}
+	b, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		return []string{fmt.Sprintf("run: %v", err)}
+	}
+	head := fmt.Sprintf("%s dispatched %s attempt %s on %s (%s)", clockOf(disp.TS), task, disp.Attempt, disp.Model, name)
+	c.key, c.cache = key, runLogLines(adap, b, head, ended)
+	return c.cache
+}
+
+// clockOf is an event time as HH:MM:SS in the viewer's zone, noClock when it
+// does not parse.
+func clockOf(ts string) string {
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return noClock
+	}
+	return t.Local().Format("15:04:05")
 }
 
 // briefLines is the text of task's brief, the file its latest planned,
