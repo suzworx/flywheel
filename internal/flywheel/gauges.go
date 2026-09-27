@@ -1015,7 +1015,11 @@ func unitChangedPaths(wd, base, task string) ([]string, error) {
 	if base == "" {
 		return changed, nil
 	}
-	revs, err := gitRead(wd, []string{"rev-list", "--first-parent", "--parents", base + "..HEAD"})
+	revArgs := []string{"rev-list", "--first-parent", "--parents", base + "..HEAD"}
+	if ref := integrationRef(wd); ref != "" {
+		revArgs = append(revArgs, "^"+ref)
+	}
+	revs, err := gitRead(wd, revArgs)
 	if err != nil {
 		return changed, nil
 	}
@@ -1135,6 +1139,36 @@ func changedPaths(wd string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// integrationRef returns the ref of the integration branch whose commits are
+// never the unit's (issue #581: a unit branch that fast-forwarded to main must
+// not be charged with main's files): refs/remotes/origin/<B> for a configured
+// integration.branch B, else refs/heads/<B>; unconfigured, origin/main, else
+// origin/master, else refs/heads/<B> for the local main or master. The first
+// that resolves wins; a local branch HEAD is on is skipped (excluding it would
+// exclude the unit's own commits), and "" means none.
+func integrationRef(wd string) string {
+	b, configured := IntegrationBranch(wd)
+	var refs []string
+	if configured {
+		refs = []string{"refs/remotes/origin/" + b}
+	} else {
+		refs = []string{"refs/remotes/origin/main", "refs/remotes/origin/master"}
+	}
+	if b != "" {
+		refs = append(refs, "refs/heads/"+b)
+	}
+	cur, _ := gitRead(wd, []string{"rev-parse", "--symbolic-full-name", "HEAD"})
+	for _, ref := range refs {
+		if ref == strings.TrimSpace(cur) {
+			continue
+		}
+		if _, err := gitRead(wd, []string{"rev-parse", "--verify", "-q", ref + "^{commit}"}); err == nil {
+			return ref
+		}
+	}
+	return ""
 }
 
 // gitRead runs a read-only git command and returns its stdout, or an error if
