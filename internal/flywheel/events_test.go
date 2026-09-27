@@ -1441,3 +1441,43 @@ func TestShippedEventValidate(t *testing.T) {
 		t.Errorf("round-trip = %+v, want %+v", got, ok)
 	}
 }
+
+// TestSuspendedEventValidate: suspended and unsuspended carry a session and
+// no task, only suspended carries an RFC 3339 until, and both round-trip
+// ReadEvents (issue #572).
+func TestSuspendedEventValidate(t *testing.T) {
+	t.Parallel()
+	sus := Event{Kind: "suspended", Session: "lead", Note: "freeze", Until: "2026-09-26T18:00:00Z"}
+	thaw := Event{Kind: "unsuspended", Session: "lead", Note: "thaw"}
+	for _, e := range []Event{sus, thaw} {
+		if err := Validate(e); err != nil {
+			t.Errorf("Validate(%+v) = %v, want nil", e, err)
+		}
+	}
+	for name, e := range map[string]Event{
+		"suspended task":      {Kind: "suspended", Task: "T1", Session: "lead"},
+		"unsuspended task":    {Kind: "unsuspended", Task: "T1", Session: "lead"},
+		"suspended session":   {Kind: "suspended", Note: "freeze"},
+		"unsuspended session": {Kind: "unsuspended"},
+		"bad until":           {Kind: "suspended", Session: "lead", Until: "6pm"},
+		"until elsewhere":     {Kind: "unsuspended", Session: "lead", Until: "2026-09-26T18:00:00Z"},
+	} {
+		if err := Validate(e); err == nil {
+			t.Errorf("%s: Validate(%+v) = nil, want an error", name, e)
+		}
+	}
+	dir := t.TempDir()
+	if err := AppendEvents(dir, []Event{sus, thaw}); err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+	events, err := ReadEvents(dir)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("ReadEvents = %+v, %v; want 2 events", events, err)
+	}
+	if g := events[0]; g.Kind != "suspended" || g.Session != "lead" || g.Note != "freeze" || g.Until != sus.Until {
+		t.Errorf("suspended round-trip = %+v, want %+v", g, sus)
+	}
+	if g := events[1]; g.Kind != "unsuspended" || g.Session != "lead" || g.Note != "thaw" {
+		t.Errorf("unsuspended round-trip = %+v, want %+v", g, thaw)
+	}
+}

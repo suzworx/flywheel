@@ -51,6 +51,8 @@ first line stops matching `^# flywheel protocol v`.
   - [`audited`](#audited)
   - [`release_audited`](#release_audited)
   - [`health`](#health)
+  - [`suspended`](#suspended)
+  - [`unsuspended`](#unsuspended)
   - [`probed`](#probed)
   - [`gate_probed`](#gate_probed)
   - [`amended`](#amended)
@@ -861,6 +863,28 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   when none), `controller_generation` (the controller lock's generation) and `version` (the
   flywheel version). `Validate` requires the snapshot and no task; no other kind may carry `health`.
 - Effect: no status change. Read by `flywheel status --health`.
+
+### `suspended`
+- Written by: `flywheel suspend --session S [--reason TEXT] [--until TIME]` (issue #572).
+- Floor level: carries no `task`.
+- Carries: `session` (who froze the factory), `note` (the reason) and `until` (the thaw time,
+  RFC 3339; omitted when the freeze lasts until `flywheel resume`). `Validate` requires the session
+  and no task; no other kind may carry `until`, and it must parse as RFC 3339.
+- Effect: the factory is suspended while its latest `suspended` event comes after its latest
+  `unsuspended` event and its `until`, when set, is still ahead; past `until` it thaws with no
+  event. While suspended every dispatch path refuses and appends nothing: `flywheel run` exits 6
+  with rule `suspended` (`the factory is suspended since <ts> by <session>: <reason>; flywheel
+  resume --session <s> to thaw`), `flywheel next` turns each `DISPATCH` into a `WAIT` naming the
+  suspension, and the controller's and `supervise --resume-limited`'s auto-resume starts nothing,
+  reporting each unit not resumed with reason `suspended`. `flywheel status` prints a first
+  `SUSPENDED since …` line (`suspended` in `--json`) and the floor lists a `factory suspended`
+  andon entry first. A second `flywheel suspend` while suspended is refused (exit 6, rule `suspended`).
+
+### `unsuspended`
+- Written by: `flywheel resume --session S [--note TEXT]` (issue #572).
+- Floor level: carries no `task`.
+- Carries: `session` (who thawed the factory) and `note`. `Validate` requires the session and no task.
+- Effect: thaws a suspended factory; refused (exit 6, rule `suspended`) when it is not suspended.
 
 ### `probed`
 - Written by: `flywheel doctor --record`.

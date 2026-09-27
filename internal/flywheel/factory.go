@@ -460,7 +460,7 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 	fl.Groups = st.Groups
 	extra := append(pausedAndon(w.events, now, cfg.Limits.RateLimitPauseThreshold()), groupAndon(st.Groups, now)...)
 	extra = append(extra, healthAndon(w.events, now)...)
-	fl.Andon = buildAndon(units, fl.Staffing.Roles, extra)
+	fl.Andon = append(suspendedAndon(w.events, now), buildAndon(units, fl.Staffing.Roles, extra)...)
 	fl.Output = buildOutput(w.events, now)
 	return fl, nil
 }
@@ -929,6 +929,36 @@ func pausedAndon(events []Event, now time.Time, pauseAt float64) []Andon {
 		out = append(out, Andon{Task: "model/" + m, State: state, Age: 0})
 	}
 	return out
+}
+
+// suspendedAndon is the one andon entry of a suspended factory (issue #572),
+// first on the list: task factory, state "factory suspended since HH:MM by
+// <by>: <reason>" plus " until HH:MM" when a thaw time is set, in the
+// viewer's zone.
+func suspendedAndon(events []Event, now time.Time) []Andon {
+	s := FactorySuspended(events, now)
+	if !s.Suspended {
+		return nil
+	}
+	state := "factory suspended since " + hhmm(s.Since) + " by " + s.By + ": " + s.Reason
+	if s.Until != "" {
+		state += " until " + hhmm(s.Until)
+	}
+	age := 0
+	if t, err := time.Parse(time.RFC3339Nano, s.Since); err == nil {
+		age = ageOfTime(t, now)
+	}
+	return []Andon{{Task: "factory", State: state, Age: age}}
+}
+
+// hhmm is an RFC 3339 time as HH:MM in the viewer's zone, or ts unchanged
+// when it does not parse.
+func hhmm(ts string) string {
+	t, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return ts
+	}
+	return t.Local().Format("15:04")
 }
 
 // resetAtFor returns the reset_at of the task's latest finished event for

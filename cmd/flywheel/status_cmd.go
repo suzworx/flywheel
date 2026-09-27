@@ -106,6 +106,13 @@ func runStatus(args []string) {
 
 // printStatus writes the text summary, one line per group.
 func printStatus(rep flywheel.StatusReport) {
+	if s := rep.Suspended; s != nil {
+		until := ""
+		if s.Until != "" {
+			until = " until " + s.Until
+		}
+		fmt.Printf("SUSPENDED since %s by %s: %s%s\n", s.Since, s.By, s.Reason, until)
+	}
 	fmt.Printf("Factory: %s\n", rep.Factory)
 	if len(rep.Goals.List) == 0 {
 		fmt.Println("Goals: none")

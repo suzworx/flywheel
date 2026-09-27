@@ -243,6 +243,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, fmt.Errorf("--increment dispatches a fresh session of the brief; it cannot be combined with --resume or --delta")
 	}
 
+	// A suspended factory dispatches nothing (issue #572).
+	if err := refuseIfSuspended(dir, time.Now()); err != nil {
+		return Result{}, err
+	}
+
 	// --base (issue #456) names where a new task branch starts; only a
 	// worktree has a branch of its own to start there.
 	if o.Base != "" && !o.Worktree {
