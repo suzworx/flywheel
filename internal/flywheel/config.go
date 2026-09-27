@@ -68,6 +68,22 @@ type Config struct {
 	Worktree    *WorktreeConfig    `json:"worktree,omitempty"`
 	Lint        *LintConfig        `json:"lint,omitempty"`
 	Integration *IntegrationConfig `json:"integration,omitempty"`
+	Factory     *FactoryConfig     `json:"factory,omitempty"`
+}
+
+// FactoryConfig tunes the interactive factory view (issue #583 k6).
+type FactoryConfig struct {
+	// Skin is the view's colours: "dark" (the default when ""), "light", or
+	// "none" for no colour (SkinNames).
+	Skin string `json:"skin,omitempty"`
+}
+
+// FactorySkin is factory.skin, DefaultSkin when unset.
+func (c Config) FactorySkin() string {
+	if c.Factory == nil || c.Factory.Skin == "" {
+		return DefaultSkin
+	}
+	return c.Factory.Skin
 }
 
 // IntegrationConfig names the branch units integrate into (issue #456):
@@ -963,6 +979,11 @@ func (c Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("integration.branch %q must be a non-empty branch name with no whitespace, not starting with \"-\"", b))
 		}
 	}
+	if c.Factory != nil {
+		if _, err := SkinFor(c.Factory.Skin); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
 	seenLines := make(map[string]bool)
 	for i, l := range c.Lines {
 		where := fmt.Sprintf("lines[%d]", i)
@@ -1348,6 +1369,8 @@ func (c Config) Get(key string) (string, error) {
 			return "", nil
 		}
 		return c.Integration.Branch, nil
+	case "factory.skin":
+		return c.FactorySkin(), nil
 	}
 	return "", fmt.Errorf("unknown key %q; valid keys: %s", key, strings.Join(c.validKeys(), ", "))
 }
@@ -1407,7 +1430,7 @@ func (c Config) validKeys() []string {
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1667,6 +1690,15 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Integration.Branch = value
 		return nil
+	case "factory.skin":
+		// An empty value clears the key (back to dark); an unknown skin is
+		// Validate's to refuse.
+		if value = strings.TrimSpace(value); value == "" {
+			c.Factory = nil
+			return nil
+		}
+		c.Factory = &FactoryConfig{Skin: value}
+		return nil
 	}
 	return c.settableErr(key)
 }
@@ -1738,7 +1770,7 @@ func (c Config) settableKeys() []string {
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
 		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
