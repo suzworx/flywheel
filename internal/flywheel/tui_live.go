@@ -246,10 +246,12 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		}
 		// Each unit's open findings outside owns, which read its brief: once
 		// per refresh, for the whys and the andon alike (issue #630).
+		// Each unit reads only its own events from one index (#630).
+		byTask := tasksEvents(events)
 		owners := map[string][]string{}
 		for _, u := range floor.Units {
 			if u.NeedsOwner > 0 {
-				owners[u.Task] = needsOwnerFindings(dir, events, u.Task)
+				owners[u.Task] = needsOwnerFindings(dir, byTask[u.Task], u.Task)
 			}
 		}
 		// The andon's next steps (issue #583 k7 c1): recover's decision from

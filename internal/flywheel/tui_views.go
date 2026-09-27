@@ -312,6 +312,7 @@ func eventNext(events []Event, cfg Config, now time.Time, pauseAt float64, tasks
 		want[t] = true
 	}
 	suspended := FactorySuspended(events, now).Suspended
+	byTask, paused := tasksEvents(events), map[string]string{}
 	out := map[string]Next{}
 	for _, ts := range Derive(events).Tasks {
 		if !want[ts.ID] {
@@ -322,25 +323,32 @@ func eventNext(events []Event, cfg Config, now time.Time, pauseAt float64, tasks
 			continue
 		}
 		f := recoverFacts{Task: ts.ID, Status: ts.Status, Attempt: ts.Attempt, Suspended: suspended, NeedsOwner: needsOwner[ts.ID]}
+		// The unit's own events (every read below filters by its task, issue
+		// #630), save the model's pause, which every task's limits set.
+		own := byTask[ts.ID]
 		var fin *Event
-		for i := range events {
-			if e := &events[i]; e.Task == ts.ID && e.Kind == "finished" && e.Attempt == ts.Attempt {
+		for i := range own {
+			if e := &own[i]; e.Kind == "finished" && e.Attempt == ts.Attempt {
 				fin = e
 			}
 		}
 		if fin != nil {
 			f.FinishReason = fin.Reason
 		}
-		if p, ok := rateLimitPausedAt(events, ts.Model, now, pauseAt); ok && ts.Model != "" {
-			f.PausedUntil = p.Until.UTC().Format(time.RFC3339)
+		if _, done := paused[ts.Model]; !done && ts.Model != "" {
+			paused[ts.Model] = ""
+			if p, ok := rateLimitPausedAt(events, ts.Model, now, pauseAt); ok {
+				paused[ts.Model] = p.Until.UTC().Format(time.RFC3339)
+			}
 		}
+		f.PausedUntil = paused[ts.Model]
 		if fin != nil && fin.Reason == "stop" {
-			have, at, tree, _ := latestReading(events, ts.ID, "owns_checked", ts.Attempt)
+			have, at, tree, _ := latestReading(own, ts.ID, "owns_checked", ts.Attempt)
 			ft, _ := time.Parse(time.RFC3339Nano, fin.TS)
 			f.HaveReading = have && at.After(ft)
-			f.InspectReady = inspectionReady(events, ts.ID, ts.Attempt)
-			if panel := panelFor(events, ts.ID, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(events, ts.ID, cfg.ReviewRequired()) {
-				f.PanelPending = panelIncomplete(VerdictMatrix(events, ts.ID, tree, panel), panel)
+			f.InspectReady = inspectionReady(own, ts.ID, ts.Attempt)
+			if panel := panelFor(own, ts.ID, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(own, ts.ID, cfg.ReviewRequired()) {
+				f.PanelPending = panelIncomplete(VerdictMatrix(own, ts.ID, tree, panel), panel)
 			}
 		}
 		out[ts.ID] = nextAction(f)

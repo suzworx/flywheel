@@ -1581,3 +1581,45 @@ func TestWithdrawnHoldsNoClaims(t *testing.T) {
 		t.Errorf("stageOf(withdrawn) = %q, want withdrawn", got)
 	}
 }
+
+// TestBuildUnitsIndexedAgrees checks the refresh's per-task index (issue
+// #630): buildUnits with each unit given only its own events builds the same
+// units as with the whole ledger, on the perf ledger with a review round.
+func TestBuildUnitsIndexedAgrees(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	events := append(perfLedger(200),
+		Event{TS: "2026-09-10T00:00:00Z", Task: "P010", Kind: "reviewed", Verdict: "correct", Session: "rev", Category: "correctness"},
+		Event{TS: "2026-09-10T00:00:01Z", Task: "P010", Kind: "review_finding", Finding: "F1", Severity: "blocker", Title: "x", Path: "a.go", Session: "rev", Category: "correctness"})
+	cfg := Config{Lines: []Line{{Name: "cli", Worker: "w1", Owns: []string{"internal/"}}}}
+	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	build := func(byTask map[string][]Event) []Unit {
+		w := NewWatcher()
+		w.events = events
+		units, _, err := buildUnits(&w, Derive(events), now, dir, 600, cfg, byTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return units
+	}
+	whole, indexed := build(nil), build(tasksEvents(events))
+	if len(whole) != 200 {
+		t.Fatalf("units = %d, want 200", len(whole))
+	}
+	a, _ := json.Marshal(whole)
+	b, _ := json.Marshal(indexed)
+	if string(a) != string(b) {
+		for i := range whole {
+			if x, y := whole[i], indexed[i]; !reflectEqualUnit(x, y) {
+				t.Errorf("unit %s: indexed %+v\nwhole   %+v", x.Task, y, x)
+			}
+		}
+	}
+}
+
+// reflectEqualUnit compares two units as JSON.
+func reflectEqualUnit(a, b Unit) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}

@@ -271,3 +271,52 @@ func TestConfigLineWIPListedInGuidance(t *testing.T) {
 		t.Errorf("error = %q, want it to name lines.cli.wip", err)
 	}
 }
+
+// TestLineOfIndexedAgrees checks the refresh's path (issue #630): the ledger
+// derived once and each task given only its own events (tasksEvents,
+// lineOfTask) names the same line as LineOf, on the fixtures above merged
+// into one ledger and on the perf ledger with lines and headers mixed in.
+func TestLineOfIndexedAgrees(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Lines: []Line{
+		{Name: "cli", Worker: "w1", Owns: []string{"internal/"}},
+		{Name: "docs", Worker: "w1", Owns: []string{"docs/"}},
+	}}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: docs/guide.md\nneeds: none\ngate: exit 0\n\n# TASK: y\n"), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	fixtures := []Event{
+		{Task: "task1", Kind: "dispatched", Attempt: "r1", Line: "cli"},
+		{TS: "2026-09-19T00:00:00Z", Task: "task2", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-19T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-19T00:03:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{TS: "2026-09-19T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r2", Line: "docs"},
+		{TS: "2026-09-19T00:02:00Z", Kind: "staffed", Persona: "lead", Session: "s"},
+		{TS: "2026-09-19T00:00:00Z", Task: "T2", Kind: "planned", Brief: "b.txt",
+			Owns: []string{"docs/guide.md"}, Header: &BriefHeader{Owns: []string{"docs/guide.md"}}},
+	}
+	perf := perfLedger(200)
+	for i := range perf {
+		switch e := &perf[i]; {
+		case e.Kind == "dispatched" && e.Task < "P050":
+			e.Line = "cli"
+		case e.Kind == "planned" && e.Task >= "P150":
+			e.Header = &BriefHeader{Owns: []string{"docs/x.md"}}
+		}
+	}
+	for name, events := range map[string][]Event{"fixtures": fixtures, "perf": perf} {
+		st, byTask := Derive(events), tasksEvents(events)
+		lines := map[string]int{}
+		for _, ts := range st.Tasks {
+			want := LineOf(cfg, dir, events, ts.ID)
+			if got := lineOfTask(cfg, dir, byTask[ts.ID], ts); got != want {
+				t.Errorf("%s %s: indexed line %q, LineOf %q", name, ts.ID, got, want)
+			}
+			lines[want]++
+		}
+		if len(lines) < 2 {
+			t.Errorf("%s: lines %v, want at least two different lines", name, lines)
+		}
+	}
+}
