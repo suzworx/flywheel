@@ -204,7 +204,10 @@ flowchart LR
   `--worktree` builds each unit in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`.
 - **Watch** — `flywheel state` derives the floor from the log, `flywheel factory` opens an
   interactive k9s-style view of it, `flywheel watch` streams every event as one line, and
-  `flywheel wait <task>...` blocks until the named units finish.
+  `flywheel wait <task>...` blocks until the named units finish. In the view, `:pulse` and
+  `:metrics` chart the [metrics](docs/metrics.md) and drill to the units behind each number
+  ([factory view](docs/factory-view.md)); `flywheel fleet status` merges every factory on the
+  machine into one table ([fleet](docs/fleet.md)).
 
 The details (bases, `--notify`, the TREE column, withdrawing a plan) are in
 [docs/features.md](docs/features.md#dispatch-watch-and-wait). The planned screens of the factory

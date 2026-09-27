@@ -19,6 +19,9 @@ implements; `flywheel help <command>` prints any command's flags.
 - [Recover and checkpoints](#recover-and-checkpoints)
 - [Freeze and resume](#freeze-and-resume)
 - [Wake by schedule](#wake-by-schedule)
+- [The factory view](#the-factory-view)
+- [Metrics](#metrics)
+- [Fleet](#fleet)
 - [Offline](#offline)
 - [Worktrees and needs-state](#worktrees-and-needs-state)
 - [Product lines and staffing](#product-lines-and-staffing)
@@ -72,9 +75,8 @@ git still works.*
 - **Take a plan back** — `flywheel log --task <id> --kind withdrawn --note "<why>"` withdraws a
   planned unit; it is refused while the unit's attempt is dispatched or running (rule W1, exit 6).
 - **Watch** — `flywheel state` derives the floor from the event log; `flywheel factory` opens an
-  interactive, k9s-style view of the floor (`:units` `:workers` `:andon` `:events` `:lines` to
-  switch, `/` to filter, enter to explain a unit, `l` for its log, `?` for help, `q` to quit;
-  `--plain` keeps the plain redraw), and `flywheel watch` streams every event as one readable line.
+  interactive, k9s-style view of the floor (see [The factory view](#the-factory-view); `--plain`
+  keeps the plain redraw), and `flywheel watch` streams every event as one readable line.
   When any unit runs in a worktree, the plain floor's (`flywheel factory --plain`) units table adds
   a TREE column with that worktree and its base commit (`CP-A@abcdef1`), and the `--json` view
   carries `workdir` and `base`.
@@ -201,7 +203,7 @@ Work is never lost when an attempt is interrupted: an attempt that ends uncleanl
 
 **In recover.** `flywheel recover` offers a stopped unit `resume-session` with the reason `stopped by a factory suspension`: the command is `flywheel resume --session <s>` while the factory is still suspended, and `flywheel run <task> --resume` once it has thawed.
 
-In progress: the factory will freeze itself when every model's tokens run out, and thaw at the reset ([#572](https://github.com/suzworx/flywheel/issues/572)).
+**Automatic freeze.** The factory freezes itself when every model's tokens run out, with reason `tokens-exhausted` and the stop of the live workers, and thaws when they return, resuming each stopped unit in its own session ([#600](https://github.com/suzworx/flywheel/pull/600)). The factory view's header then reads `factory FROZEN since … until …` and each stopped unit's why says when it resumes.
 
 ## Wake by schedule
 
@@ -213,7 +215,26 @@ The controller only acts while something runs it. `flywheel schedule install [--
 
 There is one task per repository, named `flywheel-<directory name>-<first 8 hex of the sha256 of its absolute path>`, so two checkouts with the same name never share one. `flywheel schedule status` says whether it is installed (with the scheduler's detail), `flywheel schedule remove` deletes it, and a re-install replaces it. The task runs the binary that installed it, by its absolute path.
 
-In progress: `flywheel fleet`, one view of every factory on the machine ([#585](https://github.com/suzworx/flywheel/issues/585)).
+## The factory view
+
+`flywheel factory` on a terminal opens a k9s-style view of one ledger ([#583](https://github.com/suzworx/flywheel/issues/583)); [factory-view.md](factory-view.md) has every key, and the [Screens](screens.html) page draws each screen with what is shipped.
+
+- **Layout** — a header with the factory's context (repo, `factory running` or `factory FROZEN since … until …`, paused models, lead, health, version), the last 24 hours' numbers and the key menu of the screen shown; a title bar with the view, its filter, row count and sort; the flash line; and the crumbs. Ctrl-E hides the header, Ctrl-G the crumbs, Ctrl-W shows every cell whole and Ctrl-R reloads.
+- **Views** — `:` opens a view by name or alias: `units`, `workers`, `andon`, `events`, `lines`, `tree` (the needs tree, like k9s xray), `health`, `learnings`, `checkpoints`, `pulse` and `metrics`. Esc goes back, `-` swaps to the last view, `[` `]` walk the `:` history, Ctrl-A lists them all. `/` filters (`/re`, `/!re` inverse, `/-f` fuzzy); Shift-N, A, S, C sort.
+- **Unit why and timeline** — Enter on a unit opens its detail at the why: one plain sentence from the ledger's facts, the same one `recover` would give (also the units table's last column, WHY), then its timeline with every gap over five minutes labelled (`waiting for the rate-limit reset`, `frozen by suspend`, `waiting for inspection`) and a `total · touch · flow efficiency` line. `w` `d` `y` `l` `c` `F` `e` switch to why, explain, brief, log, checkpoints, findings and events; `J` opens the first unmet need. The log follows a running unit; `w` wraps, `t` hides the timestamps, `f` goes fullscreen.
+- **`:pulse` and `:metrics`** — six panels (flow, quality, reliability, cost, capacity, by model) and a table of every metric with its trend and change over a window (`1` 24h, `2` 7d, `3` 30d). Enter opens a metric's drill-down: its chart (a histogram, a control chart, the WIP flow, or bars) with `h`, the exact units behind the number with `u`, and Enter on one of them opens its why.
+- **Search** — `:s <text>` searches the ledger, the run logs, the reports and the briefs; Enter opens the match.
+- **Colours and skins** — each row takes the colour of its state (cyan running, green passed, yellow waiting, red failed or stalled, magenta frozen, dim landed), a row that changed is drawn bold for two refreshes, and a key never waits for the ledger, which is read in the background. `factory.skin` in `.flywheel/config.json` is `dark` (the default), `light` or `none`.
+
+Still to come: actions on the unit under the cursor (validate, inspect, resume, withdraw), marks, `--readonly` and hotkeys.
+
+## Metrics
+
+`flywheel stats --metrics [--window 24h|7d|30d] [--json]` computes the factory's lean metrics from the event log alone: flow (throughput, WIP, lead, queue, cycle and touch time, flow efficiency), quality (first-pass yield, rework, gate fail rate, review findings), reliability (andons, MTTR, frozen and paused time), cost (spend, cost per landed unit, tokens per step, by model) and capacity (utilization, idle). Each value has a trend against the previous window of equal length, and each is backed by the units behind it. [metrics.md](metrics.md) defines every number; the factory view's `:pulse` and `:metrics` draw the same report.
+
+## Fleet
+
+A lead often runs several ledgers at once: the main checkout, sibling checkouts, unit worktrees and other repositories. `flywheel fleet add <path> [--name N]` registers a root in one per-user `fleet.json` (`FLYWHEEL_FLEET` points elsewhere), `flywheel fleet remove <name>` drops it, `flywheel fleet list` shows each root and every ledger found under it (its git worktrees, `.flywheel/worktrees` and `.claude/worktrees`), and `flywheel fleet status [--all] [--idle-after D]` prints one merged table, one row per ledger, with its running, passed, finished and andon counts, state, health and last activity; a git worktree shows its own activity, and idle worktree ledgers fold into one row per root ([#585](https://github.com/suzworx/flywheel/issues/585)). See [fleet.md](fleet.md). In progress: a fleet learnings queue, `flywheel fleet watch`, and the fleet as a screen in the factory view (`:ctx`).
 
 ## Offline
 
