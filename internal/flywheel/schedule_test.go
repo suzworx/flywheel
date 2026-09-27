@@ -2,7 +2,11 @@ package flywheel
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +136,84 @@ func TestScheduleLaunchdPlist(t *testing.T) {
 		if !strings.Contains(got, w) {
 			t.Errorf("plist missing %q:\n%s", w, got)
 		}
+	}
+}
+
+// TestScheduleFleetPlanAndTask: the fleet plan runs `fleet watch --once`
+// against the registry (with --notify when given) under a per-user name
+// distinct from the repository task, logs beside the registry, and the
+// host's scheduler (driven by an injected Runner) installs, queries and
+// removes that same name; the other schedulers' forms carry it too.
+func TestScheduleFleetPlanAndTask(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "my cfg")
+	file := filepath.Join(dir, "fleet.json")
+	p, err := fleetPlanFor(file, "fw", `HOST\me`, 0, "notify me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := planFor(dir, "fw", 0)
+	if p.Name != "flywheel-fleet-me" || p.Name == repo.Name || p.Every != DefaultFleetWatchEvery {
+		t.Errorf("fleet plan name %q every %v; want flywheel-fleet-me, not %q, every 5m", p.Name, p.Every, repo.Name)
+	}
+	if want := []string{"fleet", "watch", "--once", "--registry", file, "--notify", "notify me"}; !reflect.DeepEqual(p.Args, want) {
+		t.Errorf("Args = %q, want %q", p.Args, want)
+	}
+	if p.scheduleLog() != filepath.Join(dir, "fleet-watch.log") {
+		t.Errorf("log = %q, want fleet-watch.log beside the registry", p.scheduleLog())
+	}
+	if q, _ := fleetPlanFor(file, "fw", "me", 10*time.Minute, ""); slices.Contains(q.Args, "--notify") || q.Every != 10*time.Minute {
+		t.Errorf("plan without notify = %+v", q)
+	}
+	if _, err := fleetPlanFor(file, "fw", "me", 30*time.Second, ""); err == nil {
+		t.Error("fleet plan accepted 30s")
+	}
+	if tr := schtasksArgs("install", p)[9]; !strings.Contains(tr, `fleet watch --once --registry "`+file+`" --notify "notify me"`) {
+		t.Errorf("schtasks /TR = %q", tr)
+	}
+	if entry, _ := cronEntry(p); !strings.Contains(entry, "fleet watch --once") || !strings.Contains(entry, "fleet-watch.log") {
+		t.Errorf("cron entry = %q", entry)
+	}
+	if pl := launchdPlist(p); !strings.Contains(pl, "io.github.suzworx.flywheel-fleet-me") || !strings.Contains(pl, "<string>watch</string>") {
+		t.Errorf("plist = %s", pl)
+	}
+	if runtime.GOOS == "darwin" {
+		t.Skip("launchd writes into the real ~/Library/LaunchAgents; its plist is checked above")
+	}
+	crontab := ""
+	var calls []string
+	run := func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "crontab" && args[0] != "-l" {
+			b, err := os.ReadFile(args[0])
+			crontab = string(b)
+			return nil, err
+		}
+		return []byte(crontab), nil
+	}
+	s, err := NewScheduler(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Install(p); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := s.Status(p.Name); !ok || err != nil {
+		t.Errorf("status = %v, %v; want installed", ok, err)
+	}
+	if err := s.Remove(p.Name); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range calls {
+		if strings.HasPrefix(c, "schtasks") && !strings.Contains(c, "/TN "+p.Name+" ") && !strings.HasSuffix(c, "/TN "+p.Name) {
+			t.Errorf("schtasks call without the fleet name: %q", c)
+		}
+	}
+	if runtime.GOOS != "windows" && strings.Contains(crontab, p.Name) {
+		t.Errorf("crontab after remove = %q", crontab)
+	}
+	if len(calls) < 3 {
+		t.Errorf("calls = %q, want install, status and remove through the runner", calls)
 	}
 }
 

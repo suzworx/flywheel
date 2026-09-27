@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -273,28 +275,80 @@ func TestScheduleMainExitsAndOutput(t *testing.T) {
 	}
 	dir := t.TempDir()
 	var out, errb strings.Builder
-	if code := scheduleMain([]string{"install", "--every", "5m", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+	if code := scheduleMain([]string{"install", "--every", "5m", "--dir", dir}, &out, &errb, newSched, plan, noFleetPlan(t)); code != 0 {
 		t.Fatalf("install = %d; stderr %s", code, errb.String())
 	}
 	if w := "installed flywheel-x-12345678: every 5m0s runs /bin/fw controller --once --dir"; !strings.Contains(out.String(), w) {
 		t.Errorf("install output = %q, want %q", out.String(), w)
 	}
 	out.Reset()
-	if code := scheduleMain([]string{"status", "--dir", dir}, &out, &errb, newSched, plan); code != 0 ||
+	if code := scheduleMain([]string{"status", "--dir", dir}, &out, &errb, newSched, plan, noFleetPlan(t)); code != 0 ||
 		out.String() != "flywheel-x-12345678: installed\nnext run soon\n" {
 		t.Errorf("status = %d %q", code, out.String())
 	}
-	if code := scheduleMain([]string{"remove", "--dir", dir}, &out, &errb, newSched, plan); code != 0 {
+	if code := scheduleMain([]string{"remove", "--dir", dir}, &out, &errb, newSched, plan, noFleetPlan(t)); code != 0 {
 		t.Errorf("remove = %d", code)
 	}
 	calls := len(f.calls)
 	for _, args := range [][]string{{}, {"bogus"}, {"install", "--every", "30s"}, {"status", "--every", "5m"}, {"remove", "extra"}} {
-		if code := scheduleMain(args, &out, &errb, newSched, plan); code != 2 {
+		if code := scheduleMain(args, &out, &errb, newSched, plan, noFleetPlan(t)); code != 2 {
 			t.Errorf("scheduleMain(%v) = %d, want 2", args, code)
 		}
 	}
 	if len(f.calls) != calls || calls != 3 {
 		t.Errorf("calls = %v, want exactly install, status, remove", f.calls)
+	}
+}
+
+// noFleetPlan is a fleetPlan a test that never passes --fleet must not call.
+func noFleetPlan(t *testing.T) func(time.Duration, string) (flywheel.SchedulePlan, error) {
+	return func(time.Duration, string) (flywheel.SchedulePlan, error) {
+		t.Error("fleet plan built without --fleet")
+		return flywheel.SchedulePlan{}, nil
+	}
+}
+
+// TestScheduleFleetCLI: install --fleet builds the fleet plan (default every
+// unless --every is given, --notify passed through) and installs it under its
+// own name, never the repository plan; status and remove --fleet use the same
+// name; --notify without --fleet is usage.
+func TestScheduleFleetCLI(t *testing.T) {
+	t.Parallel()
+	f := &fakeScheduler{}
+	newSched := func(flywheel.Runner) (flywheel.Scheduler, error) { return f, nil }
+	repoPlan := func(string, time.Duration) (flywheel.SchedulePlan, error) {
+		t.Error("repository plan built with --fleet")
+		return flywheel.SchedulePlan{}, nil
+	}
+	var got []string
+	fleetPlan := func(every time.Duration, notify string) (flywheel.SchedulePlan, error) {
+		got = append(got, fmt.Sprintf("%v %q", every, notify))
+		args := []string{"fleet", "watch", "--once"}
+		if notify != "" {
+			args = append(args, "--notify", notify)
+		}
+		return flywheel.SchedulePlan{Name: "flywheel-fleet-me", Every: max(every, 5*time.Minute), Exe: "/bin/fw", Args: args}, nil
+	}
+	var out, errb strings.Builder
+	if code := scheduleMain([]string{"install", "--fleet", "--notify", "say hi"}, &out, &errb, newSched, repoPlan, fleetPlan); code != 0 {
+		t.Fatalf("install --fleet = %d; stderr %s", code, errb.String())
+	}
+	if w := `installed flywheel-fleet-me: every 5m0s runs /bin/fw fleet watch --once --notify "say hi"`; !strings.Contains(out.String(), w) {
+		t.Errorf("install output = %q, want %q", out.String(), w)
+	}
+	for _, args := range [][]string{{"install", "--fleet", "--every", "10m"}, {"status", "--fleet"}, {"remove", "--fleet"}} {
+		if code := scheduleMain(args, &out, &errb, newSched, repoPlan, fleetPlan); code != 0 {
+			t.Errorf("schedule %v = %d; stderr %s", args, code, errb.String())
+		}
+	}
+	if want := []string{`0s "say hi"`, `10m0s ""`, `0s ""`, `0s ""`}; !slices.Equal(got, want) {
+		t.Errorf("fleet plans = %q, want %q", got, want)
+	}
+	if want := []string{"install flywheel-fleet-me 5m0s", "install flywheel-fleet-me 10m0s", "status flywheel-fleet-me", "remove flywheel-fleet-me"}; !slices.Equal(f.calls, want) {
+		t.Errorf("calls = %q, want %q", f.calls, want)
+	}
+	if code := scheduleMain([]string{"install", "--notify", "x"}, &out, &errb, newSched, repoPlan, fleetPlan); code != 2 {
+		t.Errorf("install --notify without --fleet = %d, want 2", code)
 	}
 }
 
@@ -1053,5 +1107,130 @@ func TestFleetLearningsCLI(t *testing.T) {
 	}
 	if code, out, _ := run("--json"); code != 0 || strings.TrimSpace(out) != "[]" {
 		t.Errorf("fleet learnings --json after done = %d %q, want []", code, out)
+	}
+}
+
+// TestFleetWatchCLI drives learnings --since and --import-seen and watch
+// --once against temp registries holding one root with a 1h and a 3h old
+// learning: --since 2h queues only the 1h one, --import-seen reports the
+// titles it matched, and watch prints each new learning once, then nothing.
+func TestFleetWatchCLI(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	root := filepath.Join(t.TempDir(), "a")
+	if err := os.MkdirAll(filepath.Join(root, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var lines []byte
+	for _, l := range []struct {
+		title string
+		age   time.Duration
+	}{{"older", 3 * time.Hour}, {"newer", time.Hour}} {
+		b, _ := json.Marshal(flywheel.Event{TS: now.Add(-l.age).Format(time.RFC3339Nano), Task: "t1", Kind: "learning", Severity: "P1", Title: l.title, Observed: "o"})
+		lines = append(append(lines, b...), '\n')
+	}
+	if err := os.WriteFile(filepath.Join(root, ".flywheel", "events.jsonl"), lines, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := func() string {
+		file := filepath.Join(t.TempDir(), "fleet.json")
+		if err := flywheel.SaveFleet(file, flywheel.Fleet{Roots: []flywheel.FleetRoot{{Name: "a", Path: root}}}); err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	run := func(file string, args ...string) (int, string, string) {
+		var out, errb strings.Builder
+		code := fleetMain(args, &out, &errb, file, now)
+		return code, out.String(), errb.String()
+	}
+	var ls []flywheel.FleetLearning
+	if code, out, errs := run(registry(), "learnings", "--since", "2h", "--json"); code != 0 || json.Unmarshal([]byte(out), &ls) != nil ||
+		len(ls) != 1 || ls[0].Title != "newer" || !strings.Contains(errs, "newer than 2h0m0s") {
+		t.Errorf("learnings --since 2h = %d %s %s; want only newer", code, out, errs)
+	}
+	seen := filepath.Join(t.TempDir(), "seen.json")
+	if err := os.WriteFile(seen, []byte(`[{"title":"newer"},"gone"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := registry()
+	if code, out, errs := run(file, "learnings", "--import-seen", seen); code != 0 || !strings.HasPrefix(out, "imported: 1 ") {
+		t.Errorf("learnings --import-seen = %d %q %s; want 1 matched", code, out, errs)
+	}
+	if code, out, _ := run(file, "learnings", "--json"); code != 0 || !strings.Contains(out, `"older"`) || strings.Contains(out, `"newer"`) {
+		t.Errorf("pending after import = %d %s; want older only", code, out)
+	}
+	watch := registry()
+	if code, out, errs := run(watch, "watch", "--once"); code != 0 ||
+		out != "baseline recorded: 1 ledgers, 0 andons, 2 pending learnings; changes from now on are reported\n" {
+		t.Errorf("first watch --once = %d %q %s; want only the baseline line", code, out, errs)
+	}
+	if code, out, _ := run(watch, "watch", "--once"); code != 0 || out != "" {
+		t.Errorf("second watch --once = %d %q, want nothing new", code, out)
+	}
+	code, out, errs := run(watch, "watch", "--once", "--report-all")
+	if got := strings.Split(strings.TrimSpace(out), "\n"); code != 0 || len(got) != 2 ||
+		!strings.HasPrefix(got[0], now.Format(time.RFC3339)+" a learning: [P1] older") || !strings.Contains(got[1], " a learning: [P1] newer") {
+		t.Errorf("watch --report-all = %d %q %s; want the two pending learnings, oldest first", code, out, errs)
+	}
+	for _, args := range [][]string{{"watch", "--interval", "0s"}, {"learnings", "--since", "0s"}, {"learnings", "--import-seen", seen, "--done-all"}} {
+		if code, _, errs := run(watch, args...); code != 2 {
+			t.Errorf("fleet %v = %d, want 2 (usage)\n%s", args, code, errs)
+		}
+	}
+}
+
+// TestFleetWatchBaselineNoFlood: a first watch over a ledger that already
+// holds an old andon and a learning prints only the baseline line and
+// notifies nothing; after one new andon the next watch prints and notifies
+// exactly that item; --report-all prints both andons and notifies nothing.
+func TestFleetWatchBaselineNoFlood(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	root := filepath.Join(t.TempDir(), "a")
+	if err := os.MkdirAll(filepath.Join(root, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := now.Add(-time.Hour).Format(time.RFC3339Nano)
+	appendEvents := func(events ...flywheel.Event) {
+		t.Helper()
+		fh, err := os.OpenFile(filepath.Join(root, ".flywheel", "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer fh.Close()
+		for _, e := range events {
+			b, _ := json.Marshal(e)
+			fh.Write(append(b, '\n'))
+		}
+	}
+	appendEvents(flywheel.Event{TS: ts, Task: "t1", Kind: "learning", Severity: "P1", Title: "old", Observed: "o"},
+		flywheel.Event{TS: ts, Task: "t1", Kind: "dispatched", Attempt: "r1"},
+		flywheel.Event{TS: ts, Task: "t1", Kind: "finished", Attempt: "r1", Reason: "silent"})
+	file := filepath.Join(t.TempDir(), "fleet.json")
+	if err := flywheel.SaveFleet(file, flywheel.Fleet{Roots: []flywheel.FleetRoot{{Name: "a", Path: root}}}); err != nil {
+		t.Fatal(err)
+	}
+	var notified []string
+	notify := func(_, env []string) error { notified = append(notified, strings.Join(env, ",")); return nil }
+	look := func(reportAll bool) string {
+		var out, errb strings.Builder
+		if err := fleetWatchOnce(&out, &errb, file, "notify-me", reportAll, now, notify); err != nil {
+			t.Fatalf("watch: %v (%s)", err, errb.String())
+		}
+		return out.String()
+	}
+	if out := look(false); out != "baseline recorded: 1 ledgers, 1 andons, 1 pending learnings; changes from now on are reported\n" || len(notified) != 0 {
+		t.Fatalf("first watch = %q, notified %q; want only the baseline line, no notify", out, notified)
+	}
+	appendEvents(flywheel.Event{TS: ts, Task: "t2", Kind: "dispatched", Attempt: "r1"},
+		flywheel.Event{TS: ts, Task: "t2", Kind: "finished", Attempt: "r1", Reason: "error"})
+	want := now.Format(time.RFC3339) + " a andon: t2 finished: error"
+	if out := look(false); out != want+"\n" || !slices.Equal(notified, []string{"FLYWHEEL_FLEET_ITEM=" + want}) {
+		t.Errorf("second watch = %q, notified %q; want exactly the new andon, notified once", out, notified)
+	}
+	out := look(true)
+	if !strings.Contains(out, "a andon: t1 finished: silent\n") || !strings.Contains(out, "a andon: t2 finished: error\n") || len(notified) != 1 {
+		t.Errorf("--report-all = %q, notified %d; want both andons, no notify", out, len(notified))
 	}
 }
