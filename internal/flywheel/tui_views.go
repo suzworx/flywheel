@@ -1,6 +1,8 @@
 package flywheel
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -216,6 +218,155 @@ func healthRows(d TUIData) (header []string, rows [][]string) {
 	return header, rows
 }
 
+// andonSeverities rank the andon's signals: high stops the line, medium
+// holds it, anything else is low.
+var andonSeverities = map[string]string{
+	"failed": "high", "failed-dirty": "high", "stalled": "high", "silent": "high",
+	"git-write": "high", "permission-denied": "high",
+	"rate-limited": "medium", "paused": "medium", "stale": "medium", "no-plan": "medium",
+}
+
+// severityRank orders the severities worst first.
+var severityRank = map[string]int{"high": 0, "medium": 1, "low": 2}
+
+// andonSignal is an andon entry's signal word: its state's first word, lower
+// case ("paused until 10:20" is paused, "STALE: …" is stale).
+func andonSignal(a Andon) string {
+	word, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(a.State)), " ")
+	return strings.TrimSuffix(word, ":")
+}
+
+// andonSeverity is an andon entry's severity: high, medium or low.
+func andonSeverity(a Andon) string {
+	if s, ok := andonSeverities[andonSignal(a)]; ok {
+		return s
+	}
+	return "low"
+}
+
+// andonWhat is what happened, on one line: a unit's why, else what the
+// factory-wide entry means.
+func andonWhat(d TUIData, a Andon) string {
+	switch {
+	case strings.HasPrefix(a.Task, "model/"):
+		return "a rate limit paused " + strings.TrimPrefix(a.Task, "model/") + ": " + a.State
+	case a.Task == "health":
+		return "the latest health event is stale: the controller is not recording"
+	case a.Task == "factory":
+		return a.State
+	case strings.HasPrefix(a.Task, "staffing/"):
+		return "role " + strings.TrimPrefix(a.Task, "staffing/") + " is registered with another session than its config names"
+	case strings.HasPrefix(a.Task, "group:"):
+		return "the group's integration review has open blocking findings"
+	}
+	if w := d.Why[a.Task]; w != "" {
+		return oneLine.Replace(w)
+	}
+	return a.State
+}
+
+// andonNext is the next step: recover's command for a unit (its action and
+// reason when it has no command), and a factory-wide entry's own step.
+func andonNext(d TUIData, a Andon) string {
+	switch {
+	case strings.HasPrefix(a.Task, "model/"):
+		return "wait for the reset, then flywheel supervise --resume-limited"
+	case a.Task == "health":
+		return "flywheel controller"
+	case a.Task == "factory":
+		return "flywheel resume --session <s>"
+	case strings.HasPrefix(a.Task, "staffing/"):
+		return "register the role's configured session, or fix its config"
+	// The floor measured these in the world, which eventNext never reads:
+	// uncommitted changes are recover's to explain, a stacked fix rebases.
+	case a.State == "failed-dirty":
+		return recoverNext.Command
+	case a.State == "stacked":
+		return "flywheel rebase " + a.Task
+	}
+	n, ok := d.Next[a.Task]
+	switch {
+	case !ok:
+		return "flywheel recover"
+	case n.Command != "":
+		return n.Command
+	}
+	return strings.TrimSpace(n.Action + ": " + n.Reason)
+}
+
+// recoverNext is the next step of a unit whose decision needs recover's
+// world checks (its lease, its run file, its worktree).
+var recoverNext = Next{Action: "recover", Reason: "needs the world checks", Command: "flywheel recover"}
+
+// eventNext is each of tasks' next action as recover decides it (issue #583
+// k7 c1), from the ledger alone: recover's facts that the events hold (the
+// status, the finish reason, the rate-limit pause, the readings, the panel,
+// the suspension; needsOwner the unit's findings outside owns) through
+// nextAction. It never reads the world, so it assumes the worktree matches
+// the ledger (no head mismatch, no unexplained change, not stacked, the tree
+// unchanged since the last reading); an attempt in flight, whose next step is
+// its lease and run file's to decide, gets recoverNext.
+func eventNext(events []Event, cfg Config, now time.Time, pauseAt float64, tasks []string, needsOwner map[string][]string) map[string]Next {
+	want := map[string]bool{}
+	for _, t := range tasks {
+		want[t] = true
+	}
+	suspended := FactorySuspended(events, now).Suspended
+	out := map[string]Next{}
+	for _, ts := range Derive(events).Tasks {
+		if !want[ts.ID] {
+			continue
+		}
+		if ts.Status == "dispatched" || ts.Status == "running" {
+			out[ts.ID] = recoverNext
+			continue
+		}
+		f := recoverFacts{Task: ts.ID, Status: ts.Status, Attempt: ts.Attempt, Suspended: suspended, NeedsOwner: needsOwner[ts.ID]}
+		var fin *Event
+		for i := range events {
+			if e := &events[i]; e.Task == ts.ID && e.Kind == "finished" && e.Attempt == ts.Attempt {
+				fin = e
+			}
+		}
+		if fin != nil {
+			f.FinishReason = fin.Reason
+		}
+		if p, ok := rateLimitPausedAt(events, ts.Model, now, pauseAt); ok && ts.Model != "" {
+			f.PausedUntil = p.Until.UTC().Format(time.RFC3339)
+		}
+		if fin != nil && fin.Reason == "stop" {
+			have, at, tree, _ := latestReading(events, ts.ID, "owns_checked", ts.Attempt)
+			ft, _ := time.Parse(time.RFC3339Nano, fin.TS)
+			f.HaveReading = have && at.After(ft)
+			f.InspectReady = inspectionReady(events, ts.ID, ts.Attempt)
+			if panel := panelFor(events, ts.ID, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(events, ts.ID, cfg.ReviewRequired()) {
+				f.PanelPending = panelIncomplete(VerdictMatrix(events, ts.ID, tree, panel), panel)
+			}
+		}
+		out[ts.ID] = nextAction(f)
+	}
+	return out
+}
+
+// andonRows are the andon view's rows, worst first; entries of one severity
+// keep the floor's order (newest first). UNIT leads, as the row's key; SINCE
+// is the clock time the condition began, so a refresh leaves it unchanged.
+func andonRows(d TUIData) (header []string, rows [][]string) {
+	header = []string{"UNIT", "SEVERITY", "SIGNAL", "SINCE", "WHAT HAPPENED", "NEXT"}
+	andons := slices.Clone(d.Floor.Andon)
+	slices.SortStableFunc(andons, func(a, b Andon) int {
+		return severityRank[andonSeverity(a)] - severityRank[andonSeverity(b)]
+	})
+	for _, a := range andons {
+		since := HumanAge(a.Age)
+		if !d.Floor.Refreshed.IsZero() {
+			since = d.Floor.Refreshed.Add(-time.Duration(a.Age) * time.Second).Local().Format("15:04")
+		}
+		rows = append(rows, []string{a.Task, andonSeverity(a), a.State, since, andonWhat(d, a), andonNext(d, a)})
+	}
+	return header, rows
+}
+
 // learningRows are the learnings, newest first.
 func learningRows(d TUIData) (header []string, rows [][]string) {
 	header = []string{"ID", "TITLE", "SEVERITY", "TASK", "DISMISSED"}
@@ -427,6 +578,146 @@ func findingLines(events []Event, task string) []string {
 		out = []string{"no review findings"}
 	}
 	return out
+}
+
+// noClock stands for a step's time: a run stream's lines carry none.
+const noClock = "--:--:--"
+
+// runStep is one tool call of a run as the log tab draws it.
+type runStep struct {
+	n                  int
+	tool, target, diff string
+	cmd                string // the command of a shell call, "" for any other tool
+	rc                 string // "rc=N" once its result arrived, for a shell call
+	failed             string // the first failing line of a failed command
+}
+
+// runExitCode reads claude's failed-command result, "Exit code N".
+var runExitCode = regexp.MustCompile(`^Exit code (\d+)`)
+
+// runFailLine finds a failing test or compile line in a command's output.
+var runFailLine = regexp.MustCompile(`--- FAIL|^FAIL\b|^panic:|\.go:\d+(:\d+)?: |(?i)\berror\b`)
+
+// runLogLines are the worker's run (issue #583 k7): the adapter's
+// observations of the attempt's run file, one line per tool call — its
+// number, tool and target (file or command), +N −M for an edit, rc=N for a
+// command and the first failing line of a failed one — then how it ended;
+// head is the dispatch line, ended the finished event's time ("" while it
+// runs). A torn last line is left for the next read.
+func runLogLines(adap Adapter, run []byte, head, ended string) []string {
+	if i := bytes.LastIndexByte(run, '\n'); i >= 0 {
+		run = run[:i+1]
+	} else {
+		run = nil
+	}
+	var steps []*runStep
+	var end string
+	for _, line := range bytes.Split(run, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		if obs, ok := adap.Parse(line); ok {
+			switch obs.Kind {
+			case "tool":
+				s := &runStep{n: len(steps) + 1, tool: obs.Tool, target: strings.Join(obsPaths(obs), ", ")}
+				if obs.Command != "" {
+					s.cmd = oneLine.Replace(obs.Command)
+					s.target = s.cmd
+				}
+				s.diff = editDiff(obs.Input)
+				steps = append(steps, s)
+			case "step":
+				end = strings.TrimSpace(obs.Reason + fmt.Sprintf(" $%.2f", obs.Cost))
+			case "error":
+				end = "error " + oneLine.Replace(obs.Error)
+			}
+		}
+		// A command's result answers the latest call, the only one the
+		// adapter reports per turn; the adapter keeps no rc, so it is read
+		// from the result line itself.
+		if isErr, text, ok := toolResult(line); ok && len(steps) > 0 {
+			s := steps[len(steps)-1]
+			if s.rc != "" || s.cmd == "" {
+				continue
+			}
+			s.rc = "rc=0"
+			if isErr {
+				s.rc = "rc=1"
+				if m := runExitCode.FindStringSubmatch(text); m != nil {
+					s.rc = "rc=" + m[1]
+				}
+				for _, l := range strings.Split(text, "\n") {
+					if l = strings.TrimSpace(l); runFailLine.MatchString(l) && !runExitCode.MatchString(l) {
+						s.failed = l
+						break
+					}
+				}
+			}
+		}
+	}
+	out := []string{head}
+	for _, s := range steps {
+		l := strings.TrimRight(fmt.Sprintf("%s #%-3d %-6s %s %s %s", noClock, s.n, s.tool, s.target, s.diff, s.rc), " ")
+		out = append(out, strings.Join(strings.Fields(l), " "))
+		if s.failed != "" {
+			out = append(out, noClock+"      ↳ "+s.failed)
+		}
+	}
+	switch {
+	case ended != "":
+		out = append(out, ended+" ended "+end)
+	case end != "":
+		out = append(out, noClock+" ended "+end)
+	}
+	return out
+}
+
+// editDiff is an edit's "+N −M" (lines written, lines replaced), from its
+// input's new_string (or content) and old_string; "" when it has neither.
+func editDiff(input string) string {
+	var in struct {
+		Old     string `json:"old_string"`
+		New     string `json:"new_string"`
+		Content string `json:"content"`
+	}
+	if input == "" || json.Unmarshal([]byte(input), &in) != nil {
+		return ""
+	}
+	count := func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(strings.TrimSuffix(s, "\n"), "\n") + 1
+	}
+	added := count(in.New) + count(in.Content)
+	if added == 0 && in.Old == "" {
+		return ""
+	}
+	return fmt.Sprintf("+%d −%d", added, count(in.Old))
+}
+
+// toolResult is a claude user line's first tool_result: whether it is an
+// error, and its text (toolResultText); ok false for any other line.
+func toolResult(line []byte) (isErr bool, text string, ok bool) {
+	var l struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content []struct {
+				Type    string          `json:"type"`
+				IsError bool            `json:"is_error"`
+				Content json.RawMessage `json:"content"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &l) != nil || l.Type != "user" {
+		return false, "", false
+	}
+	for _, b := range l.Message.Content {
+		if b.Type == "tool_result" {
+			return b.IsError, toolResultText(b.Content), true
+		}
+	}
+	return false, "", false
 }
 
 // unitEventLines are the unit's events as their ledger records.
