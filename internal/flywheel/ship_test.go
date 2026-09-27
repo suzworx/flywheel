@@ -260,12 +260,14 @@ func TestShipLocalIntegrationBranch(t *testing.T) {
 // fakeForge is a scripted Forge: pr is the existing PR (nil none), checks
 // the successive Checks answers (the last repeats; none means no checks),
 // checkErrs errors Checks returns first, one per call, and mergeState the
-// state a Merge leaves the PR in (default MERGED). It records every call.
+// state a Merge leaves the PR in (default MERGED), and onChecks, when set,
+// runs on every Checks call with its 1-based number. It records every call.
 type fakeForge struct {
 	pr         *PullRequest
 	checks     []ChecksState
 	checkErrs  []error
 	mergeState string
+	onChecks   func(call int)
 
 	created, merges, checkCalls int
 	mergeTitle, mergeMsg        string
@@ -290,6 +292,9 @@ func (f *fakeForge) CreatePR(base, head, title, body string) (PullRequest, error
 
 func (f *fakeForge) Checks(n int) (ChecksState, error) {
 	f.checkCalls++
+	if f.onChecks != nil {
+		f.onChecks(f.checkCalls)
+	}
 	if len(f.checkErrs) > 0 {
 		err := f.checkErrs[0]
 		f.checkErrs = f.checkErrs[1:]
@@ -367,6 +372,9 @@ func TestShipRemoteHappyPath(t *testing.T) {
 	res, out, err := f.ship(t, ShipOptions{Forge: ff, Poll: time.Millisecond, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }})
 	if err != nil || shipSteps(res) != "preflight=ok commit=skip merge-base=skip gates=ok push=ok pr=ok ci=ok merge=ok landed=ok closed=ok" {
 		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if strings.Contains(out, "requeue") {
+		t.Errorf("origin/main unchanged, yet a requeue ran:\n%s", out)
 	}
 	if got, want := shipGit(t, f.origin, "rev-parse", "fw/T"), shipGit(t, f.dir, "rev-parse", "fw/T"); got != want {
 		t.Errorf("origin fw/T = %s, want %s", got, want)
@@ -613,5 +621,91 @@ func TestShipRemoteScrubsSessionLines(t *testing.T) {
 	}
 	if len(ff.closed) != 1 {
 		t.Errorf("closed = %v; the body says Fixes #42", ff.closed)
+	}
+}
+
+// shipRan counts the steps named step that res ran rather than trusted.
+func shipRan(res ShipResult, step string) int {
+	n := 0
+	for _, s := range res.Steps {
+		if s.Step == step && !s.Done {
+			n++
+		}
+	}
+	return n
+}
+
+// TestShipStaleRequeue (issue #591, a): origin/main advances while CI is
+// polled the first time. merge refuses the stale head, records a failed merge
+// event naming the move, and the default requeue re-runs merge-base (merging
+// the new commit), gates, push and ci, then merges once. On the unfixed code
+// Merge runs on the stale head: merge-base runs once and no failed merge is
+// recorded.
+func TestShipStaleRequeue(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	var up string
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}, onChecks: func(call int) {
+		if call == 1 {
+			up = f.advance(t, "main", "other.txt", "origin\n")
+		}
+	}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	if err != nil || !strings.HasSuffix(shipSteps(res), "ci=ok merge=ok landed=ok closed=skip") {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if n := shipRan(res, "merge-base"); n != 2 || ff.merges != 1 {
+		t.Fatalf("merge-base ran %d times, Merge called %d times; want 2 and 1\n%s", n, ff.merges, out)
+	}
+	shipGit(t, f.dir, "merge-base", "--is-ancestor", up, "fw/T")
+	if !strings.Contains(out, "ship T merge: origin/main moved; requeue 1/2 from merge-base") {
+		t.Errorf("progress lacks the requeue line:\n%s", out)
+	}
+	stale := false
+	for _, e := range f.shipped(t) {
+		if e.Step == "merge" && e.Result == "fail" && strings.Contains(e.Note, "origin/main moved to "+up[:7]+" after CI ran on ") {
+			stale = true
+		}
+	}
+	if !stale {
+		t.Errorf("no failed merge event naming the move: %+v", f.shipped(t))
+	}
+}
+
+// TestShipStaleRequeueExhausted (issue #591, b): origin/main advances on every
+// CI poll; with Requeue 1 the second stale merge returns ErrShipStale and
+// Merge is never called. On the unfixed code the first merge succeeds.
+func TestShipStaleRequeueExhausted(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}, onChecks: func(call int) {
+		f.advance(t, "main", fmt.Sprintf("other%d.txt", call), "origin\n")
+	}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Requeue: 1})
+	if !errors.Is(err, ErrShipStale) || ff.merges != 0 || f.landedCommit(t) != "" {
+		t.Fatalf("Ship = %s, %v, merges %d; want ErrShipStale and no merge\n%s", shipSteps(res), err, ff.merges, out)
+	}
+	if shipRan(res, "merge-base") != 2 || shipRan(res, "merge") != 2 || !strings.Contains(out, "requeue 1/1") || strings.Contains(out, "requeue 2/") {
+		t.Errorf("steps %s\n%s", shipSteps(res), out)
+	}
+	if last := res.Steps[len(res.Steps)-1]; last.Step != "merge" || last.Result != "fail" {
+		t.Errorf("last step = %+v, want merge fail", last)
+	}
+}
+
+// TestShipStaleNever (issue #591, c): Requeue -1 never requeues; the first
+// stale merge returns ErrShipStale and nothing merges. On the unfixed code
+// Merge is called and Ship is ok.
+func TestShipStaleNever(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}, onChecks: func(call int) {
+		if call == 1 {
+			f.advance(t, "main", "other.txt", "origin\n")
+		}
+	}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Requeue: -1})
+	if !errors.Is(err, ErrShipStale) || ff.merges != 0 || strings.Contains(out, "requeue") || shipRan(res, "merge-base") != 1 {
+		t.Fatalf("Ship = %s, %v, merges %d\n%s", shipSteps(res), err, ff.merges, out)
 	}
 }
