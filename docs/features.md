@@ -162,7 +162,8 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 `limits.breaker` stops dispatching to a model after consecutive provider errors, until a cooldown
 passes; unless `--model` was given, an approved fallback takes over (`fallbacks[{model, approved: true}]`,
 the first whose own breaker is closed).
-`flywheel doctor --record` records each probe; an `ok` probe closes that model's breaker at once instead of waiting out the cooldown.
+`flywheel doctor` launches each probe as `flywheel run` launches a worker (the prompt on stdin for claude, the worker's permission mode and tools) and prints why a probe is not ok, e.g. `m: error (exit 1: <first stderr line>)` ([#637](https://github.com/suzworx/flywheel/issues/637)).
+`flywheel doctor --record` records each probe, the why in its note; an `ok` probe closes that model's breaker at once instead of waiting out the cooldown.
 
 A worker's optional `routing` block (`candidates`, `objective` one of `cost_per_accepted`, `accepted_rate`, `gate_pass_rate` or `clean_rate`, `explore`, `min_attempts`, `seed`) makes `flywheel run` pick each fresh dispatch's model from the `flywheel stats --by model` scoreboard, exploring another candidate by a deterministic draw (same ledger, seed and task, same choice) and recording the choice as `route` on `dispatched`. A brief's optional `kind:` header (`feature`, `fix`, `refactor`, `test`, `docs`, `chore` or `perf` by default; `lint.kinds` in config replaces the list, and `flywheel lint` checks it) routes on that kind's own scoreboard once any candidate has enough attempts there, and on the model-wide one otherwise, `route.basis` saying which ([#475](https://github.com/suzworx/flywheel/issues/475)).
 It is off by default; `--model` overrides it, a `--resume` keeps its model, and the breaker still applies to the routed model.

@@ -17,7 +17,10 @@ import (
 type DoctorProbe struct {
 	Model string
 	Class string
-	At    time.Time // when the probe finished; RecordProbes stamps its event with it (#334 review)
+	// Detail says why the class is not ClassOK: a start failure, the error
+	// observation's message, or the exit code and first stderr line (#637).
+	Detail string
+	At     time.Time // when the probe finished; RecordProbes stamps its event with it (#334 review)
 }
 
 // Doctor classes.
@@ -85,8 +88,8 @@ func DoctorWorker(dir, name string) ([]DoctorProbe, error) {
 	}
 	probes := make([]DoctorProbe, len(order))
 	for i, m := range order {
-		class := probeModel(dir, worker, adap, m)
-		probes[i] = DoctorProbe{Model: m, Class: class, At: now()}
+		class, detail := probeModel(dir, worker, adap, m)
+		probes[i] = DoctorProbe{Model: m, Class: class, Detail: detail, At: now()}
 	}
 	return probes, nil
 }
@@ -249,7 +252,8 @@ func DoctorAllOK(probes []DoctorProbe) bool {
 }
 
 // RecordProbes appends one probed event per probe (Model, Reason = the
-// class, Note "flywheel doctor"), in one AppendEvents batch.
+// class, Note "flywheel doctor", or "flywheel doctor: <detail>" when the
+// probe has a Detail), in one AppendEvents batch.
 func RecordProbes(dir string, probes []DoctorProbe) error {
 	events := make([]Event, len(probes))
 	for i, p := range probes {
@@ -257,31 +261,49 @@ func RecordProbes(dir string, probes []DoctorProbe) error {
 		if !p.At.IsZero() {
 			ts = p.At.UTC().Format(time.RFC3339Nano)
 		}
+		note := "flywheel doctor"
+		if p.Detail != "" {
+			note += ": " + p.Detail
+		}
 		events[i] = Event{
 			TS:     ts,
 			Kind:   "probed",
 			Model:  p.Model,
 			Reason: p.Class,
-			Note:   "flywheel doctor",
+			Note:   note,
 		}
 	}
 	return AppendEvents(dir, events)
 }
 
+// probePrompt is the one-line task every probe dispatches.
+const probePrompt = "Reply with the single word ok and stop. Do not use any tool.\n"
+
+// probeStderrCap bounds the stderr a probe keeps for its detail.
+const probeStderrCap = 4 << 10
+
 // probeModel runs one unrecorded probe of model through adap: the sim
-// adapter replays the fixture named by model, any other adapter is launched
-// exactly as Run launches it. The result classifies from the first error
-// observation's message, or ClassOK when the run ends with reason "stop" and
-// no error was seen; a probe that fails to open or start classifies
-// ClassError.
-func probeModel(dir string, worker Worker, adap Adapter, model string) string {
+// adapter replays the fixture named by model; any other adapter is launched
+// as Run launches it — the probe prompt in a temp PromptFile (and on stdin
+// for an adapter that prompts there), the worker's permission mode, tools
+// and MCP config — with max turns 1 and without Run's git guard or ledger.
+// The class comes from the first error observation's message, or ClassOK
+// when the run ends with reason "stop" and no error was seen; a probe that
+// fails to open or start, or ends without a stop, classifies ClassError.
+// detail says why whenever the class is not ClassOK (issue #637).
+func probeModel(dir string, worker Worker, adap Adapter, model string) (class, detail string) {
 	if class, ok := localEndpointClass(dir, model, &http.Client{Timeout: 3 * time.Second}); !ok {
-		return class
+		return class, ""
 	}
 
-	req := RunRequest{Task: "doctor", Attempt: "probe", Model: model, Variant: worker.Variant, Title: "doctor-probe"}
+	req := RunRequest{
+		Task: "doctor", Attempt: "probe", Model: model, Variant: worker.Variant, Title: "doctor-probe",
+		PermissionMode: worker.PermissionMode, AllowedTools: worker.allowedTools(),
+		DisallowedTools: worker.disallowedTools(), MCPConfig: worker.mcpConfig(), MaxTurns: 1,
+	}
 	var stream io.Reader
 	var cmd *exec.Cmd
+	stderr := &capWriter{max: probeStderrCap}
 	if worker.Adapter == "sim" {
 		src := model
 		if !filepath.IsAbs(src) {
@@ -289,22 +311,39 @@ func probeModel(dir string, worker Worker, adap Adapter, model string) string {
 		}
 		f, err := os.OpenFile(src, os.O_RDONLY, 0)
 		if err != nil {
-			return ClassError
+			return ClassError, clipDetail("start: " + err.Error())
 		}
 		defer f.Close()
 		stream = f
 	} else {
+		pf, err := os.CreateTemp("", "flywheel-doctor-probe-*.md")
+		if err != nil {
+			return ClassError, clipDetail("start: " + err.Error())
+		}
+		defer os.Remove(pf.Name())
+		_, werr := pf.WriteString(probePrompt)
+		if cerr := pf.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return ClassError, clipDetail("start: " + werr.Error())
+		}
+		req.PromptFile = pf.Name()
 		bin, args := adap.Command(req)
 		cmd = exec.Command(bin, args...)
 		cmd.Dir = dir
+		if sr := promptStdin(adap, req); sr != nil {
+			cmd.Stdin = sr
+		}
 		cmd.Env = workerEnv(dir)
+		cmd.Stderr = stderr
 		out, err := cmd.StdoutPipe()
 		if err != nil {
-			return ClassError
+			return ClassError, clipDetail("start: " + err.Error())
 		}
 		stream = out
 		if err := cmd.Start(); err != nil {
-			return ClassError
+			return ClassError, clipDetail("start: " + err.Error())
 		}
 	}
 
@@ -329,16 +368,66 @@ func probeModel(dir string, worker Worker, adap Adapter, model string) string {
 			}
 		}
 	}
+	exitCode := 0
 	if cmd != nil {
-		_ = cmd.Wait()
+		var ee *exec.ExitError
+		if err := cmd.Wait(); errors.As(err, &ee) {
+			exitCode = ee.ExitCode()
+		}
 	}
 	if haveErr {
-		return classify(errMsg)
+		class := classify(errMsg)
+		if class == ClassOK {
+			return class, ""
+		}
+		return class, clipDetail(errMsg)
 	}
 	if reason == "stop" {
-		return ClassOK
+		return ClassOK, ""
 	}
-	return ClassError
+	switch {
+	case exitCode != 0:
+		d := fmt.Sprintf("exit %d", exitCode)
+		for _, l := range strings.Split(stderr.buf.String(), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				d += ": " + l
+				break
+			}
+		}
+		return ClassError, clipDetail(d)
+	case reason != "":
+		return ClassError, clipDetail("no stop (last reason: " + reason + ")")
+	default:
+		return ClassError, "no stop (no step)"
+	}
+}
+
+// clipDetail is s's first line, cut to 200 characters.
+func clipDetail(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:200])
+	}
+	return s
+}
+
+// capWriter keeps the first max bytes written to it and discards the rest,
+// never failing the write.
+type capWriter struct {
+	buf strings.Builder
+	max int
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if room := w.max - w.buf.Len(); room > 0 {
+		if len(p) > room {
+			w.buf.Write(p[:room])
+		} else {
+			w.buf.Write(p)
+		}
+	}
+	return len(p), nil
 }
 
 // classify maps an error observation's message to a doctor class, matched
