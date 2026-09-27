@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -27,6 +28,7 @@ type factoryOptions struct {
 	interval time.Duration
 	width    int
 	now      string
+	ctx      string
 }
 
 // factoryFlags defines factory's flags once, so help and run share them.
@@ -41,7 +43,25 @@ func factoryFlags() (*flag.FlagSet, *factoryOptions) {
 	fs.DurationVar(&o.interval, "interval", 2*time.Second, "redraw interval in live mode")
 	fs.IntVar(&o.width, "width", 100, "render width in columns")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to render at; makes a screenshot reproducible")
+	fs.StringVar(&o.ctx, "ctx", "", "start in this fleet ledger, named as flywheel fleet status names it (overrides --dir)")
 	return fs, o
+}
+
+// factoryCtx is the fleet ledger named name in the registry at file, as
+// flywheel fleet status names it; ok false when none is, with every name
+// the registry has.
+func factoryCtx(file, name string) (l flywheel.FleetLedger, names []string, ok bool, err error) {
+	f, err := flywheel.LoadFleet(file)
+	if err != nil {
+		return l, nil, false, err
+	}
+	for _, c := range flywheel.FleetLedgers(f) {
+		if c.Name == name {
+			return c, nil, true, nil
+		}
+		names = append(names, c.Name)
+	}
+	return l, names, false, nil
 }
 
 func runFactory(args []string) {
@@ -67,6 +87,30 @@ func runFactory(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
+	// --ctx (issue #585 f4): the view starts in that fleet ledger.
+	var place flywheel.TUIFetchOptions
+	if o.ctx != "" {
+		file, err := flywheel.FleetPath()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
+			os.Exit(1)
+		}
+		l, names, ok, err := factoryCtx(file, o.ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
+			os.Exit(1)
+		}
+		if !ok {
+			known := "none registered: flywheel fleet add <path> registers a root"
+			if len(names) > 0 {
+				known = strings.Join(names, ", ")
+			}
+			fmt.Fprintf(os.Stderr, "flywheel factory: --ctx %q is no fleet ledger; known: %s\n", o.ctx, known)
+			usage(os.Stderr)
+			os.Exit(2)
+		}
+		o.dir, place = l.Path, flywheel.TUIFetchOptions{FleetFile: file, Name: l.Name, Kind: l.Kind}
+	}
 	w := flywheel.NewWatcher()
 	color := flywheel.EnableANSI()
 	if o.asJSON || o.once {
@@ -87,7 +131,7 @@ func runFactory(args []string) {
 		return
 	}
 	// Live interactive mode.
-	if err := flywheel.RunTUI(os.Stdin, os.Stdout, o.dir, o.interval, clock); err != nil {
+	if err := flywheel.RunTUI(os.Stdin, os.Stdout, o.dir, o.interval, clock, place); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
 		os.Exit(1)
 	}

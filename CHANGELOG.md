@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.42.0](https://github.com/suzworx/flywheel/compare/v0.41.0...v0.42.0) (2026-09-27)
+
+
+### Features
+
+* a brief preflight: line runs a command that must pass before flywheel run dispatches ([#641](https://github.com/suzworx/flywheel/issues/641)) ([048acf0](https://github.com/suzworx/flywheel/commit/048acf0a7a3b1ecc0b9137706b617fd22572c751)), closes [#635](https://github.com/suzworx/flywheel/issues/635)
+* flywheel factory's andon names each unit's next step, the unit log tab follows the worker's run, metrics split by model and worker, and refresh is fast on large ledgers ([#632](https://github.com/suzworx/flywheel/issues/632)) ([53fcf33](https://github.com/suzworx/flywheel/commit/53fcf337dbcc540eda3c0e0e95396a810740cd99))
+* flywheel ship signs what it lands: a Shipped-by: trailer and a PR footer carrying the unit's evidence ([#638](https://github.com/suzworx/flywheel/issues/638)) ([597a8ee](https://github.com/suzworx/flywheel/commit/597a8ee4f26a4e358621adecb6aa044d341960da))
+
+
+### Bug Fixes
+
+* flywheel doctor feeds a stdin-prompting adapter its probe prompt, launches it as run does, and says why a probe errored ([#642](https://github.com/suzworx/flywheel/issues/642)) ([8b77e45](https://github.com/suzworx/flywheel/commit/8b77e45a45c8fd76e2ccdd47a192531146bbc5b1)), closes [#637](https://github.com/suzworx/flywheel/issues/637)
+
 ## [0.41.0](https://github.com/suzworx/flywheel/compare/v0.40.0...v0.41.0) (2026-09-27)
 
 
