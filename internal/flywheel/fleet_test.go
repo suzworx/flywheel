@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -229,7 +230,7 @@ func TestFleetSummaryCounts(t *testing.T) {
 	if exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() == nil {
 		t.Skipf("%s is inside a git repository; the no-git premise does not hold", dir)
 	}
-	row, err := ledgerSummary(dir, now)
+	row, _, err := ledgerSummary(dir, now, nil)
 	if err != nil {
 		t.Fatalf("ledgerSummary: %v", err)
 	}
@@ -263,7 +264,7 @@ func fleetIdleFixture(t *testing.T, now time.Time) Fleet {
 		fleetRaw(t, root, Event{TS: now.Add(-rootAge).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: "s"})
 		for unit, age := range map[string]time.Duration{"u-active": time.Hour, "u-idle1": 100 * time.Hour, "u-idle2": 200 * time.Hour} {
 			fleetRaw(t, filepath.Join(root, ".flywheel", "worktrees", unit),
-				Event{TS: now.Add(-age).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: "s"})
+				Event{TS: now.Add(-age).Format(time.RFC3339Nano), Kind: "staffed", Persona: "lead", Session: unit})
 		}
 		f.Roots = append(f.Roots, FleetRoot{Name: name, Path: root})
 	}
@@ -300,6 +301,133 @@ func TestFleetIdleFold(t *testing.T) {
 	}
 	if got := names(FoldIdle(all, 150*time.Hour)); !strings.Contains(got, "u-idle1") || strings.Contains(got, "u-idle2") {
 		t.Errorf("FoldIdle(150h) = %s, want u-idle1 listed and u-idle2 folded", got)
+	}
+}
+
+// fleetForkRoot makes root, a bare ledger holding the returned history: t1
+// passed, t2 finished for "length" (an andon), a stale health and a freeze.
+func fleetForkRoot(t *testing.T, root string, now time.Time) []Event {
+	t.Helper()
+	at := func(ago time.Duration) string { return now.Add(-ago).Format(time.RFC3339Nano) }
+	var events []Event
+	for _, task := range []string{"t1", "t2"} {
+		events = append(events,
+			Event{TS: at(time.Hour), Task: task, Kind: "planned", Brief: "b.txt"},
+			Event{TS: at(time.Hour), Task: task, Kind: "dispatched", Attempt: "r1"},
+			Event{TS: at(time.Hour), Task: task, Kind: "started"})
+	}
+	events = append(events,
+		Event{TS: at(50 * time.Minute), Task: "t1", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		Event{TS: at(45 * time.Minute), Task: "t1", Kind: "inspected", Attempt: "r1", Verdict: "pass"},
+		Event{TS: at(50 * time.Minute), Task: "t2", Kind: "finished", Attempt: "r1", Reason: "length"},
+		Event{TS: at(30 * time.Minute), Kind: "health", Health: &HealthSnapshot{StaleAfter: "10m"}},
+		Event{TS: at(2 * time.Minute), Kind: "suspended", Session: "lead", Note: "freeze"})
+	fleetRaw(t, root, events...)
+	return events
+}
+
+// fleetOwn is three events of worktree task w1, one minute old.
+func fleetOwn(now time.Time) []Event {
+	ts := now.Add(-time.Minute).Format(time.RFC3339Nano)
+	return []Event{
+		{TS: ts, Task: "w1", Kind: "planned", Brief: "b.txt"},
+		{TS: ts, Task: "w1", Kind: "dispatched", Attempt: "r1"},
+		{TS: ts, Task: "w1", Kind: "started"},
+	}
+}
+
+// TestFleetWorktreeOwnEvents (issue #608): a worktree ledger holding its
+// root's history plus three events of its own shows only those: Events 3,
+// Inherited N, one task, no inherited freeze, health or andon, and the age
+// of its own latest event; the root row is summarised in full. On the
+// unfixed code the worktree row counts 3 tasks and carries the freeze.
+func TestFleetWorktreeOwnEvents(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	root := filepath.Join(t.TempDir(), "r")
+	hist := fleetForkRoot(t, root, now)
+	fleetRaw(t, filepath.Join(root, ".flywheel", "worktrees", "u"), append(slices.Clone(hist), fleetOwn(now)...)...)
+	rows := FleetStatus(Fleet{Roots: []FleetRoot{{Name: "r", Path: root}}}, now)
+	if len(rows) != 2 {
+		t.Fatalf("FleetStatus = %d rows, want 2: %+v", len(rows), rows)
+	}
+	r, w := rows[0], rows[1]
+	if r.Events != len(hist) || r.Inherited != 0 || r.Tasks.Total != 2 || r.Tasks.Passed != 1 || !r.Suspended || r.Andon != 3 {
+		t.Errorf("root row = %+v, want %d events, 2 tasks, suspended, andon 3", r, len(hist))
+	}
+	if w.Events != 3 || w.Inherited != len(hist) {
+		t.Errorf("worktree events/inherited = %d/%d, want 3/%d", w.Events, w.Inherited, len(hist))
+	}
+	if want := (StatusTasks{Total: 1, Running: 1}); w.Tasks != want {
+		t.Errorf("worktree tasks = %+v, want %+v", w.Tasks, want)
+	}
+	if w.Suspended || w.Andon != 0 || w.HealthAge != nil || w.LastAge == nil || *w.LastAge != 60 {
+		t.Errorf("worktree row = %+v, want running, andon 0, no health, last 60s", w)
+	}
+}
+
+// TestFleetFoldIdleExactCopy (issue #608): a worktree that is an exact copy
+// of its root has Events 0 and folds into the idle row though its events are
+// recent; unfolded (--all) it is listed with Events 0. On the unfixed code it
+// is listed with the root's counts and never folds.
+func TestFleetFoldIdleExactCopy(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	root := filepath.Join(t.TempDir(), "r")
+	hist := fleetForkRoot(t, root, now)
+	fleetRaw(t, filepath.Join(root, ".flywheel", "worktrees", "copy"), hist...)
+	all := FleetStatus(Fleet{Roots: []FleetRoot{{Name: "r", Path: root}}}, now)
+	if len(all) != 2 || all[1].Events != 0 || all[1].Inherited != len(hist) || all[1].Tasks.Total != 0 || all[1].LastAge != nil {
+		t.Fatalf("FleetStatus = %+v, want the copy with 0 events and %d inherited", all, len(hist))
+	}
+	folded := FoldIdle(all, DefaultIdleAfter)
+	if len(folded) != 2 || folded[1].Kind != FleetKindIdle || folded[1].Idle != 1 || folded[1].LastAge != nil {
+		t.Errorf("FoldIdle = %+v, want root and one idle row with no age", folded)
+	}
+}
+
+// TestFleetWorktreeMergedRoot (issue #608): a worktree that merged main
+// after its own work holds root events newer than its fork; they count as
+// inherited too (set membership, not prefix). On the unfixed code the row
+// counts the root's 2 tasks with w1.
+func TestFleetWorktreeMergedRoot(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	root := filepath.Join(t.TempDir(), "r")
+	hist := fleetForkRoot(t, root, now)
+	fork, later := hist[:6], hist[6:] // planned/dispatched/started of t1 and t2
+	wt := append(append(slices.Clone(fork), fleetOwn(now)...), later...)
+	fleetRaw(t, filepath.Join(root, ".flywheel", "worktrees", "u"), wt...)
+	rows := FleetStatus(Fleet{Roots: []FleetRoot{{Name: "r", Path: root}}}, now)
+	if len(rows) != 2 {
+		t.Fatalf("FleetStatus = %d rows, want 2", len(rows))
+	}
+	w := rows[1]
+	if w.Events != 3 || w.Inherited != len(hist) || w.Tasks.Total != 1 || w.Suspended {
+		t.Errorf("worktree row = %+v, want 3 events, %d inherited, 1 task, not suspended", w, len(hist))
+	}
+}
+
+// TestFleetWorktreeRootUnreadable (issue #608): a worktree whose root fails
+// to read is summarised in full, Inherited 0. The unfixed code already
+// summarised in full; there only the Events assertion fails (no such field),
+// so this test guards the fallback.
+func TestFleetWorktreeRootUnreadable(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC().Truncate(time.Second)
+	root := filepath.Join(t.TempDir(), "r")
+	hist := fleetForkRoot(t, root, now)
+	if err := os.WriteFile(filepath.Join(root, ".flywheel", shardDirName), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fleetRaw(t, filepath.Join(root, ".flywheel", "worktrees", "u"), append(slices.Clone(hist), fleetOwn(now)...)...)
+	rows := FleetStatus(Fleet{Roots: []FleetRoot{{Name: "r", Path: root}}}, now)
+	if len(rows) != 2 || rows[0].Error == "" {
+		t.Fatalf("FleetStatus = %+v, want the root row carrying a read error", rows)
+	}
+	w := rows[1]
+	if w.Error != "" || w.Inherited != 0 || w.Events != len(hist)+3 || w.Tasks.Total != 3 || !w.Suspended {
+		t.Errorf("worktree row = %+v, want the full summary: %d events, 3 tasks, suspended", w, len(hist)+3)
 	}
 }
 

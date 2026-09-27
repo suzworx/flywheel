@@ -158,21 +158,27 @@ func fleetJSON(stdout, stderr io.Writer, v any) int {
 }
 
 // writeFleetTable prints rows as an aligned table. RUNNING counts the
-// dispatched and running units; HEALTH and LAST are ages, "-" when none; a
-// row that failed to read shows its error as its STATE.
+// dispatched and running units; EVENTS is the events summarised, "+N" for a
+// worktree row counting only its N events after the fork from its root
+// (issue #608); HEALTH and LAST are ages, "-" when none; a row that failed to
+// read shows its error as its STATE.
 func writeFleetTable(w io.Writer, rows []flywheel.FleetRow) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tKIND\tRUNNING\tPASSED\tFINISHED\tANDON\tSTATE\tHEALTH\tLAST")
+	fmt.Fprintln(tw, "NAME\tKIND\tEVENTS\tRUNNING\tPASSED\tFINISHED\tANDON\tSTATE\tHEALTH\tLAST")
 	for _, r := range rows {
 		if r.Kind == flywheel.FleetKindIdle {
-			fmt.Fprintf(tw, "%s (oldest %s)\t%s\t\t\t\t\t\t\t\n", r.Name, fleetAge(r.LastAge), r.Kind)
+			fmt.Fprintf(tw, "%s (oldest %s)\t%s\t\t\t\t\t\t\t\t\n", r.Name, fleetAge(r.LastAge), r.Kind)
 			continue
 		}
 		state := r.State()
 		if r.Error != "" {
 			state = "error: " + r.Error
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", r.Name, r.Kind, r.Tasks.Dispatched+r.Tasks.Running,
+		events := fmt.Sprint(r.Events)
+		if r.Inherited > 0 {
+			events = "+" + events
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", r.Name, r.Kind, events, r.Tasks.Dispatched+r.Tasks.Running,
 			r.Tasks.Passed, r.Tasks.Finished, r.Andon, state, fleetAge(r.HealthAge), fleetAge(r.LastAge))
 	}
 	tw.Flush()
