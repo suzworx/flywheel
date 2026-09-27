@@ -432,6 +432,92 @@ func TestShipRemoteFailedCheck(t *testing.T) {
 	}
 }
 
+// shipMergeBaseEvent is the fixture's latest shipped merge-base event.
+func (f shipFixture) shipMergeBaseEvent(t *testing.T) Event {
+	t.Helper()
+	var last Event
+	for _, e := range f.shipped(t) {
+		if e.Step == "merge-base" {
+			last = e
+		}
+	}
+	return last
+}
+
+// TestShipRerunIntegrationMoved (issue #577): a ship stopped at a failed
+// check, rerun after origin/main advanced, runs merge-base again and merges
+// the new commit instead of trusting the stale record.
+func TestShipRerunIntegrationMoved(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	main0 := shipGit(t, f.dir, "rev-parse", "origin/main")
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}, Failed: []string{"lint"}}}}
+	if _, out, err := f.ship(t, ShipOptions{Forge: ff}); !errors.Is(err, ErrShipCI) {
+		t.Fatalf("first ship: %v, want ErrShipCI\n%s", err, out)
+	}
+	if e := f.shipMergeBaseEvent(t); e.Result != "skip" || e.Base != main0 {
+		t.Fatalf("first merge-base event = %+v, want skip with base %s", e, main0)
+	}
+	up := f.advance(t, "main", "other.txt", "origin\n")
+	res, out, err := f.ship(t, ShipOptions{})
+	if err != nil || shipSteps(res) != "preflight=ok commit=skip merge-base=ok gates=ok push=ok pr=ok ci=ok merge=ok landed=ok closed=skip" {
+		t.Fatalf("rerun = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	if strings.Contains(out, "merge-base: skip (done)") || !strings.Contains(out, "ship T merge-base: origin/main moved "+main0[:7]+" -> "+up[:7]+"; re-running from merge-base") {
+		t.Errorf("rerun progress = %q", out)
+	}
+	shipGit(t, f.dir, "merge-base", "--is-ancestor", up, "fw/T")
+	if e := f.shipMergeBaseEvent(t); e.Result != "ok" || e.Base != up {
+		t.Errorf("rerun merge-base event = %+v, want ok with base %s", e, up)
+	}
+}
+
+// TestShipRerunIntegrationUnchanged (issue #577): the same rerun with
+// origin/main not advanced still trusts merge-base; a record without Base (an
+// older version's) or a different current commit is cut back before it.
+func TestShipRerunIntegrationUnchanged(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}, Failed: []string{"lint"}}}}
+	if _, out, err := f.ship(t, ShipOptions{Forge: ff}); !errors.Is(err, ErrShipCI) {
+		t.Fatalf("first ship: %v, want ErrShipCI\n%s", err, out)
+	}
+	ff.checks = []ChecksState{{Passed: []string{"build"}}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff})
+	if err != nil || !strings.Contains(out, "ship T merge-base: skip (done)") || strings.Count(out, "(done)") != 6 || strings.Contains(out, "re-running") {
+		t.Fatalf("rerun = %s, %v\n%s", shipSteps(res), err, out)
+	}
+
+	chain := []Event{{Step: "preflight"}, {Step: "commit"}, {Step: "merge-base", Base: "b1"}, {Step: "gates"}}
+	if got := shipTrustBase(chain, "b1"); len(got) != 4 {
+		t.Errorf("same base: chain %d, want 4", len(got))
+	}
+	for _, cur := range []string{"b2", ""} {
+		if got := shipTrustBase(chain, cur); len(got) != 2 {
+			t.Errorf("current %q: chain %d, want 2", cur, len(got))
+		}
+	}
+	chain[2].Base = ""
+	if got := shipTrustBase(chain, "b1"); len(got) != 2 {
+		t.Errorf("no recorded base: chain %d, want 2", len(got))
+	}
+}
+
+// TestShipTransientDNS (issue #577): name-resolution failures are retried;
+// a permission error is not.
+func TestShipTransientDNS(t *testing.T) {
+	t.Parallel()
+	for msg, want := range map[string]bool{
+		"ssh: Could not resolve host: github.com": true,
+		"Temporary failure in name resolution":    true,
+		"permission denied":                       false,
+	} {
+		if got := transientErr(errors.New(msg)); got != want {
+			t.Errorf("transientErr(%q) = %v, want %v", msg, got, want)
+		}
+	}
+}
+
 // TestShipRemoteMergeNotMerged (e): a merge call that returns nil while the
 // PR stays OPEN fails merge naming the state, and nothing lands.
 func TestShipRemoteMergeNotMerged(t *testing.T) {
