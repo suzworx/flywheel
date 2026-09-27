@@ -92,7 +92,7 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if err != nil {
 			return err
 		}
-		if r := panelRefusal(events, task, tree, cfg.PanelDimensions(), cfg.ReviewRequired()); r != nil {
+		if r := panelRefusal(events, task, tree, panelFor(events, task, tree, cfg.PanelDimensions()), cfg.ReviewRequired()); r != nil {
 			return r
 		}
 		if res.readingTree != "" {

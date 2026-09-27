@@ -180,6 +180,19 @@ type ReviewConfig struct {
 	// beyond its read-only base, gh issue/pr view and the unit's gate
 	// commands (issue #469), e.g. Bash(make lint:*). Default none.
 	AllowedTools []string `json:"allowed_tools,omitempty"`
+	// PanelMinLines scopes a small unit's configured panel to one reviewer
+	// (issue #459): below this many changed lines, flywheel review --panel
+	// runs only the correctness member and records a panel_scoped event.
+	// Default 0: off.
+	PanelMinLines int `json:"panel_min_lines,omitempty"`
+}
+
+// ReviewPanelMinLines is review.panel_min_lines; 0 means off.
+func (c Config) ReviewPanelMinLines() int {
+	if c.Review == nil {
+		return 0
+	}
+	return c.Review.PanelMinLines
 }
 
 // groupGatesSep separates review.group_gates and review.allowed_tools on
@@ -1194,6 +1207,9 @@ func (c Config) Validate() error {
 		}
 	}
 	if c.Review != nil {
+		if c.Review.PanelMinLines < 0 {
+			problems = append(problems, fmt.Sprintf("review.panel_min_lines: %d must not be negative", c.Review.PanelMinLines))
+		}
 		seenPersona := map[string]bool{}
 		for i, m := range c.Review.Panel {
 			where := fmt.Sprintf("review.panel[%d]", i)
@@ -1347,6 +1363,8 @@ func (c Config) Get(key string) (string, error) {
 		return "false", nil
 	case "review.panel":
 		return strings.Join(c.PanelDimensions(), ","), nil
+	case "review.panel_min_lines":
+		return strconv.Itoa(c.ReviewPanelMinLines()), nil
 	case "review.required":
 		return strconv.FormatBool(c.ReviewRequired()), nil
 	case "review.group_gates":
@@ -1428,7 +1446,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
+		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
@@ -1456,7 +1474,8 @@ func (c Config) validKeys() []string {
 // feedback.upstream, feedback.submit, limits.max_turns and
 // limits.unit_cost_usd (the same), limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
-// (a comma-separated persona list), review.required (true or false) and
+// (a comma-separated persona list), review.panel_min_lines (a non-negative
+// integer; 0 turns it off), review.required (true or false) and
 // review.group_gates (commands separated by ";;" or newlines) and
 // review.allowed_tools (claude patterns, separated the same way; an empty
 // entry is refused) and integration.branch (an empty value clears it).
@@ -1601,6 +1620,16 @@ func (c *Config) Set(key, value string) error {
 			c.Review = &ReviewConfig{}
 		}
 		c.Review.Panel = panel
+		return nil
+	case "review.panel_min_lines":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("review.panel_min_lines: value %q must be a non-negative integer (0 turns it off)", value)
+		}
+		if c.Review == nil {
+			c.Review = &ReviewConfig{}
+		}
+		c.Review.PanelMinLines = n
 		return nil
 	case "review.required":
 		b, err := strconv.ParseBool(value)
@@ -1768,7 +1797,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host",
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
-		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.required", "stall_timeout",
+		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",

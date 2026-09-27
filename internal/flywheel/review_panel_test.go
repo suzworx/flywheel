@@ -1,8 +1,10 @@
 package flywheel
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -270,5 +272,147 @@ func TestReviewSpendPanelCrash(t *testing.T) {
 	}
 	if rep.Total.Review != 0.5 {
 		t.Errorf("Total.Review = %v, want the crashed member's 0.5", rep.Total.Review)
+	}
+}
+
+// minLinesRepo is initTask with a.go committed as one line, then rewritten
+// to lines new lines (lines+1 changed lines), and review.panel_min_lines set
+// to minLines (0 leaves it unset).
+func minLinesRepo(t *testing.T, lines, minLines int) string {
+	t.Helper()
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	a := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(a, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"add", "a.go"})
+	git(t, dir, []string{"commit", "-m", "a"})
+	var b strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&b, "l%d\n", i)
+	}
+	if err := os.WriteFile(a, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if minLines > 0 {
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Set("review.panel_min_lines", strconv.Itoa(minLines)); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteConfig(dir, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// cleanMember is a fake panel member run: it records a clean review of its
+// dimension on the workdir's real tree and appends the dimension to calls.
+func cleanMember(t *testing.T, calls *[]string) func(string, string, ReviewAgentOptions) (ReviewAgentResult, error) {
+	return func(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, error) {
+		*calls = append(*calls, o.Dimension)
+		tree, err := treeHash(dir)
+		if err != nil {
+			return ReviewAgentResult{}, err
+		}
+		evs, verdict, _ := dimensionReviewEvents(task, "r1", o.Round, o.Session, "m", "claude", tree, o.Dimension, nil)
+		return ReviewAgentResult{Round: o.Round, Verdict: verdict, Tree: tree}, AppendEvents(dir, evs)
+	}
+}
+
+func scopedEvents(t *testing.T, dir string) []Event {
+	var out []Event
+	for _, e := range mustEvents(t, dir) {
+		if e.Kind == "panel_scoped" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestReviewPanelMinLinesScoped is issue #459: a 3-line change under
+// review.panel_min_lines 50 runs only correctness, records panel_scoped on
+// that tree, and inspect passes with only the correctness verdict. On the
+// unfixed code all five members run (the calls assertion fails) and inspect
+// refuses tests=missing (the InspectTask assertion fails).
+func TestReviewPanelMinLinesScoped(t *testing.T) {
+	t.Parallel()
+	dir := minLinesRepo(t, 2, 50)
+	logFinished(t, dir, "T1", "w1")
+	if _, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir}); err != nil {
+		t.Fatalf("ValidateTask() error = %v", err)
+	}
+	var calls []string
+	var out strings.Builder
+	res, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Session: "rev-1", Progress: &out, review: cleanMember(t, &calls)})
+	if err != nil || strings.Join(calls, ",") != "correctness" || strings.Join(res.Panel, ",") != "correctness" {
+		t.Fatalf("ReviewPanel = %+v, %v, calls %v; want correctness only", res, err, calls)
+	}
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := scopedEvents(t, dir)
+	if len(sc) != 1 || sc[0].Tree != tree || strings.Join(sc[0].Panel, ",") != "correctness" ||
+		sc[0].Note != "3 changed lines < review.panel_min_lines 50" {
+		t.Errorf("panel_scoped events = %+v, want one on %s scoped to correctness", sc, tree)
+	}
+	if !strings.Contains(out.String(), "T1 review panel: 3 changed lines < review.panel_min_lines 50; one reviewer: correctness") {
+		t.Errorf("progress = %q, want the scoping line", out.String())
+	}
+	if err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"}); err != nil {
+		t.Errorf("InspectTask(pass) on the scoped tree = %v, want accepted", err)
+	}
+}
+
+// TestReviewPanelMinLinesFull is issue #459: at or above the threshold, and
+// with it off even for a tiny change, every member runs and nothing is
+// scoped. The unfixed code passes this (it guards against over-scoping).
+func TestReviewPanelMinLinesFull(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ lines, min int }{{60, 50}, {0, 0}} {
+		dir := minLinesRepo(t, c.lines, c.min)
+		var calls []string
+		if _, err := ReviewPanel(dir, "T1", ReviewPanelOptions{Session: "rev-1", review: cleanMember(t, &calls)}); err != nil {
+			t.Fatalf("%+v: ReviewPanel() error = %v", c, err)
+		}
+		if strings.Join(calls, ",") != strings.Join(DefaultPanel, ",") {
+			t.Errorf("%+v: calls = %v, want the full panel", c, calls)
+		}
+		if sc := scopedEvents(t, dir); len(sc) != 0 {
+			t.Errorf("%+v: panel_scoped events = %+v, want none", c, sc)
+		}
+	}
+}
+
+// TestPanelScopedVerifyP1 is issue #459: rule P1 reads panel_scoped for the
+// inspected tree only. A pass on the scoped tree with correctness pass is
+// clean (the unfixed code fails it: tests=missing); a pass on another tree
+// with only correctness still needs the full panel.
+func TestPanelScopedVerifyP1(t *testing.T) {
+	t.Parallel()
+	scoped := Event{Task: "T1", Kind: "panel_scoped", Session: "rev-1", Tree: "t", Panel: []string{"correctness"}, Note: "3 changed lines < review.panel_min_lines 50"}
+	pass := func(tree string) Event {
+		return Event{Task: "T1", Kind: "inspected", Verdict: "pass", Session: "i1", Tree: tree}
+	}
+	same := append(append([]Event{scoped}, panelEvents("t", "correctness")...), pass("t"))
+	if items := ruleP1("T1", same, DefaultPanel, false); len(items) != 1 || !items[0].Pass {
+		t.Errorf("scoped tree: P1 = %+v, want clean", items)
+	}
+	other := append(append([]Event{scoped}, panelEvents("t2", "correctness")...), pass("t2"))
+	if items := ruleP1("T1", other, DefaultPanel, false); items[0].Pass || !strings.Contains(items[0].Reason, "tests=missing") {
+		t.Errorf("another tree: P1 = %+v, want a failure naming tests=missing", items)
+	}
+	if got := panelFor(other, "T1", "t2", DefaultPanel); strings.Join(got, ",") != strings.Join(DefaultPanel, ",") {
+		t.Errorf("panelFor(t2) = %v, want the configured panel", got)
+	}
+	if err := Validate(Event{TS: "2026-09-27T00:00:00Z", Task: "T1", Kind: "panel_scoped", Tree: "t"}); err == nil || !strings.Contains(err.Error(), "panel_scoped event must carry") {
+		t.Error("a panel_scoped event without a panel validated, want refused")
 	}
 }
