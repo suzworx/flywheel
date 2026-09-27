@@ -91,3 +91,33 @@ the percentiles by nearest rank.
 
 Ratios and USD are rounded to 4 places, `tokens_per_step` to 2, `busy_seconds` to 3; a ratio whose
 denominator is 0 is 0.
+
+## Evidence
+
+Every number drills to the units behind it. `evidence` maps a stable metric id to a list of
+units, each `task`, `value` (the unit's part in words), `group` (the split the metric uses) and
+`sort` (the number ordering the list); a list is sorted by `sort`, highest (worst) first, then by
+task. Times in a `value` are UTC, `MM-DD HH:MM`.
+
+| Id | Covers | Units | `value` | `group` | `sort` |
+|---|---|---|---|---|---|
+| `flow.throughput` | `throughput` | landed units | `landed <time>` | `landed` | the landing (Unix seconds) |
+| `flow.wip` | `wip` | units in progress at the window's end | `<status> for <since dispatch>` | the status | seconds since the first dispatch |
+| `flow.lead_time`, `flow.cycle_time`, `flow.queue_time`, `flow.touch_time` | the Dist of that name | landed units with that time | `lead 9h12m`, `cycle …`, `queued …`, `touch …` | `landed` | the time in seconds |
+| `flow.flow_efficiency` | `flow_efficiency` | landed units with a positive cycle time | `33% (touch 30m of cycle 1h30m)` | `landed` | 1 - touch / cycle |
+| `quality.first_pass_yield` | `landed`, `first_pass`, `first_pass_yield` | landed units | `first pass`, `corrected x<n>`, `sent back by a verdict`, `no r1 attempt` | `first pass` or `corrected` | 0 first pass, else corrections + 1 |
+| `quality.rework_rate` | `corrections`, `rework_rate` | landed units | `<n> corrections` | as first-pass yield | corrections |
+| `quality.gates` | `gates` | the window's conclusive gate readings | `gate <id> rc <rc> on <attempt>` | `pass` or `fail` | 1 fail, 0 pass |
+| `quality.review_find_rate` | `reviewed`, `findings`, `review_find_rate` | the window's review findings | `<severity> <title>` | the severity | 1 blocking, 0 other |
+| `quality.blocking_share` | `blocking`, `blocking_share` | the window's review findings | as above | `blocking` or `other` | 1 blocking, 0 other |
+| `quality.escapes` | `escapes` | landed units planned again | `planned again <time>, landed <time>` | `escaped` | seconds from landing to the new plan |
+| `reliability.andons` | `andons`, `andon_total`, `andon_series`, `cleared` | the window's andons | `<kind> <time>, cleared in 3h10m` or `, open` | the kind | seconds to clear, or open until the window's end |
+| `reliability.mttr` | `mttr` | cleared andons | `<kind> cleared in <d>` | the kind | seconds to clear |
+| `reliability.frozen` | `frozen` | units an attempt of which ran while the factory was frozen | `held <d> (frozen <from> to <to>)` | `frozen` | seconds held |
+| `reliability.paused` | `paused` | finishes that paused their model | `<model> paused <d> from <time>` | the model | seconds paused |
+| `cost.spend` | `spend`, `spend_series` | units with a `finished` or `reviewed` cost in the window | `$<spend>` | `landed` or `not landed` | USD |
+| `cost.cost_per_unit` | `units`, `cost_per_unit` | units with a `finished` event in the window | `$<spend>` | `finished` | USD |
+| `cost.cost_per_landed` | `cost_per_landed` | as `cost.spend` | `$<spend>` | `landed` or `not landed` | USD |
+| `cost.tokens_per_step` | `tokens`, `steps`, `tokens_per_step` | units with steps in the window | `<n> tokens/step over <n> steps` | `finished` | tokens per step |
+| `cost.by_model` | `by_model` | each unit's finished cost per model | `<model> $<cost>` | the model | USD |
+| `capacity.utilization`, `capacity.idle_share` | `workers`, `utilization`, `idle_share` | each unit's busy time per worker | `busy <d> on <worker>` | the worker | busy seconds |
