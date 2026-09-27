@@ -40,6 +40,21 @@ type TUIData struct {
 	// Next is each unit's next action as recover decides it (issue #583
 	// k7), filled while the andon view is shown.
 	Next map[string]Next
+
+	// The fleet (issue #585 f4): the ctx view's rows, filled while it is
+	// shown, or why the registry did not read; FleetCur is the Path of the
+	// row the view shows. CtxName and CtxKind are the ledger's fleet name
+	// and kind, "" when the factory is not one of the fleet's.
+	Fleet            []FleetRow
+	FleetErr         string
+	FleetCur         string
+	CtxName, CtxKind string
+}
+
+// TUICtx is a context the ctx view switches to: a ledger's directory and
+// its fleet name and kind.
+type TUICtx struct {
+	Dir, Name, Kind string
 }
 
 // TUIHealth is one health event: when, and its snapshot.
@@ -131,6 +146,49 @@ type TUI struct {
 	logNoTS  bool // t in the log tab: timestamps hidden
 	follow   bool // the log tab tails its unit
 	followed bool // follow was on and a scroll up paused it
+
+	// wantCtx is the context Enter in the ctx view asked for (issue #585
+	// f4), until the live loop takes it (TakeCtx).
+	wantCtx *TUICtx
+}
+
+// TakeCtx reports the context the ctx view asked to switch to, and clears
+// the request: the live loop re-roots its fetch there (the model does no
+// I/O).
+func (m *TUI) TakeCtx() (TUICtx, bool) {
+	c := m.wantCtx
+	m.wantCtx = nil
+	if c == nil {
+		return TUICtx{}, false
+	}
+	return *c, true
+}
+
+// enterCtx asks to switch to the fleet ledger whose PATH row shows; an idle
+// fold stands for several ledgers, so it says so instead.
+func (m *TUI) enterCtx(d TUIData, row []string) {
+	path := cell(row, len(ctxHeader)-1)
+	for _, r := range d.Fleet {
+		if r.Kind == FleetKindIdle && r.Name == cell(row, 0) {
+			m.flash(r.Name + " are not one ledger: flywheel fleet status --all lists them")
+			return
+		}
+		if path != "" && r.Path == path && r.Kind != FleetKindIdle {
+			m.wantCtx = &TUICtx{Dir: r.Path, Name: r.Name, Kind: r.Kind}
+			return
+		}
+	}
+}
+
+// ctxReset is the model a switched context starts with: the units view,
+// fresh crumbs, and nothing kept from the old ledger's views.
+func (m *TUI) ctxReset() {
+	m.view, m.cursor, m.top, m.filter, m.sort = "units", 0, 0, "", tuiSort{}
+	m.drillKind, m.drillTask, m.drillFind, m.detailTop, m.help = "", "", "", 0, false
+	m.stack, m.saved, m.metricBack = nil, map[string]navLevel{}, nil
+	m.split, m.splitMetric, m.full, m.follow, m.followed = "", "", false, false, false
+	m.seen, m.marks = nil, nil
+	m.resetCrumbs()
 }
 
 // rowMark is a row a fetch changed: new, or modified; left is the refreshes
@@ -307,6 +365,7 @@ var viewNames = map[string]string{
 	"checkpoints": "Checkpoints",
 	"pulse":       "Pulse",
 	"metrics":     "Metrics",
+	"ctx":         "Contexts",
 }
 
 // drillTitles are the drill-downs' titles in the title bar.
@@ -652,6 +711,8 @@ func (m *TUI) enter(d TUIData, row []string) {
 		m.drillLocal("learning", row[0])
 	case "checkpoints":
 		m.drillLocal("checkpoint", row[0]+"/"+row[1])
+	case "ctx":
+		m.enterCtx(d, row)
 	case "search":
 		kind := "explain"
 		if row[0] == "event" {
@@ -798,6 +859,7 @@ var tuiViews = []struct{ name, alias, what string }{
 	{"checkpoints", "c", "the saved checkpoints of interrupted attempts"},
 	{"pulse", "p", "the metrics dashboard: flow, quality, reliability, cost, capacity, by model"},
 	{"metrics", "m", "every metric: value, trend, change and definition"},
+	{"ctx", "fleet", "every factory of the fleet; enter switches the view to one"},
 	{"search", "s", "search <text>: the ledger, the run logs, the reports and the briefs"},
 }
 
@@ -920,6 +982,8 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 		header, rows = checkpointRows(d)
 	case "search":
 		header, rows = searchRows(d.Search)
+	case "ctx":
+		header, rows = ctxRows(d)
 	case "metrics":
 		if m.split != "" {
 			header, rows = splitRows(d, m.window, m.split)
@@ -932,7 +996,7 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 	// The views built in tui_views.go and tui_dash.go are pure: the filter
 	// applies here.
 	switch m.view {
-	case "tree", "health", "learnings", "checkpoints", "search", "metrics":
+	case "tree", "health", "learnings", "checkpoints", "search", "metrics", "ctx":
 		var kept [][]string
 		for _, row := range rows {
 			if m.matchesFilter(row) {
@@ -1113,6 +1177,7 @@ var viewHints = map[string][]hint{
 	"learnings":   join(tableHints, []hint{{"enter", "learning"}}, sortHints, layoutHints),
 	"checkpoints": join(tableHints, []hint{{"enter", "paths"}}, sortHints, layoutHints),
 	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
+	"ctx":         join(tableHints, []hint{{"enter", "switch"}}, sortHints, layoutHints),
 	"pulse":       join(tableHints, []hint{{"h/j/k/l", "panel"}, {"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, layoutHints),
 	"metrics":     join(tableHints, []hint{{"enter", "drill"}, {"1/2/3", "24h/7d/30d"}, {"M/W", "by model/worker"}}, sortHints, layoutHints),
 	"metric":      join([]hint{{"h", "chart"}, {"u", "units"}, {"enter", "unit"}}, scrollHints, fullHints, layoutHints),
@@ -1158,6 +1223,14 @@ func contextLines(d TUIData) []string {
 		most += l.MaxParallel
 	}
 	repo := "repo " + filepath.Base(d.Floor.Dir)
+	// The fleet context (issue #585 f4), as :ctx names it.
+	if d.CtxName != "" {
+		ctx := "ctx " + d.CtxName
+		if d.CtxKind != "" && d.CtxKind != FleetKindRoot {
+			ctx += " (" + d.CtxKind + ")"
+		}
+		repo = ctx + " · " + repo
+	}
 	if d.Branch != "" {
 		repo += " · " + d.Branch
 	}
@@ -1404,6 +1477,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"          events (e), lines (l), tree (t), health (h), learnings (lr),",
 			"          checkpoints (c), pulse (p), metrics (m), quit (q)",
 			"  :s txt  search the ledger, run logs, reports and briefs for txt",
+			"  :ctx    every factory of the fleet (:fleet); enter switches to one",
 			"Metrics (:pulse, :metrics):",
 			"  1 2 3   the window: 24h, 7d, 30d",
 			"  h j k l the pulse panel (or the arrows); enter its metric",

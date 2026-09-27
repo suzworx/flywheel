@@ -9,7 +9,8 @@ like k9s (issue #583). `flywheel factory --plain` redraws the plain floor instea
 From top to bottom:
 
 - **The header** (Ctrl-E hides it). The left column is the factory's context:
-  - `repo <dir> · <integration branch>`
+  - `repo <dir> · <integration branch>`, led by `ctx <name> · ` once the view knows the ledger's
+    [fleet](fleet.md) name: `--ctx`, a switch, or `:ctx` listing it (see [Contexts](#contexts))
   - `factory running`, or `factory FROZEN since HH:MM until HH:MM by <session>: <reason>` while
     `flywheel suspend` holds it (no `until` when it lasts until `flywheel resume`)
   - one `paused <model> until HH:MM` line per model a rate limit pauses
@@ -59,6 +60,7 @@ Hiding the header or the crumbs gives their lines to the table.
 | `/` | table | the filter prompt; the table filters as you type, Enter keeps it (see [Filters](#filters)) |
 | Enter | units, andon, tree | the unit's detail, at its why tab (see [Unit detail](#unit-detail)) |
 | Enter | learnings, checkpoints, search | the learning in full, the checkpoint's changed paths, the result's unit at the match |
+| Enter | ctx | switch the whole view to that fleet ledger (see [Contexts](#contexts)) |
 | `l` | units, andon, tree | the unit's detail at its log tab |
 | `w` `d` `y` `l` `c` `F` `e` | unit detail | switch tab: why, explain, brief, log, checkpoints, findings, events |
 | `J` (Shift) | unit detail | open the detail of the unit's first need that has not landed |
@@ -105,8 +107,30 @@ for the keys to come.
 | `pulse` | `p` | the metrics dashboard: six panels (see [Pulse](#pulse)) |
 | `metrics` | `m` | every metric: family, metric, value, trend, change, definition (see [Metrics table](#metrics-table)) |
 | `search` | `s <text>` | the search results (see [Search](#search)) |
+| `ctx` | `fleet` | every factory ledger on the machine, and Enter switches to one (see [Contexts](#contexts)) |
 
 An unknown name flashes `unknown view :x (Ctrl-A lists them)`.
+
+## Contexts
+
+`:ctx` (or `:fleet`) is k9s's context list for the [fleet](fleet.md) (issue #585): every ledger
+`flywheel fleet status` lists, idle worktree ledgers folded the same way, as NAME, KIND, STATE
+(`running`, `paused`, `SUSPENDED` or `error: <why>`), RUNNING, ANDON, PAUSED (the models a rate
+limit pauses), HEALTH, LAST and PATH. The ledger the view shows is marked `(*)` in NAME. The table
+filters and sorts like the others. It reads every ledger, so the view reads the fleet only while it
+is shown, at most once per refresh interval (Ctrl-R reads it again). With no registry, or an empty
+one, it shows one line: `flywheel fleet add <path>` registers a root.
+
+Enter on a row switches the whole view to that ledger: the units view, fresh crumbs, the old
+ledger's views and caches dropped, and the header's first context line starts with
+`ctx <name>` (and the kind when it is not a root, `ctx repo/wt (git-worktree)`). `:ctx` again
+stars the new one. A ledger that fails to load (its directory or its `.flywheel` gone) flashes
+`ctx <name>: <why>` and the view stays where it was. An idle fold stands for several ledgers, so
+Enter on it only flashes how to list them.
+
+`flywheel factory --ctx <name>` starts in that ledger, named as `flywheel fleet status` names it
+(`--dir` is then ignored); `--once` and `--json` render it. An unknown name is a usage error (exit 2)
+listing the known names.
 
 ## History
 
