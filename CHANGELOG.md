@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.40.0](https://github.com/suzworx/flywheel/compare/v0.39.0...v0.40.0) (2026-09-27)
+
+
+### Features
+
+* flywheel factory feels like k9s: instant keys with a background refresh, state colours, change flash, fullscreen and log keys, and skins ([#614](https://github.com/suzworx/flywheel/issues/614)) ([df77ef9](https://github.com/suzworx/flywheel/commit/df77ef9f040526c5be30f1288ee0b78ba020ea4d))
+* flywheel fleet learnings: every learning across the fleet, de-duplicated, in a durable pending queue drained with --done ([#625](https://github.com/suzworx/flywheel/issues/625)) ([68eb9b1](https://github.com/suzworx/flywheel/commit/68eb9b1c70cefff1a02fa0c5c59f0392af1a0b6b))
+
+
+### Bug Fixes
+
+* a resumed attempt that only wraps up an earlier attempt's writes on the same session is not no-writes ([#626](https://github.com/suzworx/flywheel/issues/626)) ([2f01ad4](https://github.com/suzworx/flywheel/commit/2f01ad4f2292126c81de8b34dd3f62de18107175)), closes [#592](https://github.com/suzworx/flywheel/issues/592)
+* an amended event records a brief's drift like a planned one, so brief-drift stops warning after the advice is followed ([#622](https://github.com/suzworx/flywheel/issues/622)) ([2bdcc75](https://github.com/suzworx/flywheel/commit/2bdcc75a0fcb05df1cc3dcdb90b55ab295cbdc53)), closes [#617](https://github.com/suzworx/flywheel/issues/617)
+* metrics WIP leaves out stale units and reports them as stale ([#624](https://github.com/suzworx/flywheel/issues/624)) ([ff59f9b](https://github.com/suzworx/flywheel/commit/ff59f9b6fcc93bc091ffb873aaeb4c5474eb3096)), closes [#590](https://github.com/suzworx/flywheel/issues/590)
+
+
+### Documentation
+
+* the Screens page and feature docs match what the factory view and fleet do today ([#623](https://github.com/suzworx/flywheel/issues/623)) ([effe26d](https://github.com/suzworx/flywheel/commit/effe26d1eaa9bb4e862fd906b59cda4533fd6a67))
+
 ## [0.39.0](https://github.com/suzworx/flywheel/compare/v0.38.0...v0.39.0) (2026-09-27)
 
 

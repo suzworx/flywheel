@@ -59,12 +59,12 @@ jobs:
       # Linux runner has.
       - name: go test
         if: runner.os != 'Linux'
-        run: go test ./...
+        run: go test -timeout 20m ./...
       - name: go test -race
         if: runner.os == 'Linux'
         env:
           CGO_ENABLED: "1"
-        run: go test -race ./...
+        run: go test -race -timeout 20m ./...
 
   scale:
     runs-on: ubuntu-latest

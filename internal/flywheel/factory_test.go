@@ -279,6 +279,47 @@ func TestClassifyRunBlocked(t *testing.T) {
 	}
 }
 
+// resumedEvents is r1 cut off after writing (session S, wrote r1Wrote) and a
+// clean c1 that wrote nothing on session c1Session (issue #592).
+func resumedEvents(r1Wrote []string, c1Session string, extra ...Event) []Event {
+	evs := []Event{
+		{Task: "T1", Attempt: "r1", Kind: "started", Session: "S"},
+		{Task: "T1", Attempt: "r1", Kind: "finished", Reason: "rate-limited", Session: "S", Wrote: r1Wrote},
+		{Task: "T1", Attempt: "c1", Kind: "started", Session: c1Session},
+	}
+	evs = append(evs, extra...)
+	return append(evs, Event{Task: "T1", Attempt: "c1", Kind: "finished", Reason: "stop", Session: c1Session})
+}
+
+func TestStopStateResumedWrapUp(t *testing.T) {
+	t.Parallel()
+	if got := stopStateFor(resumedEvents([]string{"a.go"}, "S"), "T1", "c1", "finished"); got != "" {
+		t.Errorf("resumed wrap-up of r1's writes = %q, want none", got)
+	}
+}
+
+func TestStopStateResumedNewSession(t *testing.T) {
+	t.Parallel()
+	if got := stopStateFor(resumedEvents([]string{"a.go"}, "T"), "T1", "c1", "finished"); got != "no-writes" {
+		t.Errorf("new session writing nothing = %q, want no-writes", got)
+	}
+}
+
+func TestStopStateResumedNoEarlierWrites(t *testing.T) {
+	t.Parallel()
+	if got := stopStateFor(resumedEvents(nil, "S"), "T1", "c1", "finished"); got != "no-writes" {
+		t.Errorf("resume of an attempt that wrote nothing = %q, want no-writes", got)
+	}
+}
+
+func TestStopStateResumedDenied(t *testing.T) {
+	t.Parallel()
+	denied := Event{Task: "T1", Attempt: "c1", Kind: "signal", Signal: "permission-denied"}
+	if got := stopStateFor(resumedEvents([]string{"a.go"}, "S", denied), "T1", "c1", "finished"); got != "blocked" {
+		t.Errorf("resumed attempt with permission-denied = %q, want blocked", got)
+	}
+}
+
 func TestLiveRun(t *testing.T) {
 	t.Parallel()
 	for _, s := range []string{"running", "exploring", "long-step", "silent", "stalled", "no-writes"} {

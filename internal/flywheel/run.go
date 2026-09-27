@@ -47,6 +47,10 @@ type RunOptions struct {
 	SimLineDelay time.Duration // unexported test hook: sim waits between lines
 
 	checkpointTicks *atomic.Int64 // test hook: counts finished timed checkpoint ticks
+	// simRelease is a test hook: when non-nil, the sim adapter waits for it to
+	// close (or for the suspend stop, like simSleep) before it opens its
+	// fixture, instead of SimDelay (issue #619). Production never sets it.
+	simRelease <-chan struct{}
 }
 
 // Result reports what the dispatch observed.
@@ -1106,7 +1110,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	defer stopNotice()
 
 	if worker.Adapter == "sim" {
-		if o.SimDelay > 0 {
+		if o.simRelease != nil {
+			select {
+			case <-o.simRelease:
+			case <-suspendStop:
+			}
+		} else if o.SimDelay > 0 {
 			simSleep(o.SimDelay, suspendStop)
 		}
 		src := worker.Model

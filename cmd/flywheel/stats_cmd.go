@@ -18,16 +18,17 @@ func init() {
 }
 
 // statsUsageLine is flywheel stats's usage.
-const statsUsageLine = "flywheel stats [--dir DIR] [--by model [--kind]] [--metrics [--window 24h|7d|30d]] [--json]"
+const statsUsageLine = "flywheel stats [--dir DIR] [--by model [--kind]] [--metrics [--window 24h|7d|30d] [--wip-stale-after D]] [--json]"
 
 // statsOptions holds the parsed stats flags.
 type statsOptions struct {
-	dir     string
-	by      string
-	kind    bool
-	metrics bool
-	window  string
-	jsonOut bool
+	dir        string
+	by         string
+	kind       bool
+	metrics    bool
+	window     string
+	staleAfter time.Duration
+	jsonOut    bool
 }
 
 // statsFlags defines stats's flags once, so help and run share them.
@@ -40,6 +41,7 @@ func statsFlags() (*flag.FlagSet, *statsOptions) {
 	fs.BoolVar(&o.kind, "kind", false, "with --by model, also break the scoreboard down per task kind (a brief's kind: header)")
 	fs.BoolVar(&o.metrics, "metrics", false, "print the factory metrics over a window: flow, quality, reliability, cost, capacity (docs/metrics.md)")
 	fs.StringVar(&o.window, "window", "24h", `with --metrics, the window ending now: "24h", "7d" or "30d"`)
+	fs.DurationVar(&o.staleAfter, "wip-stale-after", 0, "with --metrics, a unit in progress with no event for this long counts as stale, not wip (0 means the 7d default)")
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
 	return fs, o
 }
@@ -53,54 +55,59 @@ func statsUsage(w io.Writer) {
 // trend, derived only from the event log. Exit 0, 1 on error, 2 on usage.
 // --json prints the StatsReport instead of the text lines.
 func runStats(args []string) {
+	if code := statsMain(args, os.Stdout, os.Stderr, time.Now()); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// statsMain runs flywheel stats at now and returns the exit code (the test
+// entry point). --metrics and --json write to out, the text summary to
+// stdout.
+func statsMain(args []string, out, errw io.Writer, now time.Time) int {
 	fs, o := statsFlags()
+	usage := func(format string, a ...any) int {
+		fmt.Fprintf(errw, "flywheel stats: "+format+"\n", a...)
+		statsUsage(errw)
+		return 2
+	}
 	pos, perr := parseArgs(fs, args)
 	if perr != nil {
-		fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", perr)
-		statsUsage(os.Stderr)
-		os.Exit(2)
+		return usage("%v", perr)
 	}
 	if len(pos) != 0 {
-		fmt.Fprintf(os.Stderr, "flywheel stats: unexpected argument %q\n", pos[0])
-		statsUsage(os.Stderr)
-		os.Exit(2)
+		return usage("unexpected argument %q", pos[0])
 	}
 	if o.by != "" && o.by != "model" {
-		fmt.Fprintln(os.Stderr, `flywheel stats: --by must be "model"`)
-		statsUsage(os.Stderr)
-		os.Exit(2)
+		return usage(`--by must be "model"`)
 	}
 	if o.kind && o.by != "model" {
-		fmt.Fprintln(os.Stderr, "flywheel stats: --kind needs --by model")
-		statsUsage(os.Stderr)
-		os.Exit(2)
+		return usage("--kind needs --by model")
+	}
+	if o.staleAfter < 0 {
+		return usage("--wip-stale-after must not be negative")
 	}
 	if o.metrics {
 		if o.by != "" {
-			fmt.Fprintln(os.Stderr, "flywheel stats: --metrics does not take --by")
-			statsUsage(os.Stderr)
-			os.Exit(2)
+			return usage("--metrics does not take --by")
 		}
-		if _, err := flywheel.WindowFor(o.window, time.Now()); err != nil {
-			fmt.Fprintf(os.Stderr, "flywheel stats: --%v\n", err)
-			statsUsage(os.Stderr)
-			os.Exit(2)
+		if _, err := flywheel.WindowFor(o.window, now); err != nil {
+			return usage("--%v", err)
 		}
-		if err := runStatsMetrics(os.Stdout, o.dir, o.window, o.jsonOut, time.Now()); err != nil {
-			fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", err)
-			os.Exit(1)
+		if err := runStatsMetrics(out, o.dir, o.window, o.staleAfter, o.jsonOut, now); err != nil {
+			fmt.Fprintf(errw, "flywheel stats: %v\n", err)
+			return 1
 		}
-		return
+		return 0
 	}
 	rep, err := flywheel.StatsWith(o.dir, flywheel.StatsOptions{ByModel: o.by == "model", ByKind: o.kind})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel stats: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(errw, "flywheel stats: %v\n", err)
+		return 1
 	}
 	if o.jsonOut {
 		b, _ := json.MarshalIndent(rep, "", "  ")
-		fmt.Println(string(b))
-		return
+		fmt.Fprintln(out, string(b))
+		return 0
 	}
 	printStats(rep)
 	if o.by == "model" {
@@ -109,6 +116,7 @@ func runStats(args []string) {
 	if o.kind {
 		printByModel("By model and kind:", "KIND", rep.ByModelKind)
 	}
+	return 0
 }
 
 // printByModel writes the per-model scoreboard (issue #473) under title: one
@@ -203,11 +211,13 @@ func printStats(rep flywheel.StatsReport) {
 // runStatsMetrics writes flywheel stats --metrics for dir to out: the report
 // over the named window ending at now, as JSON (every series included), or
 // as the family table with a trend arrow against the previous equal window.
-func runStatsMetrics(out io.Writer, dir, window string, jsonOut bool, now time.Time) error {
+// staleAfter is the window's WIP stale threshold, 0 for the default.
+func runStatsMetrics(out io.Writer, dir, window string, staleAfter time.Duration, jsonOut bool, now time.Time) error {
 	w, err := flywheel.WindowFor(window, now)
 	if err != nil {
 		return err
 	}
+	w.StaleAfter = staleAfter
 	cur, err := flywheel.MetricsFor(dir, w)
 	if err != nil {
 		return err
@@ -274,8 +284,14 @@ func metricFamilies(rep flywheel.MetricsReport) []metricFamily {
 	if rl.AndonTotal > 0 {
 		andons.value += " (" + countLine(rl.Andons)[1:] + ")"
 	}
+	// The oldest stale age rides in the stale row, so prev and cur keep the
+	// same rows for the trend.
+	stale := count("stale", fl.Stale)
+	if fl.Stale > 0 {
+		stale.value += " (oldest " + fl.StaleOldest.Round(time.Second).String() + ")"
+	}
 	return []metricFamily{
-		{"Flow", []metricRow{count("throughput", fl.Throughput), count("wip", fl.WIP),
+		{"Flow", []metricRow{count("throughput", fl.Throughput), count("wip", fl.WIP), stale,
 			dur("lead time p50", fl.LeadTime.P50), dur("lead time p90", fl.LeadTime.P90),
 			dur("cycle time p50", fl.CycleTime.P50), dur("cycle time p90", fl.CycleTime.P90),
 			dur("queue time p50", fl.QueueTime.P50), dur("touch time mean", fl.TouchTime.Mean),
