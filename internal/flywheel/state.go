@@ -39,11 +39,12 @@ type GroupState struct {
 }
 
 // deriveGroups summarises every group:<id> task of events, sorted by id.
-// events is in ledger order, as openIntegrationFindings reads it.
-func deriveGroups(events []Event) []GroupState {
+// events is in ledger order, as openIntegrationFindings reads it; ordered is
+// the same events in derivationOrder, which Derive has already sorted.
+func deriveGroups(ordered, events []Event) []GroupState {
 	byTask := map[string]*GroupState{}
 	var order []string
-	for _, e := range derivationOrder(events) {
+	for _, e := range ordered {
 		if !strings.HasPrefix(e.Task, "group:") {
 			continue
 		}
@@ -137,14 +138,15 @@ var staleKinds = map[string]bool{
 	"lost":         true,
 }
 
-// eventSortKey is the precomputed comparison key for one event, so sorting
-// does not re-marshal JSON on every comparison.
+// eventSortKey is the precomputed comparison key for one event: its index in
+// the input, parsed time and kind rank. The canonical JSON, the last
+// tiebreaker, is built only when two events tie on everything else, once per
+// event (issue #630): the common case never marshals.
 type eventSortKey struct {
-	Event Event
+	Index int
 	Time  time.Time
 	Valid bool
 	Kind  int
-	Canon string
 }
 
 // canonical is the deterministic JSON encoding of e, used as the final
@@ -173,7 +175,15 @@ func derivationOrder(events []Event) []Event {
 	keys := make([]eventSortKey, len(events))
 	for i, e := range events {
 		t, perr := time.Parse(time.RFC3339Nano, e.TS)
-		keys[i] = eventSortKey{Event: e, Time: t, Valid: perr == nil, Kind: kindRank[e.Kind], Canon: canonical(e)}
+		keys[i] = eventSortKey{Index: i, Time: t, Valid: perr == nil, Kind: kindRank[e.Kind]}
+	}
+	canon := make([]string, len(events))
+	built := make([]bool, len(events))
+	canonOf := func(i int) string {
+		if !built[i] {
+			canon[i], built[i] = canonical(events[i]), true
+		}
+		return canon[i]
 	}
 	slices.SortStableFunc(keys, func(a, b eventSortKey) int {
 		if a.Valid != b.Valid {
@@ -190,18 +200,18 @@ func derivationOrder(events []Event) []Event {
 				return 1
 			}
 		}
-		if c := strings.Compare(a.Event.Task, b.Event.Task); c != 0 {
+		if c := strings.Compare(events[a.Index].Task, events[b.Index].Task); c != 0 {
 			return c
 		}
 		if c := a.Kind - b.Kind; c != 0 {
 			return c
 		}
-		return strings.Compare(a.Canon, b.Canon)
+		return strings.Compare(canonOf(a.Index), canonOf(b.Index))
 	})
 
 	evs := make([]Event, len(keys))
 	for i, k := range keys {
-		evs[i] = k.Event
+		evs[i] = events[k.Index]
 	}
 	return evs
 }
@@ -341,7 +351,7 @@ func Derive(events []Event) State {
 		counts[ts.Status] = counts[ts.Status] + 1
 	}
 	st.Counts = counts
-	if groups := deriveGroups(events); len(groups) > 0 {
+	if groups := deriveGroups(evs, events); len(groups) > 0 {
 		st.Groups = groups
 	}
 	return st

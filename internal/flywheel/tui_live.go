@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -245,21 +244,21 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			}
 			cpCache, cpLoaded = checkpointAges(cps, events, at), true
 		}
+		// Each unit's open findings outside owns, which read its brief: once
+		// per refresh, for the whys and the andon alike (issue #630).
+		owners := map[string][]string{}
+		for _, u := range floor.Units {
+			if u.NeedsOwner > 0 {
+				owners[u.Task] = needsOwnerFindings(dir, events, u.Task)
+			}
+		}
 		// The andon's next steps (issue #583 k7 c1): recover's decision from
 		// the ledger alone (eventNext), for the andon's units only; never
 		// Recover itself, whose world checks take minutes on a large ledger.
 		if view == "andon" {
-			var tasks []string
-			owners := map[string][]string{}
-			for _, u := range floor.Units {
-				tasks = append(tasks, u.Task)
-				if u.NeedsOwner > 0 {
-					owners[u.Task] = needsOwnerFindings(dir, events, u.Task)
-				}
-			}
 			var andon []string
 			for _, a := range floor.Andon {
-				if slices.Contains(tasks, a.Task) {
+				if unitExists(TUIData{Floor: floor}, a.Task) {
 					andon = append(andon, a.Task)
 				}
 			}
@@ -286,14 +285,13 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			}
 		}
 
-		// Every unit's why (issue #583 k3), from what the floor measured.
+		// Every unit's why (issue #583 k3), from what the floor measured; the
+		// ledger is grouped by task once, not scanned again per unit (#630).
 		data.Why = map[string]string{}
+		whys := NewWhyIndex(events)
 		for _, u := range floor.Units {
-			ctx := WhyContext{RunState: u.RunState, Steps: u.Steps, StallTimeout: stall, PauseAt: pauseAt}
-			if u.NeedsOwner > 0 {
-				ctx.NeedsOwner = needsOwnerFindings(dir, events, u.Task)
-			}
-			data.Why[u.Task] = UnitWhy(events, u.Task, at, ctx)
+			ctx := WhyContext{RunState: u.RunState, Steps: u.Steps, StallTimeout: stall, PauseAt: pauseAt, NeedsOwner: owners[u.Task]}
+			data.Why[u.Task] = whys.UnitWhy(u.Task, at, ctx)
 		}
 
 		// Fill Detail if Wants drill-down.
