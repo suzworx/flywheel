@@ -976,7 +976,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 
 ### `probed`
 - Written by: `flywheel doctor --record`.
-- Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`).
+- Carries: `model`, `reason` (the doctor class: ok, credits, key limit, consent required, auth missing, error, local endpoint down, model not pulled), `note` (`flywheel doctor`, or `flywheel doctor: <detail>` when the probe is not ok: the start error, the error message, or `exit N: <first stderr line>` / `no stop (...)`, cut to 200 characters; issue #637).
 - Effect: an `ok` probe newer than the model's latest provider error closes its breaker at once instead of waiting for the cooldown to expire (issue #46).
 
 ### `gate_probed`

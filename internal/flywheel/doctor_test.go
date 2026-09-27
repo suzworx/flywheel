@@ -138,7 +138,14 @@ func TestDoctorMissingFixture(t *testing.T) {
 		t.Fatalf("Doctor() error = %v", err)
 	}
 	if len(probes) != 2 || probes[0].Class != ClassOK || probes[1].Class != ClassError {
-		t.Errorf("probes = %+v, want [ok.jsonl:ok missing.jsonl:error]", probes)
+		t.Fatalf("probes = %+v, want [ok.jsonl:ok missing.jsonl:error]", probes)
+	}
+	// The error says why: the open error naming the fixture (#637).
+	if d := probes[1].Detail; !strings.HasPrefix(d, "start: ") || !strings.Contains(d, "missing.jsonl") {
+		t.Errorf("missing probe Detail = %q, want the open error naming missing.jsonl", d)
+	}
+	if probes[0].Detail != "" {
+		t.Errorf("ok probe Detail = %q, want empty", probes[0].Detail)
 	}
 	if DoctorAllOK(probes) {
 		t.Error("DoctorAllOK() = true, want false")
