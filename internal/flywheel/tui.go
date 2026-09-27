@@ -3,7 +3,6 @@ package flywheel
 import (
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -110,6 +109,24 @@ type TUI struct {
 	metricPart string
 	evCursor   int
 	metricBack *metricReturn
+
+	// The k9s feel (issue #583 k6): the skin, the rows each fetch changed
+	// (Observe), fullscreen, and the log tab's wrap, timestamps and follow.
+	skin     Skin
+	seen     map[string]map[string]string // view → row key → the row's cells, as the last fetch had them
+	marks    map[string]map[string]rowMark
+	full     bool // f: the drill-down without the header and crumbs
+	logWrap  bool // w in the log tab
+	logNoTS  bool // t in the log tab: timestamps hidden
+	follow   bool // the log tab tails its unit
+	followed bool // follow was on and a scroll up paused it
+}
+
+// rowMark is a row a fetch changed: new, or modified; left is the refreshes
+// it stays highlighted for, this one included.
+type rowMark struct {
+	kind string
+	left int
 }
 
 // metricReturn is a metric drill-down to come back to: its metric, part,
@@ -148,6 +165,7 @@ func NewTUI() *TUI {
 		now:    time.Now,
 		saved:  map[string]navLevel{},
 		window: "24h",
+		skin:   skins[DefaultSkin],
 	}
 }
 
@@ -389,6 +407,9 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		if m.drillKind == "metric" && m.metricKey(k, d) {
 			return
 		}
+		if m.drillKey(k) {
+			return
+		}
 		switch k.Kind {
 		case term.KeyEsc:
 			// A unit opened from a metric's evidence goes back to it.
@@ -411,6 +432,7 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 			if kind, ok := unitTab(k.Rune); ok && isUnitTab(m.drillKind) {
 				m.drillKind, m.detailTop = kind, 0
 				m.crumbs[len(m.crumbs)-1] = kind
+				m.startFollow(d)
 				return
 			}
 			switch k.Rune {
@@ -665,6 +687,69 @@ func (m *TUI) drillUnit(d TUIData, task, kind string) {
 	m.drillTask = task
 	m.detailTop = 0
 	m.pushCrumbs(task, kind)
+	m.startFollow(d)
+}
+
+// startFollow sets the log tab's follow as it opens: on while its unit
+// runs, else off (and nothing paused).
+func (m *TUI) startFollow(d TUIData) {
+	m.follow, m.followed = false, false
+	if m.drillKind != "log" {
+		return
+	}
+	for _, u := range d.Floor.Units {
+		if u.Task == m.drillTask && stateTokens[strings.Fields(u.RunState + " -")[0]] == "running" {
+			m.follow = true
+		}
+	}
+}
+
+// logLines are a unit tab's lines as drawn: in the log tab, without the
+// leading clock when t hid the timestamps, and cut into width-rune pieces
+// when w wraps them; any other tab's as they are.
+func (m *TUI) logLines(lines []string, width int) []string {
+	if m.drillKind != "log" || (!m.logNoTS && !m.logWrap) {
+		return lines
+	}
+	var out []string
+	for _, l := range lines {
+		if m.logNoTS {
+			if _, rest, ok := strings.Cut(l, " "); ok {
+				l = rest
+			}
+		}
+		r := []rune(l)
+		for m.logWrap && width > 0 && len(r) > width {
+			out, r = append(out, string(r[:width])), r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return out
+}
+
+// drillKey handles the keys every drill-down shares (issue #583 k6): f
+// fullscreen, G the last line; and the log tab's: w wrap, t timestamps, G
+// follow again, and a scroll up pauses the follow. It reports whether it
+// used the key; a scroll it lets through.
+func (m *TUI) drillKey(k term.Key) bool {
+	log := m.drillKind == "log"
+	switch {
+	case k.Kind == term.KeyRune && k.Rune == 'f':
+		m.full = !m.full
+	case k.Kind == term.KeyRune && k.Rune == 'G':
+		m.detailTop = 1 << 30 // View clamps it to the last page
+		m.follow, m.followed = log, false
+	case log && k.Kind == term.KeyRune && k.Rune == 'w':
+		m.logWrap = !m.logWrap
+	case log && k.Kind == term.KeyRune && k.Rune == 't':
+		m.logNoTS = !m.logNoTS
+	case log && m.follow && (k.Kind == term.KeyUp || k.Kind == term.KeyPgUp || (k.Kind == term.KeyRune && k.Rune == 'k')):
+		m.follow, m.followed = false, true
+		return false
+	default:
+		return false
+	}
+	return true
 }
 
 // unitExists reports whether task names one of the floor's units.
@@ -994,6 +1079,9 @@ var (
 	unitHints   = []hint{{"enter", "why"}, {"l", "log"}}
 	tabHints    = []hint{{"w", "why"}, {"d", "explain"}, {"y", "brief"}, {"l", "log"}, {"c", "checkpoints"},
 		{"F", "findings"}, {"e", "events"}, {"J", "need"}}
+	fullHints = []hint{{"f", "fullscreen"}}
+	// In the log tab w wraps, so the why tab is Esc and Enter away.
+	logHints = join([]hint{{"w", "wrap"}, {"t", "timestamps"}, {"G", "follow"}}, tabHints[1:])
 )
 
 // viewHints is the key menu of each view (a table view, a drill-down kind or
@@ -1011,17 +1099,17 @@ var viewHints = map[string][]hint{
 	"search":      join(tableHints, []hint{{"enter", "open at match"}}, sortHints, layoutHints),
 	"pulse":       join(tableHints, []hint{{"h/j/k/l", "panel"}, {"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, layoutHints),
 	"metrics":     join(tableHints, []hint{{"enter", "drill"}, {"1/2/3", "24h/7d/30d"}}, sortHints, layoutHints),
-	"metric":      join([]hint{{"h", "chart"}, {"u", "units"}, {"enter", "unit"}}, scrollHints, layoutHints),
-	"why":         join(tabHints, scrollHints, layoutHints),
-	"explain":     join(tabHints, scrollHints, layoutHints),
-	"brief":       join(tabHints, scrollHints, layoutHints),
-	"log":         join(tabHints, scrollHints, layoutHints),
-	"unitcp":      join(tabHints, scrollHints, layoutHints),
-	"findings":    join(tabHints, scrollHints, layoutHints),
-	"unitevents":  join(tabHints, scrollHints, layoutHints),
-	"learning":    join(scrollHints, layoutHints),
-	"checkpoint":  join(scrollHints, layoutHints),
-	"views":       join(scrollHints, layoutHints),
+	"metric":      join([]hint{{"h", "chart"}, {"u", "units"}, {"enter", "unit"}}, scrollHints, fullHints, layoutHints),
+	"why":         join(tabHints, scrollHints, fullHints, layoutHints),
+	"explain":     join(tabHints, scrollHints, fullHints, layoutHints),
+	"brief":       join(tabHints, scrollHints, fullHints, layoutHints),
+	"log":         join(logHints, scrollHints, fullHints, layoutHints),
+	"unitcp":      join(tabHints, scrollHints, fullHints, layoutHints),
+	"findings":    join(tabHints, scrollHints, fullHints, layoutHints),
+	"unitevents":  join(tabHints, scrollHints, fullHints, layoutHints),
+	"learning":    join(scrollHints, fullHints, layoutHints),
+	"checkpoint":  join(scrollHints, fullHints, layoutHints),
+	"views":       join(scrollHints, fullHints, layoutHints),
 	"help":        join(scrollHints, layoutHints),
 }
 
@@ -1069,8 +1157,8 @@ func contextLines(d TUIData) []string {
 	for _, p := range d.Paused {
 		out = append(out, "paused "+p.Model+" until "+p.Until.Local().Format("15:04"))
 	}
-	out = append(out, fmt.Sprintf("lead %s · workers %d/%d · landed today %d · $%.2f",
-		d.Floor.Staffing.Lead, busy, most, d.Floor.Output.LandedToday, d.Floor.Output.Cost))
+	out = append(out, fmt.Sprintf("lead %s · workers %d/%d · landed today %d · %s",
+		d.Floor.Staffing.Lead, busy, most, d.Floor.Output.LandedToday, fmtUSD(d.Floor.Output.Cost)))
 	health := "health none"
 	if !d.HealthAt.IsZero() {
 		health = "health " + HumanAge(max(0, int(d.Floor.Refreshed.Sub(d.HealthAt).Seconds()))) + " ago"
@@ -1194,6 +1282,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		return ""
 	}
 
+	// The "none" skin draws no colour at all, the cursor's reverse included.
+	color = color && m.skin.Name != "none"
+	// Fullscreen (f) gives a drill-down the header's and the crumbs' lines.
+	full := m.full && m.drillKind != ""
+
 	// The bottom: the flash line, then the prompt or the crumbs on the last
 	// line; a frame too short for both keeps the last.
 	var foot []string
@@ -1202,7 +1295,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		foot = []string{m.flashLine(), ":" + m.prompt}
 	case m.promptKind == "filter":
 		foot = []string{m.flashLine(), "/" + m.prompt}
-	case !m.hideCrumbs:
+	case !m.hideCrumbs && !full:
 		foot = []string{m.flashLine(), m.crumbLine()}
 	default:
 		foot = []string{m.flashLine()}
@@ -1215,11 +1308,13 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	// a column header and minTableRows rows below it.
 	const minTableRows = 5
 	var lines []string
-	if !m.hideHeader {
+	if !m.hideHeader && !full {
 		if hdr := m.headerBlock(d, width); height-len(foot)-len(hdr) >= 2+minTableRows {
 			lines = hdr
 		}
 	}
+	// hdrLines are painted once the frame is laid out on plain text.
+	hdrLines := len(lines)
 	// body is how many lines the title and the content below it get.
 	body := height - len(foot) - len(lines)
 
@@ -1239,6 +1334,9 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		titleBar = fmt.Sprintf("── Metric %s %s ──", def.name, m.window)
 	} else if m.drillKind != "" {
 		titleBar = strings.TrimRight(fmt.Sprintf("── %s %s", drillTitles[m.drillKind], m.drillTask), " ") + " ──"
+		if m.drillKind == "log" && m.followed {
+			titleBar += " paused; G to follow ──"
+		}
 	} else if m.help {
 		titleBar = "── Help ──"
 	} else if m.view == "pulse" {
@@ -1311,6 +1409,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"Unit detail tabs:",
 			"  w why and timeline, d explain, y brief, l log, c checkpoints,",
 			"  F review findings, e events; J opens the first unmet need",
+			"  f       fullscreen: the drill-down without header and crumbs",
+			"  G       the last line; in the log, follow the unit again",
+			"Log tab:",
+			"  w wrap long lines, t show or hide the timestamps; the log",
+			"  follows a running unit until you scroll up (G follows again)",
 			"Layout:",
 			"  ctrl-e  show or hide the header",
 			"  ctrl-g  show or hide the crumbs",
@@ -1333,9 +1436,13 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			detail, cur = m.metricLines(d, width)
 		} else if isUnitTab(m.drillKind) {
 			// The unit detail: its why line leads every tab.
-			detail = append([]string{"why: " + d.Why[m.drillTask], ""}, d.Detail...)
+			detail = append([]string{"why: " + d.Why[m.drillTask], ""}, m.logLines(d.Detail, width)...)
 		} else if _, ok := drillTitles[m.drillKind]; ok {
 			detail = localDetail(d, m.drillKind, m.drillTask)
+		}
+		// A log that follows its unit shows its last page.
+		if m.drillKind == "log" && m.follow {
+			m.detailTop = len(detail)
 		}
 		// A search result's drill-down opens at its match, once its lines
 		// have arrived.
@@ -1361,7 +1468,9 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 	} else if m.view == "pulse" {
 		lines = append(lines, m.pulseLines(d, width)...)
 	} else {
-		// Table view: long cells cut to maxCell unless wide (Ctrl-W).
+		// Table view: long cells cut to maxCell unless wide (Ctrl-W); whole
+		// keeps the uncut rows, whose first cells key the change marks.
+		whole := rows
 		if !m.wide {
 			rows = cutCells(rows)
 		}
@@ -1397,20 +1506,11 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			rowLineCut := cutRunes(cursor+m.formatRowWithColumns(row, widths), width)
 
 			// Colour after cutting, so widths are measured on plain text: the
-			// cursor row in reverse video, else the STATE cell of the units and
-			// andon views when it survived the cut whole.
-			switch si := slices.Index(header, "STATE"); {
-			case !color:
-			case isCursor:
-				rowLineCut = "\x1b[7m" + rowLineCut + "\x1b[0m"
-			case (m.view == "units" || m.view == "andon") && si >= 0:
-				at := 2 // the cursor column
-				for _, w := range widths[:si] {
-					at += w + 2
-				}
-				rowLineCut = paintCell(rowLineCut, row[si], at)
+			// cursor row in reverse video, else the whole row in the skin's
+			// colour of its state, highlighted while a fetch's change marks it.
+			if color {
+				rowLineCut = m.paintRow(header, row, rowLineCut, isCursor, m.marked(cell(whole[i], 0)))
 			}
-
 			lines = append(lines, rowLineCut)
 		}
 
@@ -1422,23 +1522,20 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		lines = append(lines, "")
 	}
 	lines = lines[:height-len(foot)]
-	for _, f := range foot {
-		lines = append(lines, cutRunes(f, width))
+	if color {
+		for i := 0; i < hdrLines && i < len(lines); i++ {
+			lines[i] = m.skin.header(lines[i])
+		}
+	}
+	for i, f := range foot {
+		f = cutRunes(f, width)
+		if color && i == len(foot)-1 && m.promptKind == "" && f == cutRunes(m.crumbLine(), width) {
+			f = m.skin.Paint(m.skin.Crumb, f)
+		}
+		lines = append(lines, f)
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// paintCell colours the cell state that starts at rune at of line, when
-// the line holds it whole there; the colour comes from the state word:
-// "capped 50k" is capped.
-func paintCell(line, state string, at int) string {
-	runes, n := []rune(line), utf8.RuneCountInString(state)
-	if state == "" || at+n > len(runes) || string(runes[at:at+n]) != state {
-		return line
-	}
-	word, _, _ := strings.Cut(state, " ")
-	return string(runes[:at]) + paint(true, stateColor(word), state) + string(runes[at+n:])
 }
 
 // crumbLine is the navigation path as k9s draws it, each crumb a tag:

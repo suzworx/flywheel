@@ -233,7 +233,8 @@ func (m *TUI) pulseLines(d TUIData, width int) []string {
 				if j < len(b) {
 					cell = b[j]
 				}
-				if bi < len(blocks)-1 {
+				// No panel draws past its column, the last one included.
+				if cell = fitCells(cell, pw); bi < len(blocks)-1 {
 					cell = padCells(cell, pw) + "  "
 				}
 				line += cell
@@ -267,7 +268,7 @@ func (m *TUI) pulsePanel(i int, tm TUIMetrics, w int) []string {
 		out = append(out, fitCells("  "+padCells(l[0], 11)+" "+padCells(val, 11)+" "+padCells(spark, 6)+" "+trendArrow(cur, prev), w))
 	}
 	if p.lines == nil {
-		bars := HBars(modelBars(tm.Cur), w-2)
+		bars := fitBars(modelBars(tm.Cur), w-2)
 		if len(bars) == 0 {
 			bars = []string{"no model finished"}
 		}
@@ -540,7 +541,7 @@ func headerStats(d TUIData) []string {
 		fmt.Sprintf("wip %d", r.Flow.WIP),
 		"first-pass " + fmtMetric("pct", r.Quality.FirstPassYield),
 		fmt.Sprintf("andons %d", r.Reliability.AndonTotal),
-		fmt.Sprintf("spend 24h $%.2f", r.Cost.Spend),
+		"spend 24h " + fmtUSD(r.Cost.Spend),
 		fmt.Sprintf("workers %d/%d busy", busy, most),
 	}
 }
@@ -596,14 +597,61 @@ func pausedBars(r MetricsReport) []BarRow {
 	return out
 }
 
-// modelBars are each model's cost per accepted (landed) unit.
+// modelBars are each model's cost per accepted (landed) unit, "–" for a
+// model none of whose units landed, and its spend.
 func modelBars(r MetricsReport) []BarRow {
 	var out []BarRow
 	for _, s := range r.Cost.ByModel {
-		out = append(out, BarRow{Label: s.Model, Value: s.CostPerAccepted, Text: fmt.Sprintf("$%.2f/unit  $%.2f spent", s.CostPerAccepted, s.Spend)})
+		per := "–"
+		if s.Accepted > 0 {
+			per = fmtUSD(s.CostPerAccepted) + "/unit"
+		}
+		out = append(out, BarRow{Label: s.Model, Value: s.CostPerAccepted, Text: per + "  " + fmtUSD(s.Spend) + " spent"})
 	}
 	sortBars(out)
 	return out
+}
+
+// fitBars is HBars of rows at width with every row's text whole: the full
+// text when it fits, else its part before the first double space, else none,
+// so a narrow panel never shows an amount cut in two.
+func fitBars(rows []BarRow, width int) []string {
+	for _, cut := range []func(string) string{
+		func(s string) string { return s },
+		func(s string) string { s, _, _ = strings.Cut(s, "  "); return s },
+		func(string) string { return "" },
+	} {
+		rs := slices.Clone(rows)
+		for i := range rs {
+			rs[i].Text = cut(rs[i].Text)
+		}
+		lines, whole := HBars(rs, width), true
+		for i, l := range lines {
+			whole = whole && strings.HasSuffix(l, rs[i].Text)
+		}
+		if whole {
+			return lines
+		}
+	}
+	return HBars(nil, width)
+}
+
+// fmtUSD is an amount as compact as it reads: $7.25 under $100, then whole
+// dollars ($711), then thousands ($1.2k) and millions ($3.4M).
+func fmtUSD(v float64) string {
+	sign, a := "", math.Abs(v)
+	if v < 0 {
+		sign = "-"
+	}
+	switch {
+	case a >= 999_950:
+		return fmt.Sprintf("%s$%.1fM", sign, a/1e6)
+	case a >= 999.5:
+		return fmt.Sprintf("%s$%.1fk", sign, a/1e3)
+	case a >= 100:
+		return fmt.Sprintf("%s$%.0f", sign, a)
+	}
+	return fmt.Sprintf("%s$%.2f", sign, a)
 }
 
 // workerBars are each worker's utilization.
