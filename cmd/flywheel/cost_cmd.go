@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	register("cost", "sum finished events' tokens and cost per task and model", runCost)
+	register("cost", "sum finished and agent-reviewed events' tokens and cost per task and model", runCost)
 	registerHelp("cost", "flywheel cost [--dir DIR] [--json]", func() *flag.FlagSet { fs, _ := costFlags(); return fs })
 }
 
@@ -36,9 +36,9 @@ func costUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: flywheel cost [--dir DIR] [--json]")
 }
 
-// runCost implements `flywheel cost`: a read-only sum of the finished
-// events' tokens and cost, grouped per task and per model. Exit 0, 1 on
-// error, 2 on usage. --json prints the CostReport instead of the text lines.
+// runCost implements `flywheel cost`: a read-only sum of the finished and
+// agent-reviewed events' tokens and cost, grouped per task and per model.
+// Exit 0, 1 on error, 2 on usage. --json prints the CostReport instead of the text lines.
 func runCost(args []string) {
 	fs, o := costFlags()
 	pos, perr := parseArgs(fs, args)
@@ -66,15 +66,24 @@ func runCost(args []string) {
 }
 
 // printCost writes the text cost summary: one row per task and per model,
-// then the total.
+// then the total; a row with review spend adds " review=$X" (issue #459).
 func printCost(rep flywheel.CostReport) {
 	fmt.Println("per task:")
 	for _, r := range rep.Tasks {
-		fmt.Printf("%s tokens=%d cost=$%.4f\n", r.ID, r.Count(), r.Cost)
+		fmt.Printf("%s %s\n", r.ID, costLine(r))
 	}
 	fmt.Println("per model:")
 	for _, r := range rep.Models {
-		fmt.Printf("%s tokens=%d cost=$%.4f\n", r.ID, r.Count(), r.Cost)
+		fmt.Printf("%s %s\n", r.ID, costLine(r))
 	}
-	fmt.Printf("total tokens=%d cost=$%.4f\n", rep.Total.Count(), rep.Total.Cost)
+	fmt.Printf("total %s\n", costLine(rep.Total))
+}
+
+// costLine renders a row's tokens, cost and, when any, its review part.
+func costLine(r flywheel.CostRow) string {
+	s := fmt.Sprintf("tokens=%d cost=$%.4f", r.Count(), r.Cost)
+	if r.Review > 0 {
+		s += fmt.Sprintf(" review=$%.4f", r.Review)
+	}
+	return s
 }

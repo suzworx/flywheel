@@ -17,6 +17,8 @@ implements; `flywheel help <command>` prints any command's flags.
 - [Routing, budgets and rate limits](#routing-budgets-and-rate-limits)
 - [Controller and health](#controller-and-health)
 - [Recover and checkpoints](#recover-and-checkpoints)
+- [Freeze and resume](#freeze-and-resume)
+- [Wake by schedule](#wake-by-schedule)
 - [Offline](#offline)
 - [Worktrees and needs-state](#worktrees-and-needs-state)
 - [Product lines and staffing](#product-lines-and-staffing)
@@ -136,8 +138,9 @@ permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks f
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
-`limits.unit_cost_usd` caps what one unit's worker attempts spend, corrections included (the sum
-of `cost` over its `finished` events); a worker's `unit_cost_usd` overrides it, and 0 means no
+`limits.unit_cost_usd` caps what one unit spends: its worker attempts, corrections included, and
+its agent review rounds (the sum of `cost` over its `finished` events and its `reviewed` events
+that carry a cost); a worker's `unit_cost_usd` overrides it, and 0 means no
 cap (`flywheel config set limits.unit_cost_usd 5`). A unit already at its cap is refused at
 dispatch (exit 6, rule `unit-cost`; raise the cap or split the unit). A running attempt that
 reaches it is stopped: a claude worker gets `--max-budget-usd` set to what the unit has left, and
@@ -185,6 +188,32 @@ The controller records the factory's health in the ledger: `flywheel controller 
 `flywheel recover` gives the answer to trust after a crash, a credit outage or a new lead session, and every session starts with it. It is read-only. It checks the log's hash chain and every verify rule, then compares each unit's world with the ledger: worktree HEAD against the attempt's commit, uncommitted paths against what the attempt wrote, lease, torn run file, stacked base and paused model. For each unit it prints one next action (`mark-lost`, `wait-reset`, `resume-session`, `rebase`, `assign-owner`, `re-validate`, `review`, `inspect`, `land`, `investigate` or `none`; `assign-owner` names the open blocking findings outside the unit's owns) with its reason and the exact command; `--json` prints the same report as JSON. `--apply` runs only the safe actions (mark-lost, re-validate, a conflict-free rebase), records a `recovered` event, and lists the rest for the lead.
 
 Work is never lost when an attempt is interrupted: an attempt that ends uncleanly after writing owned files, or one marked lost, is snapshotted to `refs/flywheel/checkpoints/<task>/<attempt>` without touching the branch or the index, and `flywheel checkpoint list|diff|restore|drop` brings it back ([#422](https://github.com/suzworx/flywheel/issues/422)). `limits.checkpoint_every` (a Go duration, default `10m`; `"0"` off) also checkpoints an attempt running in its task worktree on that interval, only when its owned files changed.
+
+## Freeze and resume
+
+**Suspend.** `flywheel suspend --session S [--reason TEXT] [--until TIME]` freezes the whole factory ([#578](https://github.com/suzworx/flywheel/pull/578)). It records a `suspended` event carrying the session, the reason and, with `--until`, the thaw time (RFC 3339, or `HH:MM` local: today, or tomorrow once that time has passed). Past `--until` the factory thaws by itself, with no event. A second `flywheel suspend` while suspended is refused (exit 6, rule `suspended`).
+
+**The refusal rule.** While suspended every dispatch path refuses and appends nothing: `flywheel run` exits 6 with rule `suspended` (`the factory is suspended since <ts> by <session>: <reason>; flywheel resume --session <s> to thaw`), `flywheel next` turns each `DISPATCH` into a `WAIT` naming the suspension, and the controller's and `flywheel supervise --resume-limited`'s auto-resume start nothing, reporting each unit not resumed with reason `suspended`. `flywheel status` prints a `SUSPENDED since …` line first (`suspended` in `--json`), and the floor lists a `factory suspended` andon entry first.
+
+**Stop the live workers.** `flywheel suspend --stop` also stops every worker that is running ([#584](https://github.com/suzworx/flywheel/pull/584)). It writes the sentinel `.flywheel/suspend.stop`; each running `flywheel run` checks it on every lease tick (`lease.renew_interval`), kills its worker the way the stall watchdog does, and finishes the attempt with reason `suspended` and note `stopped by suspend at <ts>`. The finished event keeps the session, the owned files the worker wrote are checkpointed, a worktree's changes stay in the worktree, and that `flywheel run` exits 6. The floor shows the unit `suspended`, not failed.
+
+**Resume exactly.** `flywheel resume --session S [--note TEXT]` thaws the factory (exit 6 when it is not suspended), removes the sentinel and continues every unit a `--stop` stopped, each in its own session: it writes the continue delta `.flywheel/briefs/<task>.delta.txt` (the brief's owns, needs and gates, then the note that the worker was stopped by a factory suspension) and starts `flywheel run <task> --resume` in the background, printing `resumed <task> <attempt> (log .flywheel/runs/<task>.autoresume.log)` for each. `--no-redispatch` only thaws.
+
+**In recover.** `flywheel recover` offers a stopped unit `resume-session` with the reason `stopped by a factory suspension`: the command is `flywheel resume --session <s>` while the factory is still suspended, and `flywheel run <task> --resume` once it has thawed.
+
+In progress: the factory will freeze itself when every model's tokens run out, and thaw at the reset ([#572](https://github.com/suzworx/flywheel/issues/572)).
+
+## Wake by schedule
+
+The controller only acts while something runs it. `flywheel schedule install [--every D]` registers an OS scheduled task that runs `flywheel controller --once --dir <repo>` every `--every` (default `15m`, at least `1m`, whole minutes), so the factory wakes with no flywheel process running ([#582](https://github.com/suzworx/flywheel/pull/582)). Each run of `controller --once` marks lost attempts, blocks scrapped needs, records health and, with `controller.auto_resume` on (the default), resumes the rate-limited units whose reset has passed; a suspended factory resumes nothing.
+
+- **Windows** — a Task Scheduler task (`schtasks /Create /SC MINUTE /MO <n>`).
+- **Linux** — an entry in the user crontab, marked by a `# flywheel-schedule <name>` line above it; its output goes to `.flywheel/schedule.log`. Cron can run under an hour, or whole hours under a day.
+- **macOS** — a launchd LaunchAgent in `~/Library/LaunchAgents`, labelled `io.github.suzworx.<name>`.
+
+There is one task per repository, named `flywheel-<directory name>-<first 8 hex of the sha256 of its absolute path>`, so two checkouts with the same name never share one. `flywheel schedule status` says whether it is installed (with the scheduler's detail), `flywheel schedule remove` deletes it, and a re-install replaces it. The task runs the binary that installed it, by its absolute path.
+
+In progress: `flywheel fleet`, one view of every factory on the machine ([#585](https://github.com/suzworx/flywheel/issues/585)).
 
 ## Offline
 

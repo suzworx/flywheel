@@ -47,6 +47,28 @@ func TestTUILiveQuitKey(t *testing.T) {
 	}
 }
 
+// TestTUILiveCtrlRReloads checks that the fetch right after Ctrl-R, not the
+// next tick, receives the reload request (issue #583).
+func TestTUILiveCtrlRReloads(t *testing.T) {
+	t.Parallel()
+	keys := make(chan term.Key, 2)
+	keys <- term.Key{Kind: term.KeyCtrl, Rune: 'r'}
+	keys <- term.Key{Kind: term.KeyRune, Rune: 'q'}
+	close(keys)
+	var reloads []bool
+	fetch := func(m *TUI) (TUIData, error) {
+		reloads = append(reloads, m.TakeRefresh())
+		return makeTestTUIData(), nil
+	}
+	tio := TUIIO{Keys: keys, Ticks: make(chan time.Time), Size: func() (int, int) { return 100, 20 }, Out: &bytes.Buffer{}}
+	if err := RunTUILoop(tio, fetch); err != nil {
+		t.Fatalf("RunTUILoop: %v", err)
+	}
+	if len(reloads) != 2 || reloads[0] || !reloads[1] {
+		t.Errorf("reload requests seen by the fetches = %v, want [false true]", reloads)
+	}
+}
+
 func TestTUILiveClosedKeys(t *testing.T) {
 	t.Parallel()
 	keys := make(chan term.Key)
