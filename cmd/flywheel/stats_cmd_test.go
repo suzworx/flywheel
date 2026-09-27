@@ -50,7 +50,7 @@ func TestMetricsCLIFlags(t *testing.T) {
 func TestMetricsCLITable(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	if err := runStatsMetrics(&out, metricsDir(t), "24h", false, metricsNow); err != nil {
+	if err := runStatsMetrics(&out, metricsDir(t), "24h", 0, false, metricsNow); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
@@ -84,7 +84,7 @@ func TestMetricsCLITable(t *testing.T) {
 func TestMetricsCLIJSON(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	if err := runStatsMetrics(&out, metricsDir(t), "24h", true, metricsNow); err != nil {
+	if err := runStatsMetrics(&out, metricsDir(t), "24h", 0, true, metricsNow); err != nil {
 		t.Fatal(err)
 	}
 	var rep flywheel.MetricsReport
@@ -94,7 +94,36 @@ func TestMetricsCLIJSON(t *testing.T) {
 	if rep.Flow.Throughput != 1 || len(rep.Buckets) != 24 || len(rep.Flow.WIPSeries) != 24 || len(rep.Cost.SpendSeries) != 24 {
 		t.Errorf("json report = throughput %d, %d buckets, series %d/%d", rep.Flow.Throughput, len(rep.Buckets), len(rep.Flow.WIPSeries), len(rep.Cost.SpendSeries))
 	}
-	if err := runStatsMetrics(&out, metricsDir(t), "1y", true, metricsNow); err == nil {
+	if err := runStatsMetrics(&out, metricsDir(t), "1y", 0, true, metricsNow); err == nil {
 		t.Error("window 1y accepted")
+	}
+}
+
+// TestStatsWIPStaleAfter (issue #590): a negative --wip-stale-after is a
+// usage error, the flag reaches the window, and --metrics --json carries
+// "stale". On the unfixed code the flag is unknown (exit 2 for every call,
+// so the 0-exit assertion fails) and the JSON has no "stale".
+func TestStatsWIPStaleAfter(t *testing.T) {
+	t.Parallel()
+	dir := metricsDir(t)
+	run := func(args ...string) (int, string, string) {
+		var out, errb strings.Builder
+		code := statsMain(args, &out, &errb, metricsNow)
+		return code, out.String(), errb.String()
+	}
+	if code, _, errs := run("--dir", dir, "--metrics", "--wip-stale-after", "-1h"); code != 2 || !strings.Contains(errs, "--wip-stale-after") {
+		t.Errorf("--wip-stale-after -1h = %d, want 2 (usage)\n%s", code, errs)
+	}
+	code, out, errs := run("--dir", dir, "--metrics", "--json")
+	if code != 0 || !strings.Contains(out, `"stale":`) || !strings.Contains(out, `"stale_oldest":`) {
+		t.Fatalf("--metrics --json = %d, want \"stale\" and \"stale_oldest\"\n%s%s", code, out, errs)
+	}
+	// d-limited's last event is 09-02T04:00 and f-running's 09-02T09:01: an
+	// 18h threshold at 09-03T00:00 makes d-limited stale (20h) and keeps
+	// f-running in WIP.
+	var rep flywheel.MetricsReport
+	code, out, errs = run("--dir", dir, "--metrics", "--json", "--wip-stale-after", "18h")
+	if code != 0 || json.Unmarshal([]byte(out), &rep) != nil || rep.Flow.WIP != 1 || rep.Flow.Stale != 1 || rep.Flow.StaleOldest != 20*time.Hour {
+		t.Errorf("--wip-stale-after 18h = %d, wip %d stale %d oldest %v, want 1 1 20h\n%s", code, rep.Flow.WIP, rep.Flow.Stale, rep.Flow.StaleOldest, errs)
 	}
 }
