@@ -42,6 +42,11 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   one is unset or empty in flywheel's environment, so no paid attempt is spent finding out; the
   message names the variables, never their values. Export each as its own statement in the
   dispatching shell, not chained into a backgrounded command, whose subshell loses it (issue #534).
+- **preflight:** — a command that must exit 0 before `flywheel run` dispatches, for a unit that
+  spends a metered external resource: `preflight: ./scripts/check-budget.sh 5`, repeatable, run in
+  order in the repository root. The first that exits non-zero refuses (exit 6, rule `preflight`)
+  before any attempt is recorded, naming the command, its exit code and first output line; a
+  correction unions the base brief's commands. `flywheel validate` does not run it (issue #635).
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before

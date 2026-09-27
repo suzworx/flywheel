@@ -3,9 +3,11 @@ package flywheel
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +170,38 @@ func TestParseBriefHeaderExclusiveAndReview(t *testing.T) {
 	}
 	if len(h.Review) != 1 || h.Review[0] != "lead" {
 		t.Errorf("review = %v, want [lead]", h.Review)
+	}
+}
+
+// TestParseBriefHeaderPreflight checks preflight: lines accumulate in order,
+// an empty line is recorded for lint and adds no command, and the header's
+// JSON carries Preflight (issue #635).
+func TestParseBriefHeaderPreflight(t *testing.T) {
+	t.Parallel()
+	h, err := ParseBriefHeaderBytes([]byte("owns: a.go\npreflight: ./check.sh 5\npreflight:   exit 0  \n\n# TASK: x\n"))
+	if err != nil {
+		t.Fatalf("ParseBriefHeaderBytes() error = %v", err)
+	}
+	if want := []string{"./check.sh 5", "exit 0"}; !reflect.DeepEqual(h.Preflight, want) {
+		t.Errorf("Preflight = %q, want %q", h.Preflight, want)
+	}
+	if h.preflightEmpty {
+		t.Error("preflightEmpty = true, want false")
+	}
+	b, err := json.Marshal(h)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(b), `"Preflight":["./check.sh 5","exit 0"]`) {
+		t.Errorf("header JSON = %s, want it to carry Preflight", b)
+	}
+	empty, _ := ParseBriefHeaderBytes([]byte("preflight:\n\n# TASK: x\n"))
+	if len(empty.Preflight) != 0 || !empty.preflightEmpty {
+		t.Errorf("empty preflight: parsed as Preflight=%q preflightEmpty=%v, want none and true", empty.Preflight, empty.preflightEmpty)
+	}
+	none, _ := ParseBriefHeaderBytes([]byte("owns: a.go\n\n# TASK: x\n"))
+	if b, _ := json.Marshal(none); strings.Contains(string(b), "Preflight") {
+		t.Errorf("header JSON without preflight: = %s, want no Preflight key", b)
 	}
 }
 
