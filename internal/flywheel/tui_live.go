@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -31,7 +32,9 @@ type TUIIO struct {
 // and draw again. Each frame is written as "\x1b[H" + View(...) with every
 // line ended by "\x1b[K" (clear to end of line) and the frame followed by
 // "\x1b[J" (clear below). A fetch error ends the loop with that error; a
-// quit key or Stop ends it at once, without another fetch.
+// quit key or Stop ends it at once, without another fetch. Every key is
+// followed by a fetch, so Ctrl-R's reload request (TakeRefresh, consumed by
+// the fetch) is honoured at once, not at the next tick.
 func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	m := NewTUI()
 	for {
@@ -84,11 +87,31 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 // and Detail when m.Wants(): "explain" → RenderExplanation(Explain(events,
 // task)) into a buffer, split into lines (an Explain error becomes the one
 // line "explain: <error>"); "log" → HumanLine of every event of that task,
-// in order.
+// in order. The header's context (issue #583) comes from the same events —
+// FactorySuspended, the paused models, LatestHealth — plus IntegrationBranch
+// and the pause threshold from the config, read once and again on a reload,
+// and tuiVersion. A reload (m.TakeRefresh, Ctrl-R) starts a new Watcher, so
+// the whole ledger is read afresh.
 func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) {
 	w := NewWatcher()
+	var branch string
+	var pauseAt float64
+	loaded := false
 	return func(m *TUI) (TUIData, error) {
-		floor, err := w.Refresh(dir, now())
+		if m.TakeRefresh() {
+			w = NewWatcher()
+			loaded = false
+		}
+		if !loaded {
+			branch, _ = IntegrationBranch(dir)
+			pauseAt = Limits{}.RateLimitPauseThreshold()
+			if cfg, _, err := LoadConfig(dir); err == nil {
+				pauseAt = cfg.Limits.RateLimitPauseThreshold()
+			}
+			loaded = true
+		}
+		at := now()
+		floor, err := w.Refresh(dir, at)
 		if err != nil {
 			return TUIData{}, err
 		}
@@ -108,9 +131,19 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		}
 
 		data := TUIData{
-			Floor:  floor,
-			Events: eventLines,
-			Detail: nil,
+			Floor:   floor,
+			Events:  eventLines,
+			Detail:  nil,
+			Branch:  branch,
+			Suspend: FactorySuspended(events, at),
+			Version: tuiVersion(),
+		}
+		models, pauses := pausedModels(events, at, pauseAt)
+		for _, model := range models {
+			data.Paused = append(data.Paused, TUIPause{Model: model, Until: pauses[model].Until})
+		}
+		if _, t, ok := LatestHealth(events); ok {
+			data.HealthAt = t
 		}
 
 		// Fill Detail if Wants drill-down.
@@ -144,6 +177,15 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 
 		return data, nil
 	}
+}
+
+// tuiVersion is the running binary's module version as the build stamped
+// it (a tagged build or go install), "dev" for a local build.
+func tuiVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
 }
 
 // RunTUI runs the interactive factory on a real terminal: MakeRaw(stdin),
