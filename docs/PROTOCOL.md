@@ -363,13 +363,20 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   each attempt** — on every exit path, before flywheel's own attempt commit (so its index refresh is
   never charged to the worker), flywheel compares the worktree's HEAD, branch, stash, index (`git
   diff --cached --name-only`) and tags with the state captured at dispatch, and `note` names what
-  changed: `HEAD: <old> -> <new>`, `stash`, `index: staged <paths>`, `index: unstaged <paths>`,
-  `tags: +<name>/-<name>`. An index change, a local-only tag or a deleted tag is a `git-write`
-  signal whatever the guard logged; a HEAD or stash move is one only when the git guard logged a
-  worker write (issue #361; otherwise another process moved it and the note says so). Tags are
-  shared by every worktree like the stash, so a tag added or moved onto a commit a remote-tracking
-  ref contains (a fetch; the note marks it `(on a remote-tracking commit)`) is a shared-ref change
-  and needs guard evidence too (issue #442). Paths the worker staged are unstaged by flywheel
+  changed: `HEAD: <old> -> <new>`, `branch: <old> -> <new>`, `stash`, `index: staged <paths>`,
+  `index: unstaged <paths>`, `tags: +<name>`/`tags: -<name>`, each followed by who it is charged
+  to and why: `(the worker's: <why>)` or `(changed by another process: <why>)` (issue #621).
+  git-write blames a worker only for git writes the worker could have made. A staged path, an
+  unstaged path while HEAD stayed put, a tag added or moved onto a local-only commit, or a deleted
+  tag is a `git-write` signal whatever the guard logged (issue #423). A HEAD or stash move, or a
+  branch change that moved HEAD, is one only when the git guard logged a write the worker tried
+  (issue #361; otherwise another process moved it and the note says so). What only another
+  process makes never signals, even beside a logged write: a tag on a commit a remote-tracking
+  ref contains (a fetch, shared by every worktree; the note says `fetched`, issues #442, #621),
+  the worktree's branch renamed with HEAD unchanged, and an unstaged path when HEAD moved. Other
+  branches and `refs/remotes/*` are not compared. The guard logs refused writes only: the read
+  forms of `git config` (`--get*`, `--list`/`-l`, `get`, `list`, a single key with no value) pass
+  it (issue #621). Paths the worker staged are unstaged by flywheel
   (`git reset -q -- <paths>`, content kept in the working tree) and the note adds `index restored:
   <paths>`. The PATH git guard is defence in depth, not the guarantee: a shell that puts the real
   `git` first on PATH never reaches it.
