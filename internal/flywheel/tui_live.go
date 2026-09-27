@@ -109,16 +109,21 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 		capped     bool
 		cpTask     string // the unit whose checkpoints unitCPs holds
 		unitCPs    []string
+		cfg        Config
+		metrics    metricsCache // issue #583 k4: at most every metricsEvery
 	)
 	return func(m *TUI) (TUIData, error) {
 		if m.TakeRefresh() {
 			w = NewWatcher()
 			loaded, cpLoaded, searchDone, cpTask = false, false, false, ""
+			metrics = metricsCache{}
 		}
 		if !loaded {
 			branch, _ = IntegrationBranch(dir)
 			pauseAt = Limits{}.RateLimitPauseThreshold()
-			if cfg, _, err := LoadConfig(dir); err == nil {
+			cfg = Config{}
+			if c, _, err := LoadConfig(dir); err == nil {
+				cfg = c
 				pauseAt = cfg.Limits.RateLimitPauseThreshold()
 				stall = cfg.DefaultWorker().stallTimeoutDuration()
 			}
@@ -190,6 +195,15 @@ func TUIFetcher(dir string, now func() time.Time) func(m *TUI) (TUIData, error) 
 			searchQ, searchDone = q, true
 		}
 		data.Search, data.SearchCapped = hits, capped
+
+		// The metrics (issue #583 k4): the last 24h for the header, and the
+		// window the metrics views show, each cached for metricsEvery.
+		data.Metrics = map[string]TUIMetrics{}
+		for _, name := range []string{"24h", m.MetricsWindow()} {
+			if tm, ok := metrics.get(name, at, events, cfg); ok {
+				data.Metrics[name] = tm
+			}
+		}
 
 		// Every unit's why (issue #583 k3), from what the floor measured.
 		data.Why = map[string]string{}

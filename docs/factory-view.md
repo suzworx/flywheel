@@ -17,6 +17,12 @@ From top to bottom:
   - `health <age> ago` for the latest health event, or `health none`
   - `flywheel <version>` (`dev` for a local build)
 
+  The middle column is the last 24 hours' numbers (see [Metrics](#metrics)):
+  `throughput <n>/24h` with a sparkline of the landings per hour, `wip <n>`, `first-pass <n>%`,
+  `andons <n>`, `spend 24h $<n>` and `workers <busy>/<max> busy`. The live view computes them at
+  most every 30 seconds, so a key press never waits for them. The column shows only while the
+  whole key menu still fits beside it; a narrow terminal drops it first.
+
   The right column is the key menu of the screen shown:
   `<:> view  </> filter  <enter> why  <l> log  <?> help  <q> quit  <ctrl-e> header ...`.
   It takes four rows, or five when four do not fit, and as many columns as fit beside the context
@@ -30,7 +36,9 @@ From top to bottom:
   `── Why T3 ──`, `── Explain T3 ──`, `── Brief T3 ──`, `── Log T3 ──`, `── Checkpoints T3 ──`,
   `── Findings T3 ──` or `── Events T3 ──`; in another drill-down `── Learning L-02 ──`,
   `── Checkpoint T3/2 ──` or `── Views ──`; `── Help ──`
-  in help. The search view's title names its text: `── Search "disk full"(all)[12] ──`.
+  in help. The search view's title names its text: `── Search "disk full"(all)[12] ──`. The
+  metrics views name their window: `── Pulse 24h ──`, `── Metrics 7d(all)[24] ──`,
+  `── Metric lead time 24h ──`.
 - **The table**, the drill-down's lines or the help text. The cursor row starts with `>`.
 - **The flash line**: the latest message (an unknown view, a toggle, a reload). The next key
   clears it, or it clears itself after five seconds.
@@ -53,6 +61,11 @@ Hiding the header or the crumbs gives their lines to the table.
 | `l` | units, andon, tree | the unit's detail at its log tab |
 | `w` `d` `y` `l` `c` `F` `e` | unit detail | switch tab: why, explain, brief, log, checkpoints, findings, events |
 | `J` (Shift) | unit detail | open the detail of the unit's first need that has not landed |
+| `1` `2` `3` | pulse, metrics | the window: 24h, 7d, 30d |
+| arrows, `h` `j` `k` `l` | pulse | move between the panels |
+| Enter | pulse, metrics | the metric's drill-down: the panel's first metric, the row's metric (see [Metric drill-down](#metric-drill-down)) |
+| `h` `u` | metric drill-down | the chart, the units behind the number |
+| Enter | metric drill-down, units | the unit's detail at its why; Esc comes back to the units |
 | Esc | everywhere | leave the drill-down, help or prompt; in a table, clear the filter, else go back to the previous view |
 | `-` | table | swap to the previous view, and back |
 | `[` / `]` | table | step back / forward through the `:` commands entered |
@@ -84,6 +97,8 @@ for the keys to come.
 | `health` | `h` | the recent health events: time, age, running, stalled, rate-limited, andon, paused models |
 | `learnings` | `lr` | the learnings, newest first: id, title, severity, task, dismissed |
 | `checkpoints` | `c` | `refs/flywheel/checkpoints/<task>/<attempt>`: task, attempt, sha, files, age (read from git as the view opens and on Ctrl-R) |
+| `pulse` | `p` | the metrics dashboard: six panels (see [Pulse](#pulse)) |
+| `metrics` | `m` | every metric: family, metric, value, trend, change, definition (see [Metrics table](#metrics-table)) |
 | `search` | `s <text>` | the search results (see [Search](#search)) |
 
 An unknown name flashes `unknown view :x (Ctrl-A lists them)`.
@@ -104,7 +119,7 @@ keeps its cursor, filter and sort: coming back to it restores them.
 
 ## Sort
 
-Shift-N sorts by the first column, Shift-A by age, Shift-S by stage (or state where there is no
+Shift-N sorts by the first column (METRIC in the metrics table), Shift-A by age, Shift-S by stage (or state where there is no
 stage), Shift-C by cost where the view has a cost column (none has yet; the flash says so). The
 same key again flips the direction; the title bar shows it (`↑stage`, `↓stage`). The sort is
 stable, so rows with equal keys keep their order. Ages sort as durations and numbers as numbers.
@@ -173,6 +188,56 @@ with about 40 characters on each side. It stops at 500 results and the title say
 `500+ (narrow the search)`. Enter on an event opens the unit's log at the match; on any other
 result, the unit's detail at its explain tab. The search runs when you enter it and on Ctrl-R, never on every
 refresh.
+
+## Metrics
+
+The metrics views read the factory's lean metrics ([metrics.md](metrics.md)) over a window: `1`
+the last 24 hours (1-hour buckets, the default), `2` the last 7 days, `3` the last 30 days (1-day
+buckets). A trend arrow compares a value with the same metric over the previous window of equal
+length: `↑` higher, `↓` lower, `→` equal. Every number opens its chart, and the chart the exact
+units behind it.
+
+### Pulse
+
+`:pulse` (`:p`) is six panels in a grid: three columns at 110 cells or wider, two at 72 or wider,
+one below.
+
+| Panel | Lines |
+| --- | --- |
+| FLOW | landed, wip, lead p50/p90 |
+| QUALITY | first-pass yield, rework, gate fail rate, findings per reviewed unit |
+| RELIABILITY | andons, MTTR, frozen, paused |
+| COST | spend, cost per landed unit, tokens per step |
+| CAPACITY | utilization, idle |
+| BY MODEL | a bar per model: its cost per accepted unit and its spend |
+
+Each line is the value, the sparkline of its per-bucket series (landed, wip, andons and spend
+have one) and its trend arrow. The panel under the cursor is marked `▶`; the arrows or `h` `j`
+`k` `l` move it, and Enter opens the drill-down of the panel's metric: lead time for FLOW, the
+first line's metric for QUALITY, RELIABILITY and CAPACITY, cost per landed unit for COST, the
+by-model scoreboard for BY MODEL.
+
+### Metrics table
+
+`:metrics` (`:m`) lists every metric: FAMILY, METRIC, VALUE, TREND (the sparkline, where the
+metric has a series, and the arrow), Δ PREV (the change from the previous window, `=` when none)
+and DEFINITION (its one line from [metrics.md](metrics.md)). Shift-N sorts by METRIC; `/` filters.
+Enter opens the metric's drill-down.
+
+### Metric drill-down
+
+The value, its trend and change, and its definition, then one of two parts; the crumbs name it,
+`<units> <pulse> <lead time> <units>`:
+
+- `h`, the chart (the part it opens at): a histogram with the p50 and p90 marked for lead, queue
+  and touch time and MTTR; a control chart (mean and ±2σ, units in landing order) for cycle time;
+  the WIP over time as a flow; bars for a breakdown (gate fail rate per gate, andons by kind,
+  pause per model, cost per unit by model, utilization per worker) and for a split of the units
+  (first pass or corrected, severity, landed or not); else the series as one wide sparkline.
+- `u`, the units behind the number (its [evidence](metrics.md#evidence)): TASK, VALUE (the
+  unit's part, e.g. `lead 9h12m`, `corrected x2`, `stalled 09-02 13:58, open`, `$3.40`) and GROUP,
+  worst first. `j` `k` move the cursor; Enter opens that unit's detail at its why and timeline,
+  and Esc from it comes back to the same row.
 
 ## Coming next
 
