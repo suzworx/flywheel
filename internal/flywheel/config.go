@@ -599,6 +599,10 @@ const (
 //
 // HealthStale is the age past which a health event is stale (issue #552), a
 // Go duration; empty means twice the recorder's --health-every.
+//
+// AutoFreeze (default on when absent) makes every tick suspend --stop the
+// factory when every worker model is paused by a rate limit, and thaw and
+// resume it when the earliest reset passes (AutoFreeze, AutoThaw; issue #572).
 type ControllerConfig struct {
 	Interval      string `json:"interval,omitempty"`
 	LockTTL       string `json:"lock_ttl,omitempty"`
@@ -606,6 +610,13 @@ type ControllerConfig struct {
 	AutoResume    *bool  `json:"auto_resume,omitempty"`
 	Notify        string `json:"notify,omitempty"`
 	HealthStale   string `json:"health_stale,omitempty"`
+	AutoFreeze    *bool  `json:"auto_freeze,omitempty"`
+}
+
+// controllerAutoFreeze reports whether the controller freezes the factory on
+// token exhaustion and thaws it: true unless controller.auto_freeze is false.
+func (c Config) controllerAutoFreeze() bool {
+	return c.Controller == nil || c.Controller.AutoFreeze == nil || *c.Controller.AutoFreeze
 }
 
 // controllerHealthStale returns controller.health_stale, else 2*every (an
