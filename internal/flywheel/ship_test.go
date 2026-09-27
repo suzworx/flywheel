@@ -261,18 +261,33 @@ func TestShipLocalIntegrationBranch(t *testing.T) {
 // the successive Checks answers (the last repeats; none means no checks),
 // checkErrs errors Checks returns first, one per call, and mergeState the
 // state a Merge leaves the PR in (default MERGED), and onChecks, when set,
-// runs on every Checks call with its 1-based number. It records every call.
+// runs on every Checks call with its 1-based number; mergedHeads is what
+// MergedPRHeads answers (at most n of them) and commitChecks what
+// CommitChecks answers per commit (issue #640). It records every call.
 type fakeForge struct {
-	pr         *PullRequest
-	checks     []ChecksState
-	checkErrs  []error
-	mergeState string
-	onChecks   func(call int)
+	pr           *PullRequest
+	checks       []ChecksState
+	checkErrs    []error
+	mergeState   string
+	onChecks     func(call int)
+	mergedHeads  []string
+	commitChecks map[string][]string
 
 	created, merges, checkCalls int
 	mergeTitle, mergeMsg        string
 	comments                    []string
 	closed                      []int
+	mergedAsks, commits         []string
+}
+
+func (f *fakeForge) MergedPRHeads(base string, n int) ([]string, error) {
+	f.mergedAsks = append(f.mergedAsks, fmt.Sprintf("%s/%d", base, n))
+	return f.mergedHeads[:min(n, len(f.mergedHeads))], nil
+}
+
+func (f *fakeForge) CommitChecks(sha string) ([]string, error) {
+	f.commits = append(f.commits, sha)
+	return f.commitChecks[sha], nil
 }
 
 const fakeMergeCommit = "abcdef0123456789abcdef0123456789abcdef01"
@@ -540,18 +555,19 @@ func TestShipRemoteMergeNotMerged(t *testing.T) {
 }
 
 // TestShipRemoteTransientRetry (f): a TLS handshake timeout and a connection
-// reset from Checks are retried after 2s and 4s, then ci passes.
+// reset from Checks are retried after 2s and 4s, then ci passes once a
+// second poll (one Poll later) sees the same checks (issue #640).
 func TestShipRemoteTransientRetry(t *testing.T) {
 	t.Parallel()
 	f := newShipFixture(t, "exit 0", true)
 	ff := &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}},
 		checkErrs: []error{errors.New("net/http: TLS handshake timeout"), errors.New("read tcp: connection reset by peer")}}
 	var sleeps []time.Duration
-	res, out, err := f.ship(t, ShipOptions{Forge: ff, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }})
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Poll: time.Second, Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }})
 	if err != nil || !strings.Contains(shipSteps(res), "ci=ok merge=ok") {
 		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
 	}
-	if len(sleeps) != 2 || sleeps[0] != 2*time.Second || sleeps[1] != 4*time.Second || ff.checkCalls != 3 {
+	if len(sleeps) != 3 || sleeps[0] != 2*time.Second || sleeps[1] != 4*time.Second || sleeps[2] != time.Second || ff.checkCalls != 4 {
 		t.Errorf("sleeps %v, checks called %d", sleeps, ff.checkCalls)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -73,19 +74,30 @@ type PullRequest struct {
 }
 
 // ChecksState is a pull request's checks, check runs and commit statuses
-// together, by name; all three empty means none were reported.
+// together, by name, all reported on Head, the PR's head commit ("" when the
+// forge cannot tell). Skipped holds the checks that concluded NEUTRAL or
+// SKIPPED: present, neither passed nor failed. All four empty means none were
+// reported.
 type ChecksState struct {
+	Head    string
 	Pending []string
 	Failed  []string
 	Passed  []string
+	Skipped []string
 }
 
 // Forge is the pull-request half of a tracker that `flywheel ship` drives
-// (issue #457). PR returns the open or merged PR whose head is branch.
+// (issue #457). PR returns the open or merged PR whose head is branch;
+// Checks the checks on PR n's head commit; MergedPRHeads the head commits of
+// the last n pull requests merged into base, newest first; CommitChecks the
+// names of the check runs and commit statuses reported on commit sha (issue
+// #640).
 type Forge interface {
 	PR(branch string) (PullRequest, bool, error)
 	CreatePR(base, head, title, body string) (PullRequest, error)
 	Checks(n int) (ChecksState, error)
+	MergedPRHeads(base string, n int) ([]string, error)
+	CommitChecks(sha string) ([]string, error)
 	Merge(n int, title, message string) error
 	PRState(n int) (state, mergeCommit string, err error)
 	CommentIssue(n int, body string) error
@@ -181,20 +193,22 @@ func (g GhTracker) PRState(n int) (string, string, error) {
 	return pr.State, pr.MergeCommit, nil
 }
 
-// Checks runs `gh pr view <n> --json statusCheckRollup`, which carries both
-// the head commit's check runs (CheckRun: status, conclusion) and its commit
-// statuses (StatusContext: state), and sorts them by name. gh pr checks is not
+// Checks runs `gh pr view <n> --json headRefOid,statusCheckRollup`, which
+// carries the head commit and, in one read, that commit's check runs
+// (CheckRun: status, conclusion) and its commit statuses (StatusContext:
+// state), and sorts them by name. gh pr checks is not
 // used: it exits non-zero while a check is pending or failed, which a Run that
 // returns only stdout on success cannot tell from gh failing. A check run not
 // completed, or a status PENDING or EXPECTED, is pending; SUCCESS passes;
-// NEUTRAL and SKIPPED neither pass nor fail; anything else (FAILURE, ERROR,
+// NEUTRAL and SKIPPED neither pass nor fail (Skipped); anything else (FAILURE, ERROR,
 // CANCELLED, TIMED_OUT, ...) fails.
 func (g GhTracker) Checks(n int) (ChecksState, error) {
-	out, err := g.gh(true, "pr", "view", strconv.Itoa(n), "--json", "statusCheckRollup")
+	out, err := g.gh(true, "pr", "view", strconv.Itoa(n), "--json", "headRefOid,statusCheckRollup")
 	if err != nil {
 		return ChecksState{}, err
 	}
 	var v struct {
+		Head   string `json:"headRefOid"`
 		Rollup []struct {
 			Type       string `json:"__typename"`
 			Name       string `json:"name"`
@@ -207,7 +221,7 @@ func (g GhTracker) Checks(n int) (ChecksState, error) {
 	if err := json.Unmarshal(out, &v); err != nil {
 		return ChecksState{}, fmt.Errorf("gh pr view %d: parse output: %v: %s", n, err, strings.TrimSpace(string(out)))
 	}
-	var cs ChecksState
+	cs := ChecksState{Head: v.Head}
 	for _, c := range v.Rollup {
 		name, outcome := c.Name, c.Conclusion
 		if c.Type == "StatusContext" || c.Context != "" {
@@ -224,11 +238,58 @@ func (g GhTracker) Checks(n int) (ChecksState, error) {
 		case "SUCCESS":
 			cs.Passed = append(cs.Passed, name)
 		case "NEUTRAL", "SKIPPED":
+			cs.Skipped = append(cs.Skipped, name)
 		default:
 			cs.Failed = append(cs.Failed, name)
 		}
 	}
 	return cs, nil
+}
+
+// MergedPRHeads runs `gh pr list --base <base> --state merged --limit <n>
+// --json headRefOid` and returns the head commits gh lists, newest first.
+func (g GhTracker) MergedPRHeads(base string, n int) ([]string, error) {
+	out, err := g.gh(true, "pr", "list", "--base", base, "--state", "merged", "--limit", strconv.Itoa(n), "--json", "headRefOid")
+	if err != nil {
+		return nil, err
+	}
+	var v []struct {
+		Head string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil {
+		return nil, fmt.Errorf("gh pr list --base %s: parse output: %v: %s", base, err, strings.TrimSpace(string(out)))
+	}
+	var heads []string
+	for _, p := range v {
+		if p.Head != "" {
+			heads = append(heads, p.Head)
+		}
+	}
+	return heads, nil
+}
+
+// CommitChecks runs `gh api --paginate repos/{owner}/{repo}/commits/<sha>/check-runs`
+// and `.../status` (Repo substituted when set) and returns the check-run
+// names and status contexts reported on sha, sorted, each once.
+func (g GhTracker) CommitChecks(sha string) ([]string, error) {
+	repo := "{owner}/{repo}"
+	if g.Repo != "" {
+		repo = g.Repo
+	}
+	var names []string
+	for _, q := range [][2]string{{"check-runs?per_page=100", ".check_runs[].name"}, {"status?per_page=100", ".statuses[].context"}} {
+		out, err := g.gh(false, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/"+q[0], "--jq", q[1])
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				names = append(names, l)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // policyRefusal reports whether a gh pr merge error is the host refusing the

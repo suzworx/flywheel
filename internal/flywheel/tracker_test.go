@@ -125,7 +125,7 @@ func TestGhForgePRs(t *testing.T) {
 func TestGhForgeChecks(t *testing.T) {
 	t.Parallel()
 	run, calls := ghScript(map[string]func() ([]byte, error){
-		"pr view 4 ": ghOut(`{"statusCheckRollup":[
+		"pr view 4 ": ghOut(`{"headRefOid":"h4","statusCheckRollup":[
 			{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS"},
 			{"__typename":"CheckRun","name":"test","status":"IN_PROGRESS","conclusion":""},
 			{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"CANCELLED"},
@@ -138,14 +138,55 @@ func TestGhForgeChecks(t *testing.T) {
 	g := GhTracker{Run: run}
 	cs, err := g.Checks(4)
 	want := ChecksState{Pending: []string{"test", "ci/wait"}, Failed: []string{"lint", "ci/ext"}, Passed: []string{"build", "ci/ok"}}
-	if err != nil || strings.Join(cs.Pending, ",") != strings.Join(want.Pending, ",") || strings.Join(cs.Failed, ",") != strings.Join(want.Failed, ",") || strings.Join(cs.Passed, ",") != strings.Join(want.Passed, ",") {
-		t.Errorf("Checks(4) = %+v, %v; want %+v", cs, err, want)
+	if err != nil || cs.Head != "h4" || strings.Join(cs.Skipped, ",") != "opt" || strings.Join(cs.Pending, ",") != strings.Join(want.Pending, ",") || strings.Join(cs.Failed, ",") != strings.Join(want.Failed, ",") || strings.Join(cs.Passed, ",") != strings.Join(want.Passed, ",") {
+		t.Errorf("Checks(4) = %+v, %v; want %+v on h4", cs, err, want)
 	}
 	if cs, err := g.Checks(5); err != nil || len(cs.Pending)+len(cs.Failed)+len(cs.Passed) != 0 {
 		t.Errorf("Checks(5) = %+v, %v; want none", cs, err)
 	}
-	if (*calls)[0] != "pr view 4 --json statusCheckRollup" {
+	if (*calls)[0] != "pr view 4 --json headRefOid,statusCheckRollup" {
 		t.Errorf("argv = %q", (*calls)[0])
+	}
+}
+
+// TestGhForgeMergedPRHeads (issue #640 c1): MergedPRHeads lists the merged
+// PRs into base with --repo and returns their head commits in gh's order.
+func TestGhForgeMergedPRHeads(t *testing.T) {
+	t.Parallel()
+	run, calls := ghScript(map[string]func() ([]byte, error){
+		"pr list --base main ": ghOut(`[{"headRefOid":"h3"},{"headRefOid":"h2"},{"headRefOid":""}]`),
+		"pr list --base bad ":  ghOut(`nope`),
+	})
+	g := GhTracker{Repo: "o/r", Run: run}
+	heads, err := g.MergedPRHeads("main", 3)
+	if err != nil || strings.Join(heads, ",") != "h3,h2" {
+		t.Errorf("MergedPRHeads = %q, %v", heads, err)
+	}
+	if (*calls)[0] != "pr list --base main --state merged --limit 3 --json headRefOid --repo o/r" {
+		t.Errorf("argv = %q", (*calls)[0])
+	}
+	if _, err := g.MergedPRHeads("bad", 3); err == nil || !strings.Contains(err.Error(), "gh pr list --base bad") {
+		t.Errorf("bad JSON: err = %v, want one naming gh pr list", err)
+	}
+}
+
+// TestGhForgeCommitChecks (issue #640): CommitChecks reads a commit's check
+// runs and statuses through gh api (Repo substituted) and returns their
+// names sorted, each once.
+func TestGhForgeCommitChecks(t *testing.T) {
+	t.Parallel()
+	run, calls := ghScript(map[string]func() ([]byte, error){
+		"api --paginate repos/o/r/commits/abc/check-runs": ghOut("test-b\ntest-a\n"),
+		"api --paginate repos/o/r/commits/abc/status":     ghOut("ci/ext\ntest-a\n"),
+	})
+	names, err := GhTracker{Repo: "o/r", Run: run}.CommitChecks("abc")
+	if err != nil || strings.Join(names, ",") != "ci/ext,test-a,test-b" {
+		t.Errorf("CommitChecks = %q, %v", names, err)
+	}
+	want := "api --paginate repos/o/r/commits/abc/check-runs?per_page=100 --jq .check_runs[].name\n" +
+		"api --paginate repos/o/r/commits/abc/status?per_page=100 --jq .statuses[].context"
+	if got := strings.Join(*calls, "\n"); got != want {
+		t.Errorf("argv =\n%s\nwant\n%s", got, want)
 	}
 }
 

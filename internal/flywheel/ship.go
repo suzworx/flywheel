@@ -71,6 +71,7 @@ type shipRun struct {
 	issue                  int         // the planned event's issue, 0 without one
 	base                   string      // <remote>/<integration>'s commit merge-base saw, recorded on its event
 	trailer                string      // the Shipped-by: trailer, "" with the signature off
+	required               []string    // ship.required_checks from config, nil when unset
 }
 
 // shipStepFuncs runs each of ShipSteps: the outcome (ok or skip), a note, and
@@ -145,7 +146,7 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 	if err != nil {
 		return ShipResult{}, err
 	}
-	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events}
+	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events, required: cfg.ShipRequiredChecks()}
 	r.remoteDefaults()
 	if !o.NoSignature && cfg.ShipSignature() {
 		var footer string
@@ -765,9 +766,63 @@ func shipPR(r *shipRun) (string, string, error) {
 	return "ok", fmt.Sprintf("opened #%d %s", r.pr.Number, r.pr.URL), nil
 }
 
-// shipCI polls the PR's checks every Poll until none is pending, then passes
-// only when at least one passed and none failed, IgnoreChecks disregarded. No
-// checks at all is never green: it waits, and times out after CITimeout.
+// keepChecks is names without IgnoreChecks.
+func (r *shipRun) keepChecks(names []string) []string {
+	var out []string
+	for _, c := range names {
+		if !slices.Contains(r.o.IgnoreChecks, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// shipExpectedFrom is how many of the pull requests last merged into the
+// integration branch expectedChecks reads.
+const shipExpectedFrom = 3
+
+// expectedChecks is the checks ci waits for (issue #640), sorted, each once,
+// IgnoreChecks disregarded: ship.required_checks when set, else the checks
+// reported on every one of the head commits of the last shipExpectedFrom pull
+// requests merged into the integration branch (fewer when fewer merged, none
+// when none did). Not the integration branch's own head: it also carries the
+// checks of workflows that run only on a push to it, which never run on a PR.
+func (r *shipRun) expectedChecks() ([]string, error) {
+	names := slices.Clone(r.required)
+	if len(names) == 0 {
+		var heads []string
+		if err := r.retry("ci", func() (err error) {
+			heads, err = r.o.Forge.MergedPRHeads(r.o.Integration, shipExpectedFrom)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		for i, h := range heads {
+			var on []string
+			if err := r.retry("ci", func() (err error) { on, err = r.o.Forge.CommitChecks(h); return err }); err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				names = slices.Clone(on)
+				continue
+			}
+			names = slices.DeleteFunc(names, func(c string) bool { return !slices.Contains(on, c) })
+		}
+	}
+	names = r.keepChecks(names)
+	slices.Sort(names)
+	return slices.Compact(names), nil
+}
+
+// shipCI polls the PR's checks every Poll (issue #640), IgnoreChecks
+// disregarded and checks reported on another commit than fw/<task>'s head
+// not counted. It passes only when every expected check (expectedChecks) is
+// on the head, passed or skipped (NEUTRAL, SKIPPED), none is pending or
+// failed, at least one passed, and the
+// set of check names was the same on two consecutive polls, so a check that
+// passes at once cannot merge the PR before CI's jobs register. A failed
+// check with none pending fails at once; after CITimeout it fails naming the
+// expected checks still missing and the checks still pending.
 func shipCI(r *shipRun) (string, string, error) {
 	if err := r.needPR(); err != nil {
 		return "", "", err
@@ -776,34 +831,60 @@ func shipCI(r *shipRun) (string, string, error) {
 	if r.pr.State == "MERGED" {
 		return "skip", fmt.Sprintf("#%d already merged", n), nil
 	}
-	keep := func(names []string) []string {
-		var out []string
-		for _, c := range names {
-			if !slices.Contains(r.o.IgnoreChecks, c) {
-				out = append(out, c)
-			}
-		}
-		return out
+	expected, err := r.expectedChecks()
+	if err != nil {
+		return "", "", err
 	}
+	exp := ""
+	if len(expected) > 0 {
+		exp = " (expected: " + strings.Join(expected, ", ") + ")"
+	}
+	head := r.fwHead()
+	last, polled := "", false
 	for waited := time.Duration(0); ; waited += r.o.Poll {
 		var cs ChecksState
 		if err := r.retry("ci", func() (err error) { cs, err = r.o.Forge.Checks(n); return err }); err != nil {
 			return "", "", err
 		}
-		pending, failed, passed := keep(cs.Pending), keep(cs.Failed), keep(cs.Passed)
+		if cs.Head != "" && head != "" && cs.Head != head {
+			cs = ChecksState{Head: cs.Head}
+		}
+		pending, failed, passed := r.keepChecks(cs.Pending), r.keepChecks(cs.Failed), r.keepChecks(cs.Passed)
 		if len(pending) == 0 && len(failed) > 0 {
 			list := strings.Join(failed, ", ")
 			return "", "failed: " + list, fmt.Errorf("%w on #%d: %s", ErrShipCI, n, list)
 		}
-		if len(pending) == 0 && len(passed) > 0 {
-			return "ok", fmt.Sprintf("%d check(s) passed on #%d", len(passed), n), nil
+		// A skipped or neutral check is present: not missing, not passed.
+		all := slices.Concat(pending, failed, passed, r.keepChecks(cs.Skipped))
+		slices.Sort(all)
+		all = slices.Compact(all)
+		key := strings.Join(all, "\n")
+		settled := polled && key == last
+		last, polled = key, true
+		var missing []string
+		for _, e := range expected {
+			if !slices.Contains(all, e) {
+				missing = append(missing, e)
+			}
+		}
+		if len(pending) == 0 && len(missing) == 0 && len(passed) > 0 && settled {
+			return "ok", fmt.Sprintf("%d check(s) passed on #%d%s", len(passed), n, exp), nil
 		}
 		if waited >= r.o.CITimeout {
-			still := "no checks reported"
-			if len(pending) > 0 {
-				still = "still pending: " + strings.Join(pending, ", ")
+			var still []string
+			if len(missing) > 0 {
+				still = append(still, "missing: "+strings.Join(missing, ", "))
 			}
-			return "", "timed out, " + still, fmt.Errorf("%w: #%d timed out after %s, %s", ErrShipCI, n, r.o.CITimeout, still)
+			if len(pending) > 0 {
+				still = append(still, "still pending: "+strings.Join(pending, ", "))
+			}
+			if len(still) == 0 && len(all) == 0 {
+				still = append(still, "no checks reported")
+			} else if len(still) == 0 {
+				still = append(still, "checks still changing")
+			}
+			s := strings.Join(still, "; ")
+			return "", "timed out, " + s, fmt.Errorf("%w: #%d timed out after %s, %s", ErrShipCI, n, r.o.CITimeout, s)
 		}
 		r.o.Sleep(r.o.Poll)
 	}
