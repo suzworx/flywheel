@@ -782,11 +782,13 @@ func (r *shipRun) keepChecks(names []string) []string {
 const shipExpectedFrom = 3
 
 // expectedChecks is the checks ci waits for (issue #640), sorted, each once,
-// IgnoreChecks disregarded: ship.required_checks when set, else the checks
-// reported on every one of the head commits of the last shipExpectedFrom pull
-// requests merged into the integration branch (fewer when fewer merged, none
-// when none did). Not the integration branch's own head: it also carries the
-// checks of workflows that run only on a push to it, which never run on a PR.
+// IgnoreChecks disregarded: ship.required_checks when set (commit statuses
+// included), else the check runs reported on every one of the head commits of
+// the last shipExpectedFrom pull requests merged into the integration branch
+// (fewer when fewer merged, none when none did). Not the integration branch's
+// own head: it also carries the checks of workflows that run only on a push
+// to it, which never run on a PR. Not commit statuses: they come from
+// external bots, which stop posting and would then block every ship (c3).
 func (r *shipRun) expectedChecks() ([]string, error) {
 	names := slices.Clone(r.required)
 	if len(names) == 0 {
@@ -799,7 +801,7 @@ func (r *shipRun) expectedChecks() ([]string, error) {
 		}
 		for i, h := range heads {
 			var on []string
-			if err := r.retry("ci", func() (err error) { on, err = r.o.Forge.CommitChecks(h); return err }); err != nil {
+			if err := r.retry("ci", func() (err error) { on, err = r.o.Forge.CommitCheckRuns(h); return err }); err != nil {
 				return nil, err
 			}
 			if i == 0 {

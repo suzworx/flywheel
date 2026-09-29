@@ -79,10 +79,10 @@ type ShipConfig struct {
 	// nil means on; false turns it off.
 	Signature *bool `json:"signature,omitempty"`
 	// RequiredChecks names the checks ship's ci step waits for on the PR's
-	// head commit before it merges (issue #640). Empty means the checks
-	// reported on the head commits of every one of the last 3 pull requests
-	// merged into the integration branch; --ignore-check removes a name from
-	// either set.
+	// head commit before it merges (issue #640); it may name a commit status.
+	// Empty means the check runs (never commit statuses) reported on the head
+	// commits of every one of the last 3 pull requests merged into the
+	// integration branch; --ignore-check removes a name from either set.
 	RequiredChecks []string `json:"required_checks,omitempty"`
 }
 

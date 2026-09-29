@@ -46,7 +46,7 @@ func TestShipCIWaitsForExpected(t *testing.T) {
 		t.Fatalf("ci = %+v, %v, checks called %d, merges %d", ci, err, ff.checkCalls, ff.merges)
 	}
 	if !slices.Equal(ff.mergedAsks, []string{"main/3"}) || !slices.Equal(ff.commits, []string{"m1"}) {
-		t.Errorf("MergedPRHeads asked %q, CommitChecks asked %q; want main/3 and m1", ff.mergedAsks, ff.commits)
+		t.Errorf("MergedPRHeads asked %q, CommitCheckRuns asked %q; want main/3 and m1", ff.mergedAsks, ff.commits)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestShipCIIntersectsMergedHeads(t *testing.T) {
 	}, checks: []ChecksState{{Passed: []string{"test"}}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
 	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test)" || len(ff.commits) != 3 {
-		t.Fatalf("ci = %+v, %v, CommitChecks asked %q", ci, err, ff.commits)
+		t.Fatalf("ci = %+v, %v, CommitCheckRuns asked %q", ci, err, ff.commits)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestShipCIRequiredConfig(t *testing.T) {
 	ff := &fakeForge{mergedHeads: []string{"m1"}, commitChecks: map[string][]string{"m1": {"never"}}, checks: []ChecksState{{Passed: []string{"test-a"}}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{IgnoreChecks: []string{"lint"}})
 	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test-a)" || len(ff.mergedAsks)+len(ff.commits) != 0 {
-		t.Fatalf("ci = %+v, %v, MergedPRHeads asked %q, CommitChecks asked %q", ci, err, ff.mergedAsks, ff.commits)
+		t.Fatalf("ci = %+v, %v, MergedPRHeads asked %q, CommitCheckRuns asked %q", ci, err, ff.mergedAsks, ff.commits)
 	}
 	f = newShipFixture(t, "exit 0", true)
 	setRequiredChecks(t, f.dir, "test-a", "deploy")
@@ -169,5 +169,36 @@ func TestShipCIRequiredConfig(t *testing.T) {
 	ci, err = ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
 	if !errors.Is(err, ErrShipCI) || ci.Note != "timed out, missing: deploy" || ff.merges != 0 {
 		t.Fatalf("missing deploy: ci = %+v, %v, merges %d", ci, err, ff.merges)
+	}
+}
+
+// TestShipCIIgnoresVanishedStatus (issue #640 c3): the merged PR heads carry
+// check runs a and b and a commit status "bot" from an external bot that has
+// since stopped posting; the PR head has a and b passed and no "bot". By
+// default only check runs are expected, so ci passes; with required_checks
+// ["bot"] ci waits for it and fails at the timeout naming it.
+func TestShipCIIgnoresVanishedStatus(t *testing.T) {
+	t.Parallel()
+	merged := func() *fakeForge {
+		heads := []string{"m1", "m2", "m3"}
+		ff := &fakeForge{mergedHeads: heads, commitChecks: map[string][]string{}, commitStatuses: map[string][]string{},
+			checks: []ChecksState{{Passed: []string{"a", "b"}}}}
+		for _, h := range heads {
+			ff.commitChecks[h], ff.commitStatuses[h] = []string{"a", "b"}, []string{"bot"}
+		}
+		return ff
+	}
+	f := newShipFixture(t, "exit 0", true)
+	ff := merged()
+	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
+	if err != nil || ci.Note != "2 check(s) passed on #7 (expected: a, b)" || ff.merges != 1 {
+		t.Fatalf("default: ci = %+v, %v, merges %d", ci, err, ff.merges)
+	}
+	f = newShipFixture(t, "exit 0", true)
+	setRequiredChecks(t, f.dir, "bot")
+	ff = merged()
+	ci, err = ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
+	if !errors.Is(err, ErrShipCI) || ci.Note != "timed out, missing: bot" || ff.merges != 0 || ff.checkCalls < 2 {
+		t.Fatalf("required bot: ci = %+v, %v, merges %d, polls %d", ci, err, ff.merges, ff.checkCalls)
 	}
 }

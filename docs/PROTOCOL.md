@@ -720,9 +720,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   footer to the PR body; each once, all built from the ledger and the binary's version.
 - The **ship required checks** are `.flywheel/config.json` `"ship": {"required_checks": ["test", "lint"]}`
   (issue #640): the check names `flywheel ship`'s `ci` step waits for on the PR's head commit before it
-  merges. Absent or empty means the check names reported on the head commits of every one of the last 3
-  pull requests merged into the integration branch (none merged: no expected checks);
-  `--ignore-check NAME` removes a name from either set.
+  merges; it may name a commit status. Absent or empty means the names of the check runs (never commit
+  statuses) reported on the head commits of every one of the last 3 pull requests merged into the
+  integration branch (none merged: no expected checks); `--ignore-check NAME` removes a name from either set.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least

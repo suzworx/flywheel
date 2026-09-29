@@ -262,16 +262,19 @@ func TestShipLocalIntegrationBranch(t *testing.T) {
 // checkErrs errors Checks returns first, one per call, and mergeState the
 // state a Merge leaves the PR in (default MERGED), and onChecks, when set,
 // runs on every Checks call with its 1-based number; mergedHeads is what
-// MergedPRHeads answers (at most n of them) and commitChecks what
-// CommitChecks answers per commit (issue #640). It records every call.
+// MergedPRHeads answers (at most n of them), commitChecks the check runs
+// CommitCheckRuns answers per commit and commitStatuses the commit statuses
+// also reported on a commit, which CommitCheckRuns leaves out, as GitHub's
+// check-runs API does (issue #640). It records every call.
 type fakeForge struct {
-	pr           *PullRequest
-	checks       []ChecksState
-	checkErrs    []error
-	mergeState   string
-	onChecks     func(call int)
-	mergedHeads  []string
-	commitChecks map[string][]string
+	pr             *PullRequest
+	checks         []ChecksState
+	checkErrs      []error
+	mergeState     string
+	onChecks       func(call int)
+	mergedHeads    []string
+	commitChecks   map[string][]string
+	commitStatuses map[string][]string
 
 	created, merges, checkCalls int
 	mergeTitle, mergeMsg        string
@@ -285,7 +288,7 @@ func (f *fakeForge) MergedPRHeads(base string, n int) ([]string, error) {
 	return f.mergedHeads[:min(n, len(f.mergedHeads))], nil
 }
 
-func (f *fakeForge) CommitChecks(sha string) ([]string, error) {
+func (f *fakeForge) CommitCheckRuns(sha string) ([]string, error) {
 	f.commits = append(f.commits, sha)
 	return f.commitChecks[sha], nil
 }

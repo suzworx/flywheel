@@ -170,21 +170,20 @@ func TestGhForgeMergedPRHeads(t *testing.T) {
 	}
 }
 
-// TestGhForgeCommitChecks (issue #640): CommitChecks reads a commit's check
-// runs and statuses through gh api (Repo substituted) and returns their
-// names sorted, each once.
-func TestGhForgeCommitChecks(t *testing.T) {
+// TestGhForgeCommitCheckRuns (issue #640 c3): CommitCheckRuns reads only a
+// commit's check runs through gh api (Repo substituted), never its commit
+// statuses, and returns their names sorted, each once.
+func TestGhForgeCommitCheckRuns(t *testing.T) {
 	t.Parallel()
 	run, calls := ghScript(map[string]func() ([]byte, error){
-		"api --paginate repos/o/r/commits/abc/check-runs": ghOut("test-b\ntest-a\n"),
-		"api --paginate repos/o/r/commits/abc/status":     ghOut("ci/ext\ntest-a\n"),
+		"api --paginate repos/o/r/commits/abc/check-runs": ghOut("test-b\ntest-a\ntest-a\n"),
+		"api --paginate repos/o/r/commits/abc/status":     ghOut("Devin Review\n"),
 	})
-	names, err := GhTracker{Repo: "o/r", Run: run}.CommitChecks("abc")
-	if err != nil || strings.Join(names, ",") != "ci/ext,test-a,test-b" {
-		t.Errorf("CommitChecks = %q, %v", names, err)
+	names, err := GhTracker{Repo: "o/r", Run: run}.CommitCheckRuns("abc")
+	if err != nil || strings.Join(names, ",") != "test-a,test-b" {
+		t.Errorf("CommitCheckRuns = %q, %v", names, err)
 	}
-	want := "api --paginate repos/o/r/commits/abc/check-runs?per_page=100 --jq .check_runs[].name\n" +
-		"api --paginate repos/o/r/commits/abc/status?per_page=100 --jq .statuses[].context"
+	want := "api --paginate repos/o/r/commits/abc/check-runs?per_page=100 --jq .check_runs[].name"
 	if got := strings.Join(*calls, "\n"); got != want {
 		t.Errorf("argv =\n%s\nwant\n%s", got, want)
 	}

@@ -89,15 +89,15 @@ type ChecksState struct {
 // Forge is the pull-request half of a tracker that `flywheel ship` drives
 // (issue #457). PR returns the open or merged PR whose head is branch;
 // Checks the checks on PR n's head commit; MergedPRHeads the head commits of
-// the last n pull requests merged into base, newest first; CommitChecks the
-// names of the check runs and commit statuses reported on commit sha (issue
-// #640).
+// the last n pull requests merged into base, newest first; CommitCheckRuns
+// the names of the check runs (not commit statuses) reported on commit sha
+// (issue #640).
 type Forge interface {
 	PR(branch string) (PullRequest, bool, error)
 	CreatePR(base, head, title, body string) (PullRequest, error)
 	Checks(n int) (ChecksState, error)
 	MergedPRHeads(base string, n int) ([]string, error)
-	CommitChecks(sha string) ([]string, error)
+	CommitCheckRuns(sha string) ([]string, error)
 	Merge(n int, title, message string) error
 	PRState(n int) (state, mergeCommit string, err error)
 	CommentIssue(n int, body string) error
@@ -268,24 +268,23 @@ func (g GhTracker) MergedPRHeads(base string, n int) ([]string, error) {
 	return heads, nil
 }
 
-// CommitChecks runs `gh api --paginate repos/{owner}/{repo}/commits/<sha>/check-runs`
-// and `.../status` (Repo substituted when set) and returns the check-run
-// names and status contexts reported on sha, sorted, each once.
-func (g GhTracker) CommitChecks(sha string) ([]string, error) {
+// CommitCheckRuns runs `gh api --paginate repos/{owner}/{repo}/commits/<sha>/check-runs`
+// (Repo substituted when set) and returns the names of the check runs
+// reported on sha, sorted, each once. Commit statuses (the /status API) are
+// left out: they come from external bots that come and go (issue #640 c3).
+func (g GhTracker) CommitCheckRuns(sha string) ([]string, error) {
 	repo := "{owner}/{repo}"
 	if g.Repo != "" {
 		repo = g.Repo
 	}
+	out, err := g.gh(false, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/check-runs?per_page=100", "--jq", ".check_runs[].name")
+	if err != nil {
+		return nil, err
+	}
 	var names []string
-	for _, q := range [][2]string{{"check-runs?per_page=100", ".check_runs[].name"}, {"status?per_page=100", ".statuses[].context"}} {
-		out, err := g.gh(false, "api", "--paginate", "repos/"+repo+"/commits/"+sha+"/"+q[0], "--jq", q[1])
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range strings.Split(string(out), "\n") {
-			if l = strings.TrimSpace(l); l != "" {
-				names = append(names, l)
-			}
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			names = append(names, l)
 		}
 	}
 	slices.Sort(names)
