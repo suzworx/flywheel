@@ -130,7 +130,9 @@ func TestLintProbe(t *testing.T) {
 		os.Exit(0)
 	}
 	dir := t.TempDir()
-	brief := lintProbeBrief(t, dir, "probe.md", "exit 0", "echo oops; exit 3", "definitely-not-a-command-xyz")
+	// Gate 3 starts with sh, so it passes the static gate command check
+	// (issue #662), and cannot start at run time (exit 127) for the probe.
+	brief := lintProbeBrief(t, dir, "probe.md", "exit 0", "echo oops; exit 3", "sh -c 'definitely-not-a-command-xyz'")
 	base, code := runLintProcess(t, brief, "--dir", dir)
 	if code != 0 || strings.Contains(base, ": gate ") {
 		t.Fatalf("lint without --probe: exit %d, stderr %q; want exit 0 and no gate lines", code, base)
@@ -172,7 +174,8 @@ func TestLintProbe(t *testing.T) {
 func TestLintProbeRecordsTask(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	gates := []string{"exit 0", "echo oops; exit 3", "definitely-not-a-command-xyz"}
+	// Gate 3 passes the static gate command check (issue #662) and exits 127.
+	gates := []string{"exit 0", "echo oops; exit 3", "sh -c 'definitely-not-a-command-xyz'"}
 	brief := lintProbeBrief(t, dir, "probe.md", gates...)
 	if out, code := runLintProcess(t, brief, "--probe", "--dir", dir); code != 1 {
 		t.Fatalf("lint --probe exit %d, want 1\n%s", code, out)

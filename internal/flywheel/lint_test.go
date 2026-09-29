@@ -358,7 +358,8 @@ func TestLintNegated(t *testing.T) {
 // a problem (issue #411).
 func TestLintBriefQuietGateMarkers(t *testing.T) {
 	t.Parallel()
-	res := lintCheck(t, t.TempDir(), []string{"a.go"},
+	// hil exists so ./hil passes the gate command check (issue #662).
+	res := lintCheck(t, t.TempDir(), []string{"a.go", "hil"},
 		"owns: a.go\nneeds: none\ngate[quiet]: ./hil\nlive-gate[quiet]: ./probe\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
 	want(t, res, nil, nil)
 	res = lintCheck(t, t.TempDir(), []string{"a.go"},
@@ -420,7 +421,8 @@ func TestLintFullSuiteGate(t *testing.T) {
 			[]string{`no gate runs the full suite (want a gate matching \b(npm|pnpm|yarn|bun)( run)? test\b; set lint.full_suite to change it)`}},
 		{"override unmatched", map[string]string{"go.mod": "module m\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"make check"}`)},
 			"go test ./...", []string{"no gate runs the full suite (want a gate matching make check; set lint.full_suite to change it)"}},
-		{"override matched", map[string]string{"go.mod": "module m\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"make check"}`)}, "make check", nil},
+		// gate_commands lists make so the case does not depend on the host having it (issue #662).
+		{"override matched", map[string]string{"go.mod": "module m\n", ".flywheel/config.json": lintConfigJSON(`{"full_suite":"make check","gate_commands":["make"]}`)}, "make check", nil},
 		{"no toolchain", map[string]string{}, "true", nil},
 	} {
 		tc.files["README.md"] = "x\n"
