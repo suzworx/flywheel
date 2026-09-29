@@ -172,6 +172,61 @@ func TestShipCIRequiredConfig(t *testing.T) {
 	}
 }
 
+// requiredSkipShip ships a fixture whose ship.required_checks is required
+// against the PR head states in checks, returning the ci step, forge and error.
+func requiredSkipShip(t *testing.T, required []string, checks ...ChecksState) (ShipStep, *fakeForge, error) {
+	t.Helper()
+	f := newShipFixture(t, "exit 0", true)
+	setRequiredChecks(t, f.dir, required...)
+	ff := &fakeForge{checks: checks}
+	ci, err := ciShip(t, f, ff, ShipOptions{})
+	return ci, ff, err
+}
+
+// TestShipCIRequiredSkipped (issue #653): a required check that concluded
+// SKIPPED (a path filter left it out) fails ci at once and nothing merges.
+func TestShipCIRequiredSkipped(t *testing.T) {
+	t.Parallel()
+	ci, ff, err := requiredSkipShip(t, []string{"test", "rules"}, ChecksState{Passed: []string{"test"}, Skipped: []string{"rules"}})
+	if !errors.Is(err, ErrShipCI) || ci.Note != "required-check-skipped: rules (SKIPPED)" || ff.merges != 0 || ff.checkCalls != 1 {
+		t.Fatalf("ci = %+v, %v, merges %d, polls %d", ci, err, ff.merges, ff.checkCalls)
+	}
+	if !strings.Contains(err.Error(), "required check(s) did not run: rules (SKIPPED); a path filter or job condition skipped them") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// TestShipCIRequiredNeutral (issue #653): NEUTRAL on a required check fails
+// ci like SKIPPED.
+func TestShipCIRequiredNeutral(t *testing.T) {
+	t.Parallel()
+	ci, ff, err := requiredSkipShip(t, []string{"test", "rules"}, ChecksState{Passed: []string{"test"}, Neutral: []string{"rules"}})
+	if !errors.Is(err, ErrShipCI) || ci.Note != "required-check-skipped: rules (NEUTRAL)" || ff.merges != 0 {
+		t.Fatalf("ci = %+v, %v, merges %d", ci, err, ff.merges)
+	}
+}
+
+// TestShipCIRequiredSkippedWhilePending (issue #653): a skip is final, so ci
+// fails on the first poll without waiting for the pending check.
+func TestShipCIRequiredSkippedWhilePending(t *testing.T) {
+	t.Parallel()
+	ci, ff, err := requiredSkipShip(t, []string{"test", "rules"},
+		ChecksState{Pending: []string{"test"}, Skipped: []string{"rules"}}, ChecksState{Passed: []string{"test"}, Skipped: []string{"rules"}})
+	if !errors.Is(err, ErrShipCI) || ci.Note != "required-check-skipped: rules (SKIPPED)" || ff.checkCalls != 1 || ff.merges != 0 {
+		t.Fatalf("ci = %+v, %v, polls %d, merges %d", ci, err, ff.checkCalls, ff.merges)
+	}
+}
+
+// TestShipCINotRequiredSkippedIgnored (issue #653): a skipped check not named
+// in ship.required_checks does not block.
+func TestShipCINotRequiredSkippedIgnored(t *testing.T) {
+	t.Parallel()
+	ci, ff, err := requiredSkipShip(t, []string{"test"}, ChecksState{Passed: []string{"test"}, Skipped: []string{"docs"}})
+	if err != nil || ci.Result != "ok" || ff.merges != 1 {
+		t.Fatalf("ci = %+v, %v, merges %d", ci, err, ff.merges)
+	}
+}
+
 // TestShipCIIgnoresVanishedStatus (issue #640 c3): the merged PR heads carry
 // check runs a and b and a commit status "bot" from an external bot that has
 // since stopped posting; the PR head has a and b passed and no "bot". By

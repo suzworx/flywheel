@@ -759,6 +759,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   merges; it may name a commit status. Absent or empty means the names of the check runs (never commit
   statuses) reported on the head commits of every one of the last 3 pull requests merged into the
   integration branch (none merged: no expected checks); `--ignore-check NAME` removes a name from either set.
+  A check named in `required_checks` must conclude `SUCCESS`: `SKIPPED` or `NEUTRAL` on it fails `ci` at once
+  with `required-check-skipped` (issue #653), while an inferred expected check that skipped still counts as present.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least

@@ -121,7 +121,8 @@ func TestGhForgePRs(t *testing.T) {
 }
 
 // TestGhForgeChecks: check runs and commit statuses from the rollup sort into
-// pending, failed and passed; an empty rollup is all empty.
+// pending, failed and passed, SKIPPED into Skipped and NEUTRAL into Neutral;
+// an empty rollup is all empty.
 func TestGhForgeChecks(t *testing.T) {
 	t.Parallel()
 	run, calls := ghScript(map[string]func() ([]byte, error){
@@ -130,6 +131,7 @@ func TestGhForgeChecks(t *testing.T) {
 			{"__typename":"CheckRun","name":"test","status":"IN_PROGRESS","conclusion":""},
 			{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"CANCELLED"},
 			{"__typename":"CheckRun","name":"opt","status":"COMPLETED","conclusion":"SKIPPED"},
+			{"__typename":"CheckRun","name":"meh","status":"COMPLETED","conclusion":"NEUTRAL"},
 			{"__typename":"StatusContext","context":"ci/ext","state":"FAILURE"},
 			{"__typename":"StatusContext","context":"ci/wait","state":"PENDING"},
 			{"__typename":"StatusContext","context":"ci/ok","state":"SUCCESS"}]}`),
@@ -138,7 +140,7 @@ func TestGhForgeChecks(t *testing.T) {
 	g := GhTracker{Run: run}
 	cs, err := g.Checks(4)
 	want := ChecksState{Pending: []string{"test", "ci/wait"}, Failed: []string{"lint", "ci/ext"}, Passed: []string{"build", "ci/ok"}}
-	if err != nil || cs.Head != "h4" || strings.Join(cs.Skipped, ",") != "opt" || strings.Join(cs.Pending, ",") != strings.Join(want.Pending, ",") || strings.Join(cs.Failed, ",") != strings.Join(want.Failed, ",") || strings.Join(cs.Passed, ",") != strings.Join(want.Passed, ",") {
+	if err != nil || cs.Head != "h4" || strings.Join(cs.Skipped, ",") != "opt" || strings.Join(cs.Neutral, ",") != "meh" || strings.Join(cs.Pending, ",") != strings.Join(want.Pending, ",") || strings.Join(cs.Failed, ",") != strings.Join(want.Failed, ",") || strings.Join(cs.Passed, ",") != strings.Join(want.Passed, ",") {
 		t.Errorf("Checks(4) = %+v, %v; want %+v on h4", cs, err, want)
 	}
 	if cs, err := g.Checks(5); err != nil || len(cs.Pending)+len(cs.Failed)+len(cs.Passed) != 0 {
