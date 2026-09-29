@@ -43,7 +43,6 @@ func TestScaleFactoryLoop(t *testing.T) {
 	}
 	git(t, dir, []string{"add", ".gitignore"})
 	git(t, dir, []string{"commit", "-m", "init"})
-	headSha := git(t, dir, []string{"rev-parse", "HEAD"})
 
 	// Write config with sim adapter and MaxParallel=8
 	config := simConfig(fixturePath("clean.jsonl", t))
@@ -139,7 +138,7 @@ func TestScaleFactoryLoop(t *testing.T) {
 			t.Fatalf("round %d: %d of %d runs failed, first: %s", round, len(runErrs), len(dispatches), strings.Join(shown, "; "))
 		}
 
-		// 3. For each task just run: validate, inspect, land
+		// 3. For each task just run: validate, inspect
 		for _, task := range dispatches {
 			// Validate task
 			res, err := ValidateTask(dir, task, ValidateOptions{Dir: dir})
@@ -154,9 +153,15 @@ func TestScaleFactoryLoop(t *testing.T) {
 			if err := InspectTask(dir, task, InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-scale"}); err != nil {
 				t.Fatalf("round %d InspectTask(%s) error = %v", round, task, err)
 			}
+		}
 
-			// Land task
-			if err := LandTask(dir, task, headSha, "", false, ""); err != nil {
+		// 4. Land the round: land verifies the commit holds the unit's file
+		// (issue #673), so each landing commits it on main first. After every
+		// validation: a main that moved would be the round's other units'
+		// base drift.
+		for _, task := range dispatches {
+			landed := commitFile(t, dir, "f"+task+".txt", task+"\n")
+			if err := LandTask(dir, task, landed, "", false, ""); err != nil {
 				t.Fatalf("round %d LandTask(%s) error = %v", round, task, err)
 			}
 		}

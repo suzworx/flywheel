@@ -94,6 +94,12 @@ func (f shipFixture) ship(t *testing.T, o ShipOptions) (ShipResult, string, erro
 	if o.Forge == nil {
 		o.Forge = &fakeForge{checks: []ChecksState{{Passed: []string{"build"}}}}
 	}
+	switch ff := o.Forge.(type) {
+	case *fakeForge:
+		ff.t, ff.origin = t, f.origin
+	case *sigForge:
+		ff.fakeForge.t, ff.fakeForge.origin = t, f.origin
+	}
 	if o.Sleep == nil {
 		o.Sleep = func(time.Duration) {}
 	}
@@ -269,6 +275,45 @@ type fakeForge struct {
 	comments                    []string
 	closed                      []int
 	mergedAsks, commits         []string
+
+	// t, origin and base let Merge make a real squash commit on origin's
+	// base branch (land verifies the merge commit, issue #673); shipFixture's
+	// ship sets t and origin, CreatePR base (default main).
+	t            *testing.T
+	origin, base string
+}
+
+// squash commits fw/T's tree plus src/merged-<n>.txt onto origin's base
+// branch, the way a forge's squash merge lands the PR, and returns the
+// commit. Its git runs with GIT_TRACE=0: they are the forge's, not Ship's.
+func (f *fakeForge) squash(n int) string {
+	t := f.t
+	t.Helper()
+	base := f.base
+	if base == "" {
+		base = "main"
+	}
+	tmp := t.TempDir()
+	env := append(os.Environ(), "GIT_TRACE=0", "GIT_INDEX_FILE="+filepath.Join(tmp, "index"),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com")
+	run := func(args ...string) string {
+		out, err := gitWith(f.origin, env, args...)
+		if err != nil {
+			t.Fatalf("forge squash: %v", err)
+		}
+		return out
+	}
+	blob := filepath.Join(tmp, "blob")
+	if err := os.WriteFile(blob, []byte(fmt.Sprintf("merged #%d\n", n)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := run("hash-object", "-w", blob)
+	run("read-tree", "refs/heads/fw/T")
+	run("update-index", "--add", "--cacheinfo", "100644,"+id+",src/merged-"+fmt.Sprint(n)+".txt")
+	tree := run("write-tree")
+	c := run("commit-tree", tree, "-p", "refs/heads/"+base, "-m", fmt.Sprintf("T (#%d)", n))
+	run("update-ref", "refs/heads/"+base, c)
+	return c
 }
 
 func (f *fakeForge) MergedPRHeads(base string, n int) ([]string, error) {
@@ -281,8 +326,6 @@ func (f *fakeForge) CommitCheckRuns(sha string) ([]string, error) {
 	return f.commitChecks[sha], nil
 }
 
-const fakeMergeCommit = "abcdef0123456789abcdef0123456789abcdef01"
-
 func (f *fakeForge) PR(branch string) (PullRequest, bool, error) {
 	if f.pr == nil {
 		return PullRequest{}, false, nil
@@ -292,6 +335,7 @@ func (f *fakeForge) PR(branch string) (PullRequest, bool, error) {
 
 func (f *fakeForge) CreatePR(base, head, title, body string) (PullRequest, error) {
 	f.created++
+	f.base = base
 	f.pr = &PullRequest{Number: 7, URL: "https://example.test/o/r/pull/7", State: "OPEN"}
 	return *f.pr, nil
 }
@@ -324,7 +368,7 @@ func (f *fakeForge) Merge(n int, title, message string) error {
 		f.pr.State = f.mergeState
 	}
 	if f.pr.State == "MERGED" {
-		f.pr.MergeCommit = fakeMergeCommit
+		f.pr.MergeCommit = f.squash(n)
 	}
 	return nil
 }
@@ -391,8 +435,8 @@ func TestShipRemoteHappyPath(t *testing.T) {
 	if !strings.Contains(ff.mergeMsg, "Fixes #42") || !strings.Contains(ff.mergeMsg, "exit 0") {
 		t.Errorf("merge message = %q", ff.mergeMsg)
 	}
-	if c := f.landedCommit(t); c != fakeMergeCommit {
-		t.Errorf("landed commit = %q, want %s", c, fakeMergeCommit)
+	if c := f.landedCommit(t); c == "" || c != ff.pr.MergeCommit || c != shipGit(t, f.origin, "rev-parse", "main") {
+		t.Errorf("landed commit = %q, want the merge commit %s on origin main", c, ff.pr.MergeCommit)
 	}
 	if len(ff.comments) != 1 || !strings.HasPrefix(ff.comments[0], "42: Landed in #7 https://example.test/o/r/pull/7") || len(ff.closed) != 1 || ff.closed[0] != 42 {
 		t.Errorf("comments %q, closed %v", ff.comments, ff.closed)
@@ -599,12 +643,15 @@ func TestShipRemoteResumeAfterMerged(t *testing.T) {
 	if _, out, err := f.ship(t, ShipOptions{Forge: ff, NoMerge: true}); err != nil {
 		t.Fatalf("first ship: %v\n%s", err, out)
 	}
-	ff.pr.State, ff.pr.MergeCommit = "MERGED", fakeMergeCommit
+	// The squash is a real commit on origin main (land verifies it, issue
+	// #673), so the resume sees origin/main moved and re-runs merge-base
+	// through push; pr, ci and merge still skip on the merged PR.
+	ff.pr.State, ff.pr.MergeCommit = "MERGED", ff.squash(ff.pr.Number)
 	res, out, err := f.ship(t, ShipOptions{Forge: ff})
-	if err != nil || strings.Count(out, "(done)") != 7 || !strings.HasSuffix(shipSteps(res), "merge=skip landed=ok closed=ok") || ff.merges != 0 {
+	if err != nil || !strings.HasSuffix(shipSteps(res), "pr=skip ci=skip merge=skip landed=ok closed=ok") || !strings.HasSuffix(shipSteps(res), "merge=skip landed=ok closed=ok") || ff.merges != 0 {
 		t.Fatalf("resume = %s, %v, merges %d\n%s", shipSteps(res), err, ff.merges, out)
 	}
-	if c := f.landedCommit(t); c != fakeMergeCommit || len(ff.closed) != 1 {
+	if c := f.landedCommit(t); c != ff.pr.MergeCommit || len(ff.closed) != 1 {
 		t.Errorf("landed %q, closed %v", c, ff.closed)
 	}
 	if _, out, err = f.ship(t, ShipOptions{Forge: ff}); err != nil || strings.Count(out, "(done)") != len(ShipSteps) || ff.merges != 0 || len(ff.closed) != 1 {
@@ -720,10 +767,11 @@ func TestShipStaleNever(t *testing.T) {
 // shipGitBudget is the most git processes one remote ship end to end may
 // start, git's own children (upload-pack, receive-pack, ...) included, as
 // measured with the per-run cache in shipRun on git 2.52 (issue #619): 46,
-// where a no-merge ship (push through ci) starts 36. Each git process costs
+// where a no-merge ship (push through ci) starts 36; 57 since landed fetches
+// the merge commit and land verifies it (issue #673). Each git process costs
 // 0.1-3s on a loaded Windows host, so the count, not the wall clock, is what
 // a regression shows up in.
-const shipGitBudget = 46
+const shipGitBudget = 57
 
 // TestShipGitProcessBudget ships the happy path of TestShipRemoteHappyPath
 // while GIT_TRACE logs one "trace: built-in:" line per git process to a
