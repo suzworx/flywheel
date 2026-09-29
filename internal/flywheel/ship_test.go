@@ -51,21 +51,9 @@ func newShipFixture(t *testing.T, gate string, inspected bool) shipFixture {
 // newShipFixtureIssue is newShipFixture with T planned from issue (0 none).
 func newShipFixtureIssue(t *testing.T, gate string, inspected bool, issue int) shipFixture {
 	t.Helper()
-	f := shipFixture{origin: t.TempDir(), dir: t.TempDir()}
-	shipGit(t, f.origin, "init", "-q", "--bare")
-	shipGit(t, f.dir, "init", "-q")
-	shipGit(t, f.dir, "config", "core.autocrlf", "false")
-	shipWrite(t, f.dir, ".gitignore", ".flywheel/\nflywheel.md\n")
-	shipWrite(t, f.dir, "src/a.go", "package src // v0\n")
-	shipGit(t, f.dir, "add", "-A")
-	shipGit(t, f.dir, "commit", "-q", "-m", "init")
-	shipGit(t, f.dir, "branch", "-M", "main")
-	shipGit(t, f.dir, "remote", "add", "origin", f.origin)
-	shipGit(t, f.dir, "push", "-q", "origin", "main")
-	shipGit(t, f.dir, "fetch", "-q", "origin")
-	base := shipGit(t, f.dir, "rev-parse", "HEAD")
-	f.wt = filepath.Join(f.dir, ".flywheel", "worktrees", "T")
-	shipGit(t, f.dir, "worktree", "add", "-q", "-b", "fw/T", f.wt, "main")
+	var f shipFixture
+	var base string
+	f.origin, f.dir, f.wt, base = shipTemplateCopy(t)
 	shipWrite(t, f.dir, "brief.txt", "owns: src/\nneeds: none\ngate: "+gate+"\n\n# TASK: T\n")
 	rc := 0
 	evs := []Event{
@@ -726,5 +714,38 @@ func TestShipStaleNever(t *testing.T) {
 	res, out, err := f.ship(t, ShipOptions{Forge: ff, Requeue: -1})
 	if !errors.Is(err, ErrShipStale) || ff.merges != 0 || strings.Contains(out, "requeue") || shipRan(res, "merge-base") != 1 {
 		t.Fatalf("Ship = %s, %v, merges %d\n%s", shipSteps(res), err, ff.merges, out)
+	}
+}
+
+// shipGitBudget is the most git processes one remote ship end to end may
+// start, git's own children (upload-pack, receive-pack, ...) included, as
+// measured with the per-run cache in shipRun on git 2.52 (issue #619): 46,
+// where a no-merge ship (push through ci) starts 36. Each git process costs
+// 0.1-3s on a loaded Windows host, so the count, not the wall clock, is what
+// a regression shows up in.
+const shipGitBudget = 46
+
+// TestShipGitProcessBudget ships the happy path of TestShipRemoteHappyPath
+// while GIT_TRACE logs one "trace: built-in:" line per git process to a
+// file, and fails when Ship started more than shipGitBudget of them.
+// not parallel: GIT_TRACE is process-wide (t.Setenv, restored at cleanup), so
+// every git a parallel test started would be counted too.
+func TestShipGitProcessBudget(t *testing.T) {
+	f := newShipFixtureIssue(t, "exit 0", true, 42)
+	trace := filepath.Join(t.TempDir(), "git-trace.txt")
+	t.Setenv("GIT_TRACE", trace)
+	ff := &fakeForge{checks: []ChecksState{{Pending: []string{"build"}}, {Passed: []string{"build"}}}}
+	res, out, err := f.ship(t, ShipOptions{Forge: ff, Poll: time.Millisecond})
+	if err != nil || shipSteps(res) != "preflight=ok commit=skip merge-base=skip gates=ok push=ok pr=ok ci=ok merge=ok landed=ok closed=ok" {
+		t.Fatalf("Ship = %s, %v\n%s", shipSteps(res), err, out)
+	}
+	b, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := strings.Count(string(b), "trace: built-in: git ")
+	t.Logf("git processes: %d", n)
+	if n == 0 || n > shipGitBudget {
+		t.Errorf("Ship started %d git processes, want 1..%d; a new uncached query or a lost forget() shows here:\n%s", n, shipGitBudget, b)
 	}
 }

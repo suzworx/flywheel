@@ -481,6 +481,9 @@ func TestTUIInstantKeysWhileFetching(t *testing.T) {
 // TestTUIAndonNextFetchFast checks the andon fetch on a large ledger (issue
 // #583 k7 c1): 5,000 events, and the fetch ends well within a hang guard
 // with NEXT decided from the events alone, never by Recover's world checks.
+// The guard is 30s: this test is parallel, so it shares a host that other
+// suites may saturate too (issue #619), and it still trips on a hang, which
+// is what it guards; the fetch normally ends in well under a second.
 func TestTUIAndonNextFetchFast(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -527,8 +530,8 @@ func TestTUIAndonNextFetchFast(t *testing.T) {
 	var r res
 	select {
 	case r = <-done:
-	case <-time.After(budget(10 * time.Second)):
-		t.Fatalf("the andon fetch did not end within %s (race %v) on a 5,000-event ledger", budget(10*time.Second), raceEnabled)
+	case <-time.After(budget(30 * time.Second)):
+		t.Fatalf("the andon fetch did not end within %s (race %v) on a 5,000-event ledger", budget(30*time.Second), raceEnabled)
 	}
 	if r.err != nil {
 		t.Fatalf("fetch: %v", r.err)
