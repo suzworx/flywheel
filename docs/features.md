@@ -61,6 +61,11 @@ git still works.*
   installed (and the command for each missing one) and how to view the floor. Building the full
   factory — lines, staffing, and the policy that keeps it safe — is
   [epic #69](https://github.com/suzworx/flywheel/issues/69).
+- **Models** — a new config's default worker uses the first agent CLI init finds on PATH (claude,
+  opencode, then codex), or the one `flywheel init --adapter` names. `flywheel config validate`
+  checks each model against flywheel's list and names the closest known ID for a typo;
+  `allow_unknown_model` on a worker accepts a newer model. Loading a config never checks the list
+  ([#275](https://github.com/suzworx/flywheel/issues/275), [quickstart](quickstart.md#1-scaffold-the-factory)).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode` or `sim`
   adapter and records the run automatically. For parallel units `flywheel run --worktree` is the
@@ -141,6 +146,9 @@ permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks f
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
+A claude worker's Bash tool may run a foreground command for up to `limits.shell_timeout`, a Go
+duration (default `60m`), so a full-suite gate runs in the foreground: flywheel sets the worker's
+`BASH_MAX_TIMEOUT_MS` to it, and `BASH_DEFAULT_TIMEOUT_MS` too unless you set your own (issue #678).
 `limits.unit_cost_usd` caps what one unit spends: its worker attempts, corrections included, and
 its agent review rounds (the sum of `cost` over its `finished` events and its `reviewed` events
 that carry a cost); a worker's `unit_cost_usd` overrides it, and 0 means no

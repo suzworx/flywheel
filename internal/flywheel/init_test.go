@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -790,6 +791,55 @@ func TestInitSeededKeepsExistingConfig(t *testing.T) {
 	}
 	if string(b) != string(custom) {
 		t.Error("InitSeeded() --force overwrote the existing config.json")
+	}
+}
+
+// TestInitDetectsAgents checks init's default worker follows the agent CLIs
+// found on PATH, first of claude, opencode, codex, opencode when none is,
+// and an existing config.json is left byte-identical (issue #275).
+// not parallel: it replaces the package-level lookPath.
+func TestInitDetectsAgents(t *testing.T) {
+	saved := lookPath
+	t.Cleanup(func() { lookPath = saved })
+	cases := []struct {
+		found          []string
+		adapter, model string
+		line           string
+	}{
+		{[]string{"codex"}, "codex", "gpt-5-codex", "agents: codex found; worker default uses codex (gpt-5-codex)"},
+		{nil, "opencode", DefaultConfig().Workers[0].Model, "agents: none found; worker default uses opencode (" + DefaultConfig().Workers[0].Model + ")"},
+		{[]string{"claude", "opencode"}, "claude", "claude-sonnet-5", "agents: claude, opencode found; worker default uses claude (claude-sonnet-5)"},
+	}
+	for _, tc := range cases {
+		lookPath = func(name string) (string, error) {
+			if slices.Contains(tc.found, name) {
+				return "/bin/" + name, nil
+			}
+			return "", errors.New("not found")
+		}
+		dir := t.TempDir()
+		_, _, choice, err := InitAgent(dir, false, "", "", "", false)
+		if err != nil {
+			t.Fatalf("InitAgent(found %v) error = %v", tc.found, err)
+		}
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if w := cfg.Workers[0]; w.Adapter != tc.adapter || w.Model != tc.model {
+			t.Errorf("found %v: worker = %s %s, want %s %s", tc.found, w.Adapter, w.Model, tc.adapter, tc.model)
+		}
+		if choice.String() != tc.line {
+			t.Errorf("found %v: summary = %q, want %q", tc.found, choice.String(), tc.line)
+		}
+
+		configPath := filepath.Join(dir, ".flywheel", "config.json")
+		before, _ := os.ReadFile(configPath)
+		lookPath = func(name string) (string, error) { return "/bin/" + name, nil }
+		_, _, choice, err = InitAgent(dir, false, "", "", "", false)
+		if after, _ := os.ReadFile(configPath); err != nil || !bytes.Equal(before, after) || choice.Adapter != "" {
+			t.Errorf("found %v: rerun err %v, choice %+v, config changed %v; want it untouched", tc.found, err, choice, !bytes.Equal(before, after))
+		}
 	}
 }
 

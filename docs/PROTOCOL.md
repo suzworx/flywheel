@@ -820,6 +820,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - `limits.checkpoint_every` (a Go duration, default `10m`; `"0"` off): an attempt running in its
   task worktree is checkpointed to `refs/flywheel/checkpoints/<task>/<attempt>` on that interval,
   only when its owned files changed.
+- `limits.shell_timeout` (a Go duration, default `60m`, positive): the longest foreground command a
+  claude worker's Bash tool may run. `flywheel run` sets the worker's `BASH_MAX_TIMEOUT_MS` to it
+  (overriding an inherited value) and `BASH_DEFAULT_TIMEOUT_MS` when the environment has none, and
+  the abandoned-job resume delta names it, issue #678.
 - `flywheel recover [--json] [--apply] [--all] [--dormant-after DUR] [--session ID]` (read-only without `--apply`)
   is where every lead session starts. It checks integrity: the log's hash chain and every §2 rule
   over every task. A rule failure on a task that is not `landed` fails integrity. A failure on a

@@ -179,6 +179,11 @@ func runConfigValidate(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel config validate: %v\n", err)
 		os.Exit(1)
 	}
+	// The model catalog is a preflight here, never a load rule (issue #275).
+	if problems := cfg.ModelProblems(); len(problems) > 0 {
+		fmt.Fprintf(os.Stderr, "flywheel config validate: %s\n", strings.Join(problems, "\n"))
+		os.Exit(1)
+	}
 	approved := 0
 	for _, w := range cfg.Workers {
 		for _, fb := range w.Fallbacks {

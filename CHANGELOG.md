@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/suzworx/flywheel/compare/v0.47.0...v0.48.0) (2026-09-29)
+
+
+### Features
+
+* flywheel config validate checks each worker's model against flywheel's catalog, and init picks the agent CLI that is installed ([#682](https://github.com/suzworx/flywheel/issues/682)) ([4505523](https://github.com/suzworx/flywheel/commit/4505523523404afa3211aac29cbe7a360d90599a))
+
 ## [0.47.0](https://github.com/suzworx/flywheel/compare/v0.46.0...v0.47.0) (2026-09-29)
 
 

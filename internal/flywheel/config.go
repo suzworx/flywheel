@@ -325,6 +325,40 @@ type Worker struct {
 	// UnitCostUSD caps what one unit's attempts on this worker spend, in USD;
 	// 0 means limits.unit_cost_usd (issue #459).
 	UnitCostUSD float64 `json:"unit_cost_usd,omitempty"`
+	// AllowUnknownModel skips the model catalog check `flywheel config
+	// validate` runs (ModelProblems) for this worker, so a model flywheel's
+	// list does not name yet, such as one released after this build, is not
+	// a problem (issue #275). Loading a config never checks the catalog.
+	AllowUnknownModel bool `json:"allow_unknown_model,omitempty"`
+}
+
+// ModelProblems checks each worker's model and fallback models against the
+// model catalog (CheckModel), one problem per failure, named like Validate's
+// problems. Workers with allow_unknown_model and sim workers are skipped.
+// It is `flywheel config validate`'s preflight, never part of Validate, so a
+// config naming a model newer than the catalog still loads (issue #275).
+func (c Config) ModelProblems() []string {
+	var problems []string
+	for i, w := range c.Workers {
+		if w.AllowUnknownModel || w.Adapter == "sim" {
+			continue
+		}
+		where := fmt.Sprintf("workers[%d]", i)
+		if w.Model != "" {
+			if err := CheckModel(w.Adapter, w.Model); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: worker %q: %v", where, w.Name, err))
+			}
+		}
+		for j, f := range w.Fallbacks {
+			if f.Model == "" {
+				continue
+			}
+			if err := CheckModel(w.Adapter, f.Model); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: worker %q: fallbacks[%d]: %v", where, w.Name, j, err))
+			}
+		}
+	}
+	return problems
 }
 
 // unitCostCap returns w's per-unit cost cap in USD: the worker's
@@ -545,6 +579,9 @@ type Limits struct {
 	// an ordinary gate waits for a running quiet gate to end), a Go
 	// duration; "" means 30m (issue #411).
 	QuietWait string `json:"quiet_wait,omitempty"`
+	// ShellTimeout is the longest foreground shell command a claude worker
+	// may run (BASH_MAX_TIMEOUT_MS), a Go duration; "" means 60m (issue #678).
+	ShellTimeout string `json:"shell_timeout,omitempty"`
 	// CheckpointEvery is how often an attempt running in its task worktree
 	// has its changed owned files checkpointed, a Go duration; "" means 10m,
 	// "0" disables it (issue #528).
@@ -572,6 +609,14 @@ func (l Limits) QuietWaitDuration() (time.Duration, error) {
 		return 30 * time.Minute, nil
 	}
 	return time.ParseDuration(l.QuietWait)
+}
+
+// ShellTimeoutDuration parses ShellTimeout ("" means 60 minutes).
+func (l Limits) ShellTimeoutDuration() (time.Duration, error) {
+	if l.ShellTimeout == "" {
+		return 60 * time.Minute, nil
+	}
+	return time.ParseDuration(l.ShellTimeout)
 }
 
 // LostAfterDuration parses LostAfter ("" means 24 hours).
@@ -1086,6 +1131,11 @@ func (c Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q: %v", c.Limits.QuietWait, err))
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q must be > 0", c.Limits.QuietWait))
+	}
+	if d, err := c.Limits.ShellTimeoutDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.shell_timeout %q: %v", c.Limits.ShellTimeout, err))
+	} else if d <= 0 {
+		problems = append(problems, fmt.Sprintf("limits.shell_timeout %q must be > 0", c.Limits.ShellTimeout))
 	}
 	if d, err := c.Limits.CheckpointEveryDuration(); err != nil {
 		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q: %v", c.Limits.CheckpointEvery, err))

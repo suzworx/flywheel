@@ -129,6 +129,47 @@ func TestConfigValidateAcceptsClaudeAdapter(t *testing.T) {
 	}
 }
 
+// TestConfigValidateModel checks ModelProblems, config validate's catalog
+// preflight: a claude typo is a problem naming the worker, allow_unknown_model
+// clears it, a fallback typo is a problem too, and loading a config with a
+// typo still succeeds (the catalog is never a load rule, issue #275).
+func TestConfigValidateModel(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{
+		{Name: "ok", Adapter: "claude", Model: "claude-sonnet-5"},
+		{Name: "typo", Adapter: "claude", Model: "claude-haiku-4-6"},
+		{Name: "sim", Adapter: "sim", Model: "script.jsonl"},
+	}}
+	got := cfg.ModelProblems()
+	if len(got) != 1 || !strings.Contains(got[0], `workers[1]: worker "typo"`) || !strings.Contains(got[0], "claude-haiku-4-5-20251001") {
+		t.Errorf("ModelProblems() = %q, want one problem naming worker typo and the closest known model", got)
+	}
+	cfg.Workers[1].AllowUnknownModel = true
+	if got := cfg.ModelProblems(); len(got) != 0 {
+		t.Errorf("ModelProblems() with allow_unknown_model = %q, want none", got)
+	}
+	cfg.Workers[0].Fallbacks = []Fallback{{Model: "claude-sonet-5"}}
+	if got := cfg.ModelProblems(); len(got) != 1 || !strings.Contains(got[0], `worker "ok": fallbacks[0]`) || !strings.Contains(got[0], `did you mean "claude-sonnet-5"`) {
+		t.Errorf("ModelProblems() with a fallback typo = %q, want one problem naming fallbacks[0]", got)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"version":1,"workers":[{"name":"w","adapter":"claude","model":"claude-haiku-4-6"}]}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() of a model typo = %v, want it to load", err)
+	}
+	if len(loaded.ModelProblems()) != 1 {
+		t.Errorf("loaded ModelProblems() = %q, want the typo", loaded.ModelProblems())
+	}
+}
+
 // TestConfigRouting checks Validate's routing rules (issue #474).
 func TestConfigRouting(t *testing.T) {
 	t.Parallel()
@@ -1158,6 +1199,34 @@ func TestLostAfterConfig(t *testing.T) {
 		}
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Validate() with lost_after %q = %v, want error containing %q", tc.value, err, tc.want)
+		}
+	}
+}
+
+// TestConfigShellTimeout covers limits.shell_timeout (issue #678): the 60m
+// default, a set value, and validation refusing an unparseable or
+// non-positive duration.
+func TestConfigShellTimeout(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	if d, err := cfg.Limits.ShellTimeoutDuration(); err != nil || d != 60*time.Minute {
+		t.Errorf("default ShellTimeoutDuration() = %v, %v; want 60m", d, err)
+	}
+	cfg.Limits.ShellTimeout = "90m"
+	if d, err := cfg.Limits.ShellTimeoutDuration(); err != nil || d != 90*time.Minute {
+		t.Errorf("ShellTimeoutDuration() = %v, %v; want 90m", d, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	for _, tc := range []struct{ value, want string }{
+		{"abc", "limits.shell_timeout"},
+		{"0s", "limits.shell_timeout \"0s\" must be > 0"},
+	} {
+		c := DefaultConfig()
+		c.Limits.ShellTimeout = tc.value
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate() with shell_timeout %q = %v, want error containing %q", tc.value, err, tc.want)
 		}
 	}
 }
