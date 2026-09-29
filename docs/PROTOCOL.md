@@ -901,7 +901,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Carries: `task`, `commit`, `note`.
 - Effect: `Derive` sets status `landed`. Verify's T5 (`ruleT5`) requires an earlier `inspected pass`
   or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6, rule T5)
-  unless the task's derived status is already `passed` or an exception is provided, and refuses
+  unless the task's derived status is already `passed` or an exception is provided, refuses
+  (exit 6, rule T5, issue #673) a `--commit` that is on neither any remote's `<integration.branch>`
+  nor the local one, or touches none
+  of the unit's files (exits 8 when the commit does not resolve or no integration branch does; see
+  T5 below), and refuses
   (exit 6, rule T9) while the task has untriaged signals unless `--allow-untriaged <reason>`
   records why, refuses (exit 6, rule `stacked`, issue #414) a unit whose base landed as a squash
   (see `rebased` above; the fix is `flywheel rebase <task>`, and an exception landing overrides it),
@@ -1368,7 +1372,17 @@ gates (exit 5) without touching the log's legality.
   recorded `excepted` event for the same task. `LandTask` additionally refuses to land a task whose
   derived status is not `passed` (unless an exception is provided), and refuses a second `landed`
   event for the same task under a different commit than the one already recorded (the same commit is
-  a silent no-op, exit 0).
+  a silent no-op, exit 0). Land also verifies the `--commit` it records (issue #673): the commit
+  must resolve, be an ancestor of an integration ref (any remote's `<integration.branch>`, e.g.
+  `origin/main` or `upstream/main`, or the local branch; unconfigured, any remote's or the local
+  `main` or `master`), and change at least one
+  of the unit's paths (the diff from the last dispatch's base to the last passing inspection's
+  tree, else the planned owns; `.flywheel/` and `flywheel.md` do not count). A commit off the
+  integration branch or touching none of the unit's paths is refused (exit 6, rule T5, naming the
+  commit's subject); a commit that does not resolve, or no integration ref that resolves, exits 8
+  (inconclusive: run `git fetch`). Outside a git repository, and when the ledger names no paths,
+  the check that cannot run is skipped. `flywheel land --merge` is exempt: it makes the commit
+  from the unit's own branch. `flywheel ship` fetches the integration branch before landing.
 - **T8 — personas write only their own kinds.** `validated` and `owns_checked` must carry `persona
   "supervisor"`; `inspected` must carry `"inspector"` or `"lead"`. No other kind is persona-checked
   by this rule (§4 has the full picture, including what is and is not mechanically enforced).
@@ -1561,7 +1575,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, or `review` (an open blocking review finding) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
-| `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 | 2 usage (e.g., --exception without --session), 1 other error |
+| `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **6** suspended (a `flywheel suspend --stop` stopped the worker, issue #572); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
 `flywheel run`'s own codes (3, 4, 7, and 6 for `suspended`) are not part of the repo-wide list: they are
