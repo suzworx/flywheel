@@ -154,6 +154,9 @@ func runValidate(args []string) {
 			fmt.Println(line)
 		}
 	}
+	if res.BaseDrift != "" {
+		fmt.Printf("%s base drift: %s\n", task, res.BaseDrift)
+	}
 	if res.Stacked != "" {
 		fmt.Printf("%s owns: warning: %s\n", task, res.Stacked)
 	}

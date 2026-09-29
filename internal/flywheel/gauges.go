@@ -124,6 +124,26 @@ type GaugeResult struct {
 	// was squash-merged as <sha7>; run: flywheel rebase <task>". A reading,
 	// never a gate: the owns check still runs.
 	Stacked string
+	// BaseDrift is set when the unit's branch forks from a newer integration
+	// commit than its recorded base, i.e. it was rebased outside flywheel
+	// (issue #672): "recorded <sha7>, branch forks from <sha7>; record it:
+	// flywheel log --task <task> --kind rebased --base <fork>". A reading,
+	// never a gate: OwnsOK and the measured paths do not change.
+	BaseDrift string `json:"base_drift,omitempty"`
+}
+
+// baseDrift is GaugeResult.BaseDrift for task in wd measured against the
+// integration ref (integrationRef, resolved once by the caller), or "" when
+// ref is "" or the branch forks at recorded.
+func baseDrift(wd, task, recorded, ref string) string {
+	if ref == "" || recorded == "" {
+		return ""
+	}
+	mb, drifted := effectiveBase(wd, recorded, ref)
+	if !drifted {
+		return ""
+	}
+	return fmt.Sprintf("recorded %s, branch forks from %s; record it: flywheel log --task %s --kind rebased --base %s", short7(recorded), short7(mb), task, mb)
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
@@ -434,7 +454,11 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 // recorded on the event (or the path is still absent, for a deletion
 // marker): the lead declared that edit, not the file forever (issue #258).
 func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsState []string, events []Event, res GaugeResult) (GaugeResult, error) {
-	changed, err := unitChangedPaths(wd, dispatchBase(events, task, attempt), task)
+	unitBase, intRef := dispatchBase(events, task, attempt), ""
+	if unitBase != "" {
+		intRef = integrationRef(wd)
+	}
+	changed, fork, err := unitChangedPathsRef(wd, unitBase, task, intRef)
 	if err != nil {
 		return GaugeResult{}, err
 	}
@@ -528,6 +552,11 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if b := dispatchBase(events, task, attempt); b != "" {
 		if res.Churn = outsideChurn(wd, b, outside); res.Churn != nil {
 			res.ChurnBase = b
+		}
+		// Only a walk that did not start at b can have drifted: the clean
+		// case costs no git process (TestShipGitProcessBudget).
+		if fork != "" && !strings.EqualFold(fork, b) {
+			res.BaseDrift = baseDrift(wd, task, b, intRef)
 		}
 	}
 	res.Attributed = attributed
@@ -1021,20 +1050,39 @@ func runCmdSplit(wd string, argv, env []string) (rc int, stdout, stderr []byte, 
 // Paths come NUL-delimited (-z), so git never quotes an unusual name. An
 // empty base, or a base git cannot use, falls back to changedPaths alone.
 func unitChangedPaths(wd, base, task string) ([]string, error) {
+	ref := ""
+	if base != "" {
+		ref = integrationRef(wd)
+	}
+	paths, _, err := unitChangedPathsRef(wd, base, task, ref)
+	return paths, err
+}
+
+// unitChangedPathsRef is unitChangedPaths with the integration ref already
+// resolved (finishValidate shares one lookup with baseDrift, issue #672). It
+// also returns fork, the first parent of the oldest commit the walk listed
+// ("" when it listed none): a fork other than base means the branch may have
+// been rebased outside flywheel, found without another git process.
+func unitChangedPathsRef(wd, base, task, ref string) (paths []string, fork string, err error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if base == "" {
-		return changed, nil
+		return changed, "", nil
 	}
 	revArgs := []string{"rev-list", "--first-parent", "--parents", base + "..HEAD"}
-	if ref := integrationRef(wd); ref != "" {
+	if ref != "" {
 		revArgs = append(revArgs, "^"+ref)
 	}
 	revs, err := gitRead(wd, revArgs)
 	if err != nil {
-		return changed, nil
+		return changed, "", nil
+	}
+	if lines := strings.Split(strings.TrimSpace(revs), "\n"); len(lines) > 0 {
+		if f := strings.Fields(lines[len(lines)-1]); len(f) > 1 {
+			fork = f[1]
+		}
 	}
 	seen := make(map[string]bool, len(changed))
 	result := append([]string(nil), changed...)
@@ -1078,7 +1126,7 @@ func unitChangedPaths(wd, base, task string) ([]string, error) {
 			add(out)
 		}
 	}
-	return result, nil
+	return result, fork, nil
 }
 
 // dispatchBase returns the unit's base: the Base of the task's latest
