@@ -832,13 +832,20 @@ func AppendEvent(dir string, e Event) error {
 // chain checked by `flywheel verify --log`; any Prev value a caller supplies is
 // overwritten. Records that must stand or fall together — an excepted event
 // and the landing it permits — can then never be split by a failure between
-// two separate appends.
+// two separate appends. The stamped instant is strictly after the ts of the
+// log's last line (issue #650), so an event never sorts before the one it
+// follows when the clock has not moved.
 func AppendEvents(dir string, events []Event) error {
+	return appendEvents(dir, events, time.Now())
+}
+
+// appendEvents is AppendEvents with the clock reading injected, so a test can
+// append twice within one clock tick.
+func appendEvents(dir string, events []Event, clock time.Time) error {
 	if len(events) == 0 {
 		return nil
 	}
-	nowT := time.Now().UTC()
-	now := nowT.Format(time.RFC3339Nano)
+	nowT := clock.UTC()
 	// Work on a copy: defaults, timestamps and prev are set here, never on
 	// the caller's events. Validate all of them before any write.
 	events = append([]Event(nil), events...)
@@ -882,20 +889,36 @@ func AppendEvents(dir string, events []Event) error {
 	} else if sharded {
 		return appendSharded(dir, events, nowT)
 	}
-	for i := range events {
-		if events[i].TS == "" {
-			events[i].TS = now
-		}
-	}
 	path := filepath.Join(dot, "events.jsonl")
 	// Serialise "read the last line, then append" (#299 review): without it
 	// two writers can chain to the same predecessor and a record no later
 	// line references could be removed undetected. The lock is innermost —
 	// nothing takes another lock while holding it — and held for one read
 	// and one write.
-	prev, err := lastLineHash(path)
+	last, found, err := lastCompleteLineOf(path)
 	if err != nil {
 		return err
+	}
+	prev := ""
+	var lastTS time.Time
+	if found {
+		prev = lineHash(last)
+		var e Event
+		if json.Unmarshal(last, &e) == nil {
+			if ts, err := time.Parse(time.RFC3339Nano, e.TS); err == nil {
+				lastTS = ts
+			}
+		}
+	}
+	// One instant for the whole batch, strictly after the last line (issue
+	// #650): a planned in the same clock tick as the finished before it would
+	// otherwise tie and kindRank would sort it first. nextStamp ignores a last
+	// ts beyond maxClockSkew, as the sharded path does.
+	now := nextStamp(nowT, lastTS, time.Time{}).Format(time.RFC3339Nano)
+	for i := range events {
+		if events[i].TS == "" {
+			events[i].TS = now
+		}
 	}
 	var lines [][]byte
 	for i := range events {
