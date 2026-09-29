@@ -80,8 +80,10 @@ first line stops matching `^# flywheel protocol v`.
 ## 1. Required entries per task
 
 Forty-three event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
-`Validate` rejects anything else. Nine of them carry a task's status (`state.go`'s `kindRank`
-orders them, together with some status-neutral kinds, for replay); the rest — `worker_plan`,
+`Validate` rejects anything else. A stamped event's `ts` is strictly after the previous event in
+its log (issue #650), so replay never sorts a re-plan before the finish it follows. Nine of the kinds
+carry a task's status (`state.go`'s `kindRank` orders them, together with some status-neutral
+kinds, for replay); the rest — `worker_plan`,
 `no-plan`, `off-course`, `report`, `validated`, `owns_checked`, `amended`, `sharded` and the
 others — change other fields but never the status itself. `staffed`, `goal`, `session_start`,
 `session_command` and `session_end` carry no `task` at all, and `Validate` also refuses a `task`
