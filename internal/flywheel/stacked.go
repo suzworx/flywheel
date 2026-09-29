@@ -208,6 +208,12 @@ func stackedFix(task, base, landedAs, baseTask string) string {
 // branch is left as it was, and returns the paths with a nil error. On
 // success it appends a rebased event (Base the new base, Note "was <old>,
 // onto <onto>") so dispatchBase measures the unit from there (issue #414).
+// When the branch was rebased outside flywheel onto a newer integration
+// commit (issue #672), the upstream is the branch's real fork point from
+// effectiveBase, not the stale recorded base, and the Note adds ", branch
+// forked from <fork> (rebased outside flywheel)". After the rebased event it
+// re-runs worktree.setup when configured (rerunSetup); a failed setup is the
+// returned error, with newBase still set.
 func RebaseUnit(dir, task, onto string) (newBase string, conflicts []string, err error) {
 	if !taskOK(task) {
 		return "", nil, fmt.Errorf("task %q does not match ^[A-Za-z0-9._-]+$", task)
@@ -254,7 +260,8 @@ func RebaseUnit(dir, task, onto string) (newBase string, conflicts []string, err
 	if rc != 0 {
 		return "", nil, fmt.Errorf("cannot resolve %s: %s", onto, stderr)
 	}
-	rc, stdout, stderr, err := git("rebase", "--onto", newBase, old, "fw/"+task)
+	from, drifted := effectiveBase(wt, old, newBase)
+	rc, stdout, stderr, err := git("rebase", "--onto", newBase, from, "fw/"+task)
 	if err != nil {
 		return "", nil, err
 	}
@@ -274,11 +281,80 @@ func RebaseUnit(dir, task, onto string) (newBase string, conflicts []string, err
 		}
 		return "", conflicts, nil
 	}
-	if err := AppendEvent(abs, Event{Task: task, Kind: "rebased", Base: newBase, Note: "was " + old + ", onto " + onto}); err != nil {
+	note := "was " + old + ", onto " + onto
+	if drifted {
+		note += ", branch forked from " + from + " (rebased outside flywheel)"
+	}
+	if err := AppendEvent(abs, Event{Task: task, Kind: "rebased", Base: newBase, Note: note}); err != nil {
 		return newBase, nil, err
 	}
 	_, _ = WriteState(abs)
-	return newBase, nil, nil
+	return newBase, nil, rerunSetup(abs, wt, task)
+}
+
+// rerunSetup runs worktree.setup, when configured, in the rebased unit's
+// worktree wt (issue #672: a rebase that moved the lockfile leaves installed
+// dependencies stale) and appends a worktree_setup event shaped like
+// prepareWorktree's, without its needs-state links or copies. A setup that
+// errs or exits non-zero is an error naming the command, the rc and the tail.
+func rerunSetup(dir, wt, task string) error {
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return err
+	}
+	command := cfg.SetupCommand()
+	if command == "" {
+		return nil
+	}
+	timeout, err := cfg.SetupTimeoutDuration()
+	if err != nil {
+		return fmt.Errorf("worktree.setup_timeout: %w", err)
+	}
+	rc, tail, dur, serr := runWorktreeSetup(dir, wt, task, command, timeout)
+	ev := Event{Task: task, Kind: "worktree_setup", Command: command, RC: &rc, DurationMS: dur.Milliseconds(), Note: clipSetupNote(tail)}
+	if serr != nil {
+		ev.Note = clipSetupNote(serr.Error() + "\n" + tail)
+	}
+	if err := AppendEvent(dir, ev); err != nil {
+		return err
+	}
+	_, _ = WriteState(dir)
+	if serr != nil || rc != 0 {
+		why := fmt.Sprintf("exited %d", rc)
+		if serr != nil {
+			why = serr.Error()
+		}
+		return fmt.Errorf("rebased, but worktree.setup %q %s (rc=%d) in %s; fix it and re-run it by hand; output tail:\n%s", command, why, rc, wt, tail)
+	}
+	return nil
+}
+
+// effectiveBase is the base the unit's branch really forks from (issue #672):
+// the merge base of HEAD in wd and onto when it differs from recorded and
+// recorded is its ancestor, i.e. the branch was rebased outside flywheel onto
+// a newer integration commit; drifted is then true. Otherwise, and on any git
+// error, it is recorded: the check never fails a caller.
+func effectiveBase(wd, recorded, onto string) (base string, drifted bool) {
+	out, err := gitRead(wd, []string{"merge-base", "HEAD", onto})
+	if err != nil {
+		return recorded, false
+	}
+	mb := strings.TrimSpace(out)
+	if mb == "" || strings.EqualFold(mb, recorded) {
+		return recorded, false
+	}
+	// A recorded full sha is compared as is: validate's git process budget
+	// (TestShipGitProcessBudget) has no room for a rev-parse per reading.
+	if len(recorded) != len(mb) || strings.Trim(strings.ToLower(recorded), "0123456789abcdef") != "" {
+		rec, err := gitRead(wd, []string{"rev-parse", "--verify", "-q", recorded + "^{commit}"})
+		if err != nil || strings.TrimSpace(rec) == mb {
+			return recorded, false
+		}
+	}
+	if in, err := isAncestor(wd, recorded, mb); err != nil || !in {
+		return recorded, false
+	}
+	return mb, true
 }
 
 // inTaskWorktree reports whether workdir is task's worktree under dir,
