@@ -11,7 +11,7 @@ description: >-
   tasks with brief files and the raw worker commands shown here.
 license: MIT
 metadata:
-  version: 0.43.0 # x-release-please-version
+  version: 0.44.0 # x-release-please-version
 ---
 
 # Flywheel Operator
