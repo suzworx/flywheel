@@ -1,5 +1,7 @@
 # Concepts
 
+An AI coding agent reading this: start at [For agents](agents.html), the roles, commands and rules on one page.
+
 This page defines the vocabulary flywheel is built on — the words the quickstart uses and the
 rules every command enforces. It is the map; [PROTOCOL.md](PROTOCOL.md) is the territory, and the
 code is the authority. Where a term names a machine check, the check is real: run the command

@@ -1,5 +1,7 @@
 # Quickstart
 
+An AI coding agent reading this: start at [For agents](agents.html), the same loop as exact commands and rules.
+
 Flywheel is a factory for AI coding work: a small Go CLI that plans, dispatches, measures and
 inspects bounded coding tasks. A **lead** writes a **work order**, a cheap disposable **worker**
 builds it, machine **gauges** re-run the work order's gates on the exact tree, an **inspector**
