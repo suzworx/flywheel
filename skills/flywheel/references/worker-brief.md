@@ -535,7 +535,9 @@ gate: go test ./internal/...
 Correction: <the defect, the evidence, the fix>
 ```
 
-`flywheel run` warns when a delta has no header, naming what it inherits.
+`flywheel run` warns when a delta has no header, naming what it inherits. A delta repeats the
+brief's `gate:` lines or declares none to inherit them; placeholder text such as
+`gate: (as the brief)` is not a command, and `flywheel lint` and `flywheel run` refuse it.
 
 `--auto` is required here too (same non-interactive permission prompt), and stdin must be closed per
 §2.

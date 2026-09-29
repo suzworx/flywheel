@@ -45,7 +45,8 @@ type LintResult struct {
 // importers, and one whose tests owns does not cover is a warning. A gate
 // that invokes a JavaScript test runner the repository does not use (config
 // lint.test_runners, else the runners package.json names) is a warning too
-// (issue #646).
+// (issue #646). A gate whose command word is not a command (placeholder
+// text) is a problem (issue #662, gateCommandProblems).
 func LintBrief(dir, path string) (LintResult, error) {
 	return lintBrief(dir, path, goList)
 }
@@ -81,6 +82,7 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 		}
 	}
 	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
+	res.Problems = append(res.Problems, gateCommandProblems(dir, header.Gates, lc.GateCommands)...)
 	if fileExists(filepath.Join(dir, "go.mod")) && (lc.Importers == nil || *lc.Importers) {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -509,6 +511,190 @@ func gateRunnerWarnings(dir string, gates []string, override []string) []string 
 		}
 	}
 	return out
+}
+
+// gateBuiltins are the bash builtins and keywords a gate may start with; they
+// resolve without a process (issue #662).
+var gateBuiltins = []string{"true", "false", "test", "[", "[[", "!", "for", "if", "while", "until", "case", "echo", "printf", "cd", "export", "set", "exit", "command", "type", "read", "source", ".", ":"}
+
+// gateResolveScript prints each argument the shell cannot resolve as a
+// command; the words are arguments, never interpolated into the script.
+const gateResolveScript = `for w in "$@"; do command -v -- "$w" >/dev/null 2>&1 || printf '%s\n' "$w"; done`
+
+// gateWord reads one shell word from s after leading blanks, quotes honoured
+// and removed; it ends at a blank or one of ;&|()<>, and rest follows it.
+func gateWord(s string) (word, rest string) {
+	s = strings.TrimLeft(s, " \t")
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\'' || c == '"':
+			j := strings.IndexByte(s[i+1:], c)
+			if j < 0 {
+				b.WriteString(s[i+1:])
+				return b.String(), ""
+			}
+			b.WriteString(s[i+1 : i+1+j])
+			i += j + 1
+		case strings.IndexByte(" \t\r\n;&|()<>", c) >= 0:
+			return b.String(), s[i:]
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), ""
+}
+
+// gateCommandWord is the command word of gate's first simple command (issue
+// #662): leading !, ( and {, VAR=value assignments, env, timeout <N> (and its
+// flags) and a leading cd <dir> && or cd <dir>; are skipped.
+func gateCommandWord(gate string) string {
+	s := gate
+	for {
+		s = strings.TrimLeft(s, " \t\r\n!({")
+		w, rest := gateWord(s)
+		switch {
+		case envAssignRE.MatchString(w), w == "env":
+			s = rest
+		case w == "timeout":
+			for {
+				a, r := gateWord(rest)
+				if a == "" || (!strings.HasPrefix(a, "-") && (a[0] < '0' || a[0] > '9')) {
+					break
+				}
+				rest = r
+			}
+			s = rest
+		case w == "cd":
+			_, r := gateWord(rest)
+			r = strings.TrimLeft(r, " \t")
+			if n, ok := strings.CutPrefix(r, "&&"); ok {
+				s = n
+			} else if n, ok := strings.CutPrefix(r, ";"); ok {
+				s = n
+			} else {
+				return w
+			}
+		default:
+			return w
+		}
+	}
+}
+
+// gateCommandProblems reports each gate whose command word is not a command,
+// placeholder text like "(as the brief)" (issue #662); no gate is executed. A
+// word is a command when allowed (lint.gate_commands) lists it, it is a
+// builtin or keyword, it names a path that exists under dir, or
+// exec.LookPath finds it; only the words still unresolved go, once, to
+// gateResolveScript in the shell gates run in (ShellArgv). Without bash (cmd)
+// that step is skipped and nothing is reported. A gate that is placeholder
+// text by gateWrapped's rule is reported as such instead, never also as not a
+// command.
+func gateCommandProblems(dir string, gates, allowed []string) []string {
+	return gateCommandProblemsWith(dir, gates, allowed, exec.LookPath, shellUnresolved)
+}
+
+// gateCommandProblemsWith is gateCommandProblems with the lookups injected,
+// for tests.
+func gateCommandProblemsWith(dir string, gates, allowed []string, lookPath func(string) (string, error), resolve func(string, []string) []string) []string {
+	words := make([]string, len(gates))
+	wrapped := make([]bool, len(gates))
+	placeholder := make([]bool, len(gates))
+	var pending []string
+	for i, g := range gates {
+		w := gateCommandWord(g)
+		if inner, ok := gateWrapped(g); ok {
+			wrapped[i], w = true, gateCommandWord(inner)
+			lower := strings.ToLower(g)
+			for _, p := range gatePlaceholderPhrases {
+				if strings.Contains(lower, p) {
+					placeholder[i] = true
+				}
+			}
+			if placeholder[i] {
+				continue
+			}
+		}
+		if w == "" || strings.ContainsAny(w, "$`") || slices.Contains(allowed, w) || slices.Contains(gateBuiltins, w) {
+			continue
+		}
+		if strings.Contains(w, "/") {
+			if _, err := os.Stat(filepath.Join(dir, w)); err == nil {
+				continue
+			}
+		} else if _, err := lookPath(w); err == nil {
+			continue
+		}
+		words[i] = w
+		if !slices.Contains(pending, w) {
+			pending = append(pending, w)
+		}
+	}
+	var unresolved []string
+	if len(pending) > 0 {
+		unresolved = resolve(dir, pending)
+	}
+	var out []string
+	for i, w := range words {
+		unres := w != "" && slices.Contains(unresolved, w)
+		switch {
+		case placeholder[i] || (wrapped[i] && unres):
+			out = append(out, fmt.Sprintf("gate %d: %q looks like placeholder text, not a command; a delta repeats the brief's gate: lines, or declares none to inherit them", i+1, gates[i]))
+		case unres:
+			out = append(out, fmt.Sprintf("gate %d: %q is not a command (placeholder text?); a delta repeats the brief's gate: lines, or declares none to inherit them", i+1, w))
+		}
+	}
+	return out
+}
+
+// gatePlaceholderPhrases are the lower-case phrases that mark a wrapped gate
+// as placeholder text (issue #662).
+var gatePlaceholderPhrases = []string{"as the brief", "as in the brief", "same as", "see brief", "see the brief", "as above", "unchanged", "inherit", "tbd", "todo"}
+
+// gateWrapped reports whether gate is a placeholder candidate and returns the
+// text inside its wrapper (issue #662). The rule: the gate is wrapped wholly in
+// (...) or <...> (never [...]: [ -f x ] is a real test) and contains none of
+// &&, ||, ;, |, $. A candidate is placeholder text when its text contains one
+// of gatePlaceholderPhrases (case-insensitive) or its first word inside the
+// wrapper does not resolve; gateCommandProblemsWith applies both, independent
+// of whether the word resolves on this host for the phrases. An unwrapped gate
+// is left to the command check (go test ./... or grep -q unchanged f never are
+// placeholders).
+func gateWrapped(gate string) (inner string, ok bool) {
+	g := strings.TrimSpace(gate)
+	if len(g) < 2 || strings.ContainsAny(g, ";|$") || strings.Contains(g, "&&") {
+		return "", false
+	}
+	if (g[0] == '(' && g[len(g)-1] == ')') || (g[0] == '<' && g[len(g)-1] == '>') {
+		return g[1 : len(g)-1], true
+	}
+	return "", false
+}
+
+// shellUnresolved runs gateResolveScript once in dir with words as arguments
+// and returns the words it printed. A cmd shell (no bash) or a shell that
+// fails resolves every word: nothing is reported that was not checked.
+func shellUnresolved(dir string, words []string) []string {
+	argv := ShellArgv(gateResolveScript)
+	if argv[0] == "cmd" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := append(append(argv[1:], "flywheel-gatecheck"), words...)
+	cmd := exec.CommandContext(ctx, argv[0], args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var bad []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if w := strings.TrimSuffix(line, "\r"); w != "" {
+			bad = append(bad, w)
+		}
+	}
+	return bad
 }
 
 // fileExists reports whether p exists and is not a directory.
