@@ -152,6 +152,9 @@ permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks f
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
+A claude worker's Bash tool may run a foreground command for up to `limits.shell_timeout`, a Go
+duration (default `60m`), so a full-suite gate runs in the foreground: flywheel sets the worker's
+`BASH_MAX_TIMEOUT_MS` to it, and `BASH_DEFAULT_TIMEOUT_MS` too unless you set your own (issue #678).
 `limits.unit_cost_usd` caps what one unit spends: its worker attempts, corrections included, and
 its agent review rounds (the sum of `cost` over its `finished` events and its `reviewed` events
 that carry a cost); a worker's `unit_cost_usd` overrides it, and 0 means no

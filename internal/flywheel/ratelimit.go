@@ -158,8 +158,9 @@ func pauseClock(t time.Time) string {
 const limitContinue = "# TASK: continue\n\nYour run was cut off by a rate limit. Continue the same task from where you stopped; do not redo finished work. Re-run the gates at the end and report their exit codes.\n"
 
 // jobContinue is the task text of the delta an abandoned-job resume attaches;
-// %s is the killed command(s) (issue #390).
-const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed when your session ended. Run it in the foreground (with a timeout long enough for it to finish) and wait for it, then finish the task and report its result and every gate's exit code.\n"
+// the first %s is the killed command(s) (issue #390), the second the
+// configured limits.shell_timeout (issue #678).
+const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed when your session ended. Run it in the foreground (your shell allows a foreground command up to %s, set by limits.shell_timeout) and wait for it, then finish the task and report its result and every gate's exit code.\n"
 
 // RunResumingLimits calls Run and, while the attempt ends rate-limited and
 // limits.rate_limit_retries allows, waits for the limit to reset and resumes
@@ -187,7 +188,15 @@ func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now 
 	if err != nil || res.Reason != "abandoned-job" {
 		return res, err
 	}
-	delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.job-1.txt", o.Task), fmt.Sprintf(jobContinue, strings.Join(res.Jobs, "`, `")))
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return res, err
+	}
+	limit, err := cfg.Limits.ShellTimeoutDuration()
+	if err != nil {
+		return res, fmt.Errorf("limits.shell_timeout %q: %w", cfg.Limits.ShellTimeout, err)
+	}
+	delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.job-1.txt", o.Task), fmt.Sprintf(jobContinue, strings.Join(res.Jobs, "`, `"), limit))
 	if err != nil {
 		return res, err
 	}

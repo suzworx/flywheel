@@ -1203,6 +1203,34 @@ func TestLostAfterConfig(t *testing.T) {
 	}
 }
 
+// TestConfigShellTimeout covers limits.shell_timeout (issue #678): the 60m
+// default, a set value, and validation refusing an unparseable or
+// non-positive duration.
+func TestConfigShellTimeout(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	if d, err := cfg.Limits.ShellTimeoutDuration(); err != nil || d != 60*time.Minute {
+		t.Errorf("default ShellTimeoutDuration() = %v, %v; want 60m", d, err)
+	}
+	cfg.Limits.ShellTimeout = "90m"
+	if d, err := cfg.Limits.ShellTimeoutDuration(); err != nil || d != 90*time.Minute {
+		t.Errorf("ShellTimeoutDuration() = %v, %v; want 90m", d, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	for _, tc := range []struct{ value, want string }{
+		{"abc", "limits.shell_timeout"},
+		{"0s", "limits.shell_timeout \"0s\" must be > 0"},
+	} {
+		c := DefaultConfig()
+		c.Limits.ShellTimeout = tc.value
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate() with shell_timeout %q = %v, want error containing %q", tc.value, err, tc.want)
+		}
+	}
+}
+
 // TestQuietWaitConfig covers limits.quiet_wait (issue #411): the 30m default,
 // Get/Set, the key lists, and validation refusing an unparseable or
 // non-positive duration.

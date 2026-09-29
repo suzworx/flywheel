@@ -579,6 +579,9 @@ type Limits struct {
 	// an ordinary gate waits for a running quiet gate to end), a Go
 	// duration; "" means 30m (issue #411).
 	QuietWait string `json:"quiet_wait,omitempty"`
+	// ShellTimeout is the longest foreground shell command a claude worker
+	// may run (BASH_MAX_TIMEOUT_MS), a Go duration; "" means 60m (issue #678).
+	ShellTimeout string `json:"shell_timeout,omitempty"`
 	// CheckpointEvery is how often an attempt running in its task worktree
 	// has its changed owned files checkpointed, a Go duration; "" means 10m,
 	// "0" disables it (issue #528).
@@ -606,6 +609,14 @@ func (l Limits) QuietWaitDuration() (time.Duration, error) {
 		return 30 * time.Minute, nil
 	}
 	return time.ParseDuration(l.QuietWait)
+}
+
+// ShellTimeoutDuration parses ShellTimeout ("" means 60 minutes).
+func (l Limits) ShellTimeoutDuration() (time.Duration, error) {
+	if l.ShellTimeout == "" {
+		return 60 * time.Minute, nil
+	}
+	return time.ParseDuration(l.ShellTimeout)
 }
 
 // LostAfterDuration parses LostAfter ("" means 24 hours).
@@ -1120,6 +1131,11 @@ func (c Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q: %v", c.Limits.QuietWait, err))
 	} else if d <= 0 {
 		problems = append(problems, fmt.Sprintf("limits.quiet_wait %q must be > 0", c.Limits.QuietWait))
+	}
+	if d, err := c.Limits.ShellTimeoutDuration(); err != nil {
+		problems = append(problems, fmt.Sprintf("limits.shell_timeout %q: %v", c.Limits.ShellTimeout, err))
+	} else if d <= 0 {
+		problems = append(problems, fmt.Sprintf("limits.shell_timeout %q must be > 0", c.Limits.ShellTimeout))
 	}
 	if d, err := c.Limits.CheckpointEveryDuration(); err != nil {
 		problems = append(problems, fmt.Sprintf("limits.checkpoint_every %q: %v", c.Limits.CheckpointEvery, err))
