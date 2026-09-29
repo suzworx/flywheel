@@ -228,8 +228,7 @@ There is one task per repository, named `flywheel-<directory name>-<first 8 hex 
 - **Search** — `:s <text>` searches the ledger, the run logs, the reports and the briefs; Enter opens the match.
 - **Headless frames** — `flywheel factory --keys SEQ --frames` (with `--width`, `--height` and `--now`) renders the same view without a terminal and prints each frame as JSON, one per key token (`j`, `<enter>`, `<ctrl-a>`, `"andon"`); the [live demo](demo.html) is made from these frames by `scripts/demo-web.sh`.
 - **Colours and skins** — each row takes the colour of its state (cyan running, green passed, yellow waiting, red failed or stalled, magenta frozen, dim landed), a row that changed is drawn bold for two refreshes, and a key never waits for the ledger, which is read in the background. `factory.skin` in `.flywheel/config.json` is `dark` (the default), `light` or `none`.
-
-Still to come: actions on the unit under the cursor (validate, inspect, resume, withdraw), marks, `--readonly` and hotkeys.
+- **Actions** — in the units view and a unit's detail, `v` validates, `i` inspects (as `FLYWHEEL_SESSION`), `r` resumes and `x` withdraws the marked units (`space` marks) or the one under the cursor; `Z` and `R` suspend and resume the factory. Each asks `y/N` with its command shown, runs the flywheel binary itself in the background so the CLI's rules decide, flashes its exit and keeps its output for `:result`. `--readonly` turns the actions off; `.flywheel/hotkeys.json` binds free keys to views.
 
 ## Metrics
 

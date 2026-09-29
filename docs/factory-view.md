@@ -77,6 +77,10 @@ Hiding the header or the crumbs gives their lines to the table.
 | `-` | table | swap to the previous view, and back |
 | `[` / `]` | table | step back / forward through the `:` commands entered |
 | `N` `A` `S` `C` (Shift) | table | sort by the first column, age, stage (or state), cost; again flips the direction |
+| `v` `i` `r` `x` | units, unit detail | validate, inspect, resume, withdraw the marked units or the one shown, after a `y/N` (see [Actions](#actions)) |
+| space | units | mark or unmark the row; Esc clears the marks first |
+| `Z` `R` (Shift) | units, unit detail | suspend, resume the factory, after a `y/N` |
+| `:result` | table | the last action's whole output |
 | Ctrl-A | everywhere but a prompt | list every view and alias in the drill-down pane |
 | Backspace | prompt | delete the last character |
 | `?` | table, drill-down, help | show or leave help |
@@ -398,10 +402,52 @@ Up, PgUp) pauses that and the title says `paused; G to follow`; `G` follows agai
 does not run opens its log at the first line. `w` wraps long lines instead of cutting them, `t`
 hides or shows the timestamps, and `f` (as in every drill-down) goes fullscreen.
 
+## Actions
+
+In the units view and a unit's detail, a key acts on the marked units, else on the unit under the
+cursor (the detail's unit in a detail). Each runs the flywheel binary itself as a subprocess with
+explicit arguments, so the CLI's own rules (T3, T4, the locks) decide; the view never writes the
+ledger.
+
+| Key | Runs |
+|---|---|
+| `v` | `flywheel validate <task> --dir <dir>` |
+| `i` | asks `p` pass, `r` rework, `s` scrap or `e` escalate, then `flywheel inspect <task> --verdict <v> --session $FLYWHEEL_SESSION --dir <dir>` |
+| `r` | `flywheel run <task> --resume --dir <dir>` |
+| `x` | `flywheel log --task <task> --kind withdrawn --note "withdrawn from flywheel factory" --dir <dir>` |
+| `Z` | `flywheel suspend --dir <dir>`, with `--session $FLYWHEEL_SESSION` when set |
+| `R` | `flywheel resume --dir <dir>`, with `--session $FLYWHEEL_SESSION` when set |
+
+`S` stays sort by stage, so suspend is `Z`. `i` with `FLYWHEEL_SESSION` unset flashes `set
+FLYWHEEL_SESSION to your own session to inspect` and does nothing: an inspection is recorded as
+your session, never a worker's.
+
+Every action asks first on the flash line, `validate T1 T2? y/N`, with the command it will run on
+the line below. `y` runs it; any other key cancels and flashes `cancelled`. While it runs the flash
+reads `running: flywheel validate T1 --dir .` and every action key says `busy: validate T1`: one
+action at a time, and a key never waits for it. When it ends the flash reads `validate T1: exit 0`,
+or `validate T1: exit 5 — <its last line>`, and the next fetch shows the new state. `:result`
+shows the whole output (Esc goes back). With several targets the commands run one after another
+and stop at the first that fails.
+
+**Marks.** `space` marks or unmarks the row under the cursor (a `●` beside it) and moves down;
+`Esc` in the units view clears the marks before it goes back. The marks clear once an action runs.
+
+**Read-only.** `flywheel factory --readonly` turns every action off: each action key flashes
+`read-only: started with --readonly`. Marks and views still work, and the header says
+`read-only`.
+
+**Hotkeys.** `.flywheel/hotkeys.json` binds a free key to a view command, read once when the view
+starts:
+
+```json
+{"hotkeys": {"K": ":pulse", "<ctrl-y>": ":andon", "L": ":s rate limit"}}
+```
+
+A key is one `--keys` token: a single character or a named key such as `<ctrl-y>`. A key already
+bound, a command that opens no view, or a file that does not parse is skipped with one flash
+naming it; the rest load. A hotkey works in any table view, as if its command were typed after `:`.
+
 ## Coming next
 
 - filtering by column, and sorting by the column under a cursor
-- actions on the unit under the cursor
-- marks, to act on several units at once
-- a read-only mode that disables every action
-- hotkeys for the views used most

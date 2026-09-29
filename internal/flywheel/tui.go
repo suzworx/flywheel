@@ -150,6 +150,22 @@ type TUI struct {
 	// wantCtx is the context Enter in the ctx view asked for (issue #585
 	// f4), until the live loop takes it (TakeCtx).
 	wantCtx *TUICtx
+
+	// The actions (issue #583 k5, tui_actions.go): the ledger they run on,
+	// the session inspect and resume run as, --readonly, the marked units,
+	// the verdict and y/N prompts, the confirmed action until the live loop
+	// takes it (TakeAction), the one running and the last one's output.
+	actDir     string
+	session    string
+	readonly   bool
+	picked     map[string]bool
+	verdictFor []string
+	confirm    *TUIAction
+	pending    *TUIAction
+	busy       string
+	running    string
+	result     []string
+	hotkeys    map[term.Key]string
 }
 
 // TakeCtx reports the context the ctx view asked to switch to, and clears
@@ -188,6 +204,7 @@ func (m *TUI) ctxReset() {
 	m.stack, m.saved, m.metricBack = nil, map[string]navLevel{}, nil
 	m.split, m.splitMetric, m.full, m.follow, m.followed = "", "", false, false, false
 	m.seen, m.marks = nil, nil
+	m.picked, m.verdictFor, m.confirm = nil, nil, nil
 	m.resetCrumbs()
 }
 
@@ -235,6 +252,7 @@ func NewTUI() *TUI {
 		saved:  map[string]navLevel{},
 		window: "24h",
 		skin:   skins[DefaultSkin],
+		actDir: ".",
 	}
 }
 
@@ -381,6 +399,7 @@ var drillTitles = map[string]string{
 	"learning":   "Learning",
 	"checkpoint": "Checkpoint",
 	"views":      "Views",
+	"result":     "Result",
 }
 
 // unitTabs are the unit detail's tabs (issue #583 k3), each switched by its
@@ -443,6 +462,15 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	// Any key clears the flash; the key may set a new one.
 	m.flashMsg = ""
 
+	// An action's verdict or y/N prompt takes the key (issue #583 k5); a
+	// table's hotkey (.flywheel/hotkeys.json) runs its view command.
+	if m.actionPrompt(k) {
+		return
+	}
+	if m.drillKind == "" && !m.help && m.promptKind == "" && m.hotkey(k) {
+		return
+	}
+
 	// The layout toggles work in every mode (issue #583).
 	if k.Kind == term.KeyCtrl {
 		switch k.Rune {
@@ -475,6 +503,9 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 	// Drill-down mode (explain/log view).
 	if m.drillKind != "" {
 		if m.drillKind == "metric" && m.metricKey(k, d) {
+			return
+		}
+		if isUnitTab(m.drillKind) && m.actionKey(k, d) {
 			return
 		}
 		if m.drillKey(k) {
@@ -608,6 +639,9 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 		return
 	}
 	if m.view == "metrics" && m.splitKey(k, rows) {
+		return
+	}
+	if m.view == "units" && m.actionKey(k, d) {
 		return
 	}
 
@@ -902,6 +936,9 @@ func (m *TUI) runCommand(cmd string) bool {
 		m.search = arg
 		m.setView("search")
 		return true
+	case "result":
+		m.openResult()
+		return m.result != nil
 	}
 	for _, v := range tuiViews {
 		if (name == v.name || name == v.alias) && v.name != "search" && arg == "" {
@@ -1162,12 +1199,15 @@ var (
 	fullHints = []hint{{"f", "fullscreen"}}
 	// In the log tab w wraps, so the why tab is Esc and Enter away.
 	logHints = join([]hint{{"w", "wrap"}, {"t", "timestamps"}, {"G", "follow"}}, tabHints[1:])
+	// The actions (issue #583 k5): on the marked units, else the one shown.
+	actHints = []hint{{"v", "validate"}, {"i", "inspect"}, {"r", "resume"}, {"x", "withdraw"}}
 )
 
 // viewHints is the key menu of each view (a table view, a drill-down kind or
 // help): the keys valid there, in the order the menu lists them.
 var viewHints = map[string][]hint{
-	"units":       join(tableHints, unitHints, sortHints, layoutHints),
+	"units":       join(tableHints, unitHints, []hint{{"space", "mark"}}, actHints, sortHints, layoutHints),
+	"result":      join(scrollHints, fullHints, layoutHints),
 	"andon":       join(tableHints, unitHints, sortHints, layoutHints),
 	"workers":     join(tableHints, sortHints, layoutHints),
 	"events":      join(tableHints, sortHints, layoutHints),
@@ -1264,6 +1304,9 @@ func contextLines(d TUIData) []string {
 // cut to width.
 func (m *TUI) headerBlock(d TUIData, width int) []string {
 	left := contextLines(d)
+	if m.readonly {
+		left[1] += " · read-only"
+	}
 	leftW := 0
 	for _, l := range left {
 		leftW = max(leftW, utf8.RuneCountInString(l))
@@ -1378,16 +1421,26 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 
 	// The bottom: the flash line, then the prompt or the crumbs on the last
 	// line; a frame too short for both keeps the last.
+	// A running action reads on the flash line while nothing else does; an
+	// action's prompt takes both lines, its command under the question.
+	flashText := m.flashLine()
+	if flashText == "" {
+		flashText = m.running
+	}
 	var foot []string
-	switch {
-	case m.promptKind == "command":
-		foot = []string{m.flashLine(), ":" + m.prompt}
-	case m.promptKind == "filter":
-		foot = []string{m.flashLine(), "/" + m.prompt}
-	case !m.hideCrumbs && !full:
-		foot = []string{m.flashLine(), m.crumbLine()}
-	default:
-		foot = []string{m.flashLine()}
+	if ask, help, ok := m.promptLines(); ok {
+		foot = []string{ask, help}
+	} else {
+		switch {
+		case m.promptKind == "command":
+			foot = []string{flashText, ":" + m.prompt}
+		case m.promptKind == "filter":
+			foot = []string{flashText, "/" + m.prompt}
+		case !m.hideCrumbs && !full:
+			foot = []string{flashText, m.crumbLine()}
+		default:
+			foot = []string{flashText}
+		}
 	}
 	for len(foot) > 1 && height-len(foot) < 1 {
 		foot = foot[1:]
@@ -1508,6 +1561,16 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"Log tab:",
 			"  w wrap long lines, t show or hide the timestamps; the log",
 			"  follows a running unit until you scroll up (G follows again)",
+			"Actions (units view and a unit's detail; each asks y/N first):",
+			"  v       validate the marked units, else the one under the cursor",
+			"  i       inspect: p pass, r rework, s scrap, e escalate",
+			"          (as $FLYWHEEL_SESSION)",
+			"  r       resume the unit's run; x withdraw it",
+			"  space   mark or unmark a row; esc clears the marks",
+			"  Z R     suspend / resume the factory",
+			"  :result the last action's output",
+			"  --readonly turns every action off; .flywheel/hotkeys.json",
+			"          binds a free key to a view: {\"hotkeys\": {\"K\": \":pulse\"}}",
 			"Layout:",
 			"  ctrl-e  show or hide the header",
 			"  ctrl-g  show or hide the crumbs",
@@ -1528,6 +1591,8 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		detail, cur := d.Detail, -1
 		if m.drillKind == "metric" {
 			detail, cur = m.metricLines(d, width)
+		} else if m.drillKind == "result" {
+			detail = m.result
 		} else if isUnitTab(m.drillKind) {
 			// The unit detail: its why line leads every tab.
 			detail = append([]string{"why: " + d.Why[m.drillTask], ""}, m.logLines(d.Detail, width)...)
@@ -1602,6 +1667,10 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			isCursor := i == m.cursor
 			if isCursor {
 				cursor = "> "
+			}
+			// The mark column (space, issue #583 k5).
+			if m.view == "units" && m.picked[cell(whole[i], 0)] {
+				cursor = cursor[:1] + "●"
 			}
 			rowLineCut := cutRunes(cursor+m.formatRowWithColumns(row, widths), width)
 

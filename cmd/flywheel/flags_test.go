@@ -666,14 +666,14 @@ func TestFactoryFlagsBindEveryOption(t *testing.T) {
 	t.Parallel()
 	args := []string{"--dir", "X", "--once", "--json", "--interval", "5s",
 		"--width", "120", "--height", "40", "--now", "2026-01-02T15:04:05Z",
-		"--keys", "j <enter>", "--frames"}
+		"--keys", "j <enter>", "--frames", "--readonly"}
 	fs, o := factoryFlags()
 	if err := fs.Parse(args); err != nil {
 		t.Fatalf("factoryFlags: %v", err)
 	}
 	want := factoryOptions{dir: "X", once: true, asJSON: true,
 		interval: 5 * time.Second, width: 120, height: 40, now: "2026-01-02T15:04:05Z",
-		keys: "j <enter>", frames: true}
+		keys: "j <enter>", frames: true, readonly: true}
 	if *o != want {
 		t.Errorf("factoryFlags parsed = %#v, want %#v", *o, want)
 	}

@@ -33,6 +33,7 @@ type factoryOptions struct {
 	keys     string
 	frames   bool
 	ctx      string
+	readonly bool
 }
 
 // factoryFlags defines factory's flags once, so help and run share them.
@@ -51,6 +52,7 @@ func factoryFlags() (*flag.FlagSet, *factoryOptions) {
 	fs.BoolVar(&o.frames, "frames", false, "render the interactive view headlessly after each --keys token and print the frames as JSON")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to render at; makes a screenshot reproducible")
 	fs.StringVar(&o.ctx, "ctx", "", "start in this fleet ledger, named as flywheel fleet status names it (overrides --dir)")
+	fs.BoolVar(&o.readonly, "readonly", false, "turn the view's actions off (validate, inspect, resume, withdraw, suspend); marks and views still work")
 	return fs, o
 }
 
@@ -173,7 +175,7 @@ func runFactory(args []string) {
 		return
 	}
 	// Live interactive mode.
-	if err := flywheel.RunTUI(os.Stdin, os.Stdout, o.dir, o.interval, clock, place); err != nil {
+	if err := flywheel.RunTUI(os.Stdin, os.Stdout, o.dir, o.interval, clock, place, o.readonly); err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
 		os.Exit(1)
 	}

@@ -49,7 +49,7 @@ description: The approved design for the flywheel factory view, a k9s-style term
 <p class="foot-note">Want the real thing? The <a href="demo.html">live demo</a> replays a real session and lets you drive the real view.</p>
 <header style="display:grid;gap:12px">
   <h1>Factory screens</h1>
-  <p class="lede">The approved design for <code>flywheel factory</code> (issue <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>): a k9s-style terminal UI for a person inspecting the factory by hand and working out what happened and why. Agents keep using the CLI and <code>--json</code>. Most of it is on main now: the layout, navigation and search, the unit's why and timeline, the pulse and metrics dashboards with their drill-downs, the frozen factory, colours and skins. Still to come: the actions on a unit. Every screen is drawn at a 110-column terminal with example data; a shipped screen shows the keys and columns the code has (<a href="factory-view.html">The factory view</a> describes each).</p>
+  <p class="lede">The approved design for <code>flywheel factory</code> (issue <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>): a k9s-style terminal UI for a person inspecting the factory by hand and working out what happened and why. Agents keep using the CLI and <code>--json</code>. Most of it is on main now: the layout, navigation and search, the unit's why and timeline, the pulse and metrics dashboards with their drill-downs, the frozen factory, colours and skins, and the actions on a unit. Every screen is drawn at a 110-column terminal with example data; a shipped screen shows the keys and columns the code has (<a href="factory-view.html">The factory view</a> describes each).</p>
   <p class="legend">The badge on each screen says what exists today:
     <span class="status shipped">shipped</span> on main,
     <span class="status building">building</span> in a unit now,
@@ -297,10 +297,10 @@ lead lead-claude-c60c5d · workers 0/4 · landed today 7 · $18.40
 <span class="k">1 2 3</span>   24h / 7d / 30d    <span class="k">C-e</span> header  <span class="k">C-g</span> crumbs                                     <span class="k">G</span>  last line / follow
 <span class="k">h j k l</span> pulse panel       <span class="k">C-w</span> wide    <span class="k">C-r</span> reload
 <span class="k">h u</span>     chart / units
-<span class="h">ACTIONS</span> <span class="d">(planned: confirm; off with --readonly)</span>
-<span class="d">v validate  i inspect  r resume  x withdraw  space mark  S suspend  R resume factory  .flywheel/hotkeys.json</span></pre></div>
-  <p class="meta">The ACTIONS row: keys that act on the unit under the cursor, marks, <code>--readonly</code> and <code>.flywheel/hotkeys.json</code> <span class="status planned">planned</span></p>
+<span class="h">ACTIONS</span> <span class="d">(each asks y/N; off with --readonly)</span>
+<span class="k">v</span> validate  <span class="k">i</span> inspect  <span class="k">r</span> resume  <span class="k">x</span> withdraw  <span class="k">space</span> mark  <span class="k">Z</span> suspend  <span class="k">R</span> resume factory  <span class="k">:result</span> output  .flywheel/hotkeys.json</pre></div>
+  <p class="meta">The ACTIONS row: keys that act on the marked units or the unit under the cursor, marks, <code>--readonly</code> and <code>.flywheel/hotkeys.json</code> <span class="status shipped">shipped</span></p>
 </section>
 
-<p class="foot-note">Example data. Build order on <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>, shipped: k1 layout, k2 navigation and search, k3 unit detail, m1 metrics engine (<code>flywheel stats --metrics</code>), m2 charts, k4 pulse and metrics, k6 feel (instant keys, colours, skins), the freeze and <code>flywheel schedule</code>, <code>flywheel fleet</code> add, list and status, f2 the fleet learnings queue, f3 <code>fleet watch</code>, and f4 the fleet screen (<code>:ctx</code>). Planned: k5 actions.</p>
+<p class="foot-note">Example data. Build order on <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>, shipped: k1 layout, k2 navigation and search, k3 unit detail, m1 metrics engine (<code>flywheel stats --metrics</code>), m2 charts, k4 pulse and metrics, k6 feel (instant keys, colours, skins), the freeze and <code>flywheel schedule</code>, <code>flywheel fleet</code> add, list and status, f2 the fleet learnings queue, f3 <code>fleet watch</code>, f4 the fleet screen (<code>:ctx</code>), and k5 actions, marks, <code>--readonly</code> and hotkeys.</p>
 </div>
