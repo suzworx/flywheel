@@ -117,7 +117,9 @@ func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration, hold
 	}
 	go func() {
 		defer close(done)
-		o := RunOptions{Task: "T1", Worktree: true, SimDelay: simDelay, checkpointTicks: ticks}
+		o := RunOptions{Task: "T1", Worktree: true, SimDelay: simDelay, checkpointTicks: ticks,
+			// The held sim prints nothing until release, so the start timeout must exceed any hold; the test's waits are its hang guards (issue #668).
+			StartTimeout: 10 * time.Minute}
 		if gate != nil {
 			o.simRelease = gate
 		}
