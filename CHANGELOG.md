@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.44.0](https://github.com/suzworx/flywheel/compare/v0.43.0...v0.44.0) (2026-09-29)
+
+
+### Features
+
+* flywheel lint warns when a gate calls a JavaScript test runner the repository does not use ([#655](https://github.com/suzworx/flywheel/issues/655)) ([a10bcd1](https://github.com/suzworx/flywheel/commit/a10bcd1c629afddca1d3d2d856beeb111ac55a89)), closes [#646](https://github.com/suzworx/flywheel/issues/646)
+* flywheel validate labels an outside-owns change that is line endings or whitespace only ([#656](https://github.com/suzworx/flywheel/issues/656)) ([72342a3](https://github.com/suzworx/flywheel/commit/72342a33e17474fe5bc32b453563ee5853aa07af)), closes [#647](https://github.com/suzworx/flywheel/issues/647)
+
+
+### Bug Fixes
+
+* flywheel recover reads the integration branch's squash history once per call, not once per unit ([#654](https://github.com/suzworx/flywheel/issues/654)) ([0757299](https://github.com/suzworx/flywheel/commit/07572990bdb9f31a5a53fc6647c52bea3e488a9b))
+
+## [0.43.0](https://github.com/suzworx/flywheel/compare/v0.42.0...v0.43.0) (2026-09-27)
+
+
+### Features
+
+* flywheel factory's :ctx view lists every factory in the fleet, and Enter or --ctx switches the view to one ([#644](https://github.com/suzworx/flywheel/issues/644)) ([de7187b](https://github.com/suzworx/flywheel/commit/de7187b96da0e958baa84b33968ad8494564beac))
+
 ## [0.42.0](https://github.com/suzworx/flywheel/compare/v0.41.0...v0.42.0) (2026-09-27)
 
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -149,6 +150,9 @@ func runValidate(args []string) {
 				break
 			}
 		}
+		for _, line := range churnHints(task, res.ChurnBase, res.Churn) {
+			fmt.Println(line)
+		}
 	}
 	if res.Stacked != "" {
 		fmt.Printf("%s owns: warning: %s\n", task, res.Stacked)
@@ -164,4 +168,31 @@ func runValidate(args []string) {
 		os.Exit(0)
 	}
 	os.Exit(5)
+}
+
+// churnHints returns one "owns: hint:" line per churn class (issue #647),
+// naming, sorted, the outside paths that differ from base only in line
+// endings or only in whitespace, and the command that restores them.
+func churnHints(task, base string, churn map[string]string) []string {
+	byClass := map[string][]string{}
+	for p, c := range churn {
+		byClass[c] = append(byClass[c], p)
+	}
+	classes := make([]string, 0, len(byClass))
+	for c := range byClass {
+		classes = append(classes, c)
+	}
+	sort.Strings(classes)
+	if base == "" {
+		base = "<base>"
+	}
+	lines := make([]string, 0, len(classes))
+	for _, c := range classes {
+		paths := byClass[c]
+		sort.Strings(paths)
+		what := strings.TrimSuffix(c, " only")
+		lines = append(lines, fmt.Sprintf("%s owns: hint: %s differ from the base only in %s; restore them byte-for-byte (git checkout %s -- %s) and re-validate",
+			task, strings.Join(paths, ", "), what, base, strings.Join(paths, " ")))
+	}
+	return lines
 }
