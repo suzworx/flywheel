@@ -137,6 +137,10 @@ type LintConfig struct {
 	// (issue #646): node:test, vitest, jest, mocha, ava, playwright. Non-empty
 	// replaces the set flywheel lint detects in package.json.
 	TestRunners []string `json:"test_runners,omitempty"`
+	// GateCommands names command words a gate may start with that resolve
+	// only at gate time (a tool on the gate shell's PATH then, not at lint or
+	// dispatch): flywheel lint and run always accept them (issue #662).
+	GateCommands []string `json:"gate_commands,omitempty"`
 }
 
 // DefaultKinds is the kind: values flywheel lint allows when lint.kinds is
