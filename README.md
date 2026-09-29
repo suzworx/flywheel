@@ -109,7 +109,7 @@ units (1)
   hello              passed    r1                .flywheel/sim.jsonl         1    0s done
 ```
 
-With a real worker (`claude`, `codex` or `opencode`) the file is written by the agent; see the
+With a real worker (`claude`, `codex`, `opencode` or `pi`) the file is written by the agent; see the
 [Quickstart](docs/quickstart.md) for the full path to a landed unit.
 
 ## Docs
@@ -202,10 +202,11 @@ flowchart LR
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files and ends
   with a factory summary: worker lines, limits, audit policy and the enforcement layers installed
   (with the command for each missing one). The default worker uses the first agent CLI it finds
-  on PATH (claude, opencode, then codex), or the one `--adapter NAME` chooses. The full factory is
+  on PATH (claude, opencode, codex, then [pi](https://pi.dev): `npm install -g @earendil-works/pi-coding-agent`,
+  models `provider/id`), or the one `--adapter NAME` chooses. The full factory is
   [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order with `flywheel log --kind planned`; `flywheel run`
-  dispatches it through the `claude`, `codex`, `opencode` or `sim` adapter and records the run;
+  dispatches it through the `claude`, `codex`, `opencode`, `pi` or `sim` adapter and records the run;
   `--worktree` builds each unit in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`.
 - **Watch** — `flywheel state` derives the floor from the log, `flywheel factory` opens an
   interactive k9s-style view of it, `flywheel watch` streams every event as one line, and
@@ -221,7 +222,7 @@ view, each marked with what exists today, are on the [screens page](https://suzw
   (available in v0.2.0). It ends with a factory summary — the worker lines, limits, audit policy, which enforcement layers are installed (and the command for each missing one) and how to view the floor. Building the full factory — lines, staffing, and the policy that keeps it
   safe — is [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  `flywheel run` dispatches it to a worker through the `claude`, `codex` or `opencode` adapter and
+  `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode` or `pi` adapter and
   records the run automatically. For parallel units `flywheel run --worktree` is the default: each
   unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
   `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without

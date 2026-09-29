@@ -9,7 +9,7 @@ import (
 
 // workerAdapters are the adapters a worker may use; a staffed role may also
 // be "cli", a person at the terminal.
-var workerAdapters = []string{"opencode", "sim", "claude", "codex"}
+var workerAdapters = []string{"opencode", "sim", "claude", "codex", "pi"}
 
 // quoted renders names as a comma-ready list of Go string literals:
 // [opencode sim] becomes ["opencode" "sim"].

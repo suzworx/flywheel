@@ -55,8 +55,10 @@ Roles are sessions, not people: the session that built a unit can never inspect 
 
    The `factory:` summary it prints names each missing enforcement hook and the `flywheel init`
    flag that adds it (`--hooks`, `--git-hooks`, `--ci`).
-3. Configure the worker in `.flywheel/config.json`: its adapter (`opencode`, `claude`, `codex`, or
-   `sim`, which replays a recorded run and writes no files) and its model:
+3. Configure the worker in `.flywheel/config.json`: its adapter (`opencode`, `claude`, `codex`,
+   `pi`, or `sim`, which replays a recorded run and writes no files) and its model. `pi` is the
+   [pi coding agent](https://pi.dev) (`npm install -g @earendil-works/pi-coding-agent`); its models
+   are `provider/id`, e.g. `anthropic/claude-sonnet-5`:
 
    ```json
    {
