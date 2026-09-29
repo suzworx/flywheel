@@ -511,7 +511,16 @@ func metricChart(def metricDef, r MetricsReport, units []MetricUnit, width int) 
 		lines, _ := ControlChart(pts, mean, sigma, width, 10, labels)
 		return append([]string{"cycle time per landed unit in landing order, hours"}, lines...)
 	case "flow":
-		lines, err := StackedFlow([][]float64{def.series(r)}, []string{def.name}, width, 10)
+		// One band per stage (issue #583); a report without stage series
+		// (an older one) draws the single total band.
+		series, names := [][]float64{def.series(r)}, []string{def.name}
+		if len(r.Flow.StageSeries) > 0 {
+			series, names = nil, FlowStages
+			for _, s := range FlowStages {
+				series = append(series, r.Flow.StageSeries[s])
+			}
+		}
+		lines, err := StackedFlow(series, names, width, 10)
 		if err != nil {
 			return []string{err.Error()}
 		}

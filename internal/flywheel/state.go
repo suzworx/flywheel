@@ -227,27 +227,22 @@ func Derive(events []Event) State {
 	disp := map[string]bool{}
 	updated := ""
 	for _, e := range evs {
-		if e.Task == "" {
-			continue // floor-level events (staffed) carry no task and no state
-		}
-		if strings.HasPrefix(e.Task, "group:") {
-			continue // a group's own records (issue #420): State.Groups, not a unit
-		}
-		if e.Kind == "gate_probed" {
-			continue // a pre-dispatch probe (issue #544) may precede planned and changes no state
+		status, res := statusStep(e, tasks[e.Task].Status, cur, disp)
+		if res == stepIgnored {
+			continue
 		}
 		ts, ok := tasks[e.Task]
 		if !ok {
 			ts = TaskState{ID: e.Task}
 		}
-		if staleKinds[e.Kind] && e.Attempt != "" && disp[e.Task] && e.Attempt != cur[e.Task] {
+		if res == stepStale {
 			ts.Stale = append(ts.Stale, e.Kind+" "+e.Attempt)
 			tasks[e.Task] = ts
 			continue
 		}
+		ts.Status = status
 		switch e.Kind {
 		case "planned":
-			ts.Status = "planned"
 			ts.Brief = e.Brief
 			ts.Needs = NeedTargets(e.Needs...)
 			ts.Owns = e.Owns
@@ -262,59 +257,9 @@ func Derive(events []Event) State {
 			// stays what it was, and Refused says why nothing started.
 			ts.Refused = e.Rule + ": " + e.Note
 		case "dispatched":
-			ts.Status = "dispatched"
 			ts.Refused = ""
 			ts.Attempts++
 			ts.Increment = e.Increment
-			if e.Attempt != "" {
-				cur[e.Task] = e.Attempt
-				disp[e.Task] = true
-			}
-		case "started":
-			ts.Status = "running"
-		case "finished":
-			ts.Status = "finished"
-		case "reviewed":
-			// The review agent reads, the gauges measure (issue #389): a
-			// reviewed event the agent wrote (persona reviewer with an
-			// adapter) never passes a unit; its pass leaves the status
-			// unchanged and only validate+inspect or a hand-recorded review
-			// (which re-runs the gates) set passed. Its correct still counts.
-			agent := agentReviewed(e) // persona reviewer or reviewer:<dimension> with an adapter (issue #420)
-			switch e.Verdict {
-			case "pass":
-				if !agent {
-					ts.Status = "passed"
-				}
-			case "correct":
-				ts.Status = "needs-correction"
-			case "reject":
-				ts.Status = "rejected"
-			}
-		case "blocked":
-			ts.Status = "blocked"
-		case "lost":
-			ts.Status = "lost"
-		case "withdrawn":
-			// A plan taken back (issue #479): terminal like lost until a later
-			// planned event revives it.
-			ts.Status = "withdrawn"
-		case "landed":
-			ts.Status = "landed"
-		case "inspected":
-			switch e.Verdict {
-			case "pass":
-				ts.Status = "passed"
-			case "rework":
-				ts.Status = "needs-correction"
-			case "scrap":
-				ts.Status = "rejected"
-			case "escalate":
-				ts.Status = "blocked"
-			}
-		case "review_finding", "finding_response":
-			// Findings and their answers (issue #389) change no status:
-			// OpenFindings reads them, and the next review round decides.
 		case "amended":
 			ts.Brief = e.Brief
 			ts.Needs = NeedTargets(e.Needs...)
@@ -364,6 +309,85 @@ func Derive(events []Event) State {
 	}
 	return st
 }
+
+// statusStep says what one event, in derivation order, does to its task's
+// status: the one copy of Derive's status rules, which the flow metrics'
+// single-pass walk replays too (issue #583). status is the task's status
+// before e; cur and disp are the per-task stale-attempt state (the latest
+// dispatched attempt, and whether one was recorded), which a dispatched event
+// updates. An ignored event (no task, a group:<id> record, a gate probe)
+// touches no task; a stale one (a result of an attempt other than the latest
+// dispatched) leaves status as it was; an applied one gives the new status.
+func statusStep(e Event, status string, cur map[string]string, disp map[string]bool) (string, stepResult) {
+	if e.Task == "" {
+		return status, stepIgnored // floor-level events (staffed) carry no task and no state
+	}
+	if strings.HasPrefix(e.Task, "group:") {
+		return status, stepIgnored // a group's own records (issue #420): State.Groups, not a unit
+	}
+	if e.Kind == "gate_probed" {
+		return status, stepIgnored // a pre-dispatch probe (issue #544) may precede planned and changes no state
+	}
+	if staleKinds[e.Kind] && e.Attempt != "" && disp[e.Task] && e.Attempt != cur[e.Task] {
+		return status, stepStale
+	}
+	switch e.Kind {
+	case "planned", "finished", "blocked", "lost", "landed":
+		status = e.Kind
+	case "withdrawn":
+		// A plan taken back (issue #479): terminal like lost until a later
+		// planned event revives it.
+		status = "withdrawn"
+	case "dispatched":
+		status = "dispatched"
+		if e.Attempt != "" {
+			cur[e.Task] = e.Attempt
+			disp[e.Task] = true
+		}
+	case "started":
+		status = "running"
+	case "reviewed":
+		// The review agent reads, the gauges measure (issue #389): a
+		// reviewed event the agent wrote (persona reviewer with an
+		// adapter) never passes a unit; its pass leaves the status
+		// unchanged and only validate+inspect or a hand-recorded review
+		// (which re-runs the gates) set passed. Its correct still counts.
+		agent := agentReviewed(e) // persona reviewer or reviewer:<dimension> with an adapter (issue #420)
+		switch e.Verdict {
+		case "pass":
+			if !agent {
+				status = "passed"
+			}
+		case "correct":
+			status = "needs-correction"
+		case "reject":
+			status = "rejected"
+		}
+	case "inspected":
+		switch e.Verdict {
+		case "pass":
+			status = "passed"
+		case "rework":
+			status = "needs-correction"
+		case "scrap":
+			status = "rejected"
+		case "escalate":
+			status = "blocked"
+		}
+	}
+	// dispatch_refused (issue #651), review_finding, finding_response
+	// (issue #389) and amended change no status.
+	return status, stepApplied
+}
+
+// stepResult is what statusStep did with an event.
+type stepResult int
+
+const (
+	stepApplied stepResult = iota // the event is the task's; the status is its new one
+	stepIgnored                   // the event belongs to no unit
+	stepStale                     // a stale attempt's result: recorded, status unchanged
+)
 
 func taskKeys(m map[string]TaskState) []string {
 	out := make([]string, 0, len(m))

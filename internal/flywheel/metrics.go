@@ -191,6 +191,12 @@ type FlowMetrics struct {
 	QueueTime        Dist          `json:"queue_time"`        // first planned → first dispatched
 	TouchTime        Dist          `json:"touch_time"`        // per unit: sum of dispatched → finished
 	FlowEfficiency   float64       `json:"flow_efficiency"`   // mean of touch / cycle
+
+	// StageSeries is, per FlowStages stage, the non-stale units in that stage
+	// at each bucket's end (issue #583): the bands of a cumulative flow
+	// diagram. running+finished+passed at a bucket == WIPSeries at that
+	// bucket; queued is extra, as WIP excludes it.
+	StageSeries map[string][]float64 `json:"stage_series"`
 }
 
 // wipStatuses are the derived statuses a unit is in progress in.
@@ -325,14 +331,29 @@ func flowMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow, bucke
 	if nEff > 0 {
 		f.FlowEfficiency = round(eff/float64(nEff), 4)
 	}
+	f.StageSeries = map[string][]float64{}
+	for _, s := range FlowStages {
+		f.StageSeries[s] = make([]float64, len(buckets))
+	}
+	// One walk over the events serves every bucket (issue #630): the bucket
+	// ends ascend, so each event is applied once.
+	walk := newStatusWalk(ev)
 	for i, b := range buckets {
 		end := b.Add(w.Bucket)
 		if end.After(w.Until) {
 			end = w.Until
 		}
-		f.WIPSeries[i] = float64(wipAt(ev, end, w.staleAfter()))
+		walk.advance(end)
+		live, _ := walk.split(end, w.staleAfter(), func(s string) bool { return flowStage(s) != "" })
+		for _, s := range live {
+			f.StageSeries[flowStage(s)][i]++
+			if wipStatuses[s] {
+				f.WIPSeries[i]++
+			}
+		}
 	}
-	wip, stale := wipTasks(ev, w.Until, w.staleAfter())
+	walk.advance(w.Until)
+	wip, stale := walk.split(w.Until, w.staleAfter(), func(s string) bool { return wipStatuses[s] })
 	f.WIP, f.Stale = len(wip), len(stale)
 	for _, s := range stale {
 		f.StaleOldest = max(f.StaleOldest, w.Until.Sub(s.Last))
@@ -340,10 +361,23 @@ func flowMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow, bucke
 	return f
 }
 
-// wipAt counts the units in progress at t that are not stale.
-func wipAt(ev []timed, t time.Time, staleAfter time.Duration) int {
-	wip, _ := wipTasks(ev, t, staleAfter)
-	return len(wip)
+// FlowStages are the cumulative flow diagram's stages, bottom band first:
+// queued (planned, not dispatched), running (dispatched or running),
+// finished and passed. The last three are the WIP statuses.
+var FlowStages = []string{"queued", "running", "finished", "passed"}
+
+// flowStage is the FlowStages stage of a derived status; "" when the status
+// is in none (landed, lost, withdrawn, blocked, needs-correction, ...).
+func flowStage(status string) string {
+	switch status {
+	case "planned":
+		return "queued"
+	case "dispatched", "running":
+		return "running"
+	case "finished", "passed":
+		return status
+	}
+	return ""
 }
 
 // QualityMetrics is how often work is right the first time.
@@ -1056,30 +1090,74 @@ type staleTask struct {
 // t - staleAfter is stale (issue #590), every other one is WIP and maps to
 // its status.
 func wipTasks(ev []timed, t time.Time, staleAfter time.Duration) (map[string]string, map[string]staleTask) {
-	var prefix []Event
-	last := map[string]time.Time{}
-	for _, e := range ev {
-		if !e.At.Before(t) {
-			break
-		}
-		prefix = append(prefix, e.Event)
-		if e.Task != "" {
-			last[e.Task] = e.At
-		}
+	walk := newStatusWalk(ev)
+	walk.advance(t)
+	return walk.split(t, staleAfter, func(s string) bool { return wipStatuses[s] })
+}
+
+// statusWalk replays the events once in Derive's order, keeping each unit's
+// derived status and last event time, so a run of ascending times costs
+// O(events + times×units) rather than one Derive per time (issue #630). Its
+// step applies Derive's own status rules, statusStep.
+type statusWalk struct {
+	ev     []timed // derivationOrder
+	next   int
+	status map[string]string
+	last   map[string]time.Time
+	cur    map[string]string // the task's latest dispatched attempt
+	disp   map[string]bool
+}
+
+// newStatusWalk orders ev as Derive replays it; a time prefix of that order
+// is Derive's order of the prefix, as time is its first key.
+func newStatusWalk(ev []timed) *statusWalk {
+	evs := make([]Event, len(ev))
+	for i, e := range ev {
+		evs[i] = e.Event
 	}
-	wip, stale := map[string]string{}, map[string]staleTask{}
+	w := &statusWalk{status: map[string]string{}, last: map[string]time.Time{}, cur: map[string]string{}, disp: map[string]bool{}}
+	for _, e := range derivationOrder(evs) {
+		at, _ := time.Parse(time.RFC3339Nano, e.TS) // ev's times parsed already
+		w.ev = append(w.ev, timed{Event: e, At: at})
+	}
+	return w
+}
+
+// advance applies every event before t; t never decreases across calls.
+func (w *statusWalk) advance(t time.Time) {
+	for ; w.next < len(w.ev) && w.ev[w.next].At.Before(t); w.next++ {
+		w.step(w.ev[w.next])
+	}
+}
+
+// step applies one event to its task's status, as Derive does.
+func (w *statusWalk) step(e timed) {
+	if e.Task == "" {
+		return
+	}
+	w.last[e.Task] = e.At
+	if s, res := statusStep(e.Event, w.status[e.Task], w.cur, w.disp); res != stepIgnored {
+		w.status[e.Task] = s
+	}
+}
+
+// split is the units, at t after advance(t), whose status keep accepts: one
+// whose last event is at or before t - staleAfter is stale, every other one
+// maps to its status.
+func (w *statusWalk) split(t time.Time, staleAfter time.Duration, keep func(string) bool) (map[string]string, map[string]staleTask) {
+	live, stale := map[string]string{}, map[string]staleTask{}
 	cutoff := t.Add(-staleAfter)
-	for _, ts := range Derive(prefix).Tasks {
-		if !wipStatuses[ts.Status] {
+	for id, s := range w.status {
+		if !keep(s) {
 			continue
 		}
-		if l, ok := last[ts.ID]; ok && !l.After(cutoff) {
-			stale[ts.ID] = staleTask{Status: ts.Status, Last: l}
+		if l := w.last[id]; !l.After(cutoff) {
+			stale[id] = staleTask{Status: s, Last: l}
 			continue
 		}
-		wip[ts.ID] = ts.Status
+		live[id] = s
 	}
-	return wip, stale
+	return live, stale
 }
 
 // MetricsFor reads dir's event log and config and computes Metrics over w.
