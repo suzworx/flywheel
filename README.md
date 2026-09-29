@@ -18,6 +18,8 @@ from any vendor and swapped at will. Cheap disposable agents build, deterministi
 every claim, and one frontier lead makes only the critical calls. It is for engineers who run
 coding agents in parallel and want every change measured, recorded and recoverable.
 
+See it run: the [live demo](https://suzworx.github.io/flywheel/demo.html) replays a real session and lets you drive the real factory view.
+
 ## Install
 
 Download **flywheel-\<version\>-\<os\>-\<arch\>.zip** from the

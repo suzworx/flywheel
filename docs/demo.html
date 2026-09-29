@@ -1,0 +1,336 @@
+---
+layout: default
+title: Live demo
+description: A real flywheel session replayed, and the real flywheel factory view to drive with k9s keys. Every frame is output of the CLI.
+---
+<style>
+/* every rule is scoped under .fd so the page never restyles the site layout */
+.fd{
+  --t-bg:#0c1218; --t-ink:#c9d4de; --t-dim:#6d7f8f; --t-rule:#233140;
+  display:grid; gap:34px;
+}
+.fd .lede{color:var(--soft)}
+.fd section{display:grid; gap:12px; scroll-margin-top:84px}
+.fd section h2{margin:0}
+.fd section p{margin:0}
+.fd .term{margin:0; overflow-x:auto; overflow-y:auto; white-space:pre; overflow-wrap:normal; word-break:normal;
+  font:13px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  color:var(--t-ink); background:var(--t-bg); border:1px solid var(--t-rule); border-radius:10px; padding:12px 14px;
+  tab-size:8}
+.fd .term:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.fd #fd-tx{height:26em}
+.fd #fd-frame{min-height:20em}
+.fd .term .p{color:#7fd18b}
+.fd .term .c{color:#e6edf3; font-weight:600}
+.fd .term .n{color:var(--t-dim); font-style:italic}
+.fd .term .ok{color:#7fd18b}
+.fd .term .bad{color:#ef7b7b}
+.fd .term .cur{display:inline-block; width:.6em; background:var(--t-ink); animation:fd-blink 1s steps(1) infinite}
+@keyframes fd-blink{50%{opacity:0}}
+.fd .bar{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+.fd button,.fd select{font:600 13px/1 system-ui,sans-serif; color:var(--ink); background:var(--code);
+  border:1px solid var(--line); border-radius:6px; padding:8px 11px; cursor:pointer}
+.fd button:hover,.fd button:focus-visible,.fd select:focus-visible{border-color:var(--accent); outline:none}
+.fd button:disabled{opacity:.45; cursor:default}
+.fd .count{font-size:13px; color:var(--soft)}
+.fd .rc{font:600 12px/1.4 ui-monospace,Menlo,Consolas,monospace; padding:1px 7px; border-radius:999px; border:1px solid currentColor}
+.fd .rc.ok{color:#2f8a4a}
+.fd .rc.bad{color:#c0392b}
+.fd .keycap{font:700 15px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; min-width:2.4em;
+  padding:10px 14px; border-radius:8px; border:1px solid var(--line); border-bottom-width:3px;
+  background:var(--code); color:var(--accent)}
+.fd .keycap .done{color:var(--soft)}
+.fd .kbd{font:600 12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--accent);
+  background:var(--code); border:1px solid var(--line); padding:1px 6px; border-radius:4px}
+.fd .caption{min-height:2.6em; color:var(--ink)}
+.fd .msg{color:var(--soft); font-size:14px}
+.fd .foot{font-size:13px; color:var(--soft); border-top:1px solid var(--line); padding-top:14px}
+@media (max-width:640px){
+  .fd .term{font-size:11px}
+  .fd #fd-tx{height:22em}
+}
+@media (prefers-reduced-motion:reduce){
+  .fd .term .cur{animation:none}
+}
+</style>
+
+<div class="fd">
+  <p class="lede">This page replays a real <code>flywheel</code> session and lets you drive the real factory view.
+    Nothing here is a mockup: the commands ran, the output is what they printed, and the factory frames are what
+    <code>flywheel factory</code> drew. The worker is the offline <code>sim</code> adapter replaying recorded runs,
+    so no model was called. See also the <a href="screens.html">factory screens</a>.</p>
+
+  <p class="msg" id="fd-msg" role="status">Loading the demo…</p>
+  <noscript><p class="msg">The demo needs JavaScript. The data is plain JSON: <a href="demo/demo.json">demo/demo.json</a>.</p></noscript>
+
+  <section id="story" aria-labelledby="fd-h1">
+    <h2 id="fd-h1">Part 1: a unit, start to landed</h2>
+    <p>Three units: one lands on its first run, one fails its gate and gets a correction, one stops at its output
+      limit. Each command shows its exit code; a gate that fails exits non-zero, and flywheel says why.</p>
+    <div class="bar" role="group" aria-label="Transcript controls">
+      <button type="button" id="fd-back" aria-label="Previous step">&#9664; Back</button>
+      <button type="button" id="fd-play" aria-pressed="false">Play</button>
+      <button type="button" id="fd-fwd" aria-label="Next step">Next &#9654;</button>
+      <label class="count">Speed
+        <select id="fd-speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      </label>
+      <span class="count" id="fd-step" aria-live="polite"></span>
+      <span class="rc" id="fd-rc" hidden></span>
+    </div>
+    <pre class="term" id="fd-tx" tabindex="0" aria-label="Terminal transcript"></pre>
+  </section>
+
+  <section id="tour" aria-labelledby="fd-h2">
+    <h2 id="fd-h2">Part 2: drive the factory view</h2>
+    <p>This is <code>flywheel factory</code>, a k9s-style view of the ledger above. Press the key shown on your
+      keyboard (or click it) to see what it does. <span class="kbd">&larr;</span> and <span class="kbd">&rarr;</span>
+      step back and forward.</p>
+    <div class="bar">
+      <span class="count">Next key</span>
+      <button type="button" class="keycap" id="fd-key" aria-describedby="fd-cap"></button>
+      <button type="button" id="fd-prev" aria-label="Previous frame">&larr;</button>
+      <button type="button" id="fd-next" aria-label="Next frame">&rarr;</button>
+      <button type="button" id="fd-restart">Restart</button>
+      <span class="count" id="fd-pos" aria-live="polite"></span>
+    </div>
+    <p class="caption" id="fd-cap" aria-live="polite"></p>
+    <pre class="term" id="fd-frame" tabindex="0" aria-label="Factory view frame"></pre>
+  </section>
+
+  <p class="foot" id="fd-foot">Every frame here is real output of flywheel, regenerated by
+    <code>scripts/demo-web.sh</code>.</p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // ANSI SGR to HTML: 16, 256 and truecolor foreground and background, bold,
+  // dim and reverse. Any other escape sequence is dropped.
+  var BASE = ["#1c2630", "#ef7b7b", "#7fd18b", "#e8c46a", "#82aaff", "#c792ea", "#56c8d8", "#c9d4de",
+              "#6d7f8f", "#ff9e9e", "#a5e8ae", "#f5da93", "#a9c4ff", "#dcb6f5", "#8fe3ee", "#ffffff"];
+  function c256(n) {
+    if (n < 16) return BASE[n];
+    if (n >= 232) { var g = 8 + (n - 232) * 10; return "rgb(" + g + "," + g + "," + g + ")"; }
+    n -= 16;
+    var v = [0, 95, 135, 175, 215, 255];
+    return "rgb(" + v[Math.floor(n / 36)] + "," + v[Math.floor(n / 6) % 6] + "," + v[n % 6] + ")";
+  }
+  function ansiToHtml(text) {
+    var st = { fg: null, bg: null, b: false, d: false, r: false };
+    var out = "", open = false;
+    var re = /\x1b\[([0-9;]*)([A-Za-z])/g, last = 0, m;
+    function span() {
+      if (open) { out += "</span>"; open = false; }
+      var fg = st.r ? (st.bg || "var(--t-bg)") : st.fg, bg = st.r ? (st.fg || "var(--t-ink)") : st.bg;
+      var css = "";
+      if (fg) css += "color:" + fg + ";";
+      if (bg) css += "background:" + bg + ";";
+      if (st.b) css += "font-weight:700;";
+      if (st.d) css += "opacity:.65;";
+      if (css) { out += '<span style="' + css + '">'; open = true; }
+    }
+    function sgr(params) {
+      var p = params === "" ? [0] : params.split(";").map(function (x) { return x === "" ? 0 : parseInt(x, 10); });
+      for (var i = 0; i < p.length; i++) {
+        var c = p[i];
+        if (c === 0) { st = { fg: null, bg: null, b: false, d: false, r: false }; }
+        else if (c === 1) st.b = true;
+        else if (c === 2) st.d = true;
+        else if (c === 22) { st.b = false; st.d = false; }
+        else if (c === 7) st.r = true;
+        else if (c === 27) st.r = false;
+        else if (c >= 30 && c <= 37) st.fg = BASE[c - 30];
+        else if (c >= 90 && c <= 97) st.fg = BASE[c - 82];
+        else if (c >= 40 && c <= 47) st.bg = BASE[c - 40];
+        else if (c >= 100 && c <= 107) st.bg = BASE[c - 92];
+        else if (c === 39) st.fg = null;
+        else if (c === 49) st.bg = null;
+        else if ((c === 38 || c === 48) && p[i + 1] === 5 && i + 2 < p.length) {
+          st[c === 38 ? "fg" : "bg"] = c256(p[i + 2] & 255); i += 2;
+        } else if ((c === 38 || c === 48) && p[i + 1] === 2 && i + 4 < p.length) {
+          st[c === 38 ? "fg" : "bg"] = "rgb(" + (p[i + 2] & 255) + "," + (p[i + 3] & 255) + "," + (p[i + 4] & 255) + ")"; i += 4;
+        }
+      }
+      span();
+    }
+    while ((m = re.exec(text)) !== null) {
+      out += esc(text.slice(last, m.index));
+      if (m[2] === "m") sgr(m[1]);
+      last = re.lastIndex;
+    }
+    out += esc(text.slice(last).replace(/\x1b/g, ""));
+    if (open) out += "</span>";
+    return out;
+  }
+
+  // Part 1: the transcript. shown is how many steps are complete; typing
+  // animates the next one unless the visitor prefers reduced motion.
+  function Transcript(steps) {
+    var shown = 0, playing = false, timer = null, speed = 1, pre = $("fd-tx");
+    function stepHtml(s, cmdPart, withOut) {
+      var h = "";
+      if (s.note) h += '<span class="n"># ' + esc(s.note) + "</span>\n";
+      var lines = String(s.cmd || "").split("\n");
+      var typed = cmdPart === undefined ? lines.join("\n") : cmdPart;
+      h += typed.split("\n").map(function (l, i) {
+        return '<span class="p">' + (i ? "&gt; " : "$ ") + '</span><span class="c">' + esc(l) + "</span>";
+      }).join("\n");
+      if (!withOut) return h + '<span class="cur"> </span>';
+      h += "\n";
+      if (s.out) h += ansiToHtml(String(s.out).replace(/\n$/, "")) + "\n";
+      var rc = typeof s.rc === "number" ? s.rc : 0;
+      return h + '<span class="' + (rc ? "bad" : "ok") + '">[exit ' + rc + "]</span>\n\n";
+    }
+    function render(partial) {
+      var h = "";
+      for (var i = 0; i < shown && i < steps.length; i++) h += stepHtml(steps[i]);
+      if (partial) h += partial;
+      else if (shown < steps.length) h += '<span class="p">$ </span><span class="cur"> </span>';
+      pre.innerHTML = h;
+      pre.scrollTop = pre.scrollHeight;
+      $("fd-step").textContent = "step " + Math.min(shown + (partial ? 1 : 0), steps.length) + " of " + steps.length;
+      var cur = steps[shown - 1], rc = $("fd-rc");
+      if (cur && !partial) {
+        var code = typeof cur.rc === "number" ? cur.rc : 0;
+        rc.hidden = false; rc.textContent = "exit " + code; rc.className = "rc " + (code ? "bad" : "ok");
+      } else rc.hidden = true;
+      $("fd-back").disabled = shown === 0 && !partial;
+      $("fd-fwd").disabled = shown >= steps.length;
+    }
+    function stop() {
+      clearTimeout(timer); timer = null; playing = false;
+      $("fd-play").textContent = shown >= steps.length ? "Replay" : "Play";
+      $("fd-play").setAttribute("aria-pressed", "false");
+    }
+    // tick advances the animation: type the next step's command, then show
+    // its output and pause long enough to read it.
+    function tick() {
+      if (shown >= steps.length) { stop(); render(); return; }
+      var s = steps[shown], cmd = String(s.cmd || ""), n = 0;
+      function type() {
+        if (!playing) return;
+        if (reduce || n >= cmd.length) {
+          shown++; render();
+          var lines = String(s.out || "").split("\n").length;
+          timer = setTimeout(tick, (900 + Math.min(lines, 30) * 90) / speed);
+          return;
+        }
+        n = Math.min(cmd.length, n + (cmd.length > 200 ? 6 : 2));
+        render(stepHtml(s, cmd.slice(0, n), false));
+        timer = setTimeout(type, 28 / speed);
+      }
+      type();
+    }
+    function play() {
+      if (shown >= steps.length) shown = 0;
+      playing = true;
+      $("fd-play").textContent = "Pause";
+      $("fd-play").setAttribute("aria-pressed", "true");
+      tick();
+    }
+    $("fd-play").addEventListener("click", function () { if (playing) { stop(); render(); } else play(); });
+    $("fd-fwd").addEventListener("click", function () { stop(); shown = Math.min(steps.length, shown + 1); render(); });
+    $("fd-back").addEventListener("click", function () { stop(); shown = Math.max(0, shown - 1); render(); });
+    $("fd-speed").addEventListener("change", function (e) { speed = parseFloat(e.target.value) || 1; });
+    render();
+    stop();
+  }
+
+  // Part 2: the tour. Each frame's key is the token that led to it, so the
+  // key to press now is the next frame's.
+  var NAMED = { enter: ["Enter", "Enter"], esc: ["Escape", "Esc"], tab: ["Tab", "Tab"], up: ["ArrowUp", "↑"],
+    down: ["ArrowDown", "↓"], left: ["ArrowLeft", "←"], right: ["ArrowRight", "→"], pgup: ["PageUp", "PgUp"],
+    pgdn: ["PageDown", "PgDn"], home: ["Home", "Home"], end: ["End", "End"], backspace: ["Backspace", "⌫"],
+    "delete": ["Delete", "Del"], space: [" ", "Space"] };
+  // parseToken turns a --keys token into the keys to press, each with a
+  // label and a test against a KeyboardEvent.
+  function parseToken(tok) {
+    tok = String(tok || "");
+    if (tok.length > 1 && tok.charAt(0) === '"' && tok.charAt(tok.length - 1) === '"') {
+      return Array.from(tok.slice(1, -1)).map(function (ch) {
+        return { label: ch, test: function (e) { return e.key === ch && !e.ctrlKey; } };
+      });
+    }
+    var m = /^<(.+)>$/.exec(tok);
+    if (m) {
+      var name = m[1].toLowerCase(), c = /^ctrl-([a-z])$/.exec(name);
+      if (c) return [{ label: "Ctrl-" + c[1].toUpperCase(), test: function (e) { return e.ctrlKey && e.key.toLowerCase() === c[1]; } }];
+      var k = NAMED[name] || [tok, tok];
+      return [{ label: k[1], test: function (e) { return e.key === k[0]; } }];
+    }
+    return [{ label: tok, test: function (e) { return e.key === tok && !e.ctrlKey; } }];
+  }
+  function Tour(frames) {
+    var i = 0, typed = 0, keys = [], section = $("tour");
+    function show() {
+      var f = frames[i] || {};
+      $("fd-frame").innerHTML = ansiToHtml(String(f.frame || ""));
+      $("fd-cap").textContent = f.caption || "";
+      $("fd-pos").textContent = "frame " + (i + 1) + " of " + frames.length;
+      $("fd-prev").disabled = i === 0;
+      $("fd-next").disabled = i >= frames.length - 1;
+      var cap = $("fd-key");
+      if (i >= frames.length - 1) {
+        keys = []; cap.textContent = "done"; cap.disabled = true;
+        cap.setAttribute("aria-label", "End of the tour");
+        return;
+      }
+      keys = parseToken(frames[i + 1].key);
+      cap.disabled = false;
+      cap.innerHTML = keys.map(function (k, n) {
+        return n < typed ? '<span class="done">' + esc(k.label) + "</span>" : esc(k.label);
+      }).join("");
+      cap.setAttribute("aria-label", "Press " + keys.map(function (k) { return k.label; }).join(" "));
+    }
+    function go(to) { i = Math.max(0, Math.min(frames.length - 1, to)); typed = 0; show(); }
+    function onScreen() {
+      var r = section.getBoundingClientRect();
+      return r.bottom > 0 && r.top < (window.innerHeight || document.documentElement.clientHeight);
+    }
+    document.addEventListener("keydown", function (e) {
+      var t = e.target && e.target.tagName;
+      if (t === "INPUT" || t === "SELECT" || t === "TEXTAREA" || e.metaKey || e.altKey || !onScreen()) return;
+      var k = keys[typed];
+      if (k && k.test(e)) {
+        e.preventDefault();
+        typed++;
+        if (typed >= keys.length) go(i + 1); else show();
+        return;
+      }
+      if (e.key === "ArrowRight") { e.preventDefault(); go(i + 1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); go(i - 1); }
+    });
+    $("fd-key").addEventListener("click", function () { go(i + 1); });
+    $("fd-next").addEventListener("click", function () { go(i + 1); });
+    $("fd-prev").addEventListener("click", function () { go(i - 1); });
+    $("fd-restart").addEventListener("click", function () { go(0); });
+    show();
+  }
+
+  function fail(msg) { $("fd-msg").textContent = msg; }
+  fetch("demo/demo.json", { cache: "no-cache" })
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (d) {
+      var tx = Array.isArray(d && d.transcript) ? d.transcript : [];
+      var tour = Array.isArray(d && d.tour) ? d.tour : [];
+      if (!tx.length && !tour.length) { fail("The demo data is empty."); return; }
+      $("fd-msg").hidden = true;
+      if (tx.length) Transcript(tx); else $("story").hidden = true;
+      if (tour.length) Tour(tour); else $("tour").hidden = true;
+      if (d.version) {
+        $("fd-foot").innerHTML = "Every frame here is real output of flywheel " + esc(d.version) +
+          ", regenerated by <code>scripts/demo-web.sh</code>.";
+      }
+    })
+    .catch(function (err) {
+      fail("The demo could not load demo/demo.json (" + err.message + "). The data is plain JSON: open demo/demo.json.");
+    });
+})();
+</script>
