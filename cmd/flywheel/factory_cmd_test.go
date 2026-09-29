@@ -151,6 +151,37 @@ func TestFactoryKeysFlag(t *testing.T) {
 	}
 }
 
+// TestFactoryReadonlyFlag checks --readonly (issue #583 k5): `factory
+// --readonly --once` parses and renders the floor, and the help lists the
+// flag. The run is a child, since runFactory exits.
+func TestFactoryReadonlyFlag(t *testing.T) {
+	t.Parallel()
+	if v, ok := os.LookupEnv(factoryHelperEnv); ok {
+		runFactory(strings.Split(v, "\x1f"))
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	if _, err := flywheel.Init(dir, false); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{TS: "2026-09-27T12:00:00Z", Task: "RO1", Kind: "planned"}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFactoryReadonlyFlag$")
+	cmd.Env = append(os.Environ(), factoryHelperEnv+"="+strings.Join([]string{"--readonly", "--once", "--dir", dir}, "\x1f"))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("factory --readonly --once: %v, stderr %q", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "RO1") {
+		t.Errorf("factory --readonly --once stdout = %q, want the floor with RO1", stdout.String())
+	}
+	if help := helpText("factory"); !strings.Contains(help, "-readonly") {
+		t.Errorf("factory help does not list --readonly:\n%s", help)
+	}
+}
+
 // TestFactoryPipedRendersOnce checks that `flywheel factory` with stdout not
 // a terminal renders the floor once and returns instead of starting a live
 // loop that would hang an automated caller (#336 review: the interactive

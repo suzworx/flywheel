@@ -106,7 +106,8 @@ func parseKeyToken(tok string) (term.Key, error) {
 // clock now, with the default skin and colour on, at width x height. It
 // returns the first frame (Key "") and one frame after each token of keys
 // (ParseKeySeq; a quoted run is typed rune by rune, then drawn once). Fetches run synchronously after every key, so the frames
-// never show "loading…"; a key that switches context (:ctx) stays put.
+// never show "loading…"; a key that switches context (:ctx) stays put, and
+// a confirmed action is dropped, never run.
 func TUIFrames(dir, keys string, width, height int, now time.Time) ([]Frame, error) {
 	seq, err := ParseKeySeq(keys)
 	if err != nil {
@@ -131,6 +132,7 @@ func TUIFrames(dir, keys string, width, height int, now time.Time) ([]Frame, err
 		for _, key := range k.Keys {
 			m.Update(key, data)
 			m.TakeCtx()
+			m.TakeAction() // headless frames never run an action (issue #583 k5)
 		}
 		if data, err = get(); err != nil {
 			return nil, err

@@ -2,9 +2,11 @@ package flywheel
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -30,6 +32,60 @@ type TUIIO struct {
 	// f4; TUIReroot), or why that context cannot be shown; nil switches
 	// nowhere.
 	Ctx func(c TUICtx) (func(m *TUI) (TUIData, error), error)
+
+	// The actions (issue #583 k5): the directory and session they run with
+	// ("" is "." and none), --readonly, the hotkeys and what loading them
+	// skipped, and Run, which runs one flywheel command and returns its
+	// output and exit code; nil is RunFlywheel.
+	Dir, Session string
+	Readonly     bool
+	Hotkeys      map[term.Key]string
+	HotkeysMsg   string
+	Run          func(argv []string) (output string, code int)
+}
+
+// actionResult is how a background action ended.
+type actionResult struct {
+	a    TUIAction
+	code int
+	out  string
+}
+
+// runAction runs a's commands in order through run and stops at the first
+// that fails: the output of each (after a "$ flywheel …" line when there
+// are several) and that one's exit code, 0 when every one passed.
+func runAction(run func([]string) (string, int), a TUIAction) (string, int) {
+	var out strings.Builder
+	for _, argv := range a.Argv {
+		if len(a.Argv) > 1 {
+			out.WriteString("$ " + TUIAction{Argv: [][]string{argv}}.CommandLine() + "\n")
+		}
+		o, code := run(argv)
+		out.WriteString(o)
+		if code != 0 {
+			return out.String(), code
+		}
+	}
+	return out.String(), 0
+}
+
+// RunFlywheel runs this flywheel binary (os.Executable) with argv as a
+// subprocess, so the CLI's own rules decide, and returns its combined
+// output and exit code (-1 when it did not start).
+func RunFlywheel(argv []string) (string, int) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "flywheel: " + err.Error(), -1
+	}
+	out, err := exec.Command(exe, argv...).CombinedOutput()
+	var ee *exec.ExitError
+	switch {
+	case errors.As(err, &ee):
+		return string(out), ee.ExitCode()
+	case err != nil:
+		return string(out) + err.Error(), -1
+	}
+	return string(out), 0
 }
 
 // fetchResult is what a background fetch hands the loop: the data, the
@@ -90,6 +146,17 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 	if tio.Skin.Name != "" {
 		m.skin = tio.Skin
 	}
+	if tio.Dir != "" {
+		m.actDir = tio.Dir
+	}
+	m.SetActions(m.actDir, tio.Session, tio.Readonly)
+	m.SetHotkeys(tio.Hotkeys, tio.HotkeysMsg)
+	run := tio.Run
+	if run == nil {
+		run = RunFlywheel
+	}
+	// Buffered: one action runs at a time, so its end never blocks.
+	acts := make(chan actionResult, 1)
 	data, err := fetch(m)
 	if err != nil {
 		return err
@@ -158,8 +225,18 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 				}
 				fetch, data, dataKey = f, d, m.fetchKey()
 				gen++
+				m.actDir = c.Dir
 				m.flash("switched to " + c.Name)
 				continue
+			}
+			// A confirmed action (issue #583 k5) runs in the background; its
+			// end flashes the result and fetches the new state.
+			if a, ok := m.TakeAction(); ok {
+				m.ActionStarted(a)
+				go func() {
+					out, code := runAction(run, a)
+					acts <- actionResult{a: a, code: code, out: out}
+				}()
 			}
 			if m.refresh || m.fetchKey() != before {
 				start()
@@ -189,6 +266,9 @@ func RunTUILoop(tio TUIIO, fetch func(m *TUI) (TUIData, error)) error {
 				again = false
 				start()
 			}
+		case r := <-acts:
+			m.ActionDone(r.a, r.code, r.out)
+			start()
 		case <-tio.Stop:
 			return nil
 		}
@@ -682,7 +762,8 @@ func searchDocs(dir string, events []Event) ([]SearchDoc, error) {
 // killing the process with the terminal still raw (#346 review). A failed
 // restoration is returned when nothing else failed first. o places dir in
 // the fleet (issue #585 f4); its rows are kept for interval unless it says.
-func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time, o TUIFetchOptions) (err error) {
+// readonly turns the actions off (issue #583 k5).
+func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func() time.Time, o TUIFetchOptions, readonly bool) (err error) {
 	if o.Every <= 0 {
 		o.Every = interval
 	}
@@ -760,6 +841,12 @@ func RunTUI(stdin, stdout *os.File, dir string, interval time.Duration, now func
 		Color: term.EnableVT(stdout),
 		Stop:  stop,
 		Ctx:   TUIReroot(now, o),
+		// The actions (issue #583 k5) run as FLYWHEEL_SESSION; the hotkeys
+		// are read once, here.
+		Dir:      dir,
+		Session:  os.Getenv("FLYWHEEL_SESSION"),
+		Readonly: readonly,
 	}
+	tio.Hotkeys, tio.HotkeysMsg = LoadHotkeys(dir)
 	return RunTUILoop(tio, TUIFetcherIn(dir, now, o))
 }
