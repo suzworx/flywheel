@@ -882,8 +882,11 @@ func (r *shipRun) expectedChecks() ([]string, error) {
 // failed, at least one passed, and the
 // set of check names was the same on two consecutive polls, so a check that
 // passes at once cannot merge the PR before CI's jobs register. A failed
-// check with none pending fails at once; after CITimeout it fails naming the
-// expected checks still missing and the checks still pending.
+// check with none pending fails at once. When ship.required_checks is set, a
+// required check that concluded SKIPPED or NEUTRAL fails at once too, even
+// with checks pending (note required-check-skipped, issue #653): a required
+// check must conclude SUCCESS. After CITimeout it fails naming the expected
+// checks still missing and the checks still pending.
 func shipCI(r *shipRun) (string, string, error) {
 	if err := r.needPR(); err != nil {
 		return "", "", err
@@ -915,8 +918,25 @@ func shipCI(r *shipRun) (string, string, error) {
 			list := strings.Join(failed, ", ")
 			return "", "failed: " + list, fmt.Errorf("%w on #%d: %s", ErrShipCI, n, list)
 		}
+		skipped, neutral := r.keepChecks(cs.Skipped), r.keepChecks(cs.Neutral)
+		// A check named in ship.required_checks must conclude SUCCESS: a skip
+		// is final, so fail at once, pending checks or not (issue #653).
+		if len(r.required) > 0 {
+			var did []string
+			for _, e := range expected {
+				if slices.Contains(skipped, e) {
+					did = append(did, e+" (SKIPPED)")
+				} else if slices.Contains(neutral, e) {
+					did = append(did, e+" (NEUTRAL)")
+				}
+			}
+			if len(did) > 0 {
+				list := strings.Join(did, ", ")
+				return "", "required-check-skipped: " + list, fmt.Errorf("%w on #%d: required check(s) did not run: %s; a path filter or job condition skipped them, and a required check must conclude SUCCESS", ErrShipCI, n, list)
+			}
+		}
 		// A skipped or neutral check is present: not missing, not passed.
-		all := slices.Concat(pending, failed, passed, r.keepChecks(cs.Skipped))
+		all := slices.Concat(pending, failed, passed, skipped, neutral)
 		slices.Sort(all)
 		all = slices.Compact(all)
 		key := strings.Join(all, "\n")

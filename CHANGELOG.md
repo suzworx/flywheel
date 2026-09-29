@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.47.0](https://github.com/suzworx/flywheel/compare/v0.46.0...v0.47.0) (2026-09-29)
+
+
+### Features
+
+* flywheel factory acts on units: validate, inspect, resume and withdraw with a confirmation, marks, suspend and resume, --readonly and hotkeys.json ([#680](https://github.com/suzworx/flywheel/issues/680)) ([46de512](https://github.com/suzworx/flywheel/commit/46de512f152eb61f20b416cc8e780365fde34822))
+
+
+### Bug Fixes
+
+* flywheel rebase starts from the branch's real fork point after a hand rebase, validate reports base drift, and rebase re-runs worktree.setup ([#679](https://github.com/suzworx/flywheel/issues/679)) ([2e121aa](https://github.com/suzworx/flywheel/commit/2e121aa211e1e044b8c62fa8561c6651abb555c7)), closes [#672](https://github.com/suzworx/flywheel/issues/672)
+* ship's ci step fails when a check named in ship.required_checks concluded SKIPPED or NEUTRAL ([#681](https://github.com/suzworx/flywheel/issues/681)) ([e13c5d4](https://github.com/suzworx/flywheel/commit/e13c5d4159807ebf16eebc60207708546993f1f2)), closes [#653](https://github.com/suzworx/flywheel/issues/653)
+* workers are denied git fetch and git pull on both adapters ([#676](https://github.com/suzworx/flywheel/issues/676)) ([afefba9](https://github.com/suzworx/flywheel/commit/afefba9a525dc8fb8e7b34c7773ad0a4c4bc0b92)), closes [#671](https://github.com/suzworx/flywheel/issues/671)
+
 ## [0.46.0](https://github.com/suzworx/flywheel/compare/v0.45.0...v0.46.0) (2026-09-29)
 
 

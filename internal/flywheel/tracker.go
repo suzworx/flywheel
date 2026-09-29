@@ -75,15 +75,18 @@ type PullRequest struct {
 
 // ChecksState is a pull request's checks, check runs and commit statuses
 // together, by name, all reported on Head, the PR's head commit ("" when the
-// forge cannot tell). Skipped holds the checks that concluded NEUTRAL or
-// SKIPPED: present, neither passed nor failed. All four empty means none were
-// reported.
+// forge cannot tell). Skipped holds the checks that concluded SKIPPED and
+// Neutral those that concluded NEUTRAL: present, neither passed nor failed.
+// All five empty means none were reported.
 type ChecksState struct {
 	Head    string
 	Pending []string
 	Failed  []string
 	Passed  []string
+	// Skipped holds the checks that concluded SKIPPED.
 	Skipped []string
+	// Neutral holds the checks that concluded NEUTRAL.
+	Neutral []string
 }
 
 // Forge is the pull-request half of a tracker that `flywheel ship` drives
@@ -200,7 +203,7 @@ func (g GhTracker) PRState(n int) (string, string, error) {
 // used: it exits non-zero while a check is pending or failed, which a Run that
 // returns only stdout on success cannot tell from gh failing. A check run not
 // completed, or a status PENDING or EXPECTED, is pending; SUCCESS passes;
-// NEUTRAL and SKIPPED neither pass nor fail (Skipped); anything else (FAILURE, ERROR,
+// NEUTRAL (Neutral) and SKIPPED (Skipped) neither pass nor fail; anything else (FAILURE, ERROR,
 // CANCELLED, TIMED_OUT, ...) fails.
 func (g GhTracker) Checks(n int) (ChecksState, error) {
 	out, err := g.gh(true, "pr", "view", strconv.Itoa(n), "--json", "headRefOid,statusCheckRollup")
@@ -237,7 +240,9 @@ func (g GhTracker) Checks(n int) (ChecksState, error) {
 			cs.Pending = append(cs.Pending, name)
 		case "SUCCESS":
 			cs.Passed = append(cs.Passed, name)
-		case "NEUTRAL", "SKIPPED":
+		case "NEUTRAL":
+			cs.Neutral = append(cs.Neutral, name)
+		case "SKIPPED":
 			cs.Skipped = append(cs.Skipped, name)
 		default:
 			cs.Failed = append(cs.Failed, name)
