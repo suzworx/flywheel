@@ -174,6 +174,15 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 		return &RuleRefusal{Rule: "T9", Fix: fmt.Sprintf("task %s has no untriaged signals; land it without --allow-untriaged", task)}
 	}
 
+	// The commit must exist, be on the integration branch and touch the
+	// unit's files (issue #673). The land queue's advance is exempt: it makes
+	// the commit from the unit's own branch, so there is nothing to check.
+	if advance == nil {
+		if err := verifyLandCommit(dir, task, commit, events); err != nil {
+			return err
+		}
+	}
+
 	var undo func() error
 	if advance != nil {
 		if commit, undo, err = advance(); err != nil {

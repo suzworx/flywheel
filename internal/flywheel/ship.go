@@ -1033,6 +1033,11 @@ func shipLanded(r *shipRun) (string, string, error) {
 	if state != "MERGED" || !CommitOK(commit) {
 		return "", "", fmt.Errorf("#%d is %s with merge commit %q; land needs a merged PR", r.pr.Number, state, commit)
 	}
+	// LandTask verifies the merge commit is on the integration branch
+	// (issue #673): fetch it first, so the commit the forge just made resolves.
+	if _, err := gitWith(r.dir, shipEnv(), "fetch", r.o.Remote, r.o.Integration); err != nil {
+		return "", "", fmt.Errorf("git fetch %s %s: %w", r.o.Remote, r.o.Integration, err)
+	}
 	err = LandTask(r.dir, r.task, commit, fmt.Sprintf("shipped as #%d", r.pr.Number), false, "")
 	if errors.Is(err, ErrAlreadyLanded) {
 		return "skip", "already landed " + short7(commit), nil

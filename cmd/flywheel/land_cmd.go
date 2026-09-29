@@ -36,7 +36,7 @@ func landFlags() (*flag.FlagSet, *landOptions) {
 	fs.SetOutput(io.Discard)
 	o := &landOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
-	fs.StringVar(&o.commit, "commit", "", "commit id (7 to 40 hex characters)")
+	fs.StringVar(&o.commit, "commit", "", "commit id (7 to 40 hex characters); it must exist, be on the integration branch and touch the unit's files (exit 8 when that cannot be checked)")
 	fs.StringVar(&o.note, "note", "", "optional landing note")
 	fs.BoolVar(&o.byLead, "by-lead", false, "record this landing as lead-implemented (requires --reason)")
 	fs.StringVar(&o.reason, "reason", "", "why the lead implemented this unit directly (requires --by-lead)")
@@ -54,7 +54,8 @@ func landUsage(w io.Writer) {
 }
 
 // runLand implements `flywheel land <task>`. A malformed commit is a usage
-// error (exit 2); a poka-yoke refusal exits 6; any other error exits 1.
+// error (exit 2); a poka-yoke refusal exits 6; a commit land cannot verify
+// (an InconclusiveError: it does not resolve) exits 8; any other error exits 1.
 // Landing an already-landed task with the same commit is a no-op (exit 0).
 func runLand(args []string) {
 	fs, o := landFlags()
@@ -147,6 +148,11 @@ func runLand(args []string) {
 		if errors.Is(err, flywheel.ErrAlreadyLanded) {
 			fmt.Printf("%s already landed %s\n", task, o.commit)
 			return
+		}
+		var inc *flywheel.InconclusiveError
+		if errors.As(err, &inc) {
+			fmt.Fprintf(os.Stderr, "flywheel land: inconclusive: %s\n", inc.Fix)
+			os.Exit(8)
 		}
 		fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
 		if flywheel.IsRuleRefusal(err) {
