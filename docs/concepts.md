@@ -1,5 +1,7 @@
 # Concepts
 
+An AI coding agent reading this: start at [For agents](agents.html), the roles, commands and rules on one page.
+
 This page defines the vocabulary flywheel is built on — the words the quickstart uses and the
 rules every command enforces. It is the map; [PROTOCOL.md](PROTOCOL.md) is the territory, and the
 code is the authority. Where a term names a machine check, the check is real: run the command
@@ -43,7 +45,9 @@ matched the same way at owns-check time:
 the check: `flywheel validate` compares every changed path against the unit's `owns:` and
 reports the strays as `outside`, making the unit fail (exit 5) even when every gate passes.
 Pre-existing dirty files the unit did not touch are baselined — excused because they were
-already dirty at dispatch.
+already dirty at dispatch. An outside path whose bytes differ from the base only in line endings
+or whitespace still fails, but validate labels it with an `owns: hint:` line and the
+`git checkout <base> -- <paths>` that restores it, so a real stray edit stands out.
 
 `owns:` exists so two workers never fight over one file: units run in parallel only when their
 `owns:` sets are disjoint, and the boundary is what makes "you edited a file you were not given"

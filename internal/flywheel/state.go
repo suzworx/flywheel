@@ -97,6 +97,9 @@ type TaskState struct {
 	Increment int      `json:"increment,omitempty"`
 	Attempts  int      `json:"attempts"`
 	UpdatedAt string   `json:"updated_at"`
+	// Refused is "<rule>: <note>" of the newest dispatch_refused newer than
+	// the task's newest dispatched (issue #651); a later dispatched clears it.
+	Refused string `json:"refused,omitempty"`
 }
 
 // kindRank orders same-instant events so the status machine replays in the
@@ -254,8 +257,13 @@ func Derive(events []Event) State {
 				// stays, and the log keeps every earlier event.
 				ts.Session, ts.Attempt, ts.RC, ts.Reason, ts.Verdict, ts.Model, ts.Stale = "", "", nil, "", "", "", nil
 			}
+		case "dispatch_refused":
+			// A refused dispatch (issue #651) changes no status: the unit
+			// stays what it was, and Refused says why nothing started.
+			ts.Refused = e.Rule + ": " + e.Note
 		case "dispatched":
 			ts.Status = "dispatched"
+			ts.Refused = ""
 			ts.Attempts++
 			ts.Increment = e.Increment
 			if e.Attempt != "" {

@@ -1,0 +1,32 @@
+# flywheel
+
+> flywheel is a factory for AI coding work: a Go CLI plus agent skills. A lead plans, writes briefs and judges; disposable workers build one brief each inside its owns: boundary; gauges re-run every gate: line on the exact tree, because a claim is not evidence; and an append-only event log (.flywheel/events.jsonl) in the repository is the single source of truth. Agents read agents.html first.
+
+## Docs
+
+- [For agents](agents.html): roles, adoption, the loop as exact commands, the brief format, exit codes, reading state as JSON, the hard rules.
+- [Quickstart](quickstart.html): install, scaffold and land one unit through the loop, with each refusal and its fix.
+- [Concepts](concepts.html): the vocabulary: work order, owns, gates, the event log, the poka-yoke rules, who does what.
+- [Protocol](PROTOCOL.html): exactly what the code enforces: event kinds, fields and rules.
+- [Factory view](factory-view.html): the live dashboard of the factory floor, for people.
+- [Fleet](fleet.html): one merged view of every factory root and its ledgers.
+- [Metrics](metrics.html): the factory's lean metrics from the event log, each defined with its unit.
+- [Features](features.html): what flywheel does beyond the core loop: watching, gauges, adapters, limits, recovery, worktrees, review, shipping.
+
+## Skills
+
+- [flywheel](https://github.com/suzworx/flywheel/blob/main/skills/flywheel/SKILL.md): the lead: drive the loop, judge evidence, never implement.
+- [flywheel-planner](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-planner/SKILL.md): turn a goal into bounded work orders; never dispatch.
+- [flywheel-worker](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-worker/SKILL.md): execute one brief, run its gates, report evidence.
+- [flywheel-inspector](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-inspector/SKILL.md): QC verdicts from gauge readings: pass, rework, scrap, escalate.
+- [flywheel-reviewer](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-reviewer/SKILL.md): independent diff review: findings with a failure scenario, never a pass.
+- [flywheel-operator](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-operator/SKILL.md): install, configure, check health and drive the loop as an operator.
+- [flywheel-foreman](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-foreman/SKILL.md): run a line of workers; retry by policy; pull the andon cord.
+- [flywheel-steward](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-steward/SKILL.md): turn signals and nonconformances into learnings.
+- [flywheel-auditor](https://github.com/suzworx/flywheel/blob/main/skills/flywheel-auditor/SKILL.md): independent audit of first articles and samples.
+
+## Optional
+
+- [Autonomous shipping](design/autonomous-shipping.html): the factory model and rules T1-T10.
+- [Factory as files](design/factory-as-files.html): the factory you own as files, intelligence you run (proposal).
+- [Flywheel at scale](design/flywheel-at-scale.html): native feedback, personas, many workers, offline (proposal).

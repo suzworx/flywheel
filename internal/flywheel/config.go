@@ -78,6 +78,20 @@ type ShipConfig struct {
 	// trailer on its commits and squash merge, and a footer on the PR body.
 	// nil means on; false turns it off.
 	Signature *bool `json:"signature,omitempty"`
+	// RequiredChecks names the checks ship's ci step waits for on the PR's
+	// head commit before it merges (issue #640); it may name a commit status.
+	// Empty means the check runs (never commit statuses) reported on the head
+	// commits of every one of the last 3 pull requests merged into the
+	// integration branch; --ignore-check removes a name from either set.
+	RequiredChecks []string `json:"required_checks,omitempty"`
+}
+
+// ShipRequiredChecks is ship.required_checks, nil when unset.
+func (c Config) ShipRequiredChecks() []string {
+	if c.Ship == nil {
+		return nil
+	}
+	return c.Ship.RequiredChecks
 }
 
 // ShipSignature is ship.signature, true when unset.
@@ -119,6 +133,10 @@ type LintConfig struct {
 	// Kinds lists the values a brief's kind: line may take (issue #475);
 	// empty means DefaultKinds.
 	Kinds []string `json:"kinds,omitempty"`
+	// TestRunners names the JavaScript test runners the repository uses
+	// (issue #646): node:test, vitest, jest, mocha, ava, playwright. Non-empty
+	// replaces the set flywheel lint detects in package.json.
+	TestRunners []string `json:"test_runners,omitempty"`
 }
 
 // DefaultKinds is the kind: values flywheel lint allows when lint.kinds is

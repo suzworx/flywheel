@@ -139,6 +139,7 @@ type Event struct {
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
 	Outside    []string          `json:"outside,omitempty"`
+	Churn      map[string]string `json:"churn,omitempty"` // owns_checked: outside path -> "line endings only" | "whitespace only" (issue #647)
 	Baseline   map[string]string `json:"baseline,omitempty"`
 	Baselined  []string          `json:"baselined,omitempty"`
 	Attributed []string          `json:"attributed,omitempty"`
@@ -225,6 +226,10 @@ type Event struct {
 	// Route is a dispatched event's routing choice (issue #474); omitted when
 	// the worker has no routing block, when --model was given, and on older events.
 	Route *RouteChoice `json:"route,omitempty"`
+	// Rule is a dispatch_refused event's refusing rule (issue #651): a
+	// RuleRefusal's Rule, or dispatch-lock when the dispatch lock could not be
+	// taken; only dispatch_refused may carry it.
+	Rule string `json:"rule,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
@@ -315,6 +320,11 @@ var kinds = map[string]bool{
 	// unsuspended thaws a suspended factory (issue #572): no task, Session who
 	// thawed it and Note.
 	"unsuspended": true,
+	// dispatch_refused records a flywheel run that returned before dispatched
+	// (issue #651): Task, Rule (the refusal's rule, or dispatch-lock) and Note
+	// (the refusal text). It never changes a task's status; Derive shows it as
+	// TaskState.Refused until a later dispatched.
+	"dispatch_refused": true,
 }
 
 // ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
@@ -584,6 +594,12 @@ func Validate(e Event) error {
 	}
 	if e.Kind == "withdrawn" && (!taskOK(e.Task) || e.Note == "") {
 		return fmt.Errorf("withdrawn event must carry a task and a note (why the plan is taken back)")
+	}
+	if e.Kind == "dispatch_refused" && (!taskOK(e.Task) || e.Rule == "") {
+		return fmt.Errorf("dispatch_refused event must carry a task and a rule")
+	}
+	if e.Rule != "" && e.Kind != "dispatch_refused" {
+		return fmt.Errorf("event kind %q cannot carry a rule", e.Kind)
 	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")
