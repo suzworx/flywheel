@@ -43,7 +43,7 @@ A brief is a plain-text file with these parts:
    for a move or rename, list them with `grep` first and edit only those.
 2. **Never rewrite the shared tree or index.** Forbidden: `git stash`, `git checkout -- <path>`
    (and any `git checkout`), `git restore`, `git reset`, `git clean`, `git switch`, `git commit`,
-   `git rebase`, `git merge`, `git cherry-pick`, `git pull`, `git push`. Other workers and the
+   `git rebase`, `git merge`, `git cherry-pick`, `git fetch`, `git pull`, `git push`. Other workers and the
    orchestrator have uncommitted work in the same tree; one stash destroys it. To find out whether
    a failure is yours, use `git diff --name-only` or a scoped gate on your own files. Many of these are blocked outright by permission rules; do
    not look for a way around a block, report it. Under `flywheel run`, `git` on your PATH is a

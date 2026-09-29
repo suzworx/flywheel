@@ -127,7 +127,8 @@ defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-
 (`Bash(git commit:*)`, `Bash(git push:*)`, `Bash(git stash:*)`, `Bash(git reset:*)`,
 `Bash(git checkout:*)`, `Bash(git rebase:*)`, `Bash(git merge:*)`): the worker can run its own
 gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
-policy is enforced by the permission layer, not by asking nicely. An explicitly configured list
+policy is enforced by the permission layer, not by asking nicely. The default also denies
+`git fetch` and `git pull`, because they write refs and reach the network. An explicitly configured list
 replaces its default; it is not merged with it, so an operator can widen or narrow deliberately.
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean
 "allowed_tools"?`, issue #463).
