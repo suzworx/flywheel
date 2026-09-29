@@ -124,9 +124,13 @@ func TestPerfDeriveBudget(t *testing.T) {
 // factory view over that ledger stays under 15s: 3x a saturated host's worst
 // case for work that normally takes well under a second (issue #619), while the
 // quadratic regression it guards took 20s+ on this ledger.
+// The dir is a git repository, as a flywheel dir always is in production
+// (issue #643): outside one, the fetch's git rev-parse walks every parent
+// directory, which took 6.4s on a Windows host and measured the filesystem.
 // not parallel: a wall-clock budget; parallel tests would share its CPU.
 func TestPerfTUIFetchUnits(t *testing.T) {
 	dir := t.TempDir()
+	initRepo(t, dir)
 	if _, err := Init(dir, false); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
