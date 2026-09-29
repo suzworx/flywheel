@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.45.0](https://github.com/suzworx/flywheel/compare/v0.44.0...v0.45.0) (2026-09-29)
+
+
+### Features
+
+* a live demo on the Pages site, a real session replayed and the real factory view to drive, from flywheel factory --keys --frames ([#663](https://github.com/suzworx/flywheel/issues/663)) ([c806406](https://github.com/suzworx/flywheel/commit/c806406c614e6acd4296d00c8d6940c140e212a4))
+* flywheel lint and run refuse a gate line that is not a command, such as placeholder text in a delta ([#669](https://github.com/suzworx/flywheel/issues/669)) ([1288f7e](https://github.com/suzworx/flywheel/commit/1288f7eeb0b2bb7642eb8da366d752d23a0f0694)), closes [#662](https://github.com/suzworx/flywheel/issues/662)
+
+
+### Bug Fixes
+
+* an appended event's timestamp is strictly after the log's last event, so a re-plan never sorts before the finish it follows ([#667](https://github.com/suzworx/flywheel/issues/667)) ([28e2506](https://github.com/suzworx/flywheel/commit/28e2506e0e97f4a101b8dbc601b822113ea0e756)), closes [#650](https://github.com/suzworx/flywheel/issues/650)
+* flywheel run records a refused dispatch, and preflight no longer holds the dispatch lock ([#661](https://github.com/suzworx/flywheel/issues/661)) ([96ad5f8](https://github.com/suzworx/flywheel/commit/96ad5f8290198c9ac24df77c1dc8cbfaa5569f2e)), closes [#651](https://github.com/suzworx/flywheel/issues/651)
+* flywheel ship's ci step waits for the checks CI actually runs, so an external status that passes at once cannot merge a PR before its jobs start ([#645](https://github.com/suzworx/flywheel/issues/645)) ([c1482e0](https://github.com/suzworx/flywheel/commit/c1482e04ddfd317fdc690491e4978c278e6aaf4e))
+
+
+### Documentation
+
+* an Agents tab on the Pages site, one page for AI coding agents to understand and adopt flywheel, plus llms.txt ([#660](https://github.com/suzworx/flywheel/issues/660)) ([dae4faa](https://github.com/suzworx/flywheel/commit/dae4faab16955d50c04519015ec524221f47ccd7))
+* link the Agents page and llms.txt from the homepage and the README ([#664](https://github.com/suzworx/flywheel/issues/664)) ([8b6ace0](https://github.com/suzworx/flywheel/commit/8b6ace03add9ee9a2fc369cd45f0c47f2bb3c416))
+* neutral example data in the fleet and screens pages, and the fleet screen marked shipped ([#665](https://github.com/suzworx/flywheel/issues/665)) ([b5ad64b](https://github.com/suzworx/flywheel/commit/b5ad64bc99e6179488c3866a0894630d34d2436b))
+
 ## [0.44.0](https://github.com/suzworx/flywheel/compare/v0.43.0...v0.44.0) (2026-09-29)
 
 
