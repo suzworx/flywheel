@@ -97,7 +97,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `chore`, `perf`; an empty `kind:` line or another value is a lint problem, and no kind is ever
   inferred; `flywheel lint` also warns on a gate running a JavaScript test runner outside
   `lint.test_runners`, else the runners package.json's test scripts and dependencies name,
-  issue #646), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  issue #646), and reports a problem for a gate whose command word is not a command (placeholder
+  text; words listed in `lint.gate_commands` are always accepted, issue #662) or that is a
+  placeholder phrase wrapped in `(...)` or `<...>` such as `(as the brief)`, on any host, `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
   nothing is appended), `note`, and `issue` (the tracker issue the plan links to, set by `flywheel
   brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1).
@@ -147,6 +149,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   passing command prints `<task> preflight ok: <cmd>`.
   Only `flywheel run` runs preflight; `flywheel validate` does not (it measures the deliverable,
   not capacity).
+- Not written when a gate the attempt will be measured with (a correction's `gate:` lines when it
+  declares any, else the base brief's) has a command word that is not a command, or is placeholder
+  text like `gate: (as the brief)` by lint's placeholder-phrase rule: run refuses with rule `gate-command` (exit 6) naming the gate and
+  word, before the dispatch lock (only a `dispatch_refused` event is recorded, issue #662). No gate
+  is run; words in config `lint.gate_commands` are always accepted.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
@@ -187,7 +194,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
+  `preflight`, `gate-command`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:

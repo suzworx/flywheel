@@ -1973,7 +1973,10 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // correction's unioned with the base brief's) must exit 0 in the repository
 // root before anything is recorded or written, so a spent external budget
 // refuses here instead of failing the attempt midway. flywheel validate does
-// not run preflight: it measures the deliverable, not capacity. A task with no
+// not run preflight: it measures the deliverable, not capacity. Gate commands
+// (issue #662): a gate the attempt will be measured with (a correction's, else
+// the base brief's, as AttemptBrief merges them) whose command word is not a
+// command refuses with rule gate-command. A task with no
 // planned brief or an unreadable prompt checks nothing and returns "": Run's
 // own checks under the lock refuse it with today's error.
 func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err error) {
@@ -1997,7 +2000,7 @@ func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err
 	if perr != nil {
 		return src, b, nil
 	}
-	needs, pre := ph.NeedsEnv, ph.Preflight
+	needs, pre, gates := ph.NeedsEnv, ph.Preflight, ph.Gates
 	if o.Resume || o.DeltaPath != "" {
 		var baseHeader BriefHeader
 		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
@@ -2005,9 +2008,25 @@ func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err
 		}
 		needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
 		pre = unionStrings(baseHeader.Preflight, ph.Preflight)
+		// The gates the correction will be measured with are AttemptBrief's
+		// merge as if this prompt were already dispatched (issue #662).
+		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
+		if h, _, aerr := AttemptBrief(dir, probe, o.Task); aerr == nil {
+			gates = h.Gates
+		}
 	}
 	if r := needsEnvRefusal(needs); r != nil {
 		return "", nil, r
+	}
+	// Gate command words (issue #662): a gate that is placeholder text can
+	// never pass, and gates are fixed per attempt.
+	cfg, _, _ := LoadConfig(dir)
+	var allowed []string
+	if cfg.Lint != nil {
+		allowed = cfg.Lint.GateCommands
+	}
+	if probs := gateCommandProblems(dir, gates, allowed); len(probs) > 0 {
+		return "", nil, &RuleRefusal{Rule: "gate-command", Fix: strings.Join(probs, "; ")}
 	}
 	for _, c := range pre {
 		if r := preflightRefusal(dir, []string{c}); r != nil {
