@@ -107,19 +107,23 @@ func TestDerivationOrderStableAgainstOld(t *testing.T) {
 }
 
 // TestPerfDeriveBudget is a hang guard (issue #630): Derive over 200 units and
-// 7,000 events stays under a second.
+// 7,000 events stays under 5s. It normally takes ~10ms and measured 1.32s on a
+// host saturated by three test suites (issue #619); the quadratic regression it
+// guards took 20s+, so 5s is out of a loaded host's reach and inside the bug's.
 // not parallel: a wall-clock budget; parallel tests would share its CPU.
 func TestPerfDeriveBudget(t *testing.T) {
 	events := perfLedger(200)
 	start := time.Now()
 	st := Derive(events)
-	if d, limit := time.Since(start), budget(time.Second); d > limit || len(st.Tasks) != 200 {
+	if d, limit := time.Since(start), budget(5*time.Second); d > limit || len(st.Tasks) != 200 {
 		t.Errorf("Derive of %d events: %s and %d tasks, want under %s (race %v) and 200", len(events), d, len(st.Tasks), limit, raceEnabled)
 	}
 }
 
 // TestPerfTUIFetchUnits is a hang guard (issue #630): one units fetch of the
-// factory view over that ledger stays under 5s.
+// factory view over that ledger stays under 15s: 3x a saturated host's worst
+// case for work that normally takes well under a second (issue #619), while the
+// quadratic regression it guards took 20s+ on this ledger.
 // not parallel: a wall-clock budget; parallel tests would share its CPU.
 func TestPerfTUIFetchUnits(t *testing.T) {
 	dir := t.TempDir()
@@ -143,7 +147,7 @@ func TestPerfTUIFetchUnits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if took, limit := time.Since(start), budget(5*time.Second); took > limit || len(d.Floor.Units) != 200 || len(d.Why) != 200 {
+	if took, limit := time.Since(start), budget(15*time.Second); took > limit || len(d.Floor.Units) != 200 || len(d.Why) != 200 {
 		t.Errorf("units fetch: %s, %d units, %d whys; want under %s (race %v) and 200 of each", took, len(d.Floor.Units), len(d.Why), limit, raceEnabled)
 	}
 }
