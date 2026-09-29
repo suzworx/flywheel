@@ -4877,6 +4877,61 @@ const fakeClaudeStdinEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_STDIN"
 // fakeClaudeBaseEnv names the file the fake claude saves its FLYWHEEL_BASE to.
 const fakeClaudeBaseEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_BASE"
 
+// fakeClaudeShellEnv names the file the fake claude saves its
+// BASH_MAX_TIMEOUT_MS to (issue #678).
+const fakeClaudeShellEnv = "FLYWHEEL_TEST_FAKE_CLAUDE_SHELL"
+
+// TestShellTimeoutWorkerEnv is issue #678: a claude worker sees
+// limits.shell_timeout as BASH_MAX_TIMEOUT_MS, overriding an inherited value.
+func TestShellTimeoutWorkerEnv(t *testing.T) {
+	// not parallel: t.Setenv PATH to a fake claude
+	dir := setupTask(t)
+	brief := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n# TASK: x\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}},
+		Limits: Limits{ShellTimeout: "90m"}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	const session = "ses_shell_001"
+	stream := fmt.Sprintf(`{"type":"system","subtype":"init","session_id":%q}`+"\n", session) +
+		fmt.Sprintf(`{"type":"result","subtype":"success","stop_reason":"end_turn","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	p := filepath.Join(t.TempDir(), "shell.jsonl")
+	if err := os.WriteFile(p, []byte(stream), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shellPath := filepath.Join(t.TempDir(), "shell.txt")
+	t.Setenv(fakeClaudeEnv, p)
+	t.Setenv(fakeClaudeShellEnv, shellPath)
+	t.Setenv("BASH_MAX_TIMEOUT_MS", "600000")
+	var buf bytes.Buffer
+	if _, err := Run(dir, RunOptions{Task: "T1", Progress: &buf}); err != nil {
+		t.Fatalf("Run() error = %v; progress:\n%s", err, buf.String())
+	}
+	got, err := os.ReadFile(shellPath)
+	if err != nil {
+		t.Fatalf("fake claude wrote no BASH_MAX_TIMEOUT_MS: %v", err)
+	}
+	if string(got) != "5400000" {
+		t.Errorf("worker BASH_MAX_TIMEOUT_MS = %q, want 5400000 (90m)", got)
+	}
+}
+
 // TestMain lets the test binary stand in for the claude CLI: copied to a
 // PATH directory as claude and started with fakeClaudeEnv set, it prints that
 // file as its stream-json output and exits 0. It first drains its stdin, where
@@ -4898,6 +4953,12 @@ func TestMain(m *testing.M) {
 		}
 		if p := os.Getenv(fakeClaudeBaseEnv); p != "" {
 			if err := os.WriteFile(p, []byte(os.Getenv("FLYWHEEL_BASE")), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		if p := os.Getenv(fakeClaudeShellEnv); p != "" {
+			if err := os.WriteFile(p, []byte(os.Getenv("BASH_MAX_TIMEOUT_MS")), 0o644); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
@@ -5053,7 +5114,7 @@ func TestResumeAbandonedJob(t *testing.T) {
 		if err != nil || !strings.HasSuffix(filepath.ToSlash(reqs[1].PromptFile), ".flywheel/briefs/T1.job-1.txt") {
 			t.Fatalf("resume prompt %s: %v, want .flywheel/briefs/T1.job-1.txt", reqs[1].PromptFile, err)
 		}
-		want := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n" + fmt.Sprintf(jobContinue, "go test ./...")
+		want := "owns: a.go\nneeds: none\ngate: go vet ./...\n\n" + fmt.Sprintf(jobContinue, "go test ./...", time.Hour)
 		if string(delta) != want {
 			t.Errorf("delta = %q, want %q", delta, want)
 		}
