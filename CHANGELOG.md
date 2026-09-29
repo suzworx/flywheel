@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/suzworx/flywheel/compare/v0.48.1...v0.49.0) (2026-09-29)
+
+
+### Features
+
+* a pi adapter, so flywheel runs the pi coding agent as a worker ([#688](https://github.com/suzworx/flywheel/issues/688)) ([5226b6b](https://github.com/suzworx/flywheel/commit/5226b6b98086ded24452b855161466c4dcd8a5cd))
+
 ## [0.48.1](https://github.com/suzworx/flywheel/compare/v0.48.0...v0.48.1) (2026-09-29)
 
 
