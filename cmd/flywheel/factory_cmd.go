@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -27,7 +28,10 @@ type factoryOptions struct {
 	plain    bool
 	interval time.Duration
 	width    int
+	height   int
 	now      string
+	keys     string
+	frames   bool
 	ctx      string
 }
 
@@ -42,6 +46,9 @@ func factoryFlags() (*flag.FlagSet, *factoryOptions) {
 	fs.BoolVar(&o.plain, "plain", false, "redraw the plain floor instead of the interactive view")
 	fs.DurationVar(&o.interval, "interval", 2*time.Second, "redraw interval in live mode")
 	fs.IntVar(&o.width, "width", 100, "render width in columns")
+	fs.IntVar(&o.height, "height", 30, "render height in rows, for --frames")
+	fs.StringVar(&o.keys, "keys", "", `keys to press, for --frames: space-separated j, :, <enter>, <esc>, <ctrl-a>, "typed run"`)
+	fs.BoolVar(&o.frames, "frames", false, "render the interactive view headlessly after each --keys token and print the frames as JSON")
 	fs.StringVar(&o.now, "now", "", "RFC3339 instant to render at; makes a screenshot reproducible")
 	fs.StringVar(&o.ctx, "ctx", "", "start in this fleet ledger, named as flywheel fleet status names it (overrides --dir)")
 	return fs, o
@@ -87,6 +94,22 @@ func runFactory(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.frames {
+		if o.width <= 0 || o.height <= 0 {
+			fmt.Fprintf(os.Stderr, "flywheel factory: --width and --height must be positive, got %dx%d\n", o.width, o.height)
+			usage(os.Stderr)
+			os.Exit(2)
+		}
+		if _, err := flywheel.ParseKeySeq(o.keys); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel factory: --keys: %v\n", err)
+			usage(os.Stderr)
+			os.Exit(2)
+		}
+	} else if o.keys != "" {
+		fmt.Fprintln(os.Stderr, "flywheel factory: --keys needs --frames")
+		usage(os.Stderr)
+		os.Exit(2)
+	}
 	// --ctx (issue #585 f4): the view starts in that fleet ledger.
 	var place flywheel.TUIFetchOptions
 	if o.ctx != "" {
@@ -110,6 +133,25 @@ func runFactory(args []string) {
 			os.Exit(2)
 		}
 		o.dir, place = l.Path, flywheel.TUIFetchOptions{FleetFile: file, Name: l.Name, Kind: l.Kind}
+	}
+	if o.frames {
+		if o.now != "" {
+			// A fixed --now also fixes the zone the frames show times in, so
+			// the same ledger renders the same frames on any host.
+			time.Local = clock().Location()
+		}
+		frames, err := flywheel.TUIFrames(o.dir, o.keys, o.width, o.height, clock())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
+			os.Exit(1)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(frames); err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel factory: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	w := flywheel.NewWatcher()
 	color := flywheel.EnableANSI()

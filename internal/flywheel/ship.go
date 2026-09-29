@@ -72,6 +72,51 @@ type shipRun struct {
 	base                   string      // <remote>/<integration>'s commit merge-base saw, recorded on its event
 	trailer                string      // the Shipped-by: trailer, "" with the signature off
 	required               []string    // ship.required_checks from config, nil when unset
+	// gitMemo holds this run's successful read-only git queries in the
+	// workdir (issue #619), and changed its changed paths when changedOK:
+	// each git process costs 0.1-3s on a loaded Windows host. forget empties
+	// both after every git write; nothing outlives the Ship call.
+	gitMemo   map[string]string
+	changed   []string
+	changedOK bool
+}
+
+// gitRead runs the read-only git query args in the workdir once per run
+// until the next forget; a failure is not remembered.
+func (r *shipRun) gitRead(args ...string) (string, error) {
+	key := strings.Join(args, "\x00")
+	if out, ok := r.gitMemo[key]; ok {
+		return out, nil
+	}
+	out, err := gitWith(r.wt, nil, args...)
+	if err != nil {
+		return "", err
+	}
+	if r.gitMemo == nil {
+		r.gitMemo = map[string]string{}
+	}
+	r.gitMemo[key] = out
+	return out, nil
+}
+
+// changedPaths is changedPaths(r.wt), once per run until the next forget.
+func (r *shipRun) changedPaths() ([]string, error) {
+	if r.changedOK {
+		return r.changed, nil
+	}
+	changed, err := changedPaths(r.wt)
+	if err != nil {
+		return nil, err
+	}
+	r.changed, r.changedOK = changed, true
+	return changed, nil
+}
+
+// forget drops what gitRead and changedPaths remember; every step that
+// writes to the repository (a commit, fetch, merge, push, gate or landing)
+// calls it after the write.
+func (r *shipRun) forget() {
+	r.gitMemo, r.changed, r.changedOK = nil, nil, false
 }
 
 // shipStepFuncs runs each of ShipSteps: the outcome (ok or skip), a note, and
@@ -174,7 +219,7 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 
 // fwHead is fw/<task>'s commit, "" when it does not resolve.
 func (r *shipRun) fwHead() string {
-	head, err := gitWith(r.wt, nil, "rev-parse", "--verify", "-q", "refs/heads/fw/"+r.task)
+	head, err := r.gitRead("rev-parse", "--verify", "-q", "refs/heads/fw/"+r.task)
 	if err != nil {
 		return ""
 	}
@@ -301,6 +346,7 @@ func shipTrustBase(chain []Event, current string) []Event {
 func (r *shipRun) integrationCommit() (string, error) {
 	if err := r.retry("merge-base", func() error {
 		_, err := gitWith(r.wt, shipEnv(), "fetch", r.o.Remote, r.o.Integration)
+		r.forget()
 		return err
 	}); err != nil {
 		return "", fmt.Errorf("git fetch %s %s: %w", r.o.Remote, r.o.Integration, err)
@@ -310,7 +356,7 @@ func (r *shipRun) integrationCommit() (string, error) {
 
 // integrationRef resolves <remote>/<integration>'s commit without fetching.
 func (r *shipRun) integrationRef() (string, error) {
-	return gitWith(r.wt, nil, "rev-parse", "--verify", "-q", r.o.Remote+"/"+r.o.Integration+"^{commit}")
+	return r.gitRead("rev-parse", "--verify", "-q", r.o.Remote+"/"+r.o.Integration+"^{commit}")
 }
 
 // header loads the owns of task's current attempt once per ship.
@@ -341,7 +387,7 @@ func shipPreflight(r *shipRun) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	changed, err := changedPaths(r.wt)
+	changed, err := r.changedPaths()
 	if err != nil {
 		return "", "", err
 	}
@@ -366,13 +412,20 @@ func shipCommit(r *shipRun) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	owned, err := ownedChanged(r.wt, owns)
+	changed, err := r.changedPaths()
 	if err != nil {
 		return "", "", err
+	}
+	var owned []string // ownedChanged's paths
+	for _, p := range changed {
+		if !isFlywheelOwnPath(p) && ownsContains(owns, p) {
+			owned = append(owned, p)
+		}
 	}
 	if len(owned) == 0 {
 		return "skip", "nothing to commit", nil
 	}
+	defer r.forget()
 	tmp, err := os.MkdirTemp("", "flywheel-ship-")
 	if err != nil {
 		return "", "", err
@@ -426,7 +479,10 @@ func shipEnv() []string {
 func shipMergeBase(r *shipRun) (string, string, error) {
 	env := shipEnv()
 	ref := r.o.Remote + "/" + r.o.Integration
-	if _, err := gitWith(r.wt, env, "fetch", r.o.Remote, r.o.Integration); err != nil {
+	defer r.forget() // the merge or its abort below
+	_, err := gitWith(r.wt, env, "fetch", r.o.Remote, r.o.Integration)
+	r.forget()
+	if err != nil {
 		return "", "", fmt.Errorf("git fetch %s %s: %w", r.o.Remote, r.o.Integration, err)
 	}
 	base, err := r.integrationRef()
@@ -469,6 +525,7 @@ func shipMergeBase(r *shipRun) (string, string, error) {
 // shipGates runs the task's gates on the merged tree (ValidateTask in the
 // workdir); a failing gate or an owns violation fails the step.
 func shipGates(r *shipRun) (string, string, error) {
+	defer r.forget() // a gate is any command and may write to the repository
 	res, err := ValidateTask(r.dir, r.task, ValidateOptions{Dir: r.dir, Workdir: r.wt})
 	if err != nil {
 		return "", "", err
@@ -741,7 +798,9 @@ func (r *shipRun) prState() (string, string, error) {
 // shipPush pushes fw/<task> to the remote with flywheel's git environment.
 func shipPush(r *shipRun) (string, string, error) {
 	branch := "fw/" + r.task
-	if err := r.retry("push", func() error { _, err := gitWith(r.wt, shipEnv(), "push", "-u", r.o.Remote, branch); return err }); err != nil {
+	err := r.retry("push", func() error { _, err := gitWith(r.wt, shipEnv(), "push", "-u", r.o.Remote, branch); return err })
+	r.forget() // push -u writes the remote-tracking ref and the upstream config
+	if err != nil {
 		return "", "", fmt.Errorf("git push -u %s %s: %w", r.o.Remote, branch, err)
 	}
 	return "ok", fmt.Sprintf("pushed %s at %s to %s", branch, short7(r.fwHead()), r.o.Remote), nil
@@ -943,6 +1002,7 @@ func shipMerge(r *shipRun) (string, string, error) {
 // shipLanded records the landing with the PR's merge commit through LandTask,
 // the function `flywheel land --commit` uses; already landed with it is skip.
 func shipLanded(r *shipRun) (string, string, error) {
+	defer r.forget() // LandTask may write to the repository
 	if err := r.needPR(); err != nil {
 		return "", "", err
 	}
