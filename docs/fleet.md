@@ -15,7 +15,7 @@ The fleet lives in one JSON file:
   "version": 1,
   "roots": [
     {"name": "flywheel", "path": "D:\\work\\flywheel"},
-    {"name": "olexa", "path": "D:\\work\\olexa"}
+    {"name": "shop", "path": "D:\\work\\shop"}
   ]
 }
 ```
@@ -63,8 +63,8 @@ NAME                                     KIND               EVENTS  RUNNING  PAS
 flywheel                                 root               412     2        1       0         1      running      4m      30s
 flywheel/f1                              flywheel-worktree  +9      0        0       0         0      running      -       2h
 +37 idle worktree ledgers (oldest 12d)   idle
-olexa                                    root               230     0        0       1         1      paused: m1   -       12m
-olexa-old                                root               57      0        0       0         0      SUSPENDED    -       3d
+shop                                     root               230     0        0       1         1      paused: m1   -       12m
+shop-old                                 root               57      0        0       0         0      SUSPENDED    -       3d
 ```
 
 Each row is a summary of one read of that ledger's events (issue #605): no floor is built, no git
@@ -150,7 +150,7 @@ The default lists the pending queue, oldest first:
 
 ```
 KEY           SEVERITY  AGE  ROOT      TASK  TITLE
-3f9a0c41be27  P1        2h   olexa     t12   gate runs twice on a resumed session
+3f9a0c41be27  P1        2h   shop      t12   gate runs twice on a resumed session
 ```
 
 `--all` lists every learning in the fleet instead (a dismissed one marked `(dismissed)`); `--json`
@@ -165,8 +165,8 @@ parse is an error, never a reset that would report everything again), and prints
 item:
 
 ```
-2026-09-27T10:05:00Z olexa learning: [P1] gate runs twice on a resumed session (3f9a0c41be27)
-2026-09-27T10:05:00Z olexa state: running -> SUSPENDED
+2026-09-27T10:05:00Z shop learning: [P1] gate runs twice on a resumed session (3f9a0c41be27)
+2026-09-27T10:05:00Z shop state: running -> SUSPENDED
 2026-09-27T10:05:00Z flywheel/f1 andon: f1 finished: length
 2026-09-27T10:05:00Z flywheel stale: health older than 10m0s
 ```
