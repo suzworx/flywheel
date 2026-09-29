@@ -20,6 +20,8 @@ coding agents in parallel and want every change measured, recorded and recoverab
 
 See it run: the [live demo](https://suzworx.github.io/flywheel/demo.html) replays a real session and lets you drive the real factory view.
 
+For agents: [agents.html](https://suzworx.github.io/flywheel/agents.html) is one page with the roles, the loop as exact commands, the brief format and the rules; [llms.txt](https://suzworx.github.io/flywheel/llms.txt) indexes the docs.
+
 ## Install
 
 Download **flywheel-\<version\>-\<os\>-\<arch\>.zip** from the
