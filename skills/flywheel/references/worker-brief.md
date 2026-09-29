@@ -91,7 +91,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   Checks section for the worker, not to gates.) For Go projects built on one OS, add cross-OS vet
   gates (`GOOS=linux go vet ./...`, `GOOS=darwin go vet ./...`): files behind a
   `//go:build !windows` constraint are never compiled on Windows, and a missing import there passed
-  every local gate and failed CI. A whitespace/diff gate is `git diff --check "$FLYWHEEL_BASE"`,
+  every local gate and failed CI. A full-suite gate that runs for many minutes is fine: a claude
+  worker can run it in the foreground for up to `limits.shell_timeout` (default `60m`), so the
+  brief tells it to run the gate in the foreground, never in the background. A whitespace/diff gate is `git diff --check "$FLYWHEEL_BASE"`,
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
   for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
