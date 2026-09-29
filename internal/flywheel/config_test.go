@@ -978,6 +978,24 @@ func TestDefaultDisallowedIndexWrites(t *testing.T) {
 	}
 }
 
+// TestDefaultDisallowedFetchPull checks the default deny list refuses git
+// fetch and git pull, which write refs and reach the network (#671), and that
+// a denial of each is attributed to its pattern.
+func TestDefaultDisallowedFetchPull(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ command, pattern string }{
+		{"git fetch -q origin", "Bash(git fetch:*)"},
+		{"git pull --rebase", "Bash(git pull:*)"},
+	} {
+		if !slices.Contains(defaultDisallowedTools, c.pattern) {
+			t.Errorf("defaultDisallowedTools lacks %s", c.pattern)
+		}
+		if got := attributeDenial(c.command, defaultDisallowedTools); !strings.Contains(got, c.pattern) {
+			t.Errorf("attributeDenial(%q) = %q, want it to name %s", c.command, got, c.pattern)
+		}
+	}
+}
+
 // TestConfigBaselineValidate checks baseline validation: a valid baseline
 // passes, empty model fails, negative prices fail (issue #59).
 func TestConfigBaselineValidate(t *testing.T) {

@@ -13,6 +13,7 @@
       "git merge*": "deny",
       "git cherry-pick*": "deny",
       "git pull*": "deny",
+      "git fetch*": "deny",
       "git push*": "deny",
       "git -C*": "deny",
       "git --work-tree*": "deny",

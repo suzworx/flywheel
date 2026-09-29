@@ -438,7 +438,7 @@ It took three other workers' and the orchestrator's uncommitted edits with it; t
 because another worker had edited a file meanwhile, and the restore that followed overwrote newer
 edits and dropped the stash. Another worker saw its edits vanish mid-run. A shared tree makes any
 tree-rewriting command — `git stash`, `git checkout`, `git restore`, `git reset`, `git clean`,
-`git switch`, `git commit`, `git rebase`, `git merge`, `git cherry-pick`, `git pull`, `git push` —
+`git switch`, `git commit`, `git rebase`, `git merge`, `git cherry-pick`, `git fetch`, `git pull`, `git push` —
 destructive to other workers' in-flight work, which is why §9 forbids them and every dispatch
 carries the deny policy (§2). A per-task `git worktree add` (#45) removes the shared tree entirely.
 
