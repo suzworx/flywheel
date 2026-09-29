@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.48.1](https://github.com/suzworx/flywheel/compare/v0.48.0...v0.48.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* claude workers get a foreground shell limit from limits.shell_timeout (default 60m), so a full-suite gate no longer ends abandoned-job ([#689](https://github.com/suzworx/flywheel/issues/689)) ([de34e0b](https://github.com/suzworx/flywheel/commit/de34e0b3eba602274be09ea43713e946c0467ed2)), closes [#678](https://github.com/suzworx/flywheel/issues/678)
+* flywheel land --commit verifies the commit resolves, is on the integration branch and touches the unit's files ([#690](https://github.com/suzworx/flywheel/issues/690)) ([1814001](https://github.com/suzworx/flywheel/commit/18140015c3afc99d5b9c5321ea38d9fd1a42aecc))
+
+
+### Documentation
+
+* README's CLI table covers fleet learnings and watch, the model catalog, factory actions, metrics and the ship ci step ([#684](https://github.com/suzworx/flywheel/issues/684)) ([338fca8](https://github.com/suzworx/flywheel/commit/338fca8404c6b742f1901e513e7f7e316194a28f))
+
 ## [0.48.0](https://github.com/suzworx/flywheel/compare/v0.47.0...v0.48.0) (2026-09-29)
 
 
