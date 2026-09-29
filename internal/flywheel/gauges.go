@@ -74,6 +74,14 @@ type GaugeResult struct {
 	BriefPaths []string // the base brief, then a delta when the attempt has one
 	Gates      []GateOut
 	Outside    []string
+	// Churn labels, by path, each bare Outside path whose change from the
+	// dispatch base is "line endings only" or "whitespace only" (issue #647):
+	// a hint for the lead to restore it, never an excuse — OwnsOK still counts
+	// it.
+	Churn map[string]string
+	// ChurnBase is the dispatch base Churn was measured against, the commit to
+	// restore the labelled paths from; set only when Churn is.
+	ChurnBase string
 	// Attributed lists, sorted, "<path> -> <task>" entries for every changed
 	// path that sits outside this task's owns but inside another task's owns
 	// while that task is in flight (issue #117), and, for a changed path in
@@ -517,6 +525,11 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 		outside = append(kept, "left uncommitted by the attempt commit: "+strings.Join(left, ", "))
 	}
 	res.Outside = outside
+	if b := dispatchBase(events, task, attempt); b != "" {
+		if res.Churn = outsideChurn(wd, b, outside); res.Churn != nil {
+			res.ChurnBase = b
+		}
+	}
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
 	res.Files = measureFiles(wd, owns, changed)
@@ -527,7 +540,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	}
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
-		Tree: tree, Commit: commit, Outside: outside, Baselined: baselined, Attributed: attributed,
+		Tree: tree, Commit: commit, Outside: outside, Churn: res.Churn, Baselined: baselined, Attributed: attributed,
 		Ignored: res.Ignored, Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
 		Note: res.Stacked,
 	}); err != nil {
