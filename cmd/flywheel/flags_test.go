@@ -615,10 +615,10 @@ func TestClaimEditRefusesUnboundedPaths(t *testing.T) {
 func TestInitFlagsBindEveryOption(t *testing.T) {
 	t.Parallel()
 	fs, o := initFlags()
-	if err := fs.Parse([]string{"--dir", "X", "--force"}); err != nil {
+	if err := fs.Parse([]string{"--dir", "X", "--force", "--adapter", "codex"}); err != nil {
 		t.Fatalf("initFlags: %v", err)
 	}
-	want := initOptions{dir: "X", force: true, localURL: "http://localhost:11434/v1"}
+	want := initOptions{dir: "X", force: true, adapter: "codex", localURL: "http://localhost:11434/v1"}
 	if *o != want {
 		t.Errorf("initFlags parsed = %#v, want %#v", *o, want)
 	}

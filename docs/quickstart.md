@@ -87,12 +87,30 @@ factory: <your repo>
   audit: first-article gate off
   enforcement: agent hooks missing — flywheel init --hooks · git hooks: missing — flywheel init --git-hooks · CI audit missing — flywheel init --ci
   view: flywheel (the live floor) · flywheel watch · flywheel next
+  agents: none found; worker default uses opencode (openrouter/deepseek/deepseek-v4-flash-0731)
 next: flywheel log --task <id> --kind planned --brief <path>
 ```
 
 The `factory:` summary is what the repository is set up with: the workers, the limits, the
 first-article audit gate, which enforcement hooks are installed (each missing one names the
 `flywheel init` flag that adds it), and the commands that show the floor.
+
+The `agents:` line says which agent CLIs init found on your PATH and which one the default worker
+uses. init looks for `claude`, `opencode` and `codex`, in that order, and gives the worker the
+first one found: claude gets `claude-sonnet-5`, opencode gets the model above, and codex gets
+`gpt-5-codex`. When it finds none, the worker uses opencode. `flywheel init --adapter claude|opencode|codex`
+chooses the adapter without detecting (any other name is a usage error, exit 2), and `--model`
+still sets the model. This only applies when `.flywheel/config.json` is new: init never rewrites
+an existing one.
+
+`flywheel config validate` checks each worker's model and fallback models against flywheel's
+list, so a lead runs it before a dispatch to catch a typo early. A claude model must be one of
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001` or the CLI
+aliases `fable`, `opus` and `sonnet` (the claude CLI has no `haiku` alias). For an unknown model,
+the problem names the closest known ID. An opencode model must be `<provider>/<model>`, and a
+codex model must not contain spaces. When a new model comes out before flywheel lists it, set
+`"allow_unknown_model": true` on that worker. Loading a config never checks the list, so every
+other command still runs with a model flywheel does not know yet.
 
 What each piece is for:
 

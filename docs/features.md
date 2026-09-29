@@ -61,6 +61,11 @@ git still works.*
   installed (and the command for each missing one) and how to view the floor. Building the full
   factory — lines, staffing, and the policy that keeps it safe — is
   [epic #69](https://github.com/suzworx/flywheel/issues/69).
+- **Models** — a new config's default worker uses the first agent CLI init finds on PATH (claude,
+  opencode, then codex), or the one `flywheel init --adapter` names. `flywheel config validate`
+  checks each model against flywheel's list and names the closest known ID for a typo;
+  `allow_unknown_model` on a worker accepts a newer model. Loading a config never checks the list
+  ([#275](https://github.com/suzworx/flywheel/issues/275), [quickstart](quickstart.md#1-scaffold-the-factory)).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode` or `sim`
   adapter and records the run automatically. For parallel units `flywheel run --worktree` is the
