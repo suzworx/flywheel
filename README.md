@@ -201,7 +201,8 @@ flowchart LR
 
 - **Set up** — `flywheel init` scaffolds `flywheel.md` plus the `.flywheel/` state files and ends
   with a factory summary: worker lines, limits, audit policy and the enforcement layers installed
-  (with the command for each missing one). The full factory is
+  (with the command for each missing one). The default worker uses the first agent CLI it finds
+  on PATH (claude, opencode, then codex), or the one `--adapter NAME` chooses. The full factory is
   [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Run** — the lead records each work order with `flywheel log --kind planned`; `flywheel run`
   dispatches it through the `claude`, `codex`, `opencode` or `sim` adapter and records the run;

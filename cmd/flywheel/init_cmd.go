@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ func init() {
 type initOptions struct {
 	dir      string
 	force    bool
+	adapter  string
 	model    string
 	variant  string
 	track    bool
@@ -40,6 +42,7 @@ func initFlags() (*flag.FlagSet, *initOptions) {
 	fs.SetOutput(io.Discard)
 	o := &initOptions{}
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
+	fs.StringVar(&o.adapter, "adapter", "", "a new .flywheel/config.json's default worker adapter: "+strings.Join(flywheel.InitAdapters(), ", ")+" (default: the first of those found on PATH, else opencode)")
 	fs.StringVar(&o.model, "model", "", "seed a new .flywheel/config.json's default worker model")
 	fs.StringVar(&o.variant, "variant", "", "seed a new .flywheel/config.json's default worker variant")
 	fs.BoolVar(&o.force, "force", false, "reset an existing flywheel.md (a directory or symlink there is still refused)")
@@ -83,11 +86,16 @@ func runInit(args []string) {
 		usage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.adapter != "" && !slices.Contains(flywheel.InitAdapters(), o.adapter) {
+		fmt.Fprintf(os.Stderr, "flywheel init: --adapter %q must be one of %s\n", o.adapter, strings.Join(flywheel.InitAdapters(), ", "))
+		usage(os.Stderr)
+		os.Exit(2)
+	}
 	configExisted := false
 	if _, err := os.Stat(filepath.Join(o.dir, ".flywheel", "config.json")); err == nil {
 		configExisted = true
 	}
-	path, pieces, err := flywheel.InitSeeded(o.dir, o.force, o.model, o.variant, o.agentsMD)
+	path, pieces, choice, err := flywheel.InitAgent(o.dir, o.force, o.adapter, o.model, o.variant, o.agentsMD)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel init: %v\n", err)
 		os.Exit(1)
@@ -210,6 +218,9 @@ func runInit(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel init: summary: %v\n", err)
 	} else {
 		fmt.Println(summary)
+	}
+	if choice.Adapter != "" {
+		fmt.Println("  " + choice.String())
 	}
 
 	fmt.Println("next: flywheel log --task <id> --kind planned --brief <path>")

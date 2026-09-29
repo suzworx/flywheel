@@ -92,6 +92,58 @@ func Init(dir string, force bool) (string, error) {
 // content is reported present, like every other piece, so a rerun with
 // --agents-md over an already-current file never reports a change.
 func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (string, []ScaffoldPiece, error) {
+	path, pieces, _, err := InitAgent(dir, force, "opencode", model, variant, agentsMD)
+	return path, pieces, err
+}
+
+// InitAgent is InitSeeded choosing the default worker's adapter (issue
+// #275): adapter names it (one of InitAdapters), or "" detects the agent
+// CLIs on PATH and takes the first found of claude, opencode, codex, and
+// opencode when none is. The worker gets that adapter's default model;
+// model and variant still override. Only a fresh config.json is affected:
+// when one exists nothing is detected, it is never rewritten, and the
+// returned AgentChoice is zero.
+func InitAgent(dir string, force bool, adapter, model, variant string, agentsMD bool) (string, []ScaffoldPiece, AgentChoice, error) {
+	if adapter != "" {
+		if _, ok := defaultWorkerModel(adapter); !ok {
+			return "", nil, AgentChoice{}, fmt.Errorf("adapter %q must be one of %s", adapter, strings.Join(InitAdapters(), ", "))
+		}
+	}
+	var choice AgentChoice
+	cfg := DefaultConfig()
+	if !regularFileExists(filepath.Join(dir, ".flywheel", configFileName)) {
+		choice.Adapter = adapter
+		if adapter == "" {
+			choice.Detected = true
+			choice.Found = DetectAgents()
+			choice.Adapter = "opencode"
+			if len(choice.Found) > 0 {
+				choice.Adapter = choice.Found[0]
+			}
+		}
+		choice.Model, _ = defaultWorkerModel(choice.Adapter)
+		cfg.Workers[0].Adapter = choice.Adapter
+		cfg.Workers[0].Model = choice.Model
+		if model != "" {
+			choice.Model = model
+		}
+	}
+	if model != "" {
+		cfg.Workers[0].Model = model
+	}
+	if variant != "" {
+		cfg.Workers[0].Variant = variant
+	}
+	path, pieces, err := initScaffold(dir, force, cfg, model != "" || variant != "", agentsMD)
+	if err != nil {
+		return "", nil, AgentChoice{}, err
+	}
+	return path, pieces, choice, nil
+}
+
+// initScaffold is InitSeeded's body with the fresh config.json's contents
+// already chosen; seeded writes it through WriteConfig (validated).
+func initScaffold(dir string, force bool, cfg Config, seeded, agentsMD bool) (string, []ScaffoldPiece, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve %q: %w", dir, err)
@@ -124,13 +176,6 @@ func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (s
 		return "", nil, fmt.Errorf("encode state: %w", err)
 	}
 	stateBytes := append(stateJSON, '\n')
-	cfg := DefaultConfig()
-	if model != "" {
-		cfg.Workers[0].Model = model
-	}
-	if variant != "" {
-		cfg.Workers[0].Variant = variant
-	}
 	configJSON, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return "", nil, fmt.Errorf("encode config: %w", err)
@@ -232,7 +277,7 @@ func InitSeeded(dir string, force bool, model, variant string, agentsMD bool) (s
 	}
 	// --model and --variant seed a fresh config through WriteConfig; an
 	// existing one is left untouched for the caller to edit.
-	if model != "" || variant != "" {
+	if seeded {
 		if !regularFileExists(configPath) {
 			if err := WriteConfig(dir, cfg); err != nil {
 				rollback()

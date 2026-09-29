@@ -325,6 +325,40 @@ type Worker struct {
 	// UnitCostUSD caps what one unit's attempts on this worker spend, in USD;
 	// 0 means limits.unit_cost_usd (issue #459).
 	UnitCostUSD float64 `json:"unit_cost_usd,omitempty"`
+	// AllowUnknownModel skips the model catalog check `flywheel config
+	// validate` runs (ModelProblems) for this worker, so a model flywheel's
+	// list does not name yet, such as one released after this build, is not
+	// a problem (issue #275). Loading a config never checks the catalog.
+	AllowUnknownModel bool `json:"allow_unknown_model,omitempty"`
+}
+
+// ModelProblems checks each worker's model and fallback models against the
+// model catalog (CheckModel), one problem per failure, named like Validate's
+// problems. Workers with allow_unknown_model and sim workers are skipped.
+// It is `flywheel config validate`'s preflight, never part of Validate, so a
+// config naming a model newer than the catalog still loads (issue #275).
+func (c Config) ModelProblems() []string {
+	var problems []string
+	for i, w := range c.Workers {
+		if w.AllowUnknownModel || w.Adapter == "sim" {
+			continue
+		}
+		where := fmt.Sprintf("workers[%d]", i)
+		if w.Model != "" {
+			if err := CheckModel(w.Adapter, w.Model); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: worker %q: %v", where, w.Name, err))
+			}
+		}
+		for j, f := range w.Fallbacks {
+			if f.Model == "" {
+				continue
+			}
+			if err := CheckModel(w.Adapter, f.Model); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: worker %q: fallbacks[%d]: %v", where, w.Name, j, err))
+			}
+		}
+	}
+	return problems
 }
 
 // unitCostCap returns w's per-unit cost cap in USD: the worker's
