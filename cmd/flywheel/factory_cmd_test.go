@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -99,6 +100,54 @@ func TestFactoryCtxFlag(t *testing.T) {
 	_, errOut, code = run("--once", "--ctx", "gamma")
 	if code != 2 || !strings.Contains(errOut, `--ctx "gamma"`) || !strings.Contains(errOut, "alpha, beta") {
 		t.Errorf("factory --ctx gamma: exit %d, stderr %q; want 2 naming alpha, beta", code, errOut)
+	}
+}
+
+// TestFactoryKeysFlag checks --keys/--frames: `factory --keys j --frames`
+// prints the first frame and one after j as JSON, and an unknown key token is
+// a usage error. Each run is a child, since runFactory exits.
+func TestFactoryKeysFlag(t *testing.T) {
+	t.Parallel()
+	if v, ok := os.LookupEnv(factoryHelperEnv); ok {
+		runFactory(strings.Split(v, "\x1f"))
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	if _, err := flywheel.Init(dir, false); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{TS: "2026-09-27T12:00:00Z", Task: "K1", Kind: "planned"}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	run := func(args ...string) (string, string, int) {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestFactoryKeysFlag$")
+		cmd.Env = append(os.Environ(), factoryHelperEnv+"="+strings.Join(args, "\x1f"))
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		var e *exec.ExitError
+		if errors.As(err, &e) {
+			return stdout.String(), stderr.String(), e.ExitCode()
+		}
+		if err != nil {
+			t.Fatalf("run child: %v", err)
+		}
+		return stdout.String(), stderr.String(), 0
+	}
+	out, errOut, code := run("--keys", "j", "--frames", "--width", "80", "--height", "20", "--now", "2026-09-27T12:05:00Z", "--dir", dir)
+	var frames []flywheel.Frame
+	if code != 0 {
+		t.Fatalf("factory --keys j --frames: exit %d, stderr %q", code, errOut)
+	}
+	if err := json.Unmarshal([]byte(out), &frames); err != nil {
+		t.Fatalf("stdout is not JSON frames: %v\n%s", err, out)
+	}
+	if len(frames) != 2 || frames[0].Key != "" || frames[1].Key != "j" || !strings.Contains(frames[0].Frame, "K1") {
+		t.Errorf("frames = %+v, want 2 (\"\" then j) showing K1", frames)
+	}
+	_, errOut, code = run("--keys", "<nope>", "--frames", "--dir", dir)
+	if code != 2 || !strings.Contains(errOut, "<nope>") {
+		t.Errorf("factory --keys <nope>: exit %d, stderr %q; want 2 naming the token", code, errOut)
 	}
 }
 
