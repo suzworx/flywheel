@@ -229,7 +229,8 @@ func TestRunResumeModelGateRefusesUnapproved(t *testing.T) {
 
 // TestRunBase checks that Run with Worktree and Base branches the unit from
 // the base and records its commit as dispatched.base (so as FLYWHEEL_BASE),
-// and that Base without Worktree is refused before any event (issue #456).
+// and that Base without Worktree is refused before dispatched, recording one
+// dispatch_refused (issues #456, #651).
 func TestRunBase(t *testing.T) {
 	t.Parallel()
 	dir, head, main2 := baseRepo(t)
@@ -242,9 +243,7 @@ func TestRunBase(t *testing.T) {
 	if !errors.As(err, &r) || r.Rule != "base" || !strings.Contains(r.Fix, "--base needs --worktree") {
 		t.Fatalf("Run(Base, no Worktree) error = %v, want a RuleRefusal base", err)
 	}
-	if after, err := ReadEvents(dir); err != nil || len(after) != len(before) {
-		t.Fatalf("refused Run appended events: %d -> %d (%v)", len(before), len(after), err)
-	}
+	wantRefusedAppended(t, dir, before, "T1", r.Rule)
 
 	if _, err := Run(dir, RunOptions{Task: "T1", Worktree: true, Base: "main2"}); err != nil {
 		t.Fatalf("Run(Worktree, Base main2) error = %v", err)
@@ -320,7 +319,7 @@ func TestRunResumeModelGateForceModelBypasses(t *testing.T) {
 
 // TestRunResumeAdapterRefusesAcrossAdapters checks a resume whose worker is
 // on another adapter than the last attempt is refused under rule resume
-// before any event is appended (issue #469).
+// before dispatched, appending only dispatch_refused (issues #469, #651).
 func TestRunResumeAdapterRefusesAcrossAdapters(t *testing.T) {
 	// not parallel: t.Setenv PATH, so main's behaviour (launching opencode)
 	// fails fast instead of finding a real binary
@@ -349,13 +348,7 @@ func TestRunResumeAdapterRefusesAcrossAdapters(t *testing.T) {
 	if !strings.Contains(r.Fix, "adapter sim") || !strings.Contains(r.Fix, "worker oc is adapter opencode") {
 		t.Errorf("refusal fix = %q, want it naming both adapters", r.Fix)
 	}
-	after, err := ReadEvents(dir)
-	if err != nil {
-		t.Fatalf("ReadEvents() error = %v", err)
-	}
-	if len(after) != len(before) {
-		t.Errorf("events after refusal = %d, want %d (none appended)", len(after), len(before))
-	}
+	wantRefusedAppended(t, dir, before, "T1", r.Rule)
 }
 
 // TestRunResumeAdapterSameAdapterResumes checks a resume on the adapter that
@@ -2138,8 +2131,8 @@ func TestRunBriefDriftWarns(t *testing.T) {
 }
 
 // TestRunBriefDriftStrictRefuses checks --strict-brief turns drift into a T1
-// RuleRefusal with no event appended: a strict refusal never half-dispatches
-// (issue #135).
+// RuleRefusal that appends only dispatch_refused: a strict refusal never
+// half-dispatches (issues #135, #651).
 func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	t.Parallel()
 	dir := setupTask(t)
@@ -2166,13 +2159,7 @@ func TestRunBriefDriftStrictRefuses(t *testing.T) {
 	if !strings.Contains(r.Fix, "brief on disk differs") || !strings.Contains(r.Fix, "flywheel log --task T1 --kind amended --brief b.txt") {
 		t.Errorf("RuleRefusal fix = %q, want it naming the re-record fix", r.Fix)
 	}
-	after, err := ReadEvents(dir)
-	if err != nil {
-		t.Fatalf("ReadEvents() error = %v", err)
-	}
-	if len(after) != len(before) {
-		t.Errorf("events grew from %d to %d after a strict refusal, want none appended", len(before), len(after))
-	}
+	wantRefusedAppended(t, dir, before, "T1", r.Rule)
 }
 
 // TestBriefDriftAdvice checks the drift message names the step that takes
@@ -3294,8 +3281,8 @@ func gateBrief(t *testing.T, dir, name, owns, gate string) string {
 
 // TestRunRefusesOwnsCollision checks a dispatch whose owns: shares a path
 // with an in-flight task's owns: is refused with the owns RuleRefusal, the
-// message names the shared path and the owning task, and no event is appended
-// (issue #164).
+// message names the shared path and the owning task, and only dispatch_refused
+// is appended (issues #164, #651).
 func TestRunRefusesOwnsCollision(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -3315,13 +3302,9 @@ func TestRunRefusesOwnsCollision(t *testing.T) {
 	if !strings.Contains(r.Fix, "shared.go") || !strings.Contains(r.Fix, "T1") {
 		t.Errorf("refusal fix = %q, want it naming the shared path shared.go and the owning task T1", r.Fix)
 	}
-	evs, err := ReadEvents(dir)
-	if err != nil {
-		t.Fatalf("ReadEvents() error = %v", err)
-	}
-	if len(evs) != 3 {
-		t.Errorf("events = %d, want 3 (planned/dispatched T1, planned T2); a refused dispatch must record nothing", len(evs))
-	}
+	// planned/dispatched T1, planned T2: a refused dispatch records only its
+	// dispatch_refused (issue #651).
+	wantRefusedAppended(t, dir, mustEvents(t, dir)[:3], "T2", r.Rule)
 }
 
 // TestRunOwnsDisjointFromRunningDispatches checks a dispatch whose owns: is
@@ -3473,8 +3456,8 @@ func TestCollisionNegated(t *testing.T) {
 
 // TestRunRefusesExclusiveCollision checks a dispatch whose exclusive: names a
 // resource an in-flight task already holds is refused with the exclusive
-// RuleRefusal, the message names the resource and the holding task, and no
-// event is appended (issue #220).
+// RuleRefusal, the message names the resource and the holding task, and only
+// dispatch_refused is appended (issues #220, #651).
 func TestRunRefusesExclusiveCollision(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -3494,13 +3477,9 @@ func TestRunRefusesExclusiveCollision(t *testing.T) {
 	if !strings.Contains(r.Fix, `"db"`) || !strings.Contains(r.Fix, "T1") {
 		t.Errorf("refusal fix = %q, want it naming the resource db and the holding task T1", r.Fix)
 	}
-	evs, err := ReadEvents(dir)
-	if err != nil {
-		t.Fatalf("ReadEvents() error = %v", err)
-	}
-	if len(evs) != 3 {
-		t.Errorf("events = %d, want 3 (planned/dispatched T1, planned T2); a refused dispatch must record nothing", len(evs))
-	}
+	// planned/dispatched T1, planned T2: a refused dispatch records only its
+	// dispatch_refused (issue #651).
+	wantRefusedAppended(t, dir, mustEvents(t, dir)[:3], "T2", r.Rule)
 }
 
 // TestRunExclusiveNamesDisjointBothDispatch checks two briefs declaring
@@ -5507,9 +5486,9 @@ func TestRunIgnoresLostCollision(t *testing.T) {
 }
 
 // TestRunRefusesInFlight checks a dispatch of a task whose attempt is still
-// dispatched or running is refused with rule in-flight before any event is
-// recorded, in fresh and --delta mode, while a lost or finished attempt does
-// not block (issue #522).
+// dispatched or running is refused with rule in-flight, recording only
+// dispatch_refused, in fresh and --delta mode, while a lost or finished
+// attempt does not block (issues #522, #651).
 func TestRunRefusesInFlight(t *testing.T) {
 	t.Parallel()
 	ev := func(kind, reason string) Event {
@@ -5567,13 +5546,7 @@ func TestRunRefusesInFlight(t *testing.T) {
 			if !strings.Contains(rf.Fix, "T1") || !strings.Contains(rf.Fix, "r1") || !strings.Contains(rf.Fix, "limits.lost_after") {
 				t.Errorf("Fix = %q, want the task, its attempt r1 and limits.lost_after", rf.Fix)
 			}
-			after, err := ReadEvents(dir)
-			if err != nil {
-				t.Fatalf("ReadEvents() error = %v", err)
-			}
-			if len(after) != len(before) {
-				t.Errorf("events = %d after the refusal, want %d (none recorded)", len(after), len(before))
-			}
+			wantRefusedAppended(t, dir, before, "T1", rf.Rule)
 		})
 	}
 }

@@ -32,13 +32,15 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `lines` (otherwise the line whose `owns` cover the unit's is used).
 - **exclusive:** — an optional **named resource** this task alone may hold while it runs: a shared
   database, build cache or device. `flywheel run` refuses (exit 6) a dispatch whose `exclusive:`
-  name an in-flight task already holds, before any event is recorded — the same guard `owns:`
+  name an in-flight task already holds, before dispatch (only a `dispatch_refused` event is
+  recorded) — the same guard `owns:`
   gives files, but for a resource, not a file: files are `owns:`. `--allow-overlap` dispatches
   anyway and records the crossing on the dispatched event's note, so a deliberate overlap stays
   visible in the ledger.
 - **needs-env:** — environment variables the gates or live round read (a secret, say):
   `needs-env: NAME[, NAME...]`, repeatable, or `needs-env: none`. `flywheel run` and `flywheel
-  validate` refuse (exit 6, rule `needs-env`) before anything is recorded or any gate runs while
+  validate` refuse (exit 6, rule `needs-env`) before dispatch or any gate runs (run records only a
+  `dispatch_refused` event) while
   one is unset or empty in flywheel's environment, so no paid attempt is spent finding out; the
   message names the variables, never their values. Export each as its own statement in the
   dispatching shell, not chained into a backgrounded command, whose subshell loses it (issue #534).
@@ -47,6 +49,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   order in the repository root. The first that exits non-zero refuses (exit 6, rule `preflight`)
   before any attempt is recorded, naming the command, its exit code and first output line; a
   correction unions the base brief's commands. `flywheel validate` does not run it (issue #635).
+  It runs before the dispatch lock, and a refused dispatch (any rule, or `dispatch-lock` when the
+  lock stayed busy) leaves the unit's status alone but records `dispatch_refused`, shown by
+  `flywheel status` as `refused: <rule>` (issue #651).
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before
@@ -412,7 +417,8 @@ DRY rule, and coordination was not the observed bottleneck; reliability was.
 **Exclusive resources.** Tasks that share a build cache, database or device (for example PlatformIO's
 `.pio/`) must not run together even with disjoint `owns:`. Declare an optional `exclusive: <resource>`
 header line: `flywheel run` refuses (exit 6) a dispatch whose `exclusive:` name an in-flight task
-already holds, before any event is recorded — the same guard `owns:` gives files, but for a **named
+already holds, before dispatch (only a `dispatch_refused` event is recorded) — the same guard `owns:`
+gives files, but for a **named
 resource, not a file**. A deliberate crossing dispatches under `--allow-overlap`, which records it on
 the dispatched event's note (`exclusive-overlap: <name> with <task>`) so it stays visible in the
 ledger.

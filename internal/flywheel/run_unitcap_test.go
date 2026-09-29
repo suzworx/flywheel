@@ -49,7 +49,8 @@ func spentTask(t *testing.T, cost, capUSD float64) string {
 }
 
 // TestRunUnitCostRefused checks a unit whose spend has reached its cap is
-// refused at dispatch with the unit-cost rule (exit 6), appending nothing,
+// refused at dispatch with the unit-cost rule (exit 6), appending only
+// dispatch_refused (issue #651),
 // and that the same unit below its cap dispatches (issue #459).
 func TestRunUnitCostRefused(t *testing.T) {
 	t.Parallel()
@@ -68,13 +69,7 @@ func TestRunUnitCostRefused(t *testing.T) {
 			t.Errorf("Fix = %q, want it to name %q", rr.Fix, want)
 		}
 	}
-	after, err := ReadEvents(dir)
-	if err != nil {
-		t.Fatalf("ReadEvents() error = %v", err)
-	}
-	if len(after) != len(before) {
-		t.Errorf("refusal appended %d event(s), want none", len(after)-len(before))
-	}
+	wantRefusedAppended(t, dir, before, "T1", rr.Rule)
 
 	below := spentTask(t, 0.5, 0.75)
 	if _, err := Run(below, RunOptions{Task: "T1"}); err != nil {

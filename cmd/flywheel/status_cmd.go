@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
@@ -102,6 +103,32 @@ func runStatus(args []string) {
 		return
 	}
 	printStatus(rep)
+	// A read error here only loses the refused lines: Status above already
+	// read the same log.
+	if evs, err := flywheel.ReadEvents(o.dir); err == nil {
+		printRefused(os.Stdout, flywheel.Derive(evs).Tasks)
+	}
+}
+
+// printRefused writes one line per unit whose newest dispatch was refused
+// before dispatched (issue #651), "  <task> <status> refused: <rule>", under a
+// "Refused: N" header; nothing when no unit carries one.
+func printRefused(w io.Writer, tasks []flywheel.TaskState) {
+	var lines []string
+	for _, ts := range tasks {
+		if ts.Refused == "" {
+			continue
+		}
+		rule, _, _ := strings.Cut(ts.Refused, ": ")
+		lines = append(lines, fmt.Sprintf("  %s %s refused: %s", ts.ID, ts.Status, rule))
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "Refused: %d\n", len(lines))
+	for _, l := range lines {
+		fmt.Fprintln(w, l)
+	}
 }
 
 // printStatus writes the text summary, one line per group.

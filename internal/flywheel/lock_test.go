@@ -274,6 +274,33 @@ func TestRepoLockProgressSingleHolderFails(t *testing.T) {
 	}
 }
 
+// TestRepoLockBusyNamesHolder: a waiter that times out names the holder's
+// label and pid from the lock file (issue #651); an old-format second line
+// without cmd keeps the "another command" wording.
+func TestRepoLockBusyNamesHolder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	holding := progressLockTimings()
+	holding.holder = "run o12"
+	release, err := acquireRepoLock(dir, "dispatch.lock", holding)
+	if err != nil {
+		t.Fatalf("acquire holder error = %v", err)
+	}
+	_, err, _ = acquireWithGuard(t, dir, progressLockTimings())
+	release()
+	want := fmt.Sprintf("is held by run o12 (pid %d) (waited ", os.Getpid())
+	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "remove the file and retry") {
+		t.Errorf("error = %v, want it to contain %q", err, want)
+	}
+
+	old := t.TempDir()
+	seedRepoLock(t, old)
+	_, err, _ = acquireWithGuard(t, old, progressLockTimings())
+	if err == nil || !strings.Contains(err.Error(), "is held by another command (waited ") {
+		t.Errorf("old-format error = %v, want the another-command wording", err)
+	}
+}
+
 // TestRepoLockProgressStaleTakeover: after the lock changes hands past the
 // wait, the last holder dies (its mtime ages past staleAfter); the waiter,
 // still waiting, takes the stale lock over and leaves no residue.
