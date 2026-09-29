@@ -42,7 +42,10 @@ type LintResult struct {
 // package manager's test script when package.json defines one) is a warning;
 // an invalid lint.full_suite is a problem. When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
-// importers, and one whose tests owns does not cover is a warning.
+// importers, and one whose tests owns does not cover is a warning. A gate
+// that invokes a JavaScript test runner the repository does not use (config
+// lint.test_runners, else the runners package.json names) is a warning too
+// (issue #646).
 func LintBrief(dir, path string) (LintResult, error) {
 	return lintBrief(dir, path, goList)
 }
@@ -77,6 +80,7 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 			res.Warnings = append(res.Warnings, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; set lint.full_suite to change it)", pattern))
 		}
 	}
+	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
 	if fileExists(filepath.Join(dir, "go.mod")) && (lc.Importers == nil || *lc.Importers) {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -398,6 +402,113 @@ func defaultFullSuite(dir string) string {
 		return `\b(npm|pnpm|yarn|bun)( run)? test\b`
 	}
 	return ""
+}
+
+// jsRunnerDeps maps the package.json dependency that brings a JavaScript test
+// runner to the runner's name (issue #646).
+var jsRunnerDeps = map[string]string{"vitest": "vitest", "jest": "jest", "mocha": "mocha", "ava": "ava", "@playwright/test": "playwright"}
+
+// envAssignRE matches a shell VAR=value assignment ahead of a command.
+var envAssignRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// jsRunners returns the JavaScript test runners the shell command s invokes
+// (issue #646). s is split into commands at ; & | ( ) { } and newlines; a
+// command runs a runner when its program (after VAR=value assignments and an
+// npx, bunx, yarn or pnpm exec prefix) is vitest, jest, mocha or ava, is
+// playwright followed by test, or is node with --test among its leading
+// flags. A runner named as an argument (grep jest file) does not count.
+func jsRunners(s string) []string {
+	var out []string
+	for _, cmd := range strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(";&|(){}\n", r) }) {
+		f := strings.Fields(cmd)
+		for len(f) > 0 && envAssignRE.MatchString(f[0]) {
+			f = f[1:]
+		}
+		switch {
+		case len(f) > 0 && (f[0] == "npx" || f[0] == "bunx" || f[0] == "yarn"):
+			f = f[1:]
+		case len(f) > 1 && f[0] == "pnpm" && f[1] == "exec":
+			f = f[2:]
+		}
+		if len(f) == 0 {
+			continue
+		}
+		var r string
+		switch prog := path.Base(strings.ReplaceAll(f[0], `\`, "/")); prog {
+		case "vitest", "jest", "mocha", "ava":
+			r = prog
+		case "playwright":
+			if len(f) > 1 && f[1] == "test" {
+				r = "playwright"
+			}
+		case "node":
+			for _, a := range f[1:] {
+				if a == "--test" {
+					r = "node:test"
+				}
+				if !strings.HasPrefix(a, "-") {
+					break
+				}
+			}
+		}
+		if r != "" && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// gateRunnerWarnings warns, once per gate, about a gate that invokes a
+// JavaScript test runner the repository does not use (issue #646). The
+// repository's runners are override when non-empty (lint.test_runners), else
+// those dir/package.json's test and test:* scripts invoke plus those its
+// dependencies and devDependencies bring. No package.json, one that does not
+// parse, or one naming no runner means no check. A gate that calls the
+// package manager's test script (npm test) invokes no runner and never warns.
+func gateRunnerWarnings(dir string, gates []string, override []string) []string {
+	repo := override
+	if len(repo) == 0 {
+		b, err := os.ReadFile(filepath.Join(dir, "package.json"))
+		if err != nil {
+			return nil
+		}
+		var pj struct {
+			Scripts         map[string]string `json:"scripts"`
+			Dependencies    map[string]any    `json:"dependencies"`
+			DevDependencies map[string]any    `json:"devDependencies"`
+		}
+		if json.Unmarshal(b, &pj) != nil {
+			return nil
+		}
+		for k, v := range pj.Scripts {
+			if k == "test" || strings.HasPrefix(k, "test:") {
+				repo = append(repo, jsRunners(v)...)
+			}
+		}
+		for dep, r := range jsRunnerDeps {
+			if _, ok := pj.Dependencies[dep]; ok {
+				repo = append(repo, r)
+			}
+			if _, ok := pj.DevDependencies[dep]; ok {
+				repo = append(repo, r)
+			}
+		}
+		slices.Sort(repo)
+		repo = slices.Compact(repo)
+	}
+	if len(repo) == 0 {
+		return nil
+	}
+	var out []string
+	for i, g := range gates {
+		for _, r := range jsRunners(g) {
+			if !slices.Contains(repo, r) {
+				out = append(out, fmt.Sprintf("gate %d runs %s but the repository's tests use %s: run them through its test script (for example npm test -- <file>) or that runner; set lint.test_runners to change it", i+1, r, strings.Join(repo, ", ")))
+				break
+			}
+		}
+	}
+	return out
 }
 
 // fileExists reports whether p exists and is not a directory.
