@@ -31,6 +31,15 @@ func TestModelCatalog(t *testing.T) {
 		{"codex", "", false, "must not be empty"},
 		{"codex", "gpt 5", false, "spaces"},
 		{"codex", "gpt-5-codex", true, ""},
+		{"pi", "anthropic/claude-sonnet-5", true, ""},
+		{"pi", "anthropic/claude-sonnet-5:high", true, ""},
+		{"pi", "openai/gpt-5", true, ""},
+		{"pi", "claude-sonnet-5", false, "<provider>/<id>"},
+		{"pi", "/claude-sonnet-5", false, "<provider>/<id>"},
+		{"pi", "anthropic/", false, "<provider>/<id>"},
+		{"pi", "anthropic/:high", false, "<provider>/<id>"},
+		{"pi", "anthropic/claude sonnet", false, "<provider>/<id>"},
+		{"pi", "", false, "must not be empty"},
 		{"sim", "testdata/script.jsonl", true, ""},
 	}
 	for _, tc := range cases {

@@ -33,7 +33,7 @@ type Line struct {
 // that act as lead, inspector or auditor. Session is optional: the name the
 // holder registers with flywheel staff.
 type RoleConfig struct {
-	Adapter string `json:"adapter,omitempty"` // opencode, claude, codex, sim, or "cli" for a person
+	Adapter string `json:"adapter,omitempty"` // opencode, claude, codex, pi, sim, or "cli" for a person
 	Model   string `json:"model,omitempty"`
 	Session string `json:"session,omitempty"`
 	// Independence is the auditor's independence rule (issue #463): "" (the
@@ -289,7 +289,7 @@ func (c Config) ReviewRequired() bool {
 // Worker configures a single CLI worker.
 type Worker struct {
 	Name         string     `json:"name"`
-	Adapter      string     `json:"adapter"` // "opencode", "sim", "claude", or "codex"
+	Adapter      string     `json:"adapter"` // "opencode", "sim", "claude", "codex", or "pi"
 	Model        string     `json:"model"`
 	Variant      string     `json:"variant,omitempty"`
 	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
@@ -985,7 +985,7 @@ func (c Config) Validate() error {
 			seen[w.Name] = true
 		}
 		if !adapterKnown(w.Adapter, false) {
-			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", \"claude\", or \"codex\"", where, w.Adapter))
+			problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"opencode\", \"sim\", \"claude\", \"codex\", or \"pi\"", where, w.Adapter))
 		}
 		if w.Model == "" {
 			problems = append(problems, where+": model must not be empty")
@@ -1299,7 +1299,7 @@ func (c Config) Validate() error {
 				}
 			}
 			if m.Adapter != "" && (m.Adapter == "sim" || !adapterKnown(m.Adapter, false)) {
-				problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"claude\", \"opencode\" or \"codex\" (a review agent)", where, m.Adapter))
+				problems = append(problems, fmt.Sprintf("%s: adapter %q must be \"claude\", \"opencode\", \"codex\" or \"pi\" (a review agent)", where, m.Adapter))
 			}
 		}
 		for i, p := range c.Review.AllowedTools {

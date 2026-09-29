@@ -96,9 +96,9 @@ first-article audit gate, which enforcement hooks are installed (each missing on
 `flywheel init` flag that adds it), and the commands that show the floor.
 
 The `agents:` line says which agent CLIs init found on your PATH and which one the default worker
-uses. init looks for `claude`, `opencode` and `codex`, in that order, and gives the worker the
-first one found: claude gets `claude-sonnet-5`, opencode gets the model above, and codex gets
-`gpt-5-codex`. When it finds none, the worker uses opencode. `flywheel init --adapter claude|opencode|codex`
+uses. init looks for `claude`, `opencode`, `codex` and `pi`, in that order, and gives the worker the
+first one found: claude gets `claude-sonnet-5`, opencode gets the model above, codex gets
+`gpt-5-codex`, and pi gets `anthropic/claude-sonnet-5`. When it finds none, the worker uses opencode. `flywheel init --adapter claude|opencode|codex|pi`
 chooses the adapter without detecting (any other name is a usage error, exit 2), and `--model`
 still sets the model. This only applies when `.flywheel/config.json` is new: init never rewrites
 an existing one.
@@ -107,8 +107,9 @@ an existing one.
 list, so a lead runs it before a dispatch to catch a typo early. A claude model must be one of
 `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001` or the CLI
 aliases `fable`, `opus` and `sonnet` (the claude CLI has no `haiku` alias). For an unknown model,
-the problem names the closest known ID. An opencode model must be `<provider>/<model>`, and a
-codex model must not contain spaces. When a new model comes out before flywheel lists it, set
+the problem names the closest known ID. An opencode model must be `<provider>/<model>`, a
+codex model must not contain spaces, and a pi model must be `<provider>/<id>`, optionally with a
+`:<thinking>` suffix (for example `anthropic/claude-sonnet-5:high`). When a new model comes out before flywheel lists it, set
 `"allow_unknown_model": true` on that worker. Loading a config never checks the list, so every
 other command still runs with a model flywheel does not know yet.
 
@@ -193,14 +194,15 @@ config names the worker, its adapter and its model:
 }
 ```
 
-There are four adapters: `opencode`, `claude`, `codex`, and `sim`. The first three call a real
-provider. A `claude` worker may set `permission_mode` (`acceptEdits`, the default,
+There are five adapters: `opencode`, `claude`, `codex`, `pi`, and `sim`. The first four call a real
+provider. `pi` is the [pi coding agent](https://pi.dev) (`npm install -g @earendil-works/pi-coding-agent`);
+its models are `provider/id`, e.g. `anthropic/claude-sonnet-5`. A `claude` worker may set `permission_mode` (`acceptEdits`, the default,
 `bypassPermissions`, `default`, `plan` or `dontAsk`) and `max_turns` (else `limits.max_turns`,
 else 200); both are refused on any other adapter.
 `sim` needs **no provider at all** — it replays a recorded run — so if you have no API key you
 can still drive every command in this guide. What a simulated worker produces is a replay, not
 real work: it writes no files, so a `sim` unit's own gates fail on purpose. Use `opencode` (or
-`claude` or `codex`) with a reachable model for the file to actually be written; confirm the model first
+`claude`, `codex` or `pi`) with a reachable model for the file to actually be written; confirm the model first
 with `flywheel doctor`.
 
 Dispatch the unit:

@@ -165,7 +165,7 @@ func obsPaths(o Observation) []string {
 }
 
 // AdapterFor returns the adapter named name: opencode, the offline sim
-// adapter, claude (issue #49), or codex (issue #275).
+// adapter, claude (issue #49), codex or pi (issue #275).
 func AdapterFor(name string) (Adapter, error) {
 	switch name {
 	case "opencode":
@@ -176,8 +176,10 @@ func AdapterFor(name string) (Adapter, error) {
 		return claudeAdapter{}, nil
 	case "codex":
 		return codexAdapter{}, nil
+	case "pi":
+		return piAdapter{}, nil
 	}
-	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\", \"sim\", \"claude\", or \"codex\"", name)
+	return nil, fmt.Errorf("unknown adapter %q; want \"opencode\", \"sim\", \"claude\", \"codex\", or \"pi\"", name)
 }
 
 // opencodeAdapter parses OpenCode's --format json JSONL run stream.

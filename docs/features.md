@@ -62,12 +62,12 @@ git still works.*
   factory — lines, staffing, and the policy that keeps it safe — is
   [epic #69](https://github.com/suzworx/flywheel/issues/69).
 - **Models** — a new config's default worker uses the first agent CLI init finds on PATH (claude,
-  opencode, then codex), or the one `flywheel init --adapter` names. `flywheel config validate`
+  opencode, codex, then pi), or the one `flywheel init --adapter` names. `flywheel config validate`
   checks each model against flywheel's list and names the closest known ID for a typo;
   `allow_unknown_model` on a worker accepts a newer model. Loading a config never checks the list
   ([#275](https://github.com/suzworx/flywheel/issues/275), [quickstart](quickstart.md#1-scaffold-the-factory)).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
-  `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode` or `sim`
+  `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode`, `pi` or `sim`
   adapter and records the run automatically. For parallel units `flywheel run --worktree` is the
   default: each unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against
   the main ledger. `--worktree --base REF` branches a new `fw/<task>` from REF, without checking
@@ -113,7 +113,7 @@ fails or a change sits outside `owns`, and an `inspect` refusal exits 6.
 
 ## Worker adapters
 
-`flywheel run` dispatches through one of four adapters: `claude`, `codex`, `opencode`, or the
+`flywheel run` dispatches through one of five adapters: `claude`, `codex`, `opencode`, `pi`, or the
 offline `sim` adapter used by tests and this repo's own demo. Each worker in
 `.flywheel/config.json` names its adapter; `flywheel run --worker <name>` picks between several
 configured workers, so one factory can mix them. The `claude` adapter (issue
@@ -122,7 +122,13 @@ dispatched to `claude-haiku-4-5` workers through it. The `codex` adapter (issue
 [#275](https://github.com/suzworx/flywheel/issues/275)) runs `codex exec --json --sandbox
 workspace-write`, points the worker at the brief file (the prompt stays one line, so the Windows
 npm shim cannot truncate it), and parses Codex's JSONL events; Codex reports tokens but no cost,
-so `limits.budget` does not count its spend. Resume uses `codex exec resume <thread id>`.
+so `limits.budget` does not count its spend. Resume uses `codex exec resume <thread id>`. The
+`pi` adapter (issue [#275](https://github.com/suzworx/flywheel/issues/275)) runs the
+[pi coding agent](https://pi.dev) (`npm install -g @earendil-works/pi-coding-agent`) as
+`pi -p --mode json --no-extensions`, attaches the brief as `@<file>` (the message stays one line),
+passes a worker's variant as `--thinking`, and parses pi's JSONL events, cost included. Its models
+are `provider/id`, e.g. `anthropic/claude-sonnet-5`. Resume uses `--session <id>`. pi has no
+permission prompts; flywheel's git guard still refuses a worker's git writes.
 
 On the `claude` adapter, a worker's only way to run its own gate lines is its Bash tool, and
 `--permission-mode acceptEdits` alone grants file edits — not commands. Each worker in

@@ -20,6 +20,7 @@ var initAgents = []struct{ Adapter, Model string }{
 	{"claude", "claude-sonnet-5"},
 	{"opencode", DefaultConfig().Workers[0].Model},
 	{"codex", "gpt-5-codex"},
+	{"pi", "anthropic/claude-sonnet-5"},
 }
 
 // lookPath finds an agent CLI on PATH; tests replace it.
@@ -27,8 +28,8 @@ var lookPath = exec.LookPath
 
 // CheckModel reports whether model is usable with adapter: a known claude ID
 // or alias, an opencode "<provider>/<model>", any codex model without spaces,
-// or a sim path. An unknown claude model's error names the closest known ID
-// and the full list.
+// a pi "<provider>/<id>[:<thinking>]", or a sim path. An unknown claude
+// model's error names the closest known ID and the full list.
 func CheckModel(adapter, model string) error {
 	if model == "" {
 		return fmt.Errorf("model must not be empty")
@@ -50,6 +51,12 @@ func CheckModel(adapter, model string) error {
 	case "codex":
 		if strings.ContainsAny(model, " \t") {
 			return fmt.Errorf("model %q must not contain spaces", model)
+		}
+	case "pi":
+		// pi's --model is <provider>/<id>, optionally :<thinking>.
+		provider, id, _ := strings.Cut(model, "/")
+		if provider == "" || id == "" || strings.HasPrefix(id, ":") || strings.ContainsAny(model, " \t") {
+			return fmt.Errorf("model %q must be <provider>/<id>[:<thinking>] for pi, e.g. %q", model, initAgents[3].Model)
 		}
 	}
 	return nil
@@ -103,7 +110,7 @@ func editDistance(a, b string) int {
 }
 
 // DetectAgents returns the agent CLIs found on PATH, in the order claude,
-// opencode, codex.
+// opencode, codex, pi.
 func DetectAgents() []string {
 	var found []string
 	for _, a := range initAgents {
