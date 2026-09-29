@@ -222,6 +222,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   present is left alone), then the `worktree.setup` command, run with bash (the gates' shell) in the
   worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE` and `FLYWHEEL_ROOT` set and killed at
   `worktree.setup_timeout` (default `10m`). Setup runs on every dispatch, so it must be idempotent.
+  `flywheel rebase <task>` also writes one, with no attempt, when it re-runs `worktree.setup` after
+  a rebase (issue #672; see `rebased`).
   A relative script path (the first word, or the second after `node`/`python`/`bash`/`sh`/`pwsh`)
   missing from the worktree but present in the root resolves against the root; prefer
   `"$FLYWHEEL_ROOT/<script>"`. On Windows gates and setup run in Git for Windows' bash, never the WSL launcher.
@@ -726,9 +728,18 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   are listed (exit 1) and nothing is recorded. A rebase done by hand is recorded with
   `flywheel log --task <t> --kind rebased --base <ref> --note "<old base> onto <ref>"` (issue #498):
   `--base` is resolved to a full commit in `--dir`, and a missing `--task`, `--base` or `--note` is a
-  usage error (exit 2).
+  usage error (exit 2). When the branch was rebased by hand onto a newer integration commit and
+  that went unrecorded (issue #672), `<base>` is the branch's real fork point (`git merge-base HEAD
+  <onto>`, used when the recorded base is its ancestor), not the stale recorded base, so the
+  integration branch's own commits are never replayed; `flywheel validate` reports the same drift as
+  `base drift: recorded <sha7>, branch forks from <sha7>; record it: flywheel log --task <t> --kind
+  rebased --base <fork>` (JSON `base_drift`), a reading that never changes the owns check. After the
+  `rebased` event the command re-runs `worktree.setup` when configured, in the task worktree, and
+  appends a `worktree_setup` event (no attempt); a setup that fails exits 1 naming the command, its
+  rc and its output tail, with the rebase kept.
 - Carries: `task`, optionally `attempt`, `base` (the new base: `git rev-parse <onto>`), `note`
-  (`was <old base>, onto <onto>`). `Validate` requires the base and the note.
+  (`was <old base>, onto <onto>`, plus `, branch forked from <fork> (rebased outside flywheel)` when
+  the fork point was used). `Validate` requires the base and the note.
 - Effect: no status change. The unit's base (`dispatchBase`) becomes the latest `rebased` event's
   `base` instead of the first `dispatched` event's, so the owns check and the review ranges measure
   from there.

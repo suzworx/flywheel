@@ -33,6 +33,7 @@ the percentiles by nearest rank.
 | `throughput_series` | landed units per bucket, by the landing's bucket | units per bucket |
 | `wip` | tasks whose derived status (as `flywheel state` derives it from the events before the window's end) is `dispatched`, `running`, `finished` or `passed`, and that are not stale | units |
 | `wip_series` | `wip` at each bucket's end | units |
+| `stage_series` | per stage, the tasks in it at each bucket's end that are not stale: `queued` (derived status `planned`: planned, not yet dispatched, neither landed nor abandoned), `running` (`dispatched` or `running`), `finished`, `passed`; the bands of the cumulative flow diagram | units per stage |
 | `stale` | tasks with one of those statuses whose last event before the window's end is at or before the window's end minus the stale threshold | units |
 | `stale_oldest` | the window's end minus the oldest stale task's last event; 0 when none | duration |
 | `lead_time` | per landed unit: first `planned` to first `landed` | Dist |
@@ -44,6 +45,16 @@ the percentiles by nearest rank.
 A unit in progress with no event for the stale threshold is stale, not WIP, so a unit finished or
 passed long ago and never landed or withdrawn stops inflating `wip`; the threshold is 7d by default
 and `flywheel stats --metrics --wip-stale-after <d>` sets it (issue #590).
+
+`stage_series` splits the flow by stage, so a widening band shows where work piles up: a wide
+`passed` band says landing is the bottleneck, a wide `queued` band says dispatch is. At every
+bucket `running + finished + passed` equals `wip_series`; `queued` is on top of WIP. In
+`flywheel stats --metrics --json` it is an object under `flow` with the four keys, each one count
+per bucket:
+
+```json
+"stage_series": {"queued": [3, 1], "running": [2, 2], "finished": [1, 0], "passed": [0, 1]}
+```
 
 ## Quality
 

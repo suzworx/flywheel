@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/suzworx/flywheel/compare/v0.45.0...v0.46.0) (2026-09-29)
+
+
+### Features
+
+* flywheel factory's WIP chart is a cumulative flow diagram with one band per stage, computed in one pass over the ledger ([#674](https://github.com/suzworx/flywheel/issues/674)) ([d88e5d9](https://github.com/suzworx/flywheel/commit/d88e5d9aa7a401ef75bed4d6ee1c564a27e53c58))
+
 ## [0.45.0](https://github.com/suzworx/flywheel/compare/v0.44.0...v0.45.0) (2026-09-29)
 
 

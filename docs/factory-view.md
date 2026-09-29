@@ -295,7 +295,8 @@ The value, its trend and change, and its definition, then one of two parts; the 
 
 - `h`, the chart (the part it opens at): a histogram with the p50 and p90 marked for lead, queue
   and touch time and MTTR; a control chart (mean and ±2σ, units in landing order) for cycle time;
-  the WIP over time as a flow; bars for a breakdown (gate fail rate per gate, andons by kind,
+  the WIP over time as a cumulative flow, one band per stage (queued, running, finished, passed;
+  see [`stage_series`](metrics.md#flow)); bars for a breakdown (gate fail rate per gate, andons by kind,
   pause per model, cost per unit by model, utilization per worker) and for a split of the units
   (first pass or corrected, severity, landed or not); else the series as one wide sparkline.
 - `u`, the units behind the number (its [evidence](metrics.md#evidence)): TASK, VALUE (the

@@ -1405,6 +1405,21 @@ type policyDoc struct {
 	} `json:"permission"`
 }
 
+// TestWorkerPolicyDeniesFetchPull checks the embedded OpenCode policy denies
+// git fetch and git pull, which write refs and reach the network (#671).
+func TestWorkerPolicyDeniesFetchPull(t *testing.T) {
+	t.Parallel()
+	var doc policyDoc
+	if err := json.Unmarshal([]byte(workerPermissionPolicy), &doc); err != nil {
+		t.Fatalf("embedded policy is not valid JSON: %v", err)
+	}
+	for _, rule := range []string{"git fetch*", "git pull*"} {
+		if got := doc.Permission.Bash[rule]; got != "deny" {
+			t.Errorf("permission.bash[%q] = %q, want deny (#671)", rule, got)
+		}
+	}
+}
+
 // TestWorkerPolicyMatchesCanonicalFile checks the embedded policy's bash
 // rules stay identical to the canonical reference file, while the embedded
 // copy alone carries external_directory: deny and the canonical file stays
