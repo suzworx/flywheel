@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -427,6 +428,67 @@ func TestLintFullSuiteGate(t *testing.T) {
 		if len(res.Problems) != 0 || !slices.Equal(res.Warnings, tc.warns) {
 			t.Errorf("%s: problems %v warnings %v, want no problems and warnings %v", tc.name, res.Problems, res.Warnings, tc.warns)
 		}
+	}
+}
+
+// TestGateRunnerWarnings checks the JavaScript test-runner warning (issue
+// #646): a gate's runner is compared with package.json's test scripts and
+// dependencies, or with lint.test_runners when set.
+func TestGateRunnerWarnings(t *testing.T) {
+	t.Parallel()
+	vitestPJ := `{"scripts":{"test":"vitest run","build":"tsc"}}`
+	warn := func(n int, r, repo string) string {
+		return fmt.Sprintf("gate %d runs %s but the repository's tests use %s: run them through its test script (for example npm test -- <file>) or that runner; set lint.test_runners to change it", n, r, repo)
+	}
+	for _, tc := range []struct {
+		name     string
+		pj       string // "" means no package.json
+		gates    []string
+		override []string
+		warns    []string
+	}{
+		{"node --test under vitest", vitestPJ, []string{"node --test x.test.mjs"}, nil, []string{warn(1, "node:test", "vitest")}},
+		{"npx vitest", vitestPJ, []string{"npx vitest run x"}, nil, nil},
+		{"npm test script", vitestPJ, []string{"npm test -- x", "npm run test:unit", "pnpm test"}, nil, nil},
+		{"jest devDependency", `{"devDependencies":{"jest":"^29"}}`, []string{"true", "cd web && vitest run"}, nil, []string{warn(2, "vitest", "jest")}},
+		{"test:* script and dependency", `{"scripts":{"test:e2e":"playwright test"},"dependencies":{"mocha":"1"}}`,
+			[]string{"npx playwright test", "pnpm exec mocha", "yarn ava"}, nil, []string{warn(3, "ava", "mocha, playwright")}},
+		{"no package.json", "", []string{"node --test x.test.mjs"}, nil, nil},
+		{"invalid JSON", `{"scripts":`, []string{"node --test x.test.mjs"}, nil, nil},
+		{"no runner in package.json", `{"scripts":{"test":"make check"}}`, []string{"node --test x.test.mjs"}, nil, nil},
+		{"override silences", vitestPJ, []string{"node --test x.test.mjs"}, []string{"node:test"}, nil},
+		{"override replaces", vitestPJ, []string{"npx vitest run x"}, []string{"node:test"}, []string{warn(1, "vitest", "node:test")}},
+		{"runner as an argument", `{"devDependencies":{"vitest":"1"}}`, []string{"grep jest file", "node scripts/check.js --test", "echo mocha"}, nil, nil},
+		{"one warning per gate", vitestPJ, []string{"jest a; mocha b"}, nil, []string{warn(1, "jest", "vitest")}},
+		{"env assignment", vitestPJ, []string{"CI=1 NODE_OPTIONS=x node --experimental-vm-modules --test a.mjs"}, nil, []string{warn(1, "node:test", "vitest")}},
+	} {
+		dir := t.TempDir()
+		if tc.pj != "" {
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(tc.pj), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := gateRunnerWarnings(dir, tc.gates, tc.override); !slices.Equal(got, tc.warns) {
+			t.Errorf("%s: gateRunnerWarnings() = %q, want %q", tc.name, got, tc.warns)
+		}
+	}
+}
+
+// TestLintGateRunner checks the runner warning reaches LintResult.Warnings and
+// lint.test_runners reaches it from config (issue #646).
+func TestLintGateRunner(t *testing.T) {
+	t.Parallel()
+	pj := `{"scripts":{"test":"vitest run"}}`
+	res := lintWith(t, map[string]string{"README.md": "x\n", "package.json": pj},
+		suiteBrief("README.md", "npm test && node --test x.test.mjs"), noGoList)
+	want := []string{"gate 1 runs node:test but the repository's tests use vitest: run them through its test script (for example npm test -- <file>) or that runner; set lint.test_runners to change it"}
+	if len(res.Problems) != 0 || !slices.Equal(res.Warnings, want) {
+		t.Errorf("problems %v warnings %v, want no problems and warnings %v", res.Problems, res.Warnings, want)
+	}
+	res = lintWith(t, map[string]string{"README.md": "x\n", "package.json": pj, ".flywheel/config.json": lintConfigJSON(`{"test_runners":["vitest","node:test"]}`)},
+		suiteBrief("README.md", "npm test && node --test x.test.mjs"), noGoList)
+	if len(res.Problems) != 0 || len(res.Warnings) != 0 {
+		t.Errorf("with lint.test_runners: problems %v warnings %v, want none", res.Problems, res.Warnings)
 	}
 }
 

@@ -95,7 +95,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
   for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
-  `flywheel lint` warns on a `git diff --check` gate with no revision. Run `flywheel lint <brief>
+  `flywheel lint` warns on a `git diff --check` gate with no revision. A JavaScript test gate
+  uses the repository's runner (`npm test -- <file>`, or the runner its test script calls):
+  `flywheel lint` warns on a gate running `node --test`, vitest, jest, mocha, ava or playwright
+  that package.json's test scripts and dependencies do not name (config `lint.test_runners`
+  replaces that set), because a worker gated on the wrong runner writes a shim to pass it
+  (#646). Run `flywheel lint <brief>
   --probe --task <id>` in the base checkout before `log --kind planned`: it runs each gate once
   there, so a wrong runner, path or missing tool is caught before a paid attempt, and `--task`
   records each probe as a `gate_probed` event so `validate` and `explain` can tell a broken gate

@@ -139,6 +139,7 @@ type Event struct {
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
 	Outside    []string          `json:"outside,omitempty"`
+	Churn      map[string]string `json:"churn,omitempty"` // owns_checked: outside path -> "line endings only" | "whitespace only" (issue #647)
 	Baseline   map[string]string `json:"baseline,omitempty"`
 	Baselined  []string          `json:"baselined,omitempty"`
 	Attributed []string          `json:"attributed,omitempty"`

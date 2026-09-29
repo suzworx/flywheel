@@ -95,7 +95,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
   checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
   `chore`, `perf`; an empty `kind:` line or another value is a lint problem, and no kind is ever
-  inferred), `persona` (`planner`), `session` and `model` (the planner's identity, from
+  inferred; `flywheel lint` also warns on a gate running a JavaScript test runner outside
+  `lint.test_runners`, else the runners package.json's test scripts and dependencies name,
+  issue #646), `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
   nothing is appended), `note`, and `issue` (the tracker issue the plan links to, set by `flywheel
   brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1).
@@ -743,6 +745,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   to its ship commit (beside `Flywheel-Task:`) and to the squash-merge message's final trailer
   paragraph, and a `Shipped by [flywheel](...) <version> · unit ... · <passed>/<total> gates · <n> correction(s)`
   footer to the PR body; each once, all built from the ledger and the binary's version.
+- The **ship required checks** are `.flywheel/config.json` `"ship": {"required_checks": ["test", "lint"]}`
+  (issue #640): the check names `flywheel ship`'s `ci` step waits for on the PR's head commit before it
+  merges; it may name a commit status. Absent or empty means the names of the check runs (never commit
+  statuses) reported on the head commits of every one of the last 3 pull requests merged into the
+  integration branch (none merged: no expected checks); `--ignore-check NAME` removes a name from either set.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least
@@ -1132,7 +1139,10 @@ working exactly as before.
   the reading was taken, canonical absolute form, recorded only when it differs from the flywheel
   root, issue #244),
   `outside` (changed paths not covered
-  by `owns:`), `baselined` (changed paths excused because they were already dirty at dispatch and
+  by `owns:`), `churn` (optional map from a bare `outside` path to `"line endings only"` or
+  `"whitespace only"` when its bytes differ from the dispatch base only that way — a label for the
+  lead to restore it byte-for-byte, never an excuse: the path stays in `outside`, issue #647),
+  `baselined` (changed paths excused because they were already dirty at dispatch and
   are byte-identical now), `attributed` (changed paths blamed on another in-flight task instead —
   see below), `persona` (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside` on the same tree.

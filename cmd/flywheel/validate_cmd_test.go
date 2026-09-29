@@ -124,3 +124,24 @@ func TestValidateBaseProbeNote(t *testing.T) {
 		t.Errorf("validate printed %d base-tree notes, want 2:\n%s", n, out)
 	}
 }
+
+// TestChurnHints checks the issue #647 hint: one line per churn class, sorted,
+// naming the paths and the restore command; none when nothing is labelled.
+func TestChurnHints(t *testing.T) {
+	t.Parallel()
+	if got := churnHints("T1", "abc", nil); len(got) != 0 {
+		t.Errorf("churnHints(nil) = %q, want none", got)
+	}
+	got := churnHints("T1", "abc", map[string]string{
+		"z.go":  "line endings only",
+		"a.txt": "line endings only",
+		"w.md":  "whitespace only",
+	})
+	want := []string{
+		"T1 owns: hint: a.txt, z.go differ from the base only in line endings; restore them byte-for-byte (git checkout abc -- a.txt z.go) and re-validate",
+		"T1 owns: hint: w.md differ from the base only in whitespace; restore them byte-for-byte (git checkout abc -- w.md) and re-validate",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("churnHints() =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

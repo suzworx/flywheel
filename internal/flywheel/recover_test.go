@@ -457,6 +457,39 @@ func TestRecoverSkipsSettledWorld(t *testing.T) {
 	}
 }
 
+// TestRecoverStackedSharedBase checks recover's Stacked field (issue #628):
+// B and S, finished on the base A squash-merged as, both get the rebase
+// remedy from the one squash cache recover shares.
+func TestRecoverStackedSharedBase(t *testing.T) {
+	t.Parallel()
+	dir, base, squash := stackedRepo(t)
+	if err := AppendEvents(dir, []Event{
+		{Task: "S", Kind: "dispatched", Attempt: "r1", Base: base},
+		{Task: "B", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{Task: "S", Kind: "finished", Attempt: "r1", Reason: "stop"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Recover(dir, recoverNow, RecoverOptions{})
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	seen := 0
+	for _, tk := range rep.Tasks {
+		if tk.Task != "B" && tk.Task != "S" {
+			continue
+		}
+		seen++
+		want := stackedFix(tk.Task, base, squash, "A")
+		if tk.Stacked != want || tk.Next.Action != "rebase" || tk.Next.Command != "flywheel rebase "+tk.Task {
+			t.Errorf("%s: stacked %q next %+v; want %q and rebase", tk.Task, tk.Stacked, tk.Next, want)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("rows for B and S = %d, want 2", seen)
+	}
+}
+
 // TestRecoverNoReadingNoTreeHash checks a finished unit with no reading since
 // its finish is re-validate without hashing its tree (issue #628).
 func TestRecoverNoReadingNoTreeHash(t *testing.T) {

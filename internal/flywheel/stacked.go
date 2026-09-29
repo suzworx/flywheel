@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // mainBranch returns the repository's integration branch as dir sees it
@@ -41,49 +43,151 @@ func isAncestor(dir, a, b string) (bool, error) {
 // commit on main after their merge-base carries a Flywheel-Task trailer for
 // another unit T whose branch fw/<T> contains the base, or, when fw/<T> is
 // gone, T is landed in the ledger. landedAs is that main commit and baseTask
-// is T. Any git error, or no recorded base, is ok false.
+// is T. Any git error, or no recorded base, is ok false. Each call reads git
+// afresh; recover shares one squashCache across its units instead.
 func SquashedBase(dir string, events []Event, task string) (base, landedAs, baseTask string, ok bool) {
+	return squashedBase(dir, events, task, newSquashCache())
+}
+
+// squashCache memoises, for one call over one events slice, the git reads
+// SquashedBase repeats for every unit (issue #628): the integration branch,
+// the landed set, per base its ancestry and the trailer log after the
+// merge-base, per branch whether it resolves, and per (base, branch) the
+// ancestry. A git error is memoised as the "not ok" it yields. Safe for
+// concurrent use; calls counts the git processes started (mainBranch as one).
+type squashCache struct {
+	calls      atomic.Int32
+	mainOnce   sync.Once
+	main       string
+	landedOnce sync.Once
+	landed     map[string]bool
+	mu         sync.Mutex
+	bases      map[string]*squashBaseMemo
+	flags      map[string]*onceBool // "branch\x00<b>" and "anc\x00<base>\x00<b>"
+}
+
+// squashBaseMemo is one base's answer: squashable when it is not an ancestor
+// of main and the merge-base and log reads succeeded; commits is that log.
+type squashBaseMemo struct {
+	once       sync.Once
+	squashable bool
+	commits    []squashCommit
+}
+
+// squashCommit is one main commit after the merge-base and its trailer tasks.
+type squashCommit struct {
+	sha   string
+	tasks []string
+}
+
+type onceBool struct {
+	once sync.Once
+	v    bool
+}
+
+func newSquashCache() *squashCache {
+	return &squashCache{bases: map[string]*squashBaseMemo{}, flags: map[string]*onceBool{}}
+}
+
+// flag returns f's answer for key, computing it once.
+func (c *squashCache) flag(key string, f func() bool) bool {
+	c.mu.Lock()
+	o, ok := c.flags[key]
+	if !ok {
+		o = &onceBool{}
+		c.flags[key] = o
+	}
+	c.mu.Unlock()
+	o.once.Do(func() { o.v = f() })
+	return o.v
+}
+
+// base returns base's memo against main, reading git on the first call only.
+func (c *squashCache) base(dir, base, main string) *squashBaseMemo {
+	c.mu.Lock()
+	m, ok := c.bases[base]
+	if !ok {
+		m = &squashBaseMemo{}
+		c.bases[base] = m
+	}
+	c.mu.Unlock()
+	m.once.Do(func() {
+		c.calls.Add(1)
+		if in, err := isAncestor(dir, base, main); err != nil || in {
+			return
+		}
+		c.calls.Add(1)
+		mb, err := gitRead(dir, []string{"merge-base", base, main})
+		if err != nil || strings.TrimSpace(mb) == "" {
+			return
+		}
+		c.calls.Add(1)
+		out, err := gitRead(dir, []string{"log", "--format=%H%x00%(trailers:key=Flywheel-Task,valueonly,separator=%x2C)", strings.TrimSpace(mb) + ".." + main})
+		if err != nil {
+			return
+		}
+		m.squashable = true
+		for _, line := range strings.Split(out, "\n") {
+			sha, names, found := strings.Cut(strings.TrimSpace(line), "\x00")
+			if !found || names == "" {
+				continue
+			}
+			sc := squashCommit{sha: sha}
+			for _, t := range strings.Split(names, ",") {
+				if t = strings.TrimSpace(t); t != "" && taskOK(t) {
+					sc.tasks = append(sc.tasks, t)
+				}
+			}
+			m.commits = append(m.commits, sc)
+		}
+	})
+	return m
+}
+
+// squashedBase is SquashedBase reading git through c.
+func squashedBase(dir string, events []Event, task string, c *squashCache) (base, landedAs, baseTask string, ok bool) {
 	base = dispatchBase(events, task, "")
-	main := mainBranch(dir)
-	if base == "" || main == "" {
+	if base == "" {
 		return "", "", "", false
 	}
-	if in, err := isAncestor(dir, base, main); err != nil || in {
+	c.mainOnce.Do(func() { c.calls.Add(1); c.main = mainBranch(dir) })
+	if c.main == "" {
 		return "", "", "", false
 	}
-	mb, err := gitRead(dir, []string{"merge-base", base, main})
-	if err != nil || strings.TrimSpace(mb) == "" {
+	m := c.base(dir, base, c.main)
+	if !m.squashable {
 		return "", "", "", false
 	}
-	out, err := gitRead(dir, []string{"log", "--format=%H%x00%(trailers:key=Flywheel-Task,valueonly,separator=%x2C)", strings.TrimSpace(mb) + ".." + main})
-	if err != nil {
-		return "", "", "", false
-	}
-	landed := map[string]bool{}
-	for _, e := range events {
-		if e.Kind == "landed" {
-			landed[e.Task] = true
+	c.landedOnce.Do(func() {
+		c.landed = map[string]bool{}
+		for _, e := range events {
+			if e.Kind == "landed" {
+				c.landed[e.Task] = true
+			}
 		}
-	}
-	for _, line := range strings.Split(out, "\n") {
-		sha, names, found := strings.Cut(strings.TrimSpace(line), "\x00")
-		if !found || names == "" {
-			continue
-		}
-		for _, t := range strings.Split(names, ",") {
-			t = strings.TrimSpace(t)
-			if t == "" || t == task || !taskOK(t) {
+	})
+	for _, sc := range m.commits {
+		for _, t := range sc.tasks {
+			if t == task {
 				continue
 			}
 			branch := "refs/heads/fw/" + t
-			if rc, _, _, err := runCmdSplit(dir, gitArgs([]string{"rev-parse", "--verify", "-q", branch}), nil); err == nil && rc == 0 {
-				if in, err := isAncestor(dir, base, branch); err == nil && in {
-					return base, sha, t, true
+			if c.flag("branch\x00"+branch, func() bool {
+				c.calls.Add(1)
+				rc, _, _, err := runCmdSplit(dir, gitArgs([]string{"rev-parse", "--verify", "-q", branch}), nil)
+				return err == nil && rc == 0
+			}) {
+				if c.flag("anc\x00"+base+"\x00"+branch, func() bool {
+					c.calls.Add(1)
+					in, err := isAncestor(dir, base, branch)
+					return err == nil && in
+				}) {
+					return base, sc.sha, t, true
 				}
 				continue
 			}
-			if landed[t] {
-				return base, sha, t, true
+			if c.landed[t] {
+				return base, sc.sha, t, true
 			}
 		}
 	}
