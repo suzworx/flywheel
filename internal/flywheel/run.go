@@ -2,6 +2,7 @@ package flywheel
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -51,6 +52,10 @@ type RunOptions struct {
 	// close (or for the suspend stop, like simSleep) before it opens its
 	// fixture, instead of SimDelay (issue #619). Production never sets it.
 	simRelease <-chan struct{}
+	// lockTimings is a test hook: when non-nil, Run takes the dispatch lock
+	// with these timings instead of defaultRepoLockTimings (issue #651).
+	// Production never sets it.
+	lockTimings *repoLockTimings
 }
 
 // Result reports what the dispatch observed.
@@ -198,6 +203,15 @@ var commandHook func(RunRequest)
 // attempt, after the event that detected them. Neither changes the run's
 // outcome. Every path after the dispatched event records a finished event.
 func Run(dir string, o RunOptions) (res Result, err error) {
+	// A refusal before dispatched is recorded (issue #651), so a unit that
+	// never started says why in the ledger, not only on a terminal nobody
+	// watched. Registered first, it runs after the dispatch lock is released.
+	dispatched := false
+	defer func() {
+		if err != nil && !dispatched {
+			recordDispatchRefused(dir, o.Task, err)
+		}
+	}()
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return Result{}, err
@@ -285,6 +299,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Needs-env and preflight (issues #534, #635) run before the dispatch
+	// lock (issue #651): a preflight command may run for minutes, and holding
+	// the lock through it starved every other dispatch on the repository.
+	// They read the log without the lock; under it the prompt is read again
+	// and must be the bytes they checked.
+	checkedSrc, checkedPrompt, err := preDispatchChecks(dir, o)
+	if err != nil {
+		return Result{}, err
+	}
+
 	// T1: dispatched needs a planned event carrying the brief path.
 	// Dispatch lock (issue #242): the log is read, the collision checks are
 	// run and the dispatched event is appended under .flywheel/dispatch.lock,
@@ -292,8 +316,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// reading a log in which neither has dispatched, both passing the checks
 	// and both dispatching — taking the same exclusive resource or writing
 	// the same owned file, the exact case the refusals exist to stop. The
-	// lock is released as soon as dispatched lands, before the worker starts.
-	releaseDispatchLock, err := acquireDispatchLock(dir)
+	// lock is released as soon as dispatched lands, before the worker starts,
+	// and never covers needs-env or preflight (above). The lock file names
+	// this run as its holder, so a waiter that times out can say who holds it.
+	timings := defaultRepoLockTimings()
+	if o.lockTimings != nil {
+		timings = *o.lockTimings
+	}
+	timings.holder = "run " + o.Task
+	releaseDispatchLock, err := acquireRepoLock(dir, "dispatch.lock", timings)
 	if err != nil {
 		return Result{}, err
 	}
@@ -581,34 +612,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read prompt %s: %w", promptSrc, err)
 	}
-	// Needs-env (issue #534): a variable the prompt about to be sent names in
-	// needs-env: (a correction's unioned with the base brief's, so it cannot
-	// drop one) that is unset or empty refuses before anything is recorded or
-	// written, so no paid attempt is spent finding out. Values are never read
-	// into a message or an event.
-	if ph, perr := ParseBriefHeaderBytes(promptB); perr == nil {
-		needs := ph.NeedsEnv
-		if o.Resume || o.DeltaPath != "" {
-			needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
-		}
-		if r := needsEnvRefusal(needs); r != nil {
-			return Result{}, r
-		}
-		// Preflight (issue #635): each preflight: command (a correction's
-		// unioned with the base brief's) must exit 0 in the repository root
-		// before anything is recorded or written, so a spent external budget
-		// refuses here instead of failing the attempt midway. flywheel validate
-		// does not run preflight: it measures the deliverable, not capacity.
-		pre := ph.Preflight
-		if o.Resume || o.DeltaPath != "" {
-			pre = unionStrings(baseHeader.Preflight, ph.Preflight)
-		}
-		for _, c := range pre {
-			if r := preflightRefusal(dir, []string{c}); r != nil {
-				return Result{}, r
-			}
-			progress(o.Progress, fmt.Sprintf("%s preflight ok: %s", o.Task, c))
-		}
+	// The prompt must be the bytes preDispatchChecks ran needs-env and
+	// preflight against before the lock (issue #651); one planned, amended or
+	// edited while this run waited was never checked, so it is not sent.
+	if promptSrc != checkedSrc || !bytes.Equal(promptB, checkedPrompt) {
+		return Result{}, fmt.Errorf("prompt %s for task %s changed while the dispatch waited for the lock; run it again", promptSrc, o.Task)
 	}
 	// A correction's delta is snapshotted per attempt at dispatch (issue
 	// #452): promptB is written atomically to
@@ -810,6 +818,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}); err != nil {
 		return Result{}, err
 	}
+	dispatched = true
 	// The dispatched event is recorded and every check that read the log is
 	// past: release the dispatch lock NOW, before the worker starts. A lock
 	// held for the run would serialise the entire factory, which is the
@@ -1946,9 +1955,110 @@ type ownsCollision struct {
 // #242). The mechanics — the O_EXCL create, the token-checked release, the
 // heartbeat and the stale takeover — are the shared repository lock in
 // lock.go; this wrapper names the dispatch.lock file and keeps its own
-// default timings (Run's values and behaviour are unchanged).
+// default timings. Run takes the lock itself, labelled with its task (issue
+// #651); the shard seal is this wrapper's caller, so its label is seal.
 func acquireDispatchLock(dir string) (release func(), err error) {
-	return acquireRepoLock(dir, "dispatch.lock", defaultRepoLockTimings())
+	timings := defaultRepoLockTimings()
+	timings.holder = "seal"
+	return acquireRepoLock(dir, "dispatch.lock", timings)
+}
+
+// preDispatchChecks runs Run's needs-env and preflight checks before the
+// dispatch lock (issue #651) and returns the prompt path and bytes it checked.
+// Needs-env (issue #534): a variable the prompt about to be sent names in
+// needs-env: (a correction's unioned with the base brief's, so it cannot drop
+// one) that is unset or empty refuses before anything is recorded or written,
+// so no paid attempt is spent finding out. Values are never read into a
+// message or an event. Preflight (issue #635): each preflight: command (a
+// correction's unioned with the base brief's) must exit 0 in the repository
+// root before anything is recorded or written, so a spent external budget
+// refuses here instead of failing the attempt midway. flywheel validate does
+// not run preflight: it measures the deliverable, not capacity. A task with no
+// planned brief or an unreadable prompt checks nothing and returns "": Run's
+// own checks under the lock refuse it with today's error.
+func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err error) {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
+	if brief == "" {
+		return "", nil, nil
+	}
+	src, err = promptSource(dir, brief, o.DeltaPath, o.Task, o.Resume)
+	if err != nil {
+		return "", nil, nil
+	}
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return "", nil, nil
+	}
+	ph, perr := ParseBriefHeaderBytes(b)
+	if perr != nil {
+		return src, b, nil
+	}
+	needs, pre := ph.NeedsEnv, ph.Preflight
+	if o.Resume || o.DeltaPath != "" {
+		var baseHeader BriefHeader
+		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+			baseHeader = h
+		}
+		needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
+		pre = unionStrings(baseHeader.Preflight, ph.Preflight)
+	}
+	if r := needsEnvRefusal(needs); r != nil {
+		return "", nil, r
+	}
+	for _, c := range pre {
+		if r := preflightRefusal(dir, []string{c}); r != nil {
+			return "", nil, r
+		}
+		progress(o.Progress, fmt.Sprintf("%s preflight ok: %s", o.Task, c))
+	}
+	return src, b, nil
+}
+
+// recordDispatchRefused appends one dispatch_refused event (issue #651) when
+// err is a RuleRefusal or a dispatch-lock timeout of a task that has a planned
+// event; any other error (bad arguments, an unreadable file, a resume with no
+// session) and the suspended refusal record nothing. A task whose newest event is already the same
+// refusal is not recorded again, so a retry loop cannot flood the log. It is
+// best-effort: the refusal is still returned whether or not the append lands.
+func recordDispatchRefused(dir, task string, err error) {
+	var rule, note string
+	var rf *RuleRefusal
+	var busy *RepoLockBusy
+	switch {
+	case errors.As(err, &rf) && rf.Rule == "suspended":
+		// A suspended ledger is frozen by the owner: recording would write
+		// to it while stopped, once per retry.
+		return
+	case errors.As(err, &rf):
+		rule, note = rf.Rule, rf.Fix
+	case errors.As(err, &busy):
+		rule, note = "dispatch-lock", busy.Error()
+	default:
+		return
+	}
+	events, rerr := ReadEvents(dir)
+	if rerr != nil {
+		return
+	}
+	planned := false
+	var newest *Event
+	for i := range events {
+		if events[i].Task != task {
+			continue
+		}
+		if events[i].Kind == "planned" {
+			planned = true
+		}
+		newest = &events[i]
+	}
+	if !planned || newest != nil && newest.Kind == "dispatch_refused" && newest.Rule == rule && newest.Note == note {
+		return
+	}
+	_ = AppendEvent(dir, Event{Task: task, Kind: "dispatch_refused", Rule: rule, Note: note})
 }
 
 // briefDriftAdvice is the brief-drift message for task, whose brief drifted

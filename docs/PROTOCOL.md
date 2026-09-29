@@ -29,6 +29,7 @@ first line stops matching `^# flywheel protocol v`.
 - [1. Required entries per task](#1-required-entries-per-task)
   - [`planned`](#planned)
   - [`dispatched`](#dispatched)
+  - [`dispatch_refused`](#dispatch_refused)
   - [`worktree_setup`](#worktree_setup)
   - [`started`](#started)
   - [`worker_plan`](#worker_plan)
@@ -131,13 +132,17 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: the CLI only, via `flywheel run <task>` — never by hand.
 - Not written when a variable the prompt's `needs-env:` names (a correction's unioned with the
   base brief's) is unset or empty in flywheel's environment: run refuses with rule `needs-env`
-  (exit 6) naming the variables, never their values, before any event (issue #534);
+  (exit 6) naming the variables, never their values, before dispatch (only a `dispatch_refused`
+  event is recorded, issue #534);
   `flywheel validate` refuses the same way (exit 6) before any gate runs.
 - Not written when a `preflight:` command exits non-zero: each `preflight: CMD` line the prompt
   names (a correction's unioned with the base brief's) runs in order in the repository root, as a
   gate runs, after the needs-env check; the first that exits non-zero or cannot start refuses with
   rule `preflight` (exit 6) naming the command, its exit code and its first output line, before any
-  event or file is written (issue #635). Each passing command prints `<task> preflight ok: <cmd>`.
+  file is written (only a `dispatch_refused` event is recorded, issue #635). Needs-env and preflight run before the dispatch lock is
+  taken, so a slow preflight never holds up another dispatch; under the lock the prompt must still
+  be the bytes they checked, else the run errors and must be started again (issue #651). Each
+  passing command prints `<task> preflight ok: <cmd>`.
   Only `flywheel run` runs preflight; `flywheel validate` does not (it measures the deliverable,
   not capacity).
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
@@ -166,7 +171,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   snapshot fails the dispatch), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
-  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before any event, issue #456; without `--base` a new `fw/<task>` starts from `origin/<integration.branch>`, else the local `integration.branch`, when that is configured (neither resolving refuses the dispatch), else from HEAD with a progress warning when HEAD carries commits `origin/main` (else `origin/master`, else the local main or master) lacks, issue #550), `workdir` (the worker's tree, canonical absolute form, recorded only when it is not the flywheel root: the task worktree for `run --worktree`, or PATH for `flywheel run <task> --workdir PATH`, an existing tree the lead prepared, a merge in progress say, used as it is with no setup, checkpoints or attempt commit; `--workdir` with `--worktree`, a PATH that is not a directory, or one that is not a git working tree of the same repository (a different `git rev-parse --git-common-dir`) is refused (exit 6, rule `workdir`; with `--base`, rule `base`) before any event; `validate` and `inspect` default to it, and a `--resume` or `--delta` with neither flag runs there again, issue #545), `increment` (N when
+  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before dispatch (only a `dispatch_refused` event is recorded), issue #456; without `--base` a new `fw/<task>` starts from `origin/<integration.branch>`, else the local `integration.branch`, when that is configured (neither resolving refuses the dispatch), else from HEAD with a progress warning when HEAD carries commits `origin/main` (else `origin/master`, else the local main or master) lacks, issue #550), `workdir` (the worker's tree, canonical absolute form, recorded only when it is not the flywheel root: the task worktree for `run --worktree`, or PATH for `flywheel run <task> --workdir PATH`, an existing tree the lead prepared, a merge in progress say, used as it is with no setup, checkpoints or attempt commit; `--workdir` with `--worktree`, a PATH that is not a directory, or one that is not a git working tree of the same repository (a different `git rev-parse --git-common-dir`) is refused (exit 6, rule `workdir`; with `--base`, rule `base`) before dispatch (only a `dispatch_refused` event is recorded); `validate` and `inspect` default to it, and a `--resume` or `--delta` with neither flag runs there again, issue #545), `increment` (N when
   `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
   attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
@@ -176,6 +181,26 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   against the current brief (fresh attempts) or the delta file it names (`c*` attempts); an
   `amended` event between the dispatch and now excuses a fresh attempt's mismatch, but never a
   correction's.
+
+### `dispatch_refused`
+- Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
+  `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
+  `preflight`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
+  because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
+  Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
+  resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
+  the owner froze the ledger, and a retry loop would write to it while stopped), for a plain error
+  (bad arguments, an unreadable file), for a task
+  with no `planned` event, or when the task's newest event is already a `dispatch_refused` with the
+  same rule and note (a retry loop records the refusal once).
+- Carries: `task`, `rule` (the refusal's rule, or `dispatch-lock` for the lock timeout) and `note`
+  (the refusal text; for the lock, `lock ... is held by run <task> (pid <n>) (waited ..., <n>
+  handovers); ...` — the holder named from the lock file's `cmd` label, or `another command` for an
+  older lock file). `Validate` requires the task and the rule; no other kind may carry `rule`.
+- Effect: no status change: the unit stays `planned` (or whatever it was). `Derive` sets the task's
+  `refused` in `.flywheel/state.json` to `<rule>: <note>` of the newest `dispatch_refused` newer
+  than its newest `dispatched`; a later `dispatched` clears it. `flywheel status` lists each such
+  unit under `Refused: <n>` as `<task> <status> refused: <rule>`.
 
 ### `worktree_setup`
 - Written by: the CLI only, via `flywheel run <task> --worktree` (issue #430), after the task's
@@ -503,8 +528,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `dispatched` attempt's `worker` while it is still configured, else the first configured worker
   with its `adapter` and `model`, else the default worker with one stderr line saying so (issue
   #469). A session never crosses adapters: `flywheel run --resume` onto a worker whose adapter
-  differs from the last attempt's is refused (exit 6, rule `resume`) before any event is appended,
-  and the fix loop instead dispatches such a correction as a fresh session that reads the delta.
+  differs from the last attempt's is refused (exit 6, rule `resume`) before dispatch (only a
+  `dispatch_refused` event is appended), and the fix loop instead dispatches such a correction as a fresh session that reads the delta.
 - The thread (issue #389): `.flywheel/reviews/<task>.md` is GENERATED from the event log
   (`RenderReviewThread`) after every agent review round, every recorded `finding_response` and
   every dismissal — never on GitHub. It holds one `## Round <n> — <verdict>, <reviewer session>,

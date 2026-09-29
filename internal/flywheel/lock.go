@@ -43,6 +43,49 @@ type repoLockTimings struct {
 	// it to change holders in lockstep with the waiter's polls, so no
 	// scheduling delay can decide them (issue #603).
 	poll func()
+	// holder labels the acquiring command on the lock file's second line
+	// ("cmd run o12", issue #651), so a waiter that times out can name who
+	// holds the lock. Empty writes no label.
+	holder string
+}
+
+// RepoLockBusy is the error of a lock wait that timed out (issue #651):
+// ordinary contention, not a rule refusal. Holder is the label the holder
+// wrote ("run o12 (pid 4242)"), or "" when the file carried none.
+type RepoLockBusy struct {
+	Path      string
+	Holder    string
+	Waited    time.Duration
+	Handovers int
+}
+
+func (e *RepoLockBusy) Error() string {
+	who := "another command"
+	if e.Holder != "" {
+		who = e.Holder
+	}
+	return fmt.Sprintf("lock %s is held by %s (waited %s, %d handovers); if none is running, remove the file and retry", e.Path, who, e.Waited, e.Handovers)
+}
+
+// repoLockHolderLabel reads the lock file's second line, "pid <n> host <h>
+// locked <ts> cmd <label>", and returns "<label> (pid <n>)". An older line
+// without cmd, or an unreadable file, yields "".
+func repoLockHolderLabel(p string) string {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	_, rest, _ := strings.Cut(string(b), "\n")
+	line, _, _ := strings.Cut(rest, "\n")
+	pre, label, ok := strings.Cut(strings.TrimRight(line, "\r"), " cmd ")
+	label = strings.TrimSpace(label)
+	if !ok || label == "" {
+		return ""
+	}
+	if f := strings.Fields(pre); len(f) >= 2 && f[0] == "pid" {
+		return label + " (pid " + f[1] + ")"
+	}
+	return label
 }
 
 // defaultRepoLockTimings are the timings Run's dispatch lock keeps: the
@@ -114,7 +157,11 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 		f, oerr := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if oerr == nil {
 			host, _ := os.Hostname()
-			_, _ = fmt.Fprintf(f, "%s\npid %d host %s locked %s\n", token, os.Getpid(), host, now().UTC().Format(time.RFC3339))
+			cmd := ""
+			if timings.holder != "" {
+				cmd = " cmd " + timings.holder
+			}
+			_, _ = fmt.Fprintf(f, "%s\npid %d host %s locked %s%s\n", token, os.Getpid(), host, now().UTC().Format(time.RFC3339), cmd)
 			_ = f.Close()
 			return repoLockRelease(p, token, timings.heartbeat), nil
 		}
@@ -154,7 +201,7 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 			} else {
 				waited = waited.Round(time.Millisecond)
 			}
-			return nil, fmt.Errorf("lock %s is held by another command (waited %s, %d handovers); if none is running, remove the file and retry", p, waited, handovers)
+			return nil, &RepoLockBusy{Path: p, Holder: repoLockHolderLabel(p), Waited: waited, Handovers: handovers}
 		}
 		time.Sleep(timings.retry)
 	}

@@ -84,7 +84,7 @@ func TestRunWorkdirDispatches(t *testing.T) {
 }
 
 // TestRunWorkdirRefusals checks each bad --workdir is a RuleRefusal before
-// any event is appended.
+// dispatched that appends only its dispatch_refused (issue #651).
 func TestRunWorkdirRefusals(t *testing.T) {
 	t.Parallel()
 	dir, wt := workdirRepo(t)
@@ -101,15 +101,13 @@ func TestRunWorkdirRefusals(t *testing.T) {
 		{"not a repo", "workdir", RunOptions{Task: "T1", Workdir: t.TempDir()}},
 		{"other repo", "workdir", RunOptions{Task: "T1", Workdir: otherWt}},
 	} {
-		before := len(mustEvents(t, dir))
+		before := mustEvents(t, dir)
 		_, err := Run(dir, tc.o)
 		var r *RuleRefusal
 		if !errors.As(err, &r) || r.Rule != tc.rule {
 			t.Errorf("%s: Run() error = %v, want a RuleRefusal %s", tc.name, err, tc.rule)
 		}
-		if after := len(mustEvents(t, dir)); after != before {
-			t.Errorf("%s: refused Run appended events: %d -> %d", tc.name, before, after)
-		}
+		wantRefusedAppended(t, dir, before, "T1", tc.rule)
 	}
 }
 
