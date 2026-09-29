@@ -46,9 +46,10 @@ description: The approved design for the flywheel factory view, a k9s-style term
 </style>
 
 <div class="fs">
+<p class="foot-note">Want the real thing? The <a href="demo.html">live demo</a> replays a real session and lets you drive the real view.</p>
 <header style="display:grid;gap:12px">
   <h1>Factory screens</h1>
-  <p class="lede">The approved design for <code>flywheel factory</code> (issue <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>): a k9s-style terminal UI for a person inspecting the factory by hand and working out what happened and why. Agents keep using the CLI and <code>--json</code>. Most of it is on main now: the layout, navigation and search, the unit's why and timeline, the pulse and metrics dashboards with their drill-downs, the frozen factory, colours and skins. Still to come: the fleet screen inside the view and the actions on a unit. Every screen is drawn at a 110-column terminal with example data; a shipped screen shows the keys and columns the code has (<a href="factory-view.html">The factory view</a> describes each).</p>
+  <p class="lede">The approved design for <code>flywheel factory</code> (issue <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>): a k9s-style terminal UI for a person inspecting the factory by hand and working out what happened and why. Agents keep using the CLI and <code>--json</code>. Most of it is on main now: the layout, navigation and search, the unit's why and timeline, the pulse and metrics dashboards with their drill-downs, the frozen factory, colours and skins. Still to come: the actions on a unit. Every screen is drawn at a 110-column terminal with example data; a shipped screen shows the keys and columns the code has (<a href="factory-view.html">The factory view</a> describes each).</p>
   <p class="legend">The badge on each screen says what exists today:
     <span class="status shipped">shipped</span> on main,
     <span class="status building">building</span> in a unit now,
@@ -267,15 +268,15 @@ lead lead-claude-c60c5d · workers 0/4 · landed today 7 · $18.40
 </section>
 
 <section id="fleet">
-  <div class="meta"><h2>Fleet</h2><span class="kbd">:ctx</span><span class="status planned">planned</span></div>
-  <p>Every factory on the machine, like k9s contexts. Enter switches the whole view to that ledger. This screen inside <code>flywheel factory</code> is planned; the fleet itself is shipped on the CLI: <code>flywheel fleet add</code>, <code>list</code> and <code>status</code> keep a registry of factory roots, find every ledger under them (worktrees included) and print one merged table with NAME, KIND, EVENTS, RUNNING, PASSED, FINISHED, ANDON, STATE, HEALTH and LAST (see <a href="fleet.html">Fleet</a>). The fleet learnings queue is being built; <code>fleet watch</code> is planned.</p>
+  <div class="meta"><h2>Fleet</h2><span class="kbd">:ctx</span><span class="status shipped">shipped</span></div>
+  <p>Every factory on the machine, like k9s contexts. This screen is in <code>flywheel factory</code> now: <code>:ctx</code> lists every factory in the fleet, <span class="kbd">Enter</span> switches the whole view to it, and <code>--ctx &lt;name&gt;</code> starts there. The fleet is also on the CLI: <code>flywheel fleet add</code>, <code>list</code> and <code>status</code> keep a registry of factory roots, find every ledger under them (worktrees included) and print one merged table with NAME, KIND, EVENTS, RUNNING, PASSED, FINISHED, ANDON, STATE, HEALTH and LAST (see <a href="fleet.html">Fleet</a>). The fleet learnings queue and <code>fleet watch</code> are shipped too.</p>
   <div class="scroll"><pre class="t"><span class="d">── Fleet[5] ─────────────────────────────────────────────────────────────────────────────────────────────────</span>
   <span class="h">NAME            KIND        RUNNING  PASSED  LANDED/7d  FIRST-PASS  ANDON  STATE                    HEALTH</span>
 <span class="s">  <span class="g">flywheel-main   root              3       1         31         71%      1  running                  2m</span></span>
-  <span class="c">olexa-main2     root              2       0         18         64%      2  running                  4m</span>
-  <span class="m">olexa-perf-394  root              0       0          9         78%      0  FROZEN until 15:00       6m</span>
-  <span class="d">olexa           root              0       0          0          –       0  idle                     none</span>
-  <span class="c">cardputer       root              1       0          4         50%      0  paused: opus until 15:00  9m</span>
+  <span class="c">shop-main2      root              2       0         18         64%      2  running                  4m</span>
+  <span class="m">shop-perf-394   root              0       0          9         78%      0  FROZEN until 15:00       6m</span>
+  <span class="d">shop            root              0       0          0          –       0  idle                     none</span>
+  <span class="c">badge           root              1       0          4         50%      0  paused: opus until 15:00  9m</span>
 
 <span class="crumb">fleet</span>                                                                      <span class="d">registry ~/.config/flywheel/fleet.json</span></pre></div>
 </section>
@@ -301,5 +302,5 @@ lead lead-claude-c60c5d · workers 0/4 · landed today 7 · $18.40
   <p class="meta">The ACTIONS row: keys that act on the unit under the cursor, marks, <code>--readonly</code> and <code>.flywheel/hotkeys.json</code> <span class="status planned">planned</span></p>
 </section>
 
-<p class="foot-note">Example data. Build order on <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>, shipped: k1 layout, k2 navigation and search, k3 unit detail, m1 metrics engine (<code>flywheel stats --metrics</code>), m2 charts, k4 pulse and metrics, k6 feel (instant keys, colours, skins), the freeze and <code>flywheel schedule</code>, and <code>flywheel fleet</code> add, list and status. Building: f2 the fleet learnings queue. Planned: k5 actions, f4 the fleet screen (<code>:ctx</code>), f3 <code>fleet watch</code>.</p>
+<p class="foot-note">Example data. Build order on <a href="https://github.com/suzworx/flywheel/issues/583">#583</a>, shipped: k1 layout, k2 navigation and search, k3 unit detail, m1 metrics engine (<code>flywheel stats --metrics</code>), m2 charts, k4 pulse and metrics, k6 feel (instant keys, colours, skins), the freeze and <code>flywheel schedule</code>, <code>flywheel fleet</code> add, list and status, f2 the fleet learnings queue, f3 <code>fleet watch</code>, and f4 the fleet screen (<code>:ctx</code>). Planned: k5 actions.</p>
 </div>

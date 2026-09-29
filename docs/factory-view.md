@@ -132,6 +132,26 @@ Enter on it only flashes how to list them.
 (`--dir` is then ignored); `--once` and `--json` render it. An unknown name is a usage error (exit 2)
 listing the known names.
 
+## Headless frames
+
+`flywheel factory --keys SEQ --frames` draws the interactive view without a terminal: the same
+screens, keys and default skin as the live view, at `--width` (default 100) by `--height` (default
+30) and at `--now` when given (which also fixes the zone times are shown in). It presses SEQ token by
+token and prints one JSON array, `[{"key": "", "frame": "<ANSI text>"}, {"key": "j", ...}]`: the
+first frame, then one after each token. A token is one character (`j`, `/`, `:`), a named key
+(`<enter>`, `<esc>`, `<tab>`, `<up>`, `<down>`, `<left>`, `<right>`, `<pgup>`, `<pgdn>`, `<home>`,
+`<end>`, `<backspace>`, `<delete>`, `<space>`, `<ctrl-a>` … `<ctrl-z>`) or a quoted run typed one rune
+at a time and drawn once (`"andon"`). An unknown token is a usage error (exit 2), and `--keys`
+without `--frames` is one too.
+
+```sh
+flywheel factory --keys 'j <enter> : "andon" <enter>' --frames --width 100 --height 30 --now 2026-09-27T09:30:00Z
+```
+
+The [live demo](demo.html) is built this way: `scripts/demo-web.sh` runs a real session with the
+offline `sim` adapter, renders the tour with `--frames` and writes `docs/demo/demo.json`;
+`--check` fails when the committed file no longer matches what the CLI draws.
+
 ## History
 
 Every view you open with `:` goes on a stack, and the crumbs show it: `<units> <workers> <andon>`.
