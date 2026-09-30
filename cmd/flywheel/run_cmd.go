@@ -131,6 +131,9 @@ func runDispatch(fs *flag.FlagSet, o *runOptions, task string) (code int, attemp
 		if flywheel.IsNoWorkerSession(err) {
 			return 2, res.Attempt, "no-session"
 		}
+		if flywheel.IsWorkerPolicyRefusal(err) {
+			return 2, res.Attempt, "usage"
+		}
 		if flywheel.IsRuleRefusal(err) {
 			return 6, res.Attempt, "refused"
 		}

@@ -1066,6 +1066,55 @@ func TestConfigBaselineValidate(t *testing.T) {
 	}
 }
 
+// TestConfigValidateWorkerPolicy checks worker_policy.deny validation (issue
+// #692): an empty entry or one with pattern syntax is rejected by name and
+// index and fails LoadConfig; a disallowed_tools list without the git-write
+// core is reported by Validate but still loads.
+func TestConfigValidateWorkerPolicy(t *testing.T) {
+	t.Parallel()
+	base := func(p *WorkerPolicy, w Worker) Config {
+		w.Name, w.Adapter, w.Model = "w", "claude", "m"
+		return Config{Version: 1, Workers: []Worker{w}, WorkerPolicy: p}
+	}
+	ok := base(&WorkerPolicy{Deny: []string{"pio run -t upload", "node scripts/flash.mjs"}}, Worker{})
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid worker_policy: Validate() = %v, want nil", err)
+	}
+	for _, tc := range []struct{ entry, want string }{
+		{"", "worker_policy.deny[1] must not be empty"},
+		{"   ", "worker_policy.deny[1] must not be empty"},
+		{"pio run*", `worker_policy.deny[1] "pio run*" must be a plain command prefix`},
+		{"Bash(make)", `worker_policy.deny[1] "Bash(make)"`},
+		{"make:deploy", `worker_policy.deny[1] "make:deploy"`},
+	} {
+		c := base(&WorkerPolicy{Deny: []string{"make deploy", tc.entry}}, Worker{})
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("entry %q: Validate() = %v, want %q", tc.entry, err, tc.want)
+		}
+		if err := c.validateLoad(); err == nil {
+			t.Errorf("entry %q: validateLoad() = nil, want the load to fail", tc.entry)
+		}
+	}
+
+	custom := base(nil, Worker{DisallowedTools: []string{"Bash(git commit:*)", "Bash(pio:*)"}})
+	err := custom.Validate()
+	want := "workers[0].disallowed_tools replaces the built-in git-write deny list and omits Bash(git push:*), Bash(git reset:*); list the defaults too or use worker_policy.deny"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("custom disallowed_tools: Validate() = %v, want %q", err, want)
+	}
+	dir := t.TempDir()
+	if err := WriteConfig(dir, custom); err != nil {
+		t.Fatalf("WriteConfig(custom disallowed_tools) = %v, want it to write", err)
+	}
+	if _, _, err := LoadConfig(dir); err != nil {
+		t.Errorf("LoadConfig(custom disallowed_tools) = %v, want it to load", err)
+	}
+	full := base(nil, Worker{DisallowedTools: append(slices.Clone(defaultDisallowedTools), "Bash(pio:*)")})
+	if err := full.Validate(); err != nil {
+		t.Errorf("custom list with the defaults: Validate() = %v, want nil", err)
+	}
+}
+
 // TestConfigToolListsJSONRoundTrip checks allowed_tools/disallowed_tools
 // survive a WriteConfig/LoadConfig round trip under their JSON field names
 // (issue #192).
