@@ -305,7 +305,7 @@ func TestLintGateDiffCheck(t *testing.T) {
 		{"bare", "git diff --check", true},
 		{"pathspec after dashdash", "git diff --check -- a.go", true},
 		{"after another command", "go build ./... && git diff --check", true},
-		{"piped", "git diff --check|cat", true},
+		{"piped", "set -o pipefail; git diff --check|cat", true},
 		{"flywheel base", `git diff --check "$FLYWHEEL_BASE"`, false},
 		{"revision", "git diff --check HEAD~1", false},
 		{"no index", "git diff --no-index --check /dev/null x", false},
