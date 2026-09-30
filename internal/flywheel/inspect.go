@@ -245,6 +245,12 @@ func requireReadings(dir, wd, task string, events []Event, tree string) readings
 // requireReadings and ruleT3 share this predicate, so inspect and verify
 // accept exactly the same set of passes.
 func readingsForPass(wd string, events []Event, header BriefHeader, task, tree string, after time.Time) (string, bool, error) {
+	// The latest owns reading of tree wins over an older clean one: markers
+	// found once are never excused by a reading taken before the check (issue
+	// #698).
+	if _, found := markersRefusal(events, task, tree, after); found {
+		return "", false, nil
+	}
 	if allReadings(events, header, task, tree, after) {
 		return "", true, nil
 	}
@@ -283,6 +289,9 @@ func allReadings(events []Event, header BriefHeader, task, tree string, after ti
 // returned unchanged when no other tree qualifies for the issue #218
 // relaxation.
 func readingsRefusal(events []Event, header BriefHeader, task, tree string, after time.Time) RuleRefusal {
+	if r, found := markersRefusal(events, task, tree, after); found {
+		return r
+	}
 	for i := range header.Gates {
 		idx := fmt.Sprintf("%d", i+1)
 		if !hasPassingValidated(events, task, idx, tree, after) {
@@ -314,7 +323,7 @@ func relaxedReadingTree(wd string, events []Event, header BriefHeader, task, tre
 			continue
 		}
 		qualifies := e.Kind == "validated" && e.Reason != "host-blocked" && e.RC != nil && *e.RC == 0 ||
-			e.Kind == "owns_checked" && len(e.Outside) == 0
+			e.Kind == "owns_checked" && ownsReadingClean(e)
 		if qualifies && externalReadingOK(e) && t.After(cands[e.Tree]) {
 			cands[e.Tree] = t
 		}
@@ -437,7 +446,7 @@ func hasCleanOwnsChecked(events []Event, task, tree string, after time.Time) boo
 		if e.Task != task || e.Kind != "owns_checked" || e.Tree != tree {
 			continue
 		}
-		if len(e.Outside) != 0 || !externalReadingOK(e) {
+		if !ownsReadingClean(e) || !externalReadingOK(e) {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(after) {
@@ -445,6 +454,36 @@ func hasCleanOwnsChecked(events []Event, task, tree string, after time.Time) boo
 		}
 	}
 	return false
+}
+
+// ownsReadingClean reports whether an owns_checked event is a clean owns
+// reading: nothing outside owns and no conflict marker (issue #698).
+func ownsReadingClean(e Event) bool {
+	return len(e.Outside) == 0 && len(e.Markers) == 0
+}
+
+// markersRefusal is the T3 refusal for a pass whose latest owns_checked on
+// tree after after found conflict markers, naming the first entries, or
+// ok=false when that reading has none (issue #698).
+func markersRefusal(events []Event, task, tree string, after time.Time) (RuleRefusal, bool) {
+	var markers []string
+	var latest time.Time
+	for _, e := range events {
+		if e.Task != task || e.Kind != "owns_checked" || e.Tree != tree {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(after) && !t.Before(latest) {
+			latest, markers = t, e.Markers
+		}
+	}
+	if len(markers) == 0 {
+		return RuleRefusal{}, false
+	}
+	first := markers
+	if len(first) > 5 {
+		first = first[:5]
+	}
+	return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("the latest owns_checked for tree %s found git conflict markers at %s: remove the markers, then run: flywheel validate %s, and inspect again", tree, strings.Join(first, ", "), task)}, true
 }
 
 // sessionClash reports which worker session collides with sess, or "" when

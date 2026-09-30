@@ -523,6 +523,11 @@ func readingsOutcomeFor(wd string, events []Event, header BriefHeader, task, tre
 	if tree == "" {
 		return readingsViolation, nil
 	}
+	// As readingsForPass: markers on the latest owns reading of tree are never
+	// excused by an older clean one (issue #698).
+	if _, found := markersRefusal(events, task, tree, after); found {
+		return readingsViolation, nil
+	}
 	if allReadings(events, header, task, tree, after) {
 		return readingsOK, nil
 	}

@@ -149,6 +149,9 @@ type Event struct {
 	// inside the unit's owns, sorted by path (issue #130), so a truncated
 	// document is visible in the ledger without re-reading the tree.
 	Files []FileShape `json:"files,omitempty"`
+	// Markers is an owns_checked event's "<path>:<line>" git conflict marker
+	// lines in the changed paths (issue #698); a reading with any is not clean.
+	Markers []string `json:"markers,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git
@@ -1010,9 +1013,7 @@ func ParseEvents(r io.Reader, strict bool) ([]Event, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "<<<<<<<") ||
-			strings.HasPrefix(line, "=======") ||
-			strings.HasPrefix(line, ">>>>>>>") {
+		if isConflictMarkerLine(line) {
 			return nil, fmt.Errorf("unresolved merge conflict at line %d", n)
 		}
 		var e Event

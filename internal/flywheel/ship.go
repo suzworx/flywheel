@@ -533,6 +533,13 @@ func shipGates(r *shipRun) (string, string, error) {
 	if res.Refused != "" {
 		return "", res.Refused, fmt.Errorf("%w: %s", ErrShipGates, res.Refused)
 	}
+	// The merge ship made (shipMergeBase) is re-validated here, before any
+	// push: a conflict marker in the merged tree is a refusal, exit 6 (issue
+	// #698).
+	if len(res.Markers) > 0 {
+		note := "conflict markers: " + strings.Join(res.Markers, ", ")
+		return "", note, &RuleRefusal{Rule: "ship", Fix: fmt.Sprintf("the merged tree of fw/%s holds git conflict markers at %s: remove the markers, re-validate (flywheel validate %s), inspect, then ship again", r.task, strings.Join(res.Markers, ", "), r.task)}
+	}
 	if res.OK() {
 		return "ok", fmt.Sprintf("%d gate(s) passed", len(res.Gates)), nil
 	}
