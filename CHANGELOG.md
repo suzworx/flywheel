@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.50.0](https://github.com/suzworx/flywheel/compare/v0.49.0...v0.50.0) (2026-09-30)
+
+
+### Features
+
+* worker_policy.deny adds project command denies to every adapter's git deny list, never replacing it ([#702](https://github.com/suzworx/flywheel/issues/702)) ([f369345](https://github.com/suzworx/flywheel/commit/f36934528a6b5bbd5c819476db9807e8cf609992)), closes [#692](https://github.com/suzworx/flywheel/issues/692)
+
+
+### Bug Fixes
+
+* flywheel land --correct records a land_corrected event, so a wrong landing is fixed without rewriting the log ([#700](https://github.com/suzworx/flywheel/issues/700)) ([d38989c](https://github.com/suzworx/flywheel/commit/d38989c5befc103d01bd46f297f0f313b09345ee)), closes [#673](https://github.com/suzworx/flywheel/issues/673)
+* owns: none declares a unit that owns no paths, instead of a path named none ([#703](https://github.com/suzworx/flywheel/issues/703)) ([17e74c7](https://github.com/suzworx/flywheel/commit/17e74c750b09f7d6d3c278d74ee1b95f9719e3a9)), closes [#693](https://github.com/suzworx/flywheel/issues/693)
+
 ## [0.49.0](https://github.com/suzworx/flywheel/compare/v0.48.1...v0.49.0) (2026-09-29)
 
 
