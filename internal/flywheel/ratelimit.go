@@ -74,23 +74,47 @@ func rateLimitPaused(events []Event, model string, now time.Time) (until time.Ti
 	return p.Until, ok
 }
 
+// accountWideWindows are the rate-limit windows that belong to the account,
+// not to one model (issue #658): a pause in one of them holds every model
+// dispatched through the same adapter. Any other window (seven_day_opus,
+// seven_day_sonnet, an unknown or empty one) pauses only its own model.
+var accountWideWindows = map[string]bool{
+	"five_hour": true,
+	"seven_day": true,
+}
+
 // ratePause is why and until when a model is paused. Utilization and Window
 // are set only when the pause is the utilization threshold, not a hit limit.
+// Model is the reporting model: set by rateLimitPausedOn, and different from
+// the paused model when an account-wide pause covers it (issue #658).
 type ratePause struct {
 	Until       time.Time
 	Utilization float64
 	Window      string
+	Model       string
+	shared      bool
+	window      string
 }
 
 // reason is " (<n>% of the <window> window used)" for a utilization pause, ""
-// for a hit limit.
+// for a hit limit, and " (<reporter> reported <n>% of the <window> window,
+// account-wide)" when another model's account-wide pause holds this one.
 func (p ratePause) reason() string {
-	if p.Utilization == 0 {
-		return ""
-	}
 	window := p.Window
 	if window == "" {
+		window = p.window
+	}
+	if window == "" {
 		window = "rate-limit"
+	}
+	if p.shared {
+		if p.Utilization == 0 {
+			return fmt.Sprintf(" (%s hit the %s window, account-wide)", p.Model, window)
+		}
+		return fmt.Sprintf(" (%s reported %.0f%% of the %s window, account-wide)", p.Model, p.Utilization*100, window)
+	}
+	if p.Utilization == 0 {
+		return ""
 	}
 	return fmt.Sprintf(" (%.0f%% of the %s window used)", p.Utilization*100, window)
 }
@@ -101,6 +125,13 @@ func (p ratePause) reason() string {
 // limit_reset_at is still ahead. A later finish below the threshold, or the
 // reset passing, releases it.
 func rateLimitPausedAt(events []Event, model string, now time.Time, pauseAt float64) (ratePause, bool) {
+	p, _, ok := modelPause(events, model, now, pauseAt)
+	return p, ok
+}
+
+// modelPause is rateLimitPausedAt with the index of the finished event that
+// holds the pause; a hit limit keeps that finish's limit_window in window.
+func modelPause(events []Event, model string, now time.Time, pauseAt float64) (ratePause, int, bool) {
 	latest := true
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
@@ -111,36 +142,132 @@ func rateLimitPausedAt(events []Event, model string, now time.Time, pauseAt floa
 			latest = false
 			if e.ResetAt == "" && pauseAt > 0 && e.LimitUtilization >= pauseAt && e.LimitResetAt != "" {
 				if at, err := time.Parse(time.RFC3339, e.LimitResetAt); err == nil && now.Before(at) {
-					return ratePause{Until: at, Utilization: e.LimitUtilization, Window: e.LimitWindow}, true
+					return ratePause{Until: at, Utilization: e.LimitUtilization, Window: e.LimitWindow}, i, true
 				}
 			}
 		}
 		if e.Reason == "stop" {
-			return ratePause{}, false
+			return ratePause{}, -1, false
 		}
 		if e.ResetAt == "" {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, e.ResetAt)
 		if err != nil || !now.Before(at) {
-			return ratePause{}, false
+			return ratePause{}, -1, false
 		}
-		return ratePause{Until: at}, true
+		return ratePause{Until: at, window: e.LimitWindow}, i, true
 	}
-	return ratePause{}, false
+	return ratePause{}, -1, false
 }
 
-// pausedModels lists every model in events that rateLimitPausedAt holds at
-// now, with its pause, in first-seen order.
-func pausedModels(events []Event, now time.Time, pauseAt float64) (models []string, pauses map[string]ratePause) {
-	pauses = map[string]ratePause{}
-	seen := map[string]bool{}
+// finishAdapters is, per event index, the adapter of each finished event:
+// the Adapter of its task's latest dispatched event before it, else
+// adapterFor(model) (nil: ""). Other events get "".
+func finishAdapters(events []Event, adapterFor func(string) string) []string {
+	out := make([]string, len(events))
+	byTask := map[string]string{}
+	for i, e := range events {
+		switch e.Kind {
+		case "dispatched":
+			byTask[e.Task] = e.Adapter
+		case "finished":
+			out[i] = byTask[e.Task]
+			if out[i] == "" && adapterFor != nil {
+				out[i] = adapterFor(e.Model)
+			}
+		}
+	}
+	return out
+}
+
+// modelAdapter is model's adapter: the Adapter of its latest dispatched
+// event, else adapterFor(model) (nil: "").
+func modelAdapter(events []Event, model string, adapterFor func(string) string) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		if e := events[i]; e.Kind == "dispatched" && e.Model == model && e.Adapter != "" {
+			return e.Adapter
+		}
+	}
+	if adapterFor != nil {
+		return adapterFor(model)
+	}
+	return ""
+}
+
+// rateLimitPausedFor is rateLimitPausedOn with model's adapter from
+// modelAdapter.
+func rateLimitPausedFor(events []Event, model string, now time.Time, pauseAt float64, adapterFor func(string) string) (ratePause, bool) {
+	return pausedOn(events, finishAdapters(events, adapterFor), model, modelAdapter(events, model, adapterFor), now, pauseAt)
+}
+
+// rateLimitPausedOn reports whether model, dispatched through adapter, is
+// paused at now (issue #658): by its own pause (rateLimitPausedAt), or by
+// another model's pause whose finish is on the same adapter and whose window
+// is account-wide (accountWideWindows). An account-wide pause is released by
+// a later clean stop of any model on its adapter, as well as by the reset
+// passing. An empty adapter shares no pause. adapterFor resolves the adapter
+// of a finish whose task has no dispatch in events.
+func rateLimitPausedOn(events []Event, model, adapter string, now time.Time, pauseAt float64, adapterFor func(string) string) (ratePause, bool) {
+	return pausedOn(events, finishAdapters(events, adapterFor), model, adapter, now, pauseAt)
+}
+
+// pausedOn is rateLimitPausedOn with the finish adapters precomputed.
+func pausedOn(events []Event, fa []string, model, adapter string, now time.Time, pauseAt float64) (ratePause, bool) {
+	held := func(m string) (ratePause, bool) {
+		p, i, ok := modelPause(events, m, now, pauseAt)
+		p.Model = m
+		if !ok || !accountWideWindows[events[i].LimitWindow] || fa[i] == "" {
+			return p, ok && m == model
+		}
+		for j := i + 1; j < len(events); j++ {
+			if e := events[j]; e.Kind == "finished" && e.Reason == "stop" && fa[j] == fa[i] {
+				return p, false
+			}
+		}
+		return p, m == model || fa[i] == adapter
+	}
+	if p, ok := held(model); ok {
+		return p, true
+	}
+	var best ratePause
+	found := false
+	seen := map[string]bool{model: true}
 	for _, e := range events {
-		if e.Kind != "finished" || (e.ResetAt == "" && e.LimitResetAt == "") || e.Model == "" || seen[e.Model] {
+		if e.Kind != "finished" || e.Model == "" || seen[e.Model] || adapter == "" {
 			continue
 		}
 		seen[e.Model] = true
-		if p, ok := rateLimitPausedAt(events, e.Model, now, pauseAt); ok {
+		if p, ok := held(e.Model); ok && (!found || p.Until.After(best.Until)) {
+			p.shared = true
+			best, found = p, true
+		}
+	}
+	return best, found
+}
+
+// pausedModels lists every model in events that rateLimitPausedFor holds at
+// now, with its pause, in first-seen order; adapters come from the
+// dispatched events only. Callers holding the config use pausedModelsFor.
+func pausedModels(events []Event, now time.Time, pauseAt float64) (models []string, pauses map[string]ratePause) {
+	return pausedModelsFor(events, now, pauseAt, nil)
+}
+
+// pausedModelsFor is pausedModels with adapterFor for models without a
+// dispatch: every model of a finish carrying a reset or of a dispatch is a
+// candidate, so an account-wide pause lists every model on its adapter
+// (issue #658).
+func pausedModelsFor(events []Event, now time.Time, pauseAt float64, adapterFor func(string) string) (models []string, pauses map[string]ratePause) {
+	pauses = map[string]ratePause{}
+	seen := map[string]bool{}
+	fa := finishAdapters(events, adapterFor)
+	for _, e := range events {
+		limited := e.Kind == "finished" && (e.ResetAt != "" || e.LimitResetAt != "")
+		if (!limited && e.Kind != "dispatched") || e.Model == "" || seen[e.Model] {
+			continue
+		}
+		seen[e.Model] = true
+		if p, ok := pausedOn(events, fa, e.Model, modelAdapter(events, e.Model, adapterFor), now, pauseAt); ok {
 			models = append(models, e.Model)
 			pauses[e.Model] = p
 		}

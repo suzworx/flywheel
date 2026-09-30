@@ -541,9 +541,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	// A rate limit belongs to the subscription: while its reset is pending, no
 	// fresh attempt goes to the model (issue #383). A resume is exempt, since
-	// RunResumingLimits resumes only after the reset.
+	// RunResumingLimits resumes only after the reset. The model dispatches
+	// through worker.Adapter, so another model's account-wide pause on that
+	// adapter holds it too, --model overrides and fallbacks included (issue
+	// #658).
 	if !o.Resume {
-		if p, paused := rateLimitPausedAt(events, model, now(), cfg.Limits.RateLimitPauseThreshold()); paused {
+		if p, paused := rateLimitPausedOn(events, model, worker.Adapter, now(), cfg.Limits.RateLimitPauseThreshold(), configAdapter(cfg)); paused {
 			return Result{}, &RuleRefusal{
 				Rule: "rate-limit",
 				Fix:  fmt.Sprintf("%s is paused by a rate limit until %s%s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(p.Until), p.reason()),
