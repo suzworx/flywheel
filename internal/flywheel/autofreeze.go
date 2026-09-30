@@ -10,8 +10,9 @@ import (
 
 // TokensExhausted reports whether the factory has no tokens left at now
 // (issue #572): at least one worker is configured and every configured
-// worker's model and fallback models is paused by a rate limit (pausedModels
-// at limits.rate_limit_pause_at). until is the earliest reset among them and
+// worker's model and fallback models is paused by a rate limit (its own, or an
+// account-wide one on its adapter, issue #658, at limits.rate_limit_pause_at).
+// until is the earliest reset among them and
 // models the paused models, in configuration order.
 func TokensExhausted(events []Event, cfg Config, now time.Time) (exhausted bool, until time.Time, models []string) {
 	var want []string
@@ -25,9 +26,12 @@ func TokensExhausted(events []Event, cfg Config, now time.Time) (exhausted bool,
 	if len(want) == 0 {
 		return false, time.Time{}, nil
 	}
-	_, pauses := pausedModels(events, now, cfg.Limits.RateLimitPauseThreshold())
+	// A model with no event of its own is paused too when an account-wide
+	// pause holds its configured adapter (issue #658).
+	adapterFor := configAdapter(cfg)
+	fa := finishAdapters(events, adapterFor)
 	for _, m := range want {
-		p, ok := pauses[m]
+		p, ok := pausedOn(events, fa, m, modelAdapter(events, m, adapterFor), now, cfg.Limits.RateLimitPauseThreshold())
 		if !ok {
 			return false, time.Time{}, nil
 		}
@@ -36,6 +40,19 @@ func TokensExhausted(events []Event, cfg Config, now time.Time) (exhausted bool,
 		}
 	}
 	return true, until, want
+}
+
+// configAdapter maps a model to the adapter of the first configured worker
+// whose model or fallback model it is, "" for an unconfigured model.
+func configAdapter(cfg Config) func(string) string {
+	return func(model string) string {
+		for _, w := range cfg.Workers {
+			if w.Model == model || slices.Contains(fallbackModels(w), model) {
+				return w.Adapter
+			}
+		}
+		return ""
+	}
 }
 
 // fallbackModels is w's fallback models, in order.

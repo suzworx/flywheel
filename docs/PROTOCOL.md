@@ -325,7 +325,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `limit_utilization` at or above `limits.rate_limit_pause_at` (default 0.95; negative disables) and
   `limit_reset_at` is ahead, the model is paused until then exactly as for a hit limit, the refusal
   naming `(<n>% of the <window> window used)` and the andon `paused until HH:MM (<n>% used)`; a later
-  finish below the threshold, or the reset passing, releases it, issue #417; `abandoned-job` — a clean
+  finish below the threshold, or the reset passing, releases it, issue #417. A pause whose window is
+  account-wide (`five_hour`, `seven_day`) holds every model dispatched through the same adapter,
+  named `(<reporter> reported <n>% of the <window> window, account-wide)`, until the reset or a later
+  clean `stop` of any model on that adapter; a model-scoped window (`seven_day_opus`, ...) holds only
+  its model, issue #658; `abandoned-job` — a clean
   stop that left a background shell it started (claude Bash `run_in_background`, whose
   tool_result reports `running in background with ID: <id>` or `agentId: <id>`) never collected
   — no later tool call's input names that id (`BashOutput`, `KillShell`, a `Read` of its output

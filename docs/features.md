@@ -195,7 +195,7 @@ A worker cut off by a provider rate limit finishes `rate-limited` (exit 4, no si
 `limits.rate_limit_retries` is how many times it resumes (default 3; 0 disables).
 When `flywheel run` has exited, the controller resumes the unit itself once the reset passes (`controller.auto_resume`, default on; `controller.notify` is a shell command run per resumed unit), within the same retry cap; `flywheel supervise --resume-limited` is the one-shot form.
 `limits.rate_limit_max_wait` is the longest it waits for a reset, a Go duration (default `5h`).
-`limits.rate_limit_pause_at` pauses a claude model before the limit hits, once its stream reports that share of the window used (default `0.95`; negative disables), until the exact reset the stream gave.
+`limits.rate_limit_pause_at` pauses a claude model before the limit hits, once its stream reports that share of the window used (default `0.95`; negative disables), until the exact reset the stream gave. An account-wide window (`five_hour`, `seven_day`) pauses every model on the same adapter; a model-scoped one (`seven_day_opus`) only its model (issue #658).
 Until the reset the whole model is paused: `flywheel run` refuses new units on it (exit 6, rule `rate-limit`), `flywheel next` HOLDs, and the floor shows `rate-limited until HH:MM` with a `model/<model>` andon entry.
 
 An abandoned attempt — lease expired, or no lease and its run file idle longer than `limits.lost_after` (a Go duration, default `24h`) — is marked `lost` by `flywheel run`, `flywheel next` and the controller, so it never blocks a dispatch as an owns or exclusive collision.
