@@ -1,6 +1,26 @@
 package flywheel
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
+
+// attributeFileDenial names why a denied file write failed when the cause is
+// Claude Code's .claude/ protection (issue #696): an entry "<tool> <path>"
+// whose tool is Write, Edit, MultiEdit or NotebookEdit and whose path (`\`
+// read as `/`) has a segment exactly ".claude" becomes
+// "<entry> (.claude/ is protected by Claude Code; own a staging path)". Any
+// other entry is returned unchanged.
+func attributeFileDenial(entry string) string {
+	tool, p, ok := strings.Cut(entry, " ")
+	if !ok || !slices.Contains([]string{"Write", "Edit", "MultiEdit", "NotebookEdit"}, tool) {
+		return entry
+	}
+	if !slices.Contains(strings.Split(strings.ReplaceAll(p, `\`, "/"), "/"), ".claude") {
+		return entry
+	}
+	return entry + " (.claude/ is protected by Claude Code; own a staging path)"
+}
 
 // attributeDenial names the deny pattern and the command segment that matched
 // a denied Bash call (issue #497): Claude's refusal names only the whole
