@@ -90,12 +90,9 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 	if err != nil {
 		return err
 	}
-	landed := ""
-	for _, e := range events {
-		if e.Task == task && e.Kind == "landed" {
-			landed = e.Commit
-		}
-	}
+	// The effective landed commit: a land_corrected event supersedes the
+	// landed one (issue #673), so re-landing the corrected commit is a no-op.
+	landed, _, _ := landedCommit(events, task)
 	if landed != "" {
 		if advance == nil && landed == commit {
 			return fmt.Errorf("%s already landed %s: %w", task, commit, ErrAlreadyLanded)

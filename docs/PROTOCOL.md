@@ -47,6 +47,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`rebased`](#rebased)
   - [`recovered`](#recovered)
   - [`landed`](#landed)
+  - [`land_corrected`](#land_corrected)
   - [`excepted`](#excepted)
   - [`allow_untriaged`](#allow_untriaged)
   - [`audited`](#audited)
@@ -918,6 +919,25 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   always in that order), so two concurrent landings of one task can never both pass the
   already-landed check, and no learning can change the task's signals mid-decision.
 
+### `land_corrected`
+- Written by: the CLI only, via `flywheel land <task> --correct <sha> --reason TEXT --session S`
+  (issue #673): a landing recorded with the wrong commit is corrected by a new event, never by
+  rewriting the `landed` one (the log is append-only) and never by a `note`.
+- Carries: `task`, `commit` (the corrected commit), `tree` (its landed tree, as `landed` records),
+  `note` (the reason), `session` (the lead). `Validate` requires the task, the note, the session and
+  a valid commit on every write path.
+- Effect: no status change (the status stays `landed`). The task's effective landed commit is the
+  last `landed` or `land_corrected` commit in log order (`landedCommit`); the earlier ones are
+  superseded, and `flywheel explain` lists them. Re-landing the effective commit is a no-op; any
+  other commit is still refused (T5). `CorrectLanding` takes `.flywheel/dispatch.lock` and refuses
+  (exit 6, rule T5) when the task has no `landed` event (nothing to correct; land it first), when the
+  commit is malformed or already the effective one, or when the `--commit` checks of `landed` refuse it
+  (off the integration branch, touching none of the unit's files; exit 8 when it does not resolve),
+  and (exit 6, rule T4) when the session is a worker session for the task. `--correct` cannot be
+  combined with `--commit`, `--merge`, `--by-lead`, `--exception`, `--allow-untriaged`, `--onto` or
+  `--note`, and needs `--reason` and `--session` (exit 2). Verify's T5 fails a `land_corrected`
+  event without an earlier `landed` event, reason or session; T4 fails one from a worker session.
+
 ### `excepted`
 - Written by: the CLI only, via `flywheel land <task> --commit <sha> --exception TEXT --session S`.
 - Carries: `task`, `commit` (the commit the evidence covers), `session` (the lead), `note` (the
@@ -1364,15 +1384,18 @@ gates (exit 5) without touching the log's legality.
   still runs on the ledger's own evidence (it needs no git): a complete reading passes T3, and an
   incomplete one is **inconclusive** (exit 8) rather than a violation — a verifier that cannot see
   the tree must not claim a violation it has not established.
-- **T4 — no self-inspection.** An `inspected` or `excepted` event's `session` must never be a session
-  that wrote that task's `started`, `finished`, `dispatched`, `report`, or `worker_plan` event.
+- **T4 — no self-inspection.** An `inspected`, `excepted` or `land_corrected` event's `session` must
+  never be a session that wrote that task's `started`, `finished`, `dispatched`, `report`, or
+  `worker_plan` event.
   `InspectTask` checks this **before** T3, so a worker-session inspection is refused as T4 even when
   its readings are also missing.
 - **T5 — no landing without a pass.** A `landed` event needs an earlier `inspected pass` or a
   recorded `excepted` event for the same task. `LandTask` additionally refuses to land a task whose
   derived status is not `passed` (unless an exception is provided), and refuses a second `landed`
-  event for the same task under a different commit than the one already recorded (the same commit is
-  a silent no-op, exit 0). Land also verifies the `--commit` it records (issue #673): the commit
+  event for the same task under a different commit than the effective one (the last `landed` or
+  `land_corrected` commit; the same commit is a silent no-op, exit 0). A wrong landing is corrected
+  by `flywheel land <task> --correct <sha> --reason TEXT --session S` (see `land_corrected`); a
+  `land_corrected` event needs an earlier `landed` event, a reason and a session. Land also verifies the `--commit` it records (issue #673): the commit
   must resolve, be an ancestor of an integration ref (any remote's `<integration.branch>`, e.g.
   `origin/main` or `upstream/main`, or the local branch; unconfigured, any remote's or the local
   `main` or `master`), and change at least one
@@ -1576,6 +1599,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
+| `flywheel land <task> --correct <sha> --reason TEXT --session S` | `land_corrected` recorded | **6** — `RuleRefusal` naming T5 (no landed event, the commit is already the effective one, or it fails land's commit checks) or T4 (a worker session) | 8 inconclusive (the commit does not resolve: run `git fetch`), 2 usage (a conflicting flag, or no --reason or --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **6** suspended (a `flywheel suspend --stop` stopped the worker, issue #572); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
 `flywheel run`'s own codes (3, 4, 7, and 6 for `suspended`) are not part of the repo-wide list: they are
