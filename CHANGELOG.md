@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.52.0](https://github.com/suzworx/flywheel/compare/v0.51.0...v0.52.0) (2026-09-30)
+
+
+### Features
+
+* lint warns on a gate whose exit status is a filter's, not the checked command's ([#708](https://github.com/suzworx/flywheel/issues/708)) ([3c3151f](https://github.com/suzworx/flywheel/commit/3c3151fa929aa819594da52da85ed259e5d250c9)), closes [#704](https://github.com/suzworx/flywheel/issues/704)
+
+
+### Bug Fixes
+
+* an account-wide rate-limit window (five_hour, seven_day) pauses every model on the adapter ([#709](https://github.com/suzworx/flywheel/issues/709)) ([5d0b820](https://github.com/suzworx/flywheel/commit/5d0b820a03d800506eefdb00486796bb8c84bc29)), closes [#658](https://github.com/suzworx/flywheel/issues/658)
+
 ## [0.51.0](https://github.com/suzworx/flywheel/compare/v0.50.0...v0.51.0) (2026-09-30)
 
 
