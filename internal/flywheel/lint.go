@@ -103,7 +103,49 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 			res.Warnings = append(res.Warnings, w)
 		}
 	}
+	// .claude/ owns (issue #696): the worker is resolved as Run resolves it
+	// without --worker, the default replaced by the product line's worker.
+	worker := cfg.DefaultWorker()
+	if line, ok, lerr := cfg.LineFor(header); lerr == nil && ok {
+		if lw, found := cfg.Worker(line.Worker); found {
+			worker = lw
+		}
+	}
+	if p := claudeDirProblem(worker, header.Owns); p != "" {
+		res.Problems = append(res.Problems, p)
+	}
 	return res, nil
+}
+
+// claudeDirOwns returns, in order, the owns entries (patterns too) any of
+// whose slash-separated path segments is exactly ".claude", after normalising
+// `\` to `/` (issue #696). Negated entries ("!...") never count.
+func claudeDirOwns(owns []string) []string {
+	var out []string
+	for _, o := range owns {
+		if strings.HasPrefix(o, "!") {
+			continue
+		}
+		if slices.Contains(strings.Split(strings.ReplaceAll(o, `\`, "/"), "/"), ".claude") {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// claudeDirProblem names the owns entries under .claude/ when w is a claude
+// worker (issue #696): Claude Code protects .claude/, so every Write or Edit
+// there is denied, even with bypassPermissions. Empty means no problem. Lint
+// reports it as a problem; Run refuses with rule claude-dir.
+func claudeDirProblem(w Worker, owns []string) string {
+	if w.Adapter != "claude" {
+		return ""
+	}
+	hits := claudeDirOwns(owns)
+	if len(hits) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("owns %s under .claude/: worker %q (claude) cannot write there (Claude Code protects .claude/, even with bypassPermissions); own a staging path (e.g. staging/claude/...) and let the lead move the files after inspection, or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
 }
 
 // webResearchWords are the brief phrases that ask for web research (issue

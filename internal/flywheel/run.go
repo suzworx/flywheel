@@ -310,7 +310,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// the lock through it starved every other dispatch on the repository.
 	// They read the log without the lock; under it the prompt is read again
 	// and must be the bytes they checked.
-	checkedSrc, checkedPrompt, err := preDispatchChecks(dir, o)
+	checkedSrc, checkedPrompt, err := preDispatchChecks(dir, o, worker)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1723,13 +1723,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// the finished event. A clean stop that wrote nothing records no signal
 	// (an untriaged signal blocks landing, and some units legitimately write
 	// nothing); it prints a line, and the floor shows it as no-writes. A Bash
-	// denial names the deny pattern and the segment it matched (issue #497).
+	// denial names the deny pattern and the segment it matched (issue #497); a
+	// denied write under .claude/ names Claude Code's protection (issue #696).
 	stopSignal, stopLine := "", ""
 	if reason == "stop" {
 		if len(denials) > 0 {
 			named := make([]string, len(denials))
 			for i, d := range denials {
-				named[i] = d
+				named[i] = attributeFileDenial(d)
 				if cmd, ok := strings.CutPrefix(d, "Bash"+bashDenialSep); ok {
 					named[i] = attributeDenial(cmd, req.DisallowedTools)
 				}
@@ -1996,10 +1997,13 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // not run preflight: it measures the deliverable, not capacity. Gate commands
 // (issue #662): a gate the attempt will be measured with (a correction's, else
 // the base brief's, as AttemptBrief merges them) whose command word is not a
-// command refuses with rule gate-command. A task with no
+// command refuses with rule gate-command. Owns under .claude/ (issue #696,
+// the attempt's owns merged the same way) refuse with rule claude-dir when w,
+// the resolved worker, is a claude worker: Claude Code denies every write
+// there. A task with no
 // planned brief or an unreadable prompt checks nothing and returns "": Run's
 // own checks under the lock refuse it with today's error.
-func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err error) {
+func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt []byte, err error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return "", nil, err
@@ -2020,7 +2024,7 @@ func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err
 	if perr != nil {
 		return src, b, nil
 	}
-	needs, pre, gates := ph.NeedsEnv, ph.Preflight, ph.Gates
+	needs, pre, gates, owns := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns
 	if o.Resume || o.DeltaPath != "" {
 		var baseHeader BriefHeader
 		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
@@ -2032,8 +2036,11 @@ func preDispatchChecks(dir string, o RunOptions) (src string, prompt []byte, err
 		// merge as if this prompt were already dispatched (issue #662).
 		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
 		if h, _, aerr := AttemptBrief(dir, probe, o.Task); aerr == nil {
-			gates = h.Gates
+			gates, owns = h.Gates, h.Owns
 		}
+	}
+	if fix := claudeDirProblem(w, owns); fix != "" {
+		return "", nil, &RuleRefusal{Rule: "claude-dir", Fix: fix}
 	}
 	if r := needsEnvRefusal(needs); r != nil {
 		return "", nil, r
