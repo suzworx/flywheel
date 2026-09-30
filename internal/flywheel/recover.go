@@ -326,14 +326,21 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 		}
 		pending = append(pending, i)
 	}
-	// events, obs and cfg are only read; world is the one shared mutable
-	// state. Each result lands at its own index, so the order is the ledger's.
+	// Each unit's own events, indexed once (issue #628): the per-unit reads
+	// that filter by task scan only these, not the whole ledger per unit.
+	byTask := map[string][]Event{}
+	for _, e := range events {
+		byTask[e.Task] = append(byTask[e.Task], e)
+	}
+	// events, byTask, obs and cfg are only read; world is the one shared
+	// mutable state. Each result lands at its own index, so the order is the
+	// ledger's.
 	next := make(chan int)
 	var wg sync.WaitGroup
 	for range min(runtime.GOMAXPROCS(0), 8, len(pending)) {
 		wg.Go(func() {
 			for i := range next {
-				rows[i], facts[i] = recoverTask(dir, state.Tasks[i], events, obs, cfg, now, world)
+				rows[i], facts[i] = recoverTask(dir, state.Tasks[i], events, byTask[state.Tasks[i].ID], obs, cfg, now, world)
 			}
 		})
 	}
@@ -361,8 +368,10 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 }
 
 // recoverTask measures one unit's world and returns its report row (Next
-// unset) and the facts nextAction decides from.
-func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Config, now time.Time, world *recoverWorld) (RecoverTask, recoverFacts) {
+// unset) and the facts nextAction decides from. own is the unit's events in
+// ledger order; events, the whole ledger, is read only by what spans units
+// (a model's rate-limit pause, the landed units a stacked base squashed into).
+func recoverTask(dir string, ts TaskState, events, own []Event, obs Observed, cfg Config, now time.Time, world *recoverWorld) (RecoverTask, recoverFacts) {
 	id, att := ts.ID, ts.Attempt
 	t := RecoverTask{Task: id, Status: ts.Status, Attempt: att, Model: ts.Model, Lease: "none", RunFile: runFileState(dir, id, att)}
 	f := recoverFacts{Task: id, Status: ts.Status, Attempt: att}
@@ -374,7 +383,7 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 			}
 		}
 	}
-	if reason, evidence, ok := lostEvidence(ts, events, obs, PolicyFromConfig(cfg), now); ok {
+	if reason, evidence, ok := lostEvidence(ts, own, obs, PolicyFromConfig(cfg), now); ok {
 		f.Lost = reason + ": " + evidence
 	}
 	if p, ok := rateLimitPausedAt(events, ts.Model, now, cfg.Limits.RateLimitPauseThreshold()); ok && ts.Model != "" {
@@ -388,9 +397,9 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 		}
 	}
 	var fin *Event
-	for i := range events {
-		if e := events[i]; e.Task == id && e.Kind == "finished" && e.Attempt == att {
-			fin = &events[i]
+	for i := range own {
+		if e := own[i]; e.Task == id && e.Kind == "finished" && e.Attempt == att {
+			fin = &own[i]
 		}
 	}
 	if fin != nil {
@@ -399,20 +408,20 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 	if abs, err := filepath.Abs(dir); err == nil {
 		if wt := filepath.Join(abs, ".flywheel", "worktrees", id); dirExists(wt) {
 			t.Worktree = wt
-		} else if rw := recordedWorkdir(events, id); rw != "" && !samePath(rw, abs) {
+		} else if rw := recordedWorkdir(own, id); rw != "" && !samePath(rw, abs) {
 			t.Worktree = rw
 		}
 	}
 	if t.Worktree != "" && ts.Status != "landed" {
-		worldChecks(&t, &f, fin, events)
+		worldChecks(&t, &f, fin, own)
 	}
 	if ts.Status != "landed" {
-		f.NeedsOwner = needsOwnerFindings(dir, events, id)
+		f.NeedsOwner = needsOwnerFindings(dir, own, id)
 	}
 	// nextAction reads the reading facts only for a finished unit: any other
 	// status returns before them, so they cost no git reads (issue #628).
 	if ts.Status == "finished" && fin != nil && fin.Reason == "stop" {
-		oh, ot, tree, _ := latestReading(events, id, "owns_checked", att)
+		oh, ot, tree, _ := latestReading(own, id, "owns_checked", att)
 		ft, _ := time.Parse(time.RFC3339Nano, fin.TS)
 		f.HaveReading = oh && ot.After(ft)
 		wd := t.Worktree
@@ -424,9 +433,9 @@ func recoverTask(dir string, ts TaskState, events []Event, obs Observed, cfg Con
 				f.TreeChanged = true
 			}
 		}
-		f.InspectReady = inspectionReady(events, id, att)
-		if panel := panelFor(events, id, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(events, id, cfg.ReviewRequired()) {
-			f.PanelPending = panelIncomplete(VerdictMatrix(events, id, tree, panel), panel)
+		f.InspectReady = inspectionReady(own, id, att)
+		if panel := panelFor(own, id, tree, cfg.PanelDimensions()); f.InspectReady && len(panel) > 0 && panelApplies(own, id, cfg.ReviewRequired()) {
+			f.PanelPending = panelIncomplete(VerdictMatrix(own, id, tree, panel), panel)
 		}
 	}
 	return t, f
