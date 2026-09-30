@@ -145,6 +145,12 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("validate %s rebased onto %s: %w", task, onto, err)
 	}
+	// A merge flywheel made (landConflict) or its rebase is re-validated
+	// here, so a conflict marker left in the merged tree refuses the landing
+	// before the branch moves (issue #698).
+	if len(validation.Markers) > 0 {
+		return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("the tree rebased or merged onto %s in %s holds git conflict markers at %s: remove the markers, re-validate (flywheel validate %s), inspect, then land again", onto, workdir, strings.Join(validation.Markers, ", "), task)}
+	}
 	if !validation.OK() {
 		return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("gates fail after rebase onto %s (the branch in %s stays rebased): flywheel explain %s", onto, workdir, task)}
 	}

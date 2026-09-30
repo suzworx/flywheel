@@ -730,6 +730,46 @@ func TestLandMergeOntoMustBeABranch(t *testing.T) {
 	}
 }
 
+// TestLandMergeMarkerRefused: a landing conflict merge committed with its
+// markers still in (CRLF, as a resolver splitting on LF would leave it) is
+// re-validated by land --merge and refused naming file:line, before main
+// moves (issue #698).
+func TestLandMergeMarkerRefused(t *testing.T) {
+	t.Parallel()
+	dir, wt := landMergeSetup(t)
+	fork := git(t, dir, []string{"merge-base", "HEAD", "fw/T1"})
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:01:30Z", Task: "T1", Kind: "rebased", Attempt: "r1", Base: fork, Note: "record the fork as the base"}); err != nil {
+		t.Fatalf("append rebased: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "main feature"})
+	if _, err := LandMerge("T1", LandMergeOptions{Dir: dir}); !IsRuleRefusal(err) {
+		t.Fatalf("LandMerge() error = %v, want the conflict refusal", err)
+	}
+	b, err := os.ReadFile(filepath.Join(wt, "feature.go"))
+	if err != nil || !bytes.Contains(b, []byte("<<<<<<<")) {
+		t.Fatalf("feature.go holds no markers (%v):\n%s", err, b)
+	}
+	crlf := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n", "\r\n")
+	if err := os.WriteFile(filepath.Join(wt, "feature.go"), []byte(crlf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, []string{"add", "-A"})
+	git(t, wt, []string{"commit", "--no-edit"})
+	before := git(t, dir, []string{"rev-parse", "HEAD"})
+	_, err = LandMerge("T1", LandMergeOptions{Dir: dir})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "land" || !strings.Contains(r.Fix, "feature.go:1") || !strings.Contains(r.Fix, "remove the markers") {
+		t.Fatalf("LandMerge() error = %v, want a land refusal naming feature.go:1 and the fix", err)
+	}
+	if after := git(t, dir, []string{"rev-parse", "HEAD"}); after != before {
+		t.Errorf("main moved from %s to %s past a tree with markers", before, after)
+	}
+}
+
 // landRepo is initRepo plus a repo-local test identity: LandMerge runs plain
 // git (rebase, merge) that commits, and CI machines have no global identity.
 func landRepo(t *testing.T, dir string) {

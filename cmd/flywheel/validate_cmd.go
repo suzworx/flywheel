@@ -167,6 +167,14 @@ func runValidate(args []string) {
 		}
 		fmt.Printf("%s owns: warning: %d owned path(s) are git-ignored and will never be committed: %s\n", task, n, shown)
 	}
+	// A committed conflict marker fails the pass (issue #698), exit 5 below.
+	if len(res.Markers) > 0 {
+		fmt.Printf("%s conflict markers:\n", task)
+		for _, m := range res.Markers {
+			fmt.Printf("  %s\n", m)
+		}
+		fmt.Printf("%s conflict markers: remove them, then run flywheel validate %s again\n", task, task)
+	}
 	if res.OK() {
 		os.Exit(0)
 	}

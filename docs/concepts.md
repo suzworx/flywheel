@@ -48,6 +48,9 @@ Pre-existing dirty files the unit did not touch are baselined — excused becaus
 already dirty at dispatch. An outside path whose bytes differ from the base only in line endings
 or whitespace still fails, but validate labels it with an `owns: hint:` line and the
 `git checkout <base> -- <paths>` that restores it, so a real stray edit stands out.
+Validate also fails (exit 5) when any changed file, owned or not, still holds a git conflict
+marker line (`<<<<<<<`, `=======`, `>>>>>>>`, LF or CRLF): it lists them as `path:line` under
+`conflict markers:`, and inspect, `land --merge` and `ship` refuse that tree too.
 
 `owns:` exists so two workers never fight over one file: units run in parallel only when their
 `owns:` sets are disjoint, and the boundary is what makes "you edited a file you were not given"
