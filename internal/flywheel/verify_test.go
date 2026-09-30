@@ -1845,3 +1845,56 @@ func TestVerifyW1Withdrawn(t *testing.T) {
 		})
 	}
 }
+
+// TestRuleT5LandCorrected (issue #673): a land_corrected event passes T5 only
+// after an earlier landed event and with a reason and a session.
+func TestRuleT5LandCorrected(t *testing.T) {
+	t.Parallel()
+	pass := []Event{
+		{TS: "2026-09-29T10:00:00Z", Task: "U", Kind: "inspected", Verdict: "pass", Session: "lead"},
+		{TS: "2026-09-29T10:01:00Z", Task: "U", Kind: "landed", Commit: "aaaaaaa"},
+	}
+	corr := Event{TS: "2026-09-29T10:02:00Z", Task: "U", Kind: "land_corrected", Commit: "bbbbbbb", Note: "wrong PR", Session: "lead"}
+	for _, tc := range []struct {
+		name   string
+		events []Event
+		fail   string
+	}{
+		{"after a landing", append(append([]Event{}, pass...), corr), ""},
+		{"without a landing", []Event{pass[0], corr}, "no earlier landed event"},
+		{"before the landing", []Event{pass[0], corr, pass[1]}, "no earlier landed event"},
+		{"without a session", append(append([]Event{}, pass...), Event{TS: corr.TS, Task: "U", Kind: "land_corrected", Commit: "bbbbbbb", Note: "n"}), "lacks a reason or a session"},
+	} {
+		items := ruleT5("U", tc.events)
+		failed := ""
+		for _, it := range items {
+			if !it.Pass {
+				failed += it.Reason
+			}
+		}
+		if tc.fail == "" && failed != "" || tc.fail != "" && !strings.Contains(failed, tc.fail) {
+			t.Errorf("%s: T5 failures %q, want %q", tc.name, failed, tc.fail)
+		}
+	}
+}
+
+// TestRuleT4LandCorrectedWorkerSession (issue #673): a correction from a
+// worker session fails T4; one from the lead passes.
+func TestRuleT4LandCorrectedWorkerSession(t *testing.T) {
+	t.Parallel()
+	events := []Event{
+		{Task: "U", Kind: "started", Attempt: "r1", Session: "w1"},
+		{Task: "U", Kind: "landed", Commit: "aaaaaaa"},
+		{Task: "U", Kind: "land_corrected", Commit: "bbbbbbb", Note: "n", Session: "lead"},
+	}
+	for _, it := range ruleT4("U", events) {
+		if !it.Pass {
+			t.Errorf("lead correction failed T4: %s", it.Reason)
+		}
+	}
+	events[2].Session = "w1"
+	items := ruleT4("U", events)
+	if len(items) != 1 || items[0].Pass || !strings.Contains(items[0].Reason, "land_corrected event uses worker session") {
+		t.Errorf("worker correction T4 = %+v; want one failure naming land_corrected", items)
+	}
+}

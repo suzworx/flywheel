@@ -255,6 +255,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err != nil {
 		return Result{}, err
 	}
+	// worker_policy.deny (issue #692): an adapter that cannot enforce it is
+	// refused before any event is appended.
+	if err := checkWorkerPolicy(dir, worker.Adapter, cfg.WorkerPolicy); err != nil {
+		return Result{}, err
+	}
 
 	// Increment validation (issue #83): --increment dispatches a fresh session
 	// of the brief; it cannot be combined with --resume or --delta.
@@ -1020,7 +1025,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Task: o.Task, Attempt: attempt, PromptFile: promptSrc, Model: model,
 		Variant: worker.Variant, Session: sessionArg, Title: o.Task + "-" + attempt,
 		Resume: o.Resume, Increment: o.Increment,
-		AllowedTools: worker.allowedTools(), DisallowedTools: worker.disallowedTools(),
+		AllowedTools: worker.allowedTools(), DisallowedTools: claudeDisallowed(worker, cfg.WorkerPolicy),
 		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
 		MaxTurns: cfg.maxTurns(worker),
 	}
@@ -1723,7 +1728,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			for i, d := range denials {
 				named[i] = d
 				if cmd, ok := strings.CutPrefix(d, "Bash"+bashDenialSep); ok {
-					named[i] = attributeDenial(cmd, worker.disallowedTools())
+					named[i] = attributeDenial(cmd, req.DisallowedTools)
 				}
 			}
 			list := clipNote(strings.Join(named, ", "))

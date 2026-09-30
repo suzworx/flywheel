@@ -278,6 +278,10 @@ var kinds = map[string]bool{
 	// rebased records `flywheel rebase` moving a unit onto a new base (issue
 	// #414): Base is the new base, Note "was <old>, onto <ref>".
 	"rebased": true,
+	// land_corrected supersedes the commit a landed event recorded (issue
+	// #673): Commit the corrected commit, Tree its landed tree, Note the
+	// reason and Session the lead session, all required. The old event stays.
+	"land_corrected": true,
 	// group_reviewed closes one group review (issue #420): Task group:<id>,
 	// Verdict pass or correct, Tree the integration tree, Note the members,
 	// conflicts and group gate results.
@@ -693,6 +697,11 @@ func Validate(e Event) error {
 		}
 		if !externalReadingOK(e) {
 			return fmt.Errorf("external %s event must carry evidence, a session and the commit it measured", e.Kind)
+		}
+	}
+	if e.Kind == "land_corrected" {
+		if !taskOK(e.Task) || e.Note == "" || e.Session == "" || !CommitOK(e.Commit) {
+			return fmt.Errorf("land_corrected event must carry a task, a note (the reason), a session and the corrected commit")
 		}
 	}
 	if e.Kind == "allow_untriaged" {
