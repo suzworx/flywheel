@@ -651,7 +651,9 @@ func TestInspectPassRefusedByLaterFinished(t *testing.T) {
 		t.Fatalf("ValidateTask() error = %v", err)
 	}
 	rc := 0
-	if err := AppendEvent(dir, Event{TS: "2026-09-30T00:00:00Z", Task: "T1", Kind: "finished", Attempt: "r2", Session: "w1", RC: &rc}); err != nil {
+	// No fixed ts: AppendEvent stamps it strictly after the validation (a
+	// hard-coded 2026-09-30 fell behind the real clock and broke this test).
+	if err := AppendEvent(dir, Event{Task: "T1", Kind: "finished", Attempt: "r2", Session: "w1", RC: &rc}); err != nil {
 		t.Fatalf("AppendEvent() finished error = %v", err)
 	}
 	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
