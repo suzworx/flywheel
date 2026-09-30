@@ -16,8 +16,12 @@ var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
 // live-gate, exclusive, review, line, kind.
 type BriefHeader struct {
-	Owns  []string // comma-separated, annotations stripped
-	Needs []string
+	Owns []string // comma-separated, annotations stripped, "none" and "-" dropped
+	// OwnsNone is true when the header has an owns line and every entry on
+	// every owns line is "none" or "-" (issue #693): the unit owns no paths,
+	// as opposed to a brief with no owns line at all.
+	OwnsNone bool `json:",omitempty"`
+	Needs    []string
 	// NeedsDeclared is true when the header has at least one needs: line, even needs: none (issue #307).
 	NeedsDeclared bool `json:",omitempty"`
 	// NeedsState lists repo-relative paths or directories (a trailing '/' for
@@ -205,13 +209,23 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Kind = strings.ToLower(val)
 		}
 	}
+	// `owns: none` (or `-`, any case) declares a unit that owns no paths
+	// (issue #693): the entry is dropped, never kept as a path named "none".
+	sawNone, sawPath := false, false
 	for _, part := range owns {
 		for _, entry := range strings.Split(part, ",") {
-			if e := stripAnnotation(strings.TrimSpace(entry)); e != "" {
+			e := stripAnnotation(strings.TrimSpace(entry))
+			switch {
+			case e == "":
+			case isOwnsNone(e):
+				sawNone = true
+			default:
+				sawPath = true
 				h.Owns = append(h.Owns, e)
 			}
 		}
 	}
+	h.OwnsNone = sawNone && !sawPath
 	// One pass over every needs: line, so an id repeated across lines is kept
 	// once (#310 review).
 	h.Needs = NeedTargets(h.Needs...)
@@ -256,6 +270,12 @@ func stripAnnotation(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return s
+}
+
+// isOwnsNone reports whether an owns entry declares no owned paths: "none"
+// (any case) or "-" (issue #693).
+func isOwnsNone(e string) bool {
+	return e == "-" || strings.EqualFold(e, "none")
 }
 
 // NeedTargets turns needs: values into task ids (issue #307): each value is
