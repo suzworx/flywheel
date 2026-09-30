@@ -215,7 +215,9 @@ Gates that actually measure:
   a worker gated on the wrong runner writes a shim to pass it, and `flywheel lint` warns.
 - One command per gate, no disjunctions: a gate with an `||` fallback passes when the check fails.
 - A gate that filters output starts with `set -o pipefail;`: bash runs gates without it, so
-  `go test ./... | tail -5` has tail's exit status, and `flywheel lint` warns.
+  `go test ./... | tail -5` has tail's exit status, and `flywheel lint` warns. `flywheel validate`
+  records such a masked gate as failed (reason `masked`, the failing stage's status); to ignore a
+  stage's failure on purpose, write `{ cmd || true; } | grep ...`.
 - Probe before planning (`flywheel lint <brief> --probe --task <id>`) so a wrong path or missing
   tool is caught before a paid attempt.
 

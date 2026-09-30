@@ -111,6 +111,14 @@ readings; `flywheel inspect` only passes a unit whose readings are on record (an
 session's verdict); `flywheel verify` checks every poka-yoke rule. `validate` exits 5 when a gate
 fails or a change sits outside `owns`, and an `inspect` refusal exits 6.
 
+A gate that runs under bash is also measured for a masked pipeline (issue
+[#704](https://github.com/suzworx/flywheel/issues/704)): bash runs gates without pipefail, so in
+`runner | grep PASS` a crashed runner takes grep's exit status. `validate` records the exit status
+of every stage of the gate's last pipeline; when the gate exits 0 but an earlier stage exited
+non-zero (other than 141, SIGPIPE, which `cmd | head` causes), the reading is that stage's status,
+with reason `masked`, so the gate fails. To ignore a stage's failure on purpose, write
+`{ cmd || true; } | grep ...`.
+
 ## Worker adapters
 
 `flywheel run` dispatches through one of five adapters: `claude`, `codex`, `opencode`, `pi`, or the

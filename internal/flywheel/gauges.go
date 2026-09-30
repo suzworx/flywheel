@@ -47,8 +47,13 @@ type GateOut struct {
 	Inconclusive bool
 	// Note carries the persistent-host-block message when HostBlocked is true
 	// because the rerun was blocked too, or the "blocked by <paths>" message
-	// when Inconclusive is true; empty otherwise.
+	// when Inconclusive is true, or the "masked: ..." message when Masked is
+	// true; empty otherwise.
 	Note string
+	// Masked is true when the gate's own status was 0 (its filter's) while an
+	// earlier stage of its last pipeline failed (issue #704); RC then carries
+	// that stage's status.
+	Masked bool
 	// Live is true for a live-gate: entry (issue #152), false for an
 	// ordinary gate: entry.
 	Live bool
@@ -382,18 +387,23 @@ func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, 
 func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote string) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
-	rc, dur, out, err := runGateBase(wd, gate, base)
+	rc, dur, out, stages, err := runGateStages(wd, gate, base)
 	if err != nil {
 		return GateOut{}, err
 	}
 	blocked := strings.Contains(string(out), hostBlocked)
 	if blocked {
-		rc2, dur2, out2, err2 := runGateBase(wd, gate, base)
+		rc2, dur2, out2, stages2, err2 := runGateStages(wd, gate, base)
 		if err2 != nil {
 			return GateOut{}, err2
 		}
-		rc, dur, out = rc2, dur2, out2
+		rc, dur, out, stages = rc2, dur2, out2, stages2
 		blocked = strings.Contains(string(out), hostBlocked)
+	}
+	// A masked pipeline (issue #704) reads as its first failing stage.
+	idx, status, masked := maskedStage(rc, stages)
+	if masked {
+		rc = status
 	}
 	if err := os.WriteFile(logPath, out, 0o644); err != nil {
 		return GateOut{}, fmt.Errorf("write %s: %w", logPath, err)
@@ -413,6 +423,10 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 		ev.Reason = "host-blocked"
 		note = hostBlockNote(out)
 		ev.Note = note
+	} else if masked {
+		ev.Reason = "masked"
+		note = maskedNote(idx, len(stages), status)
+		ev.Note = note
 	} else if rc != 0 {
 		if paths := inconclusivePaths(wd, owns, out); len(paths) > 0 {
 			inconclusive = true
@@ -431,7 +445,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 	return GateOut{
 		Gate: gateID, Command: gate, RC: rc, DurationMS: dur,
 		LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
-		Live: live,
+		Masked: masked, Live: live,
 	}, nil
 }
 
@@ -986,20 +1000,116 @@ func runGate(wd, command string) (rc int, durMS int64, out []byte, err error) {
 // runGateBase is runGate with FLYWHEEL_BASE=base added to the inherited
 // environment (issue #470), so a `git diff --check "$FLYWHEEL_BASE"` gate
 // measures the unit's work after the attempt commit moved HEAD. An empty base
-// inherits the environment unchanged.
+// inherits the environment unchanged. A masked pipeline (issue #704: the
+// filter passed while an earlier stage failed) reads as that stage's status,
+// pipefail semantics, so every caller treats it as failed.
 func runGateBase(wd, command, base string) (rc int, durMS int64, out []byte, err error) {
+	rc, durMS, out, stages, err := runGateStages(wd, command, base)
+	if err != nil {
+		return rc, durMS, out, err
+	}
+	if _, s, masked := maskedStage(rc, stages); masked {
+		rc = s
+	}
+	return rc, durMS, out, nil
+}
+
+// pipestatusTrailer follows the gate under bash: it records the exit status of
+// every stage of the gate's last pipeline in $FLYWHEEL_PIPESTATUS_FILE and
+// exits with the gate's own status. Both assignment words expand before either
+// is assigned, so each sees the gate's last pipeline. It prints nothing.
+const pipestatusTrailer = `__fw_rc=$? __fw_ps="${PIPESTATUS[*]}"; printf '%s\n' "$__fw_ps" > "$FLYWHEEL_PIPESTATUS_FILE"; exit $__fw_rc`
+
+// runGateStages runs the gate as runGateBase does, without masking, and also
+// returns the exit status of each stage of its last pipeline when the shell is
+// bash (nil under sh or cmd, or when the gate exited before its end).
+func runGateStages(wd, command, base string) (rc int, durMS int64, out []byte, stages []int, err error) {
 	var env []string
 	if base != "" {
 		env = append(os.Environ(), "FLYWHEEL_BASE="+base)
 	}
 	argv := ShellArgv(command)
+	psPath := ""
+	if isBashArgv(argv) {
+		f, ferr := os.CreateTemp("", "flywheel-pipestatus-*")
+		if ferr != nil {
+			return 0, 0, nil, nil, fmt.Errorf("pipestatus file: %w", ferr)
+		}
+		psPath = f.Name()
+		f.Close()
+		defer os.Remove(psPath)
+		if env == nil {
+			env = os.Environ()
+		}
+		env = append(env, "FLYWHEEL_PIPESTATUS_FILE="+filepath.ToSlash(psPath))
+		argv = append(argv[:len(argv)-1:len(argv)-1], command+"\n"+pipestatusTrailer)
+	}
 	t0 := time.Now()
 	grc, gout, gerr := runCmd(wd, argv, env)
 	dur := time.Since(t0).Milliseconds()
 	if gerr != nil {
-		return 0, dur, nil, gerr
+		return 0, dur, nil, nil, gerr
 	}
-	return grc, dur, gout, nil
+	if psPath != "" {
+		stages = readPipestatus(psPath)
+	}
+	return grc, dur, gout, stages, nil
+}
+
+// isBashArgv reports whether argv runs under bash: argv[0]'s base name,
+// lowercased and without .exe, is "bash".
+func isBashArgv(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	name := argv[0]
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	return strings.TrimSuffix(strings.ToLower(name), ".exe") == "bash"
+}
+
+// readPipestatus parses the space-separated statuses the trailer wrote. A
+// missing, empty or unparsable file yields no stages.
+func readPipestatus(path string) []int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	fields := strings.Fields(string(b))
+	stages := make([]int, 0, len(fields))
+	for _, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return nil
+		}
+		stages = append(stages, n)
+	}
+	if len(stages) == 0 {
+		return nil
+	}
+	return stages
+}
+
+// maskedStage decides whether a gate is masked (issue #704): its own rc is 0
+// while a stage before the last exited non-zero with a status other than 141
+// (SIGPIPE: `cmd | head` closing early is normal). It returns the first such
+// stage's 1-based index and status.
+func maskedStage(rc int, stages []int) (idx, status int, masked bool) {
+	if rc != 0 {
+		return 0, 0, false
+	}
+	for i := 0; i < len(stages)-1; i++ {
+		if s := stages[i]; s != 0 && s != 141 {
+			return i + 1, s, true
+		}
+	}
+	return 0, 0, false
+}
+
+// maskedNote is the note recorded on a masked gate's reading.
+func maskedNote(idx, n, status int) string {
+	return fmt.Sprintf("masked: pipeline stage %d of %d exited %d; the gate's own status was 0 (the filter's)", idx, n, status)
 }
 
 // runCmd runs argv in wd with the given environment (nil inherits the caller's
