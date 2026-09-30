@@ -588,8 +588,8 @@ func workerSessions(events []Event, task string) map[string]bool {
 	return workers
 }
 
-// ruleT4 checks that no inspected, excepted or external (attested, issue #367)
-// event comes from a worker session.
+// ruleT4 checks that no inspected, excepted, land_corrected (issue #673) or
+// external (attested, issue #367) event comes from a worker session.
 func ruleT4(task string, events []Event) []VerifyItem {
 	workers := workerSessions(events, task)
 	var items []VerifyItem
@@ -605,6 +605,10 @@ func ruleT4(task string, events []Event) []VerifyItem {
 			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
 				Reason: fmt.Sprintf("excepted event uses worker session %q", e.Session)})
 		}
+		if e.Kind == "land_corrected" && workers[e.Session] {
+			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
+				Reason: fmt.Sprintf("land_corrected event uses worker session %q; a landing correction must come from the lead", e.Session)})
+		}
 		if e.Source == "external" && workers[e.Session] {
 			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
 				Reason: fmt.Sprintf("external %s reading attested by worker session %q", e.Kind, e.Session)})
@@ -617,14 +621,30 @@ func ruleT4(task string, events []Event) []VerifyItem {
 }
 
 // ruleT5 checks that every landed event has an earlier inspected pass or a
-// recorded exception.
+// recorded exception, and that every land_corrected event (issue #673) has an
+// earlier landed event, a reason and a session.
 func ruleT5(task string, events []Event) []VerifyItem {
 	workers := workerSessions(events, task)
 	var items []VerifyItem
+	landedSeen := false
 	for _, e := range events {
+		if e.Task == task && e.Kind == "land_corrected" {
+			// A correction (issue #673) supersedes an earlier landing's
+			// commit; without one there is nothing to correct.
+			switch {
+			case !landedSeen:
+				items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: false,
+					Reason: fmt.Sprintf("land_corrected event (commit %s) has no earlier landed event", short7(e.Commit))})
+			case e.Note == "" || e.Session == "":
+				items = append(items, VerifyItem{Task: task, Rule: "T5", Pass: false,
+					Reason: fmt.Sprintf("land_corrected event (commit %s) lacks a reason or a session", short7(e.Commit))})
+			}
+			continue
+		}
 		if e.Task != task || e.Kind != "landed" {
 			continue
 		}
+		landedSeen = true
 		if earlierInspectedPass(events, task, e.TS) {
 			continue
 		}
