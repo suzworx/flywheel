@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.54.0](https://github.com/suzworx/flywheel/compare/v0.53.0...v0.54.0) (2026-09-30)
+
+
+### Features
+
+* lint.full_suite_paths sets a full-suite pattern per owns prefix; validate refuses a missing full suite ([#717](https://github.com/suzworx/flywheel/issues/717)) ([6d2a5a3](https://github.com/suzworx/flywheel/commit/6d2a5a3083d6c4fdef6ea64cd15946c6918b4a32)), closes [#652](https://github.com/suzworx/flywheel/issues/652)
+
+
+### Performance
+
+* recover indexes events by unit once; budget test on a 200-unit ledger ([#715](https://github.com/suzworx/flywheel/issues/715)) ([423da16](https://github.com/suzworx/flywheel/commit/423da16b64649bb1faf1fc616c172796af88dd7c)), closes [#628](https://github.com/suzworx/flywheel/issues/628)
+
 ## [0.53.0](https://github.com/suzworx/flywheel/compare/v0.52.0...v0.53.0) (2026-09-30)
 
 
