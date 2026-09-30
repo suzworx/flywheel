@@ -114,7 +114,11 @@ You never:
   or a trailing-slash directory such as `src/voice/` — rather than leaving the entry to be added
   later. When the name is known and the file does not exist yet, list it with the `(new)`
   annotation — `src/voice.ts (new)` — so lint does not report it as missing. Both forms are
-  checked the same as a literal path at validate and lint time. When a broad entry must leave out
+  checked the same as a literal path at validate and lint time. Lint resolves owns against the
+  integration ref units are based on (`origin/<integration.branch>`, else `origin/main`) when
+  the checkout is behind it, and warns: read owns from that tree, and set `integration.branch`
+  when PRs target another branch. Otherwise (a checkout at the ref or ahead of it, such as a
+  stacked unit's worktree) lint resolves owns against the checkout. When a broad entry must leave out
   a file another work order owns, add a negated entry — `apps/inc/**, !apps/inc/wake.h` — rather
   than a prose exception or `--allow-overlap`. The negation is machine-checked, so the two
   work orders do not collide at dispatch.

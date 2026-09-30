@@ -17,9 +17,14 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   (rules live in §4). An entry may be a literal path, a path ending in `/` (everything under that
   directory), or a shell pattern containing `*`, `?` or `[` — for example `src/voice/*.test.ts`
   for a file whose exact name is not known yet. `flywheel validate` matches all three forms the
-  same way at owns-check time, and `flywheel lint` checks a pattern by globbing it against the
-  worktree instead of statting a literal path, so a pattern that currently matches nothing is
-  reported the same as a missing path. A literal path the unit will create carries the annotation
+  same way at owns-check time, and `flywheel lint` checks a pattern by matching it against the
+  tree instead of looking up a literal path, so a pattern that currently matches nothing is
+  reported the same as a missing path. Owns resolve against the integration ref units are based
+  on (`origin/<integration.branch>`, else `origin/main`) when the checkout is behind it;
+  otherwise against the checkout. A checkout behind the ref gets a warning, and a path only in
+  it is reported missing on the ref: write owns from the ref's tree. A checkout at the ref or
+  ahead of it (a stacked unit's worktree, local commits) is checked as is, so files the base
+  unit created count. A literal path the unit will create carries the annotation
   `(new)` — `src/voice.ts (new)` — and `flywheel lint` skips the existence check for it. An entry
   starting with `!` is an exception: `owns: apps/inc/**, !apps/inc/wake.h` owns every header but
   `wake.h`. A negated entry takes the same three forms, so it can be a literal path, a `dir/` or a
