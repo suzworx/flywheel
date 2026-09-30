@@ -773,6 +773,23 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   integration branch (none merged: no expected checks); `--ignore-check NAME` removes a name from either set.
   A check named in `required_checks` must conclude `SUCCESS`: `SKIPPED` or `NEUTRAL` on it fails `ci` at once
   with `required-check-skipped` (issue #653), while an inferred expected check that skipped still counts as present.
+- The **worker policy** (issue #692) is `.flywheel/config.json` `"worker_policy": {"deny": ["pio run -t upload", "node scripts/flash.mjs"]}`:
+  command prefixes, as a worker would type them, that no worker may run (a device upload, a deploy, a
+  publish). Each entry is added to the adapter's built-in deny list, never replacing it. `LoadConfig`
+  rejects an empty or whitespace-only entry and one containing `*`, `(`, `)` or `:` (pattern syntax
+  flywheel adds itself), naming `worker_policy.deny[<i>]`. Enforcement per adapter: **claude** appends
+  `Bash(<prefix>:*)` to the worker's resolved `--disallowedTools` (the git-write defaults, or its own
+  `disallowed_tools`), deduplicated, and a denial is attributed to that pattern like a git one (the
+  `stop` signal's `Bash: <pattern> (<segment>)`, issue #497); **opencode** leaves
+  `.flywheel/opencode-worker.json` as the user wrote it and `flywheel run` checks its `permission.bash`
+  holds `"<prefix>*": "deny"` for every entry (the embedded default when the file is missing),
+  refusing the dispatch with the missing patterns, the file and "add them after the `"*": "allow"`
+  line"; **codex** and **pi** cannot enforce a command deny list, so `flywheel run` refuses with
+  `worker_policy.deny is set but the <adapter> adapter cannot enforce a command deny list; use a claude
+  or opencode worker`; **sim** ignores it. Both refusals come before any event (no `dispatched`, no
+  `dispatch_refused`). Separately, `flywheel config validate` exits 1, while loading still succeeds,
+  when a worker's `disallowed_tools` (which replaces the defaults) omits any of `Bash(git commit:*)`,
+  `Bash(git push:*)` or `Bash(git reset:*)`.
 
 ### `recovered`
 - Written by: the CLI only, via `flywheel recover --apply` (issue #422), when it applied at least

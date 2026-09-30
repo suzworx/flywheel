@@ -126,6 +126,13 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   detector then reads the worker as hung. One unit died twice with `rc=-1 reason=stalled` at 4
   and 5 steps this way. The lead runs the gauges — asking the worker to verify by running the
   gate breaks that separation and trips the stall detector.
+- **No side-effect commands** — a project command that reaches a device or the outside world
+  (a firmware upload over a serial port, a deploy, a publish) goes in `.flywheel/config.json`
+  `"worker_policy": {"deny": ["pio run -t upload", "node scripts/flash.mjs"]}` (issue #692): added
+  to every claude worker's git-write deny list, never replacing it, checked in an opencode worker's
+  `opencode-worker.json`, and refused at dispatch on codex and pi. A brief that needs a build-only
+  check gives the exact build-only command (`pio run -e esp32`), never a project wrapper script
+  whose name sounds build-only: one such wrapper flashed real hardware.
 - **Working directory** — the first body line names the absolute path the worker may touch: "Work
   only in <abs path>". The brief file lives inside that directory (`<workdir>/.flywheel/briefs/`),
   never in another checkout — a brief attached from a different checkout made a worker edit that

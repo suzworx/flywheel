@@ -70,6 +70,18 @@ type Config struct {
 	Integration *IntegrationConfig `json:"integration,omitempty"`
 	Factory     *FactoryConfig     `json:"factory,omitempty"`
 	Ship        *ShipConfig        `json:"ship,omitempty"`
+	// WorkerPolicy is the project's worker command policy (issue #692).
+	WorkerPolicy *WorkerPolicy `json:"worker_policy,omitempty"`
+}
+
+// WorkerPolicy holds project-level worker command rules (issue #692).
+type WorkerPolicy struct {
+	// Deny lists command prefixes as a worker would type them (e.g.
+	// "pio run -t upload"). They are appended to every adapter's built-in deny
+	// list, never replacing it: Bash(<prefix>:*) for claude, "<prefix>*": "deny"
+	// in .flywheel/opencode-worker.json for opencode. codex and pi cannot
+	// enforce them, so a run on those adapters is refused while any are set.
+	Deny []string `json:"deny,omitempty"`
 }
 
 // ShipConfig tunes flywheel ship.
@@ -883,7 +895,7 @@ func LoadConfig(dir string) (Config, bool, error) {
 		}
 		return Config{}, false, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if err := c.Validate(); err != nil {
+	if err := c.validateLoad(); err != nil {
 		return Config{}, false, err
 	}
 	return c, true, nil
@@ -972,8 +984,24 @@ func levenshtein(a, b string) int {
 }
 
 // Validate checks the configuration and reports every problem found, one per
-// line, in a single error.
+// line, in a single error: every problem validateLoad reports, then the
+// advisory ones a config still loads with (disallowedToolsProblems, issue
+// #692), so flywheel config validate exits 1 on them.
 func (c Config) Validate() error {
+	var problems []string
+	if err := c.validateLoad(); err != nil {
+		problems = append(problems, err.Error())
+	}
+	problems = append(problems, c.disallowedToolsProblems()...)
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(problems, "\n"))
+}
+
+// validateLoad checks the rules a config must meet to load or be written,
+// reporting every problem found, one per line, in a single error.
+func (c Config) validateLoad() error {
 	var problems []string
 	if c.Version != 1 {
 		problems = append(problems, fmt.Sprintf("version: got %d, want 1", c.Version))
@@ -1078,6 +1106,7 @@ func (c Config) Validate() error {
 			problems = append(problems, err.Error())
 		}
 	}
+	problems = append(problems, c.WorkerPolicy.problems()...)
 	seenLines := make(map[string]bool)
 	for i, l := range c.Lines {
 		where := fmt.Sprintf("lines[%d]", i)
@@ -1905,7 +1934,7 @@ func (c Config) settableKeys() []string {
 // temp file and rename so readers never observe partial output; .flywheel/ is
 // created if missing.
 func WriteConfig(dir string, c Config) error {
-	if err := c.Validate(); err != nil {
+	if err := c.validateLoad(); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(c, "", "  ")

@@ -140,7 +140,13 @@ defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-
 gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
 policy is enforced by the permission layer, not by asking nicely. The default also denies
 `git fetch` and `git pull`, because they write refs and reach the network. An explicitly configured list
-replaces its default; it is not merged with it, so an operator can widen or narrow deliberately.
+replaces its default; it is not merged with it, so an operator can widen or narrow deliberately,
+and `flywheel config validate` fails when such a list drops `Bash(git commit:*)`, `Bash(git push:*)`
+or `Bash(git reset:*)`. To deny a project command without touching the git-write list, use the
+top-level `worker_policy.deny` (issue #692): command prefixes such as `pio run -t upload` or
+`node scripts/flash.mjs`, appended as `Bash(<prefix>:*)` to every claude worker's list, checked as
+`"<prefix>*": "deny"` in `.flywheel/opencode-worker.json` for opencode workers, and refused at
+dispatch on codex and pi workers, which cannot enforce a command deny list.
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean
 "allowed_tools"?`, issue #463).
 A claude worker's `permission_mode` sets its `--permission-mode`: `acceptEdits` (the default),

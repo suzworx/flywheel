@@ -1,6 +1,8 @@
 package flywheel
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -42,6 +44,38 @@ func TestAttributeDenial(t *testing.T) {
 				t.Errorf("attributeDenial(%q) = %q, want %q", c.command, got, c.want)
 			}
 		})
+	}
+}
+
+// TestDenialWorkerPolicy checks a denied command matching a worker_policy.deny
+// entry names that pattern, like a git pattern (issues #497, #692): the run's
+// attribution reads the request's resolved list, claudeDisallowed, loaded
+// from a config.json that sets worker_policy.
+func TestDenialWorkerPolicy(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version": 1, "workers": [{"name": "w", "adapter": "claude", "model": "m"}],
+  "worker_policy": {"deny": ["pio run -t upload", "node scripts/flash.mjs"]}}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() = %v, want worker_policy accepted", err)
+	}
+	deny := claudeDisallowed(cfg.Workers[0], cfg.WorkerPolicy)
+	for _, c := range []struct{ command, want string }{
+		{`cd fw && pio run -t upload -e esp32`, "Bash: Bash(pio run -t upload:*) (pio run -t upload -e esp32)"},
+		{`npm run build; node scripts/flash.mjs --port COM3`, "Bash: Bash(node scripts/flash.mjs:*) (node scripts/flash.mjs --port COM3)"},
+		{`git push origin`, "Bash: Bash(git push:*) (git push origin)"},
+		{`pio run`, "Bash: unattributed (pio run)"},
+	} {
+		if got := attributeDenial(c.command, deny); got != c.want {
+			t.Errorf("attributeDenial(%q) = %q, want %q", c.command, got, c.want)
+		}
 	}
 }
 
