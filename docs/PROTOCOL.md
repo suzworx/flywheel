@@ -157,6 +157,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   text like `gate: (as the brief)` by lint's placeholder-phrase rule: run refuses with rule `gate-command` (exit 6) naming the gate and
   word, before the dispatch lock (only a `dispatch_refused` event is recorded, issue #662). No gate
   is run; words in config `lint.gate_commands` are always accepted.
+- Not written when config `lint.full_suite_required` is true and none of those gates matches the
+  full-suite pattern (`lint.full_suite`, else the toolchain default): run refuses with rule
+  `full-suite` (exit 6) naming the pattern, before the dispatch lock (only a `dispatch_refused`
+  event is recorded, issue #652). An invalid pattern is not refused here; `flywheel lint` reports it.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
@@ -197,7 +201,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
