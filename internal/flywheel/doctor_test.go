@@ -286,3 +286,34 @@ func testDoctorLedgerIndexUntouched(t *testing.T) {
 		t.Error(".git/index changed across DoctorLedgerWarning")
 	}
 }
+
+// TestDoctorIntegrationUnsetWarns: with integration.branch unset, a
+// feature-branch checkout warns with the config command; main, the remote
+// default branch, a detached HEAD and a configured branch do not (issue #694).
+func TestDoctorIntegrationUnsetWarns(t *testing.T) {
+	t.Parallel()
+	dir := branchRepo(t, "main")
+	if _, w := DoctorIntegrationBranch(dir); w != "" {
+		t.Errorf("on main: warning = %q, want none", w)
+	}
+	git(t, dir, []string{"checkout", "-q", "-b", "dev"})
+	want := "integration.branch is unset while the checkout is on dev; if PRs target dev, set it: flywheel config set integration.branch dev"
+	if _, w := DoctorIntegrationBranch(dir); w != want {
+		t.Errorf("on dev: warning = %q, want %q", w, want)
+	}
+	git(t, dir, []string{"update-ref", "refs/remotes/origin/dev", "HEAD"})
+	git(t, dir, []string{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/dev"})
+	if _, w := DoctorIntegrationBranch(dir); w != "" {
+		t.Errorf("on the remote default: warning = %q, want none", w)
+	}
+	git(t, dir, []string{"symbolic-ref", "--delete", "refs/remotes/origin/HEAD"})
+	git(t, dir, []string{"checkout", "-q", "--detach"})
+	if _, w := DoctorIntegrationBranch(dir); w != "" {
+		t.Errorf("detached: warning = %q, want none", w)
+	}
+	git(t, dir, []string{"checkout", "-q", "dev"})
+	setIntegration(t, dir, "dev")
+	if _, w := DoctorIntegrationBranch(dir); w != "" {
+		t.Errorf("configured: warning = %q, want none", w)
+	}
+}

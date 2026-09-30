@@ -36,6 +36,14 @@ type LintResult struct {
 // missing write rule, a missing needs line and a negated entry no positive
 // entry covers.
 //
+// Owns resolve against the integration ref when the checkout is behind it
+// (issue #694): when integrationRef(dir) names a ref and HEAD is neither its
+// commit nor a descendant of it, that is a warning, entries are looked up in
+// one git ls-tree of the ref (patterns with path.Match, as validate matches
+// them), and a path only in the checkout is a problem naming the ref.
+// Otherwise (no ref, or HEAD at the ref or ahead of it, as a stacked unit's
+// worktree is): the checkout, as described above, with no ls-tree.
+//
 // Two more warnings guard the gates and owns against what CI catches later
 // (issue #462). No gate matching the full-suite pattern (config
 // lint.full_suite, else go test over ./... when dir has go.mod, else a
@@ -193,12 +201,28 @@ func lintStructure(dir, path string) (LintResult, error) {
 	if none && len(entries) > 0 {
 		res.Problems = append(res.Problems, "owns: none cannot be combined with paths")
 	}
+	// Owns resolve against the integration ref units are based on when the
+	// checkout is behind it (issue #694); otherwise (no ref, HEAD at the ref
+	// or ahead of it, as a stacked unit is) against the checkout.
+	var rt *refTree
+	if ref := integrationRef(dir); ref != "" {
+		if behind, w := headBehind(dir, ref); behind {
+			rt = &refTree{dir: dir, ref: ref}
+			res.Warnings = append(res.Warnings, w)
+		}
+	}
 	for _, e := range entries {
 		if neg, ok := negatedEntry(e.path); ok {
 			if !negationExcludes(entries, neg) {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("owns: !%s excludes nothing: no positive entry covers it", neg))
 			}
 			continue
+		}
+		if rt != nil {
+			if ps, ok := rt.check(e); ok {
+				res.Problems = append(res.Problems, ps...)
+				continue
+			}
 		}
 		if isOwnsPattern(e.path) {
 			matches, err := filepath.Glob(filepath.Join(dir, e.path))
@@ -278,6 +302,100 @@ func lintStructure(dir, path string) (LintResult, error) {
 		res.Warnings = append(res.Warnings, `write rule "At most one write per response" is absent`)
 	}
 	return res, nil
+}
+
+// refTree is the integration ref lint checks owns against (issue #694):
+// workers are based on its tree, not the checkout's. The tree is listed once,
+// with one git ls-tree, on the first entry that needs it.
+type refTree struct {
+	dir, ref string
+	listed   bool
+	failed   bool
+	types    map[string]string // path -> object type (blob, tree, commit)
+	names    []string
+}
+
+// refName is ref without refs/remotes/ or refs/heads/, e.g. origin/dev.
+func refName(ref string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
+}
+
+// load lists the ref's tree once; false when git ls-tree failed, and lint
+// then checks the checkout instead.
+func (rt *refTree) load() bool {
+	if !rt.listed {
+		rt.listed = true
+		out, err := gitRead(rt.dir, []string{"ls-tree", "-r", "-t", "-z", "--full-tree", rt.ref})
+		if err != nil {
+			rt.failed = true
+			return false
+		}
+		rt.types = map[string]string{}
+		for _, rec := range strings.Split(out, "\x00") {
+			meta, p, ok := strings.Cut(rec, "\t")
+			if f := strings.Fields(meta); ok && len(f) == 3 {
+				rt.types[p] = f[1]
+				rt.names = append(rt.names, p)
+			}
+		}
+	}
+	return !rt.failed
+}
+
+// check is one positive owns entry's problems against the ref, with the
+// checkout's texts naming the ref; ok is false when the ref's tree could not
+// be listed. A (new) literal entry is never checked and lists nothing; a
+// pattern has its syntax checked with path.Match, the matcher validate uses.
+func (rt *refTree) check(e ownsEntry) (problems []string, ok bool) {
+	name := refName(rt.ref)
+	if isOwnsPattern(e.path) {
+		if _, err := path.Match(e.path, ""); err != nil {
+			return []string{fmt.Sprintf("owns pattern %s is invalid: %v; correct the pattern", e.path, err)}, true
+		}
+		if e.annotation == "new" {
+			return nil, true
+		}
+		if !rt.load() {
+			return nil, false
+		}
+		if !slices.ContainsFunc(rt.names, func(p string) bool { return ownsEntryMatches(e.path, p) }) {
+			return []string{fmt.Sprintf("owns pattern %s matches no file on %s; if the unit creates it, annotate it: %s (new)", e.path, name, e.path)}, true
+		}
+		return nil, true
+	}
+	if e.annotation == "new" {
+		return nil, true
+	}
+	if !rt.load() {
+		return nil, false
+	}
+	typ, found := rt.types[strings.TrimSuffix(filepath.ToSlash(e.path), "/")]
+	switch {
+	case !found:
+		return []string{fmt.Sprintf("owns path %s does not exist on %s; if the unit creates it, annotate it: %s (new)", e.path, name, e.path)}, true
+	case strings.HasSuffix(e.path, "/") && typ != "tree":
+		return []string{fmt.Sprintf("owns path %s is not a directory on %s", e.path, name)}, true
+	}
+	return nil, true
+}
+
+// headBehind reports whether the checkout's HEAD is neither ref's commit nor
+// a descendant of it (issue #694), with the warning to give: owns read from
+// that tree may not exist where workers start. A HEAD at the ref or ahead of
+// it (a stacked unit, local commits) is not behind. One rev-parse, then at
+// most one merge-base; any git failure means not behind.
+func headBehind(dir, ref string) (behind bool, warning string) {
+	out, err := gitRead(dir, []string{"rev-parse", "HEAD", ref + "^{commit}"})
+	f := strings.Fields(out)
+	if err != nil || len(f) != 2 || f[0] == f[1] {
+		return false, ""
+	}
+	rc, _, _, err := runCmdSplit(dir, gitArgs([]string{"merge-base", "--is-ancestor", f[1], f[0]}), nil)
+	if err != nil || rc != 1 {
+		return false, ""
+	}
+	name := refName(ref)
+	return true, fmt.Sprintf("checkout HEAD %s is not at %s (%s): workers are based on %s; read and write owns from that tree", f[0][:7], name, f[1][:7], name)
 }
 
 // gateDiffCheckAgainstHead reports whether a gate runs `git diff --check`
@@ -362,7 +480,9 @@ func gateBacktickInDoubleQuotes(gate string) bool {
 // isOwnsPattern reports whether an owns entry is a shell pattern rather than
 // a literal path: it contains '*', '?' or '['. ownsContains (gauges.go)
 // already matches these with path.Match at validate time; lint checks them
-// with filepath.Glob against dir instead of os.Stat.
+// the same way against the integration ref's tree (refTree) when the
+// checkout is behind it, else with
+// filepath.Glob against dir instead of os.Stat.
 func isOwnsPattern(p string) bool {
 	return strings.ContainsAny(p, "*?[")
 }

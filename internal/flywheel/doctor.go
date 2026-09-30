@@ -224,7 +224,8 @@ func namePaths(paths []string) string {
 // is "integration branch: <b> (integration.branch)" when the config sets it,
 // "(detected)" when main or master was found, and "integration branch: none"
 // otherwise; warning names a configured branch whose refs/heads/<b> does not
-// resolve in dir, "" otherwise.
+// resolve in dir, or, unset, a checkout on another branch
+// (integrationUnsetWarning), "" otherwise.
 func DoctorIntegrationBranch(dir string) (line, warning string) {
 	b, configured := IntegrationBranch(dir)
 	switch {
@@ -238,7 +239,26 @@ func DoctorIntegrationBranch(dir string) (line, warning string) {
 	default:
 		line = "integration branch: none (no integration.branch, main or master)"
 	}
+	if !configured {
+		warning = integrationUnsetWarning(dir)
+	}
 	return line, warning
+}
+
+// integrationUnsetWarning warns, with integration.branch unset, when the
+// checkout's current branch is neither main, master nor the remote default
+// (refs/remotes/origin/HEAD when it resolves): PRs that target it would be
+// based on the wrong branch (issue #694). A detached HEAD never warns.
+func integrationUnsetWarning(dir string) string {
+	out, err := gitRead(dir, []string{"symbolic-ref", "-q", "--short", "HEAD"})
+	cur := strings.TrimSpace(out)
+	if err != nil || cur == "" || cur == "main" || cur == "master" {
+		return ""
+	}
+	if def, err := gitRead(dir, []string{"symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"}); err == nil && strings.TrimPrefix(strings.TrimSpace(def), "origin/") == cur {
+		return ""
+	}
+	return fmt.Sprintf("integration.branch is unset while the checkout is on %s; if PRs target %s, set it: flywheel config set integration.branch %s", cur, cur, cur)
 }
 
 // DoctorAllOK reports whether every probe classified as ClassOK.
