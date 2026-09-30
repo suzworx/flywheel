@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -49,8 +50,9 @@ type LintResult struct {
 // lint.full_suite, else go test over ./... when dir has go.mod, else a
 // package manager's test script when package.json defines one) is a warning,
 // and a problem (zero gates included) when lint.full_suite_required is set
-// (issue #652);
-// an invalid lint.full_suite is a problem. When dir has go.mod and
+// (issue #652); owns under lint.full_suite_paths prefixes need each selected
+// prefix's pattern instead, one finding per miss (fullSuiteMissing);
+// an invalid lint.full_suite or lint.full_suite_paths pattern is a problem. When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
 // that invokes a JavaScript test runner the repository does not use (config
@@ -80,12 +82,19 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if lc == nil {
 		lc = &LintConfig{}
 	}
-	if pattern, missing, err := fullSuiteMissing(dir, lc, header.Gates); err != nil {
-		res.Problems = append(res.Problems, fmt.Sprintf("config lint.full_suite %q is not a valid regular expression: %v", pattern, err))
-	} else if missing && lc.FullSuiteRequired {
-		res.Problems = append(res.Problems, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; lint.full_suite_required is set)", pattern))
-	} else if missing && len(header.Gates) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; set lint.full_suite to change it)", pattern))
+	if missing, err := fullSuiteMissing(dir, lc, header.Gates, header.Owns); err != nil {
+		res.Problems = append(res.Problems, err.Error())
+	} else {
+		for _, w := range missing {
+			switch {
+			case lc.FullSuiteRequired:
+				res.Problems = append(res.Problems, w.String()+"; lint.full_suite_required is set)")
+			case len(header.Gates) > 0 && w.Prefix == "":
+				res.Warnings = append(res.Warnings, w.String()+"; set lint.full_suite to change it)")
+			case len(header.Gates) > 0:
+				res.Warnings = append(res.Warnings, w.String()+"; set lint.full_suite_paths to change it)")
+			}
+		}
 	}
 	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
 	res.Problems = append(res.Problems, gateCommandProblems(dir, header.Gates, lc.GateCommands)...)
@@ -698,26 +707,74 @@ func defaultFullSuite(dir string) string {
 	return ""
 }
 
-// fullSuiteMissing reports whether no gate in gates matches the full-suite
-// pattern (issue #652): lc.FullSuite, else defaultFullSuite(dir). A "" pattern
-// means no check, so never missing; an invalid one returns err with the
-// pattern. No gates at all is missing; lintBrief only warns on it when there
-// are gates.
-func fullSuiteMissing(dir string, lc *LintConfig, gates []string) (pattern string, missing bool, err error) {
-	if lc != nil {
-		pattern = lc.FullSuite
+// fullSuiteWant is one full-suite pattern a brief's gates must match (issue
+// #652): Prefix is the lint.full_suite_paths key that selected it, "" for the
+// global pattern.
+type fullSuiteWant struct {
+	Prefix, Pattern string
+}
+
+// String is the want's "full suite" phrase and pattern, as lint and run
+// report a miss.
+func (w fullSuiteWant) String() string {
+	if w.Prefix == "" {
+		return "no gate runs the full suite (want a gate matching " + w.Pattern
 	}
-	if pattern == "" {
-		pattern = defaultFullSuite(dir)
+	return "no gate runs the full suite for " + w.Prefix + " (want a gate matching " + w.Pattern
+}
+
+// fullSuiteMissing returns the full-suite wants no gate in gates matches
+// (issue #652), sorted by prefix. Each owns path (slash form) selects the
+// pattern of the longest lint.full_suite_paths key that prefixes it; when at
+// least one did, the selected patterns are the wants. Otherwise the one want
+// is lc.FullSuite, else defaultFullSuite(dir), and "" means no check. An
+// invalid pattern returns an error naming its config key, keys tried in
+// sorted order. No gates at all misses every want; lintBrief only warns on
+// that when there are gates.
+func fullSuiteMissing(dir string, lc *LintConfig, gates, owns []string) ([]fullSuiteWant, error) {
+	if lc == nil {
+		lc = &LintConfig{}
 	}
-	if pattern == "" {
-		return "", false, nil
+	keys := slices.Sorted(maps.Keys(lc.FullSuitePaths))
+	for _, k := range keys {
+		if _, err := regexp.Compile(lc.FullSuitePaths[k]); err != nil {
+			return nil, fmt.Errorf("config lint.full_suite_paths[%q] %q is not a valid regular expression: %v", k, lc.FullSuitePaths[k], err)
+		}
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return pattern, false, err
+	var wants []fullSuiteWant
+	for _, o := range owns {
+		o = filepath.ToSlash(o)
+		best := ""
+		for _, k := range keys {
+			if strings.HasPrefix(o, k) && len(k) > len(best) {
+				best = k
+			}
+		}
+		if best != "" && !slices.ContainsFunc(wants, func(w fullSuiteWant) bool { return w.Prefix == best }) {
+			wants = append(wants, fullSuiteWant{Prefix: best, Pattern: lc.FullSuitePaths[best]})
+		}
 	}
-	return pattern, !slices.ContainsFunc(gates, re.MatchString), nil
+	if len(wants) == 0 {
+		pattern := lc.FullSuite
+		if pattern == "" {
+			pattern = defaultFullSuite(dir)
+		}
+		if pattern == "" {
+			return nil, nil
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("config lint.full_suite %q is not a valid regular expression: %v", pattern, err)
+		}
+		wants = []fullSuiteWant{{Pattern: pattern}}
+	}
+	slices.SortFunc(wants, func(a, b fullSuiteWant) int { return strings.Compare(a.Prefix, b.Prefix) })
+	var missing []fullSuiteWant
+	for _, w := range wants {
+		if !slices.ContainsFunc(gates, regexp.MustCompile(w.Pattern).MatchString) {
+			missing = append(missing, w)
+		}
+	}
+	return missing, nil
 }
 
 // jsRunnerDeps maps the package.json dependency that brings a JavaScript test

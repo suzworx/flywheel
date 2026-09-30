@@ -241,6 +241,15 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if r := needsEnvRefusal(header.NeedsEnv); r != nil {
 		return GaugeResult{}, r
 	}
+	// Full suite (issue #652): with lint.full_suite_required set, an effective
+	// brief (re-planned after dispatch, say) whose gates miss a full-suite want
+	// refuses as run does. An unreadable config skips this check.
+	cfg, _, cfgErr := LoadConfig(o.Dir)
+	if cfgErr == nil {
+		if r := fullSuiteRefusal(o.Dir, cfg.Lint, header.Gates, header.Owns); r != nil {
+			return GaugeResult{}, r
+		}
+	}
 	if len(header.Gates) == 0 {
 		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])
 	}
@@ -285,7 +294,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// the host gate lock's wait budget (issue #411); an unreadable config
 	// keeps the 30m default rather than failing the pass.
 	quietWait, _ := Limits{}.QuietWaitDuration()
-	if cfg, _, cerr := LoadConfig(o.Dir); cerr == nil {
+	if cfgErr == nil {
 		if d, derr := cfg.Limits.QuietWaitDuration(); derr == nil && d > 0 {
 			quietWait = d
 		}
