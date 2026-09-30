@@ -366,7 +366,7 @@ and exit codes are in [PROTOCOL.md](docs/PROTOCOL.md). Bare `flywheel` opens the
 | `flywheel goal` | Manage the factory's goals: add, list, show and set. |
 | `flywheel run <task>` | Dispatch a worker (`--worker`, `--model`, `--worktree [--base REF]`, `--workdir PATH`, `--delta`, `--resume`, `--notify CMD`) and record the run; exit 0 clean, 3 silent start, 4 unclean, 6 stopped by `flywheel suspend --stop`, 7 stall. |
 | `flywheel wait <task>... [--timeout D]` | Block until each named task finishes its current attempt; exit 0 all clean, 4 any unclean, 8 timeout. |
-| `flywheel validate <task> [--workdir PATH] [--carry PATH]... [--live]` | Machine gauges: run a task's gates on the exact tree, check owns and refuse git conflict markers in changed files (exit 0/5); `--carry` copies a path in first, `--live` adds the `live-gate:` lines. |
+| `flywheel validate <task> [--workdir PATH] [--carry PATH]... [--live]` | Machine gauges: run a task's gates on the exact tree, check owns and refuse git conflict markers in changed files (exit 0/5); a pipeline whose filter passed after an earlier stage failed is a failed gate; `--carry` copies a path in first, `--live` adds the `live-gate:` lines. |
 | `flywheel supervise [--once] [--resume-limited]` | Validate every finished unit nobody has measured yet (exit 5 if any fails); `--resume-limited` resumes rate-limited units once their reset passes. Never inspects or lands. |
 | `flywheel inspect <task> --verdict V --session S` | Record an inspection verdict, refused (exit 6) unless the gauges' readings cover the current tree (or `--commit`'s). |
 | `flywheel verify [<task>...] [--all] [--log]` | Check the log against the rules T1, T3, T4, T5, T8, R1, P1 and W1 (exit 0/6); `--log` also checks the hash chain. |
