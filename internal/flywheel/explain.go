@@ -32,6 +32,7 @@ type Explanation struct {
 	Cost         float64        `json:"cost"`
 	Commit       string         `json:"commit,omitempty"`
 	Tree         string         `json:"tree,omitempty"`
+	Superseded   []string       `json:"superseded,omitempty"` // landed commits a land_corrected replaced (issue #673)
 	Timeline     []ExplainEntry `json:"timeline"`
 }
 
@@ -173,6 +174,14 @@ func explainLine(e Event) string {
 		}
 		return line
 
+	case "land_corrected":
+		// A correction supersedes the landed commit (issue #673).
+		line := fmt.Sprintf("landing corrected to %s by %s", e.Commit, e.Session)
+		if e.Tree != "" {
+			line += fmt.Sprintf(" tree %s", hash8(e.Tree))
+		}
+		return line + " — " + e.Note
+
 	default:
 		line := e.Kind
 		if e.Attempt != "" {
@@ -290,14 +299,9 @@ func Explain(events []Event, task string) (Explanation, error) {
 		}
 	}
 
-	// Get commit and tree from last landed event
-	for i := len(taskEvents) - 1; i >= 0; i-- {
-		if taskEvents[i].Kind == "landed" {
-			explanation.Commit = taskEvents[i].Commit
-			explanation.Tree = taskEvents[i].Tree
-			break
-		}
-	}
+	// Commit and tree of the effective landing: a land_corrected event
+	// supersedes the landed one (issue #673).
+	explanation.Commit, explanation.Tree, explanation.Superseded = landedCommit(taskEvents, task)
 
 	// Build timeline; a failed gate that already failed on the base tree
 	// before dispatch says so (issue #544).
@@ -369,6 +373,9 @@ func RenderExplanation(w io.Writer, x Explanation) error {
 		fmt.Fprintf(&b, "- landed: %s", x.Commit)
 		if x.Tree != "" {
 			fmt.Fprintf(&b, " (tree %s)", hash8(x.Tree))
+		}
+		if len(x.Superseded) > 0 {
+			fmt.Fprintf(&b, " (corrected; superseded %s)", strings.Join(x.Superseded, ", "))
 		}
 		fmt.Fprintf(&b, "\n")
 	}

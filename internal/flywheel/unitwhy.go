@@ -214,14 +214,16 @@ func noteOf(events []Event, task, kind string) string {
 	return note
 }
 
-// whyLanded names the landed commit, and the PR a ship opened or reused.
+// whyLanded names the effective landed commit (a land_corrected event
+// supersedes the landed one, issue #673), and the PR a ship opened or reused.
 func whyLanded(events []Event, task string) string {
 	commit, pr := "", ""
+	if c, _, _ := landedCommit(events, task); c != "" {
+		commit = short7(c)
+	}
 	for _, e := range events {
 		switch {
 		case e.Task != task:
-		case e.Kind == "landed" && e.Commit != "":
-			commit = short7(e.Commit)
 		case e.Kind == "shipped" && e.Step == "pr" && e.Result != "fail":
 			if i := strings.Index(e.Note, "#"); i >= 0 {
 				pr, _, _ = strings.Cut(e.Note[i:], " ")
