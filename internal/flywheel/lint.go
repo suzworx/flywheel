@@ -47,7 +47,9 @@ type LintResult struct {
 // Two more warnings guard the gates and owns against what CI catches later
 // (issue #462). No gate matching the full-suite pattern (config
 // lint.full_suite, else go test over ./... when dir has go.mod, else a
-// package manager's test script when package.json defines one) is a warning;
+// package manager's test script when package.json defines one) is a warning,
+// and a problem (zero gates included) when lint.full_suite_required is set
+// (issue #652);
 // an invalid lint.full_suite is a problem. When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
@@ -78,16 +80,12 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if lc == nil {
 		lc = &LintConfig{}
 	}
-	pattern := lc.FullSuite
-	if pattern == "" {
-		pattern = defaultFullSuite(dir)
-	}
-	if pattern != "" {
-		if re, err := regexp.Compile(pattern); err != nil {
-			res.Problems = append(res.Problems, fmt.Sprintf("config lint.full_suite %q is not a valid regular expression: %v", pattern, err))
-		} else if len(header.Gates) > 0 && !slices.ContainsFunc(header.Gates, re.MatchString) {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; set lint.full_suite to change it)", pattern))
-		}
+	if pattern, missing, err := fullSuiteMissing(dir, lc, header.Gates); err != nil {
+		res.Problems = append(res.Problems, fmt.Sprintf("config lint.full_suite %q is not a valid regular expression: %v", pattern, err))
+	} else if missing && lc.FullSuiteRequired {
+		res.Problems = append(res.Problems, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; lint.full_suite_required is set)", pattern))
+	} else if missing && len(header.Gates) > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("no gate runs the full suite (want a gate matching %s; set lint.full_suite to change it)", pattern))
 	}
 	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
 	res.Problems = append(res.Problems, gateCommandProblems(dir, header.Gates, lc.GateCommands)...)
@@ -698,6 +696,28 @@ func defaultFullSuite(dir string) string {
 		return `\b(npm|pnpm|yarn|bun)( run)? test\b`
 	}
 	return ""
+}
+
+// fullSuiteMissing reports whether no gate in gates matches the full-suite
+// pattern (issue #652): lc.FullSuite, else defaultFullSuite(dir). A "" pattern
+// means no check, so never missing; an invalid one returns err with the
+// pattern. No gates at all is missing; lintBrief only warns on it when there
+// are gates.
+func fullSuiteMissing(dir string, lc *LintConfig, gates []string) (pattern string, missing bool, err error) {
+	if lc != nil {
+		pattern = lc.FullSuite
+	}
+	if pattern == "" {
+		pattern = defaultFullSuite(dir)
+	}
+	if pattern == "" {
+		return "", false, nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return pattern, false, err
+	}
+	return pattern, !slices.ContainsFunc(gates, re.MatchString), nil
 }
 
 // jsRunnerDeps maps the package.json dependency that brings a JavaScript test

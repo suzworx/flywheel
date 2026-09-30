@@ -1997,7 +1997,9 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // not run preflight: it measures the deliverable, not capacity. Gate commands
 // (issue #662): a gate the attempt will be measured with (a correction's, else
 // the base brief's, as AttemptBrief merges them) whose command word is not a
-// command refuses with rule gate-command. Owns under .claude/ (issue #696,
+// command refuses with rule gate-command. With lint.full_suite_required set
+// (issue #652), those gates matching no full-suite pattern (fullSuiteMissing)
+// refuse with rule full-suite. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A task with no
@@ -2054,6 +2056,14 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	}
 	if probs := gateCommandProblems(dir, gates, allowed); len(probs) > 0 {
 		return "", nil, &RuleRefusal{Rule: "gate-command", Fix: strings.Join(probs, "; ")}
+	}
+	// Full suite (issue #652): with lint.full_suite_required set, gates that
+	// miss the full suite let a unit validate green and fail in CI. An invalid
+	// pattern is lint's problem to report, not a refusal here.
+	if cfg.Lint != nil && cfg.Lint.FullSuiteRequired {
+		if pattern, missing, ferr := fullSuiteMissing(dir, cfg.Lint, gates); ferr == nil && missing {
+			return "", nil, &RuleRefusal{Rule: "full-suite", Fix: fmt.Sprintf("no gate runs the full suite (want a gate matching %s); add one to the brief or unset lint.full_suite_required", pattern)}
+		}
 	}
 	for _, c := range pre {
 		if r := preflightRefusal(dir, []string{c}); r != nil {

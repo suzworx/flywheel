@@ -139,6 +139,10 @@ type LintConfig struct {
 	// FullSuite is the regular expression a gate must match to count as the
 	// full test suite; "" means the default for the directory's toolchain.
 	FullSuite string `json:"full_suite,omitempty"`
+	// FullSuiteRequired makes a brief with no gate matching FullSuite a lint
+	// problem, not a warning, and flywheel run refuses it with rule
+	// full-suite (issue #652). Opt-in; false keeps the warning.
+	FullSuiteRequired bool `json:"full_suite_required,omitempty"`
 	// Importers turns the Go importer-coverage warning off when false; nil
 	// means on wherever go.mod exists.
 	Importers *bool `json:"importers,omitempty"`
