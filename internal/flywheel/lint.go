@@ -277,6 +277,9 @@ func lintStructure(dir, path string) (LintResult, error) {
 		if gateDiffCheckAgainstHead(g) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d runs "git diff" against HEAD; after the attempt commit it sees nothing — diff against "$FLYWHEEL_BASE"`, i+1))
 		}
+		if f := gateMaskingFilter(g); f != "" {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d pipes into %s: the gate's exit status is %s's, not the command's; start it with "set -o pipefail;" or drop the filter`, i+1, f, f))
+		}
 	}
 	for i, lg := range header.LiveGates {
 		if gateBacktickInDoubleQuotes(lg) {
@@ -441,6 +444,122 @@ func gateDiffCheckAgainstHead(gate string) bool {
 		}
 	}
 	return false
+}
+
+// gateFilters are the command words whose exit status says nothing about the
+// command piped into them (issue #704).
+var gateFilters = []string{"grep", "egrep", "fgrep", "rg", "tail", "head", "sed", "awk", "cut", "sort", "uniq", "tee", "cat", "wc", "tr", "findstr"}
+
+// gateFilterMasks reports whether a gate's exit status is a filter's rather
+// than the checked command's (issue #704): gates run under `bash -c` without
+// pipefail, so `go test ./... | tail -5` passes when go test fails. See
+// gateMaskingFilter for the rules.
+func gateFilterMasks(gate string) bool {
+	return gateMaskingFilter(gate) != ""
+}
+
+// gateMaskingFilter is the base name of the filter ending the first pipeline
+// of two or more stages in gate, or "" (issue #704). Commands split at ;, &&,
+// ||, & and newlines, and stages at | and |&, only outside quotes and $( ) or
+// backtick substitutions, whose text is never inspected. A pipeline that
+// starts with echo or printf filters captured text and never counts, and a
+// gate that mentions pipefail or PIPESTATUS never counts.
+func gateMaskingFilter(gate string) string {
+	if strings.Contains(gate, "pipefail") || strings.Contains(gate, "PIPESTATUS") {
+		return ""
+	}
+	var cmds [][]string
+	var stages []string
+	var cur strings.Builder
+	endStage := func() { stages = append(stages, cur.String()); cur.Reset() }
+	endCmd := func() { endStage(); cmds = append(cmds, stages); stages = nil }
+	inSingle, inDouble, inBacktick, depth := false, false, false, 0
+	for i := 0; i < len(gate); i++ {
+		c := gate[i]
+		visible := depth == 0 && !inBacktick
+		switch {
+		case inSingle:
+			inSingle = c != '\''
+		case c == '\\':
+			if visible && i+1 < len(gate) {
+				cur.WriteString(gate[i : i+2])
+			}
+			i++
+			continue
+		case inBacktick:
+			inBacktick = c != '`'
+		case inDouble:
+			inDouble = c != '"'
+		case c == '\'':
+			inSingle = true
+		case c == '"':
+			inDouble = true
+		case c == '`' || c == '$' && i+1 < len(gate) && gate[i+1] == '(':
+			if visible {
+				cur.WriteString("$S")
+			}
+			if c == '`' {
+				inBacktick = true
+			} else {
+				depth++
+				i++
+			}
+		case depth > 0:
+			switch c {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			}
+		case c == ';' || c == '\n':
+			endCmd()
+		case c == '|' && i+1 < len(gate) && gate[i+1] == '|':
+			endCmd()
+			i++
+		case c == '|':
+			endStage()
+			if i+1 < len(gate) && gate[i+1] == '&' {
+				i++
+			}
+		case c == '&' && i+1 < len(gate) && gate[i+1] == '&':
+			endCmd()
+			i++
+		case c == '&' && (i == 0 || !strings.ContainsRune("<>", rune(gate[i-1]))) && (i+1 >= len(gate) || gate[i+1] != '>'):
+			endCmd()
+		default:
+			cur.WriteByte(c)
+		}
+		// Quoted text stays in the stage, so a quoted command word still reads.
+		if visible && (inSingle || inDouble || c == '\'' || c == '"') {
+			cur.WriteByte(c)
+		}
+	}
+	endCmd()
+	for _, p := range cmds {
+		if len(p) < 2 {
+			continue
+		}
+		if first := stageCommandWord(p[0]); first == "echo" || first == "printf" {
+			continue
+		}
+		if last := stageCommandWord(p[len(p)-1]); slices.Contains(gateFilters, last) {
+			return last
+		}
+	}
+	return ""
+}
+
+// stageCommandWord is the base name of a pipeline stage's command word, with
+// leading !, (, { and VAR=value assignments skipped and .exe dropped.
+func stageCommandWord(stage string) string {
+	s := strings.TrimLeft(stage, " \t\r!({")
+	for {
+		w, rest := gateWord(s)
+		if !envAssignRE.MatchString(w) {
+			return strings.TrimSuffix(path.Base(strings.ReplaceAll(w, `\`, "/")), ".exe")
+		}
+		s = rest
+	}
 }
 
 // gateBacktickInDoubleQuotes reports whether a gate has an unescaped backtick
