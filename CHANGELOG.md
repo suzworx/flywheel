@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.51.0](https://github.com/suzworx/flywheel/compare/v0.50.0...v0.51.0) (2026-09-30)
+
+
+### Features
+
+* lint resolves owns against the integration ref when the checkout is behind it; doctor warns when integration.branch is unset ([#707](https://github.com/suzworx/flywheel/issues/707)) ([0e97be4](https://github.com/suzworx/flywheel/commit/0e97be43d70ea461ce1442f0f234aafd1a503366)), closes [#694](https://github.com/suzworx/flywheel/issues/694)
+* validate refuses git conflict markers in a unit's changed files, CRLF included ([#705](https://github.com/suzworx/flywheel/issues/705)) ([71a8e47](https://github.com/suzworx/flywheel/commit/71a8e47282f5539439fd0598ea8cfdd238c1c4e7)), closes [#698](https://github.com/suzworx/flywheel/issues/698)
+
 ## [0.50.0](https://github.com/suzworx/flywheel/compare/v0.49.0...v0.50.0) (2026-09-30)
 
 
