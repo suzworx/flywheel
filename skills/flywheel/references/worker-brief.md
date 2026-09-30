@@ -25,7 +25,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `wake.h`. A negated entry takes the same three forms, so it can be a literal path, a `dir/` or a
   pattern. It is matched the same way at validate time and by the dispatch owns-collision check,
   so the unit does not collide with another in-flight unit that owns `wake.h`. Lint never checks
-  a negated entry for existence, and warns when no positive entry covers it. List every
+  a negated entry for existence, and warns when no positive entry covers it. A read-only
+  investigation brief uses `owns: none` (or `owns: -`): the unit owns no paths, never collides at
+  dispatch, and any file it changes fails its owns check. List every
   file a unit may create up front, in `owns:`, rather than inviting it to add one later. (`needs:`
   takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
   dependencies). An optional `line: <name>` puts the unit on a product line from `.flywheel/config.json`

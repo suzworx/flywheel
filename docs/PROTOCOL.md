@@ -1355,7 +1355,11 @@ gates (exit 5) without touching the log's legality.
   collision check applies the same rule, so that header does not collide with an in-flight task
   owning `apps/inc/wake.h`; an amendment adding a negation that removes a covered path is a
   narrowing; and `flywheel lint` never checks a negated entry for existence, but warns when no
-  positive entry covers it. Each inspection uses its own window, so a later correction attempt
+  positive entry covers it. `owns: none` (or `owns: -`, any case) declares a unit that owns no
+  paths (issue #693), such as a read-only investigation: the entry is dropped rather than kept as a
+  path named `none`, so the unit never collides at dispatch, and any changed file outside
+  flywheel's own bookkeeping fails its owns check. `flywheel lint` counts it as a present owns line
+  and reports `none` combined with real paths as a problem. Each inspection uses its own window, so a later correction attempt
   never invalidates an earlier legitimate pass. A pass measured in an external `--workdir` — a
   separate clone, not a worktree of the verifying repository — is verifiable from its own repo:
   `flywheel verify --workdir <path>` resolves tree objects there, and without the flag a `workdir`

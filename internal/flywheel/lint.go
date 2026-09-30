@@ -176,9 +176,22 @@ func lintStructure(dir, path string) (LintResult, error) {
 	if !strings.Contains(content, "## Checks") {
 		res.Problems = append(res.Problems, "no ## Checks section")
 	}
-	entries := ownsEntries(content)
-	if len(entries) == 0 {
+	// `owns: none` (or `-`) is a present owns line that owns no paths (issue
+	// #693); mixed with real paths it is a contradiction.
+	var entries []ownsEntry
+	none := false
+	for _, e := range ownsEntries(content) {
+		if isOwnsNone(e.path) {
+			none = true
+			continue
+		}
+		entries = append(entries, e)
+	}
+	if len(entries) == 0 && !none {
 		res.Problems = append(res.Problems, "missing owns: line")
+	}
+	if none && len(entries) > 0 {
+		res.Problems = append(res.Problems, "owns: none cannot be combined with paths")
 	}
 	for _, e := range entries {
 		if neg, ok := negatedEntry(e.path); ok {
