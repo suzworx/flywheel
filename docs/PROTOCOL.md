@@ -158,9 +158,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   word, before the dispatch lock (only a `dispatch_refused` event is recorded, issue #662). No gate
   is run; words in config `lint.gate_commands` are always accepted.
 - Not written when config `lint.full_suite_required` is true and none of those gates matches the
-  full-suite pattern (`lint.full_suite`, else the toolchain default): run refuses with rule
-  `full-suite` (exit 6) naming the pattern, before the dispatch lock (only a `dispatch_refused`
+  full-suite pattern (`lint.full_suite`, else the toolchain default; or, when an owned path is under
+  a `lint.full_suite_paths` prefix, every such prefix's pattern): run refuses with rule
+  `full-suite` (exit 6) naming each missed pattern, before the dispatch lock (only a `dispatch_refused`
   event is recorded, issue #652). An invalid pattern is not refused here; `flywheel lint` reports it.
+  `flywheel validate` refuses the effective brief with the same rule (exit 6) before any gate runs,
+  recording nothing, as it does for `needs-env`.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before

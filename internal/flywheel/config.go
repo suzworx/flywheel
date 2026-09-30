@@ -140,9 +140,15 @@ type LintConfig struct {
 	// full test suite; "" means the default for the directory's toolchain.
 	FullSuite string `json:"full_suite,omitempty"`
 	// FullSuiteRequired makes a brief with no gate matching FullSuite a lint
-	// problem, not a warning, and flywheel run refuses it with rule
-	// full-suite (issue #652). Opt-in; false keeps the warning.
+	// problem, not a warning, and flywheel run and validate refuse it with
+	// rule full-suite (issue #652). Opt-in; false keeps the warning.
 	FullSuiteRequired bool `json:"full_suite_required,omitempty"`
+	// FullSuitePaths maps an owns-path prefix (slash form, e.g. "apps/api/")
+	// to the regular expression a gate must match when the brief owns a path
+	// under that prefix (issue #652). The longest matching prefix selects an
+	// owns path's pattern; when no owns path is under any prefix, FullSuite
+	// applies.
+	FullSuitePaths map[string]string `json:"full_suite_paths,omitempty"`
 	// Importers turns the Go importer-coverage warning off when false; nil
 	// means on wherever go.mod exists.
 	Importers *bool `json:"importers,omitempty"`

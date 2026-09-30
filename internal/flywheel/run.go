@@ -1998,8 +1998,8 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // (issue #662): a gate the attempt will be measured with (a correction's, else
 // the base brief's, as AttemptBrief merges them) whose command word is not a
 // command refuses with rule gate-command. With lint.full_suite_required set
-// (issue #652), those gates matching no full-suite pattern (fullSuiteMissing)
-// refuse with rule full-suite. Owns under .claude/ (issue #696,
+// (issue #652), those gates and owns missing a full-suite pattern
+// (fullSuiteRefusal) refuse with rule full-suite. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A task with no
@@ -2060,10 +2060,8 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	// Full suite (issue #652): with lint.full_suite_required set, gates that
 	// miss the full suite let a unit validate green and fail in CI. An invalid
 	// pattern is lint's problem to report, not a refusal here.
-	if cfg.Lint != nil && cfg.Lint.FullSuiteRequired {
-		if pattern, missing, ferr := fullSuiteMissing(dir, cfg.Lint, gates); ferr == nil && missing {
-			return "", nil, &RuleRefusal{Rule: "full-suite", Fix: fmt.Sprintf("no gate runs the full suite (want a gate matching %s); add one to the brief or unset lint.full_suite_required", pattern)}
-		}
+	if r := fullSuiteRefusal(dir, cfg.Lint, gates, owns); r != nil {
+		return "", nil, r
 	}
 	for _, c := range pre {
 		if r := preflightRefusal(dir, []string{c}); r != nil {
@@ -2072,6 +2070,25 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		progress(o.Progress, fmt.Sprintf("%s preflight ok: %s", o.Task, c))
 	}
 	return src, b, nil
+}
+
+// fullSuiteRefusal is the rule full-suite refusal (issue #652) when lc has
+// full_suite_required set and gates and owns miss a full-suite want
+// (fullSuiteMissing), its Fix listing every miss; else nil. An invalid pattern
+// is nil: lint reports it. Run and validate both refuse with it.
+func fullSuiteRefusal(dir string, lc *LintConfig, gates, owns []string) *RuleRefusal {
+	if lc == nil || !lc.FullSuiteRequired {
+		return nil
+	}
+	missing, err := fullSuiteMissing(dir, lc, gates, owns)
+	if err != nil || len(missing) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(missing))
+	for i, w := range missing {
+		msgs[i] = w.String() + ")"
+	}
+	return &RuleRefusal{Rule: "full-suite", Fix: strings.Join(msgs, "; ") + "; add one to the brief or unset lint.full_suite_required"}
 }
 
 // recordDispatchRefused appends one dispatch_refused event (issue #651) when
