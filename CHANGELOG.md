@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.53.0](https://github.com/suzworx/flywheel/compare/v0.52.0...v0.53.0) (2026-09-30)
+
+
+### Features
+
+* lint.full_suite_required makes a missing full-suite gate a lint problem and a run refusal ([#714](https://github.com/suzworx/flywheel/issues/714)) ([aca82d6](https://github.com/suzworx/flywheel/commit/aca82d6fde77e4a6ea54927c35f72e97da372a7f))
+* validate records a masked pipeline as a failed gate ([#713](https://github.com/suzworx/flywheel/issues/713)) ([ef07708](https://github.com/suzworx/flywheel/commit/ef077085b79daf236698d3c04b178dfbe52ffaaa)), closes [#704](https://github.com/suzworx/flywheel/issues/704)
+
+
+### Bug Fixes
+
+* a claude worker cannot write under .claude/; lint and run refuse such owns, denials name it ([#711](https://github.com/suzworx/flywheel/issues/711)) ([62cbe87](https://github.com/suzworx/flywheel/commit/62cbe870f5ae02c64854fcdac3329e2cc2d01731)), closes [#696](https://github.com/suzworx/flywheel/issues/696)
+
 ## [0.52.0](https://github.com/suzworx/flywheel/compare/v0.51.0...v0.52.0) (2026-09-30)
 
 
