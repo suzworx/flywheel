@@ -130,6 +130,10 @@ type GaugeResult struct {
 	// flywheel log --task <task> --kind rebased --base <fork>". A reading,
 	// never a gate: OwnsOK and the measured paths do not change.
 	BaseDrift string `json:"base_drift,omitempty"`
+	// Markers lists, sorted, "<path>:<line>" for every git conflict marker
+	// line in a changed path, owned or not (conflictMarkers, issue #698): any
+	// fails the pass, and the owns_checked event records them.
+	Markers []string
 }
 
 // baseDrift is GaugeResult.BaseDrift for task in wd measured against the
@@ -147,9 +151,9 @@ func baseDrift(wd, task, recorded, ref string) string {
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
-// sits outside owns.
+// sits outside owns, and no changed file holds a conflict marker.
 func (r GaugeResult) OK() bool {
-	return r.Refused == "" && r.GatesOK && r.OwnsOK
+	return r.Refused == "" && r.GatesOK && r.OwnsOK && len(r.Markers) == 0
 }
 
 // attemptGatesUnrun returns the GatesUnrun of the latest finished event of
@@ -562,6 +566,9 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	res.Attributed = attributed
 	res.OwnsOK = len(outside) == 0
 	res.Files = measureFiles(wd, owns, changed)
+	// Every changed path, owned or not: a marker committed anywhere breaks the
+	// tree (issue #698).
+	res.Markers = conflictMarkers(wd, changed)
 	// A base squash-merged under the unit (issue #414) inflates the changed
 	// set with the base unit's pre-squash commits: warn, never refuse here.
 	if b, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
@@ -570,7 +577,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Churn: res.Churn, Baselined: baselined, Attributed: attributed,
-		Ignored: res.Ignored, Files: res.Files, Persona: "supervisor", Workdir: workdirField(wd, dir),
+		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Persona: "supervisor", Workdir: workdirField(wd, dir),
 		Note: res.Stacked,
 	}); err != nil {
 		return GaugeResult{}, err

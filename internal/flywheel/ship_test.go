@@ -217,6 +217,27 @@ func TestShipLocalMergeConflict(t *testing.T) {
 	}
 }
 
+// TestShipMarkerRefused: a CRLF conflict marker in the tree ship merged is
+// a rule refusal at the gates step, naming file:line, and nothing is pushed
+// (issue #698).
+func TestShipMarkerRefused(t *testing.T) {
+	t.Parallel()
+	f := newShipFixture(t, "exit 0", true)
+	shipWrite(t, f.wt, "src/a.go", "package src\r\n<<<<<<< HEAD\r\nvar a = 1\r\n=======\r\nvar a = 2\r\n>>>>>>> origin/main\r\n")
+	f.advance(t, "main", "other.txt", "origin\n")
+	res, out, err := f.ship(t, ShipOptions{})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "ship" || !strings.Contains(r.Fix, "src/a.go:2") || !strings.Contains(r.Fix, "remove the markers") {
+		t.Fatalf("Ship error = %v, want a ship refusal naming src/a.go:2\n%s", err, out)
+	}
+	if got := shipSteps(res); got != "preflight=ok commit=ok merge-base=ok gates=fail" {
+		t.Errorf("steps = %s, want the gates step to fail before push\n%s", got, out)
+	}
+	if n := shipRan(res, "push"); n != 0 {
+		t.Errorf("push ran %d time(s) past a tree with markers", n)
+	}
+}
+
 // TestShipLocalGateFails: a failing gate on the merged tree fails the gates
 // step with ErrShipGates, naming the gate.
 func TestShipLocalGateFails(t *testing.T) {
