@@ -290,6 +290,11 @@ type fakeForge struct {
 	mergedHeads    []string
 	commitChecks   map[string][]string
 	commitStatuses map[string][]string
+	// rules and rulesErr are what HostRules answers; rulesAsks records the
+	// branch of every HostRules call (issue #686).
+	rules     HostRules
+	rulesErr  error
+	rulesAsks []string
 
 	created, merges, checkCalls int
 	mergeTitle, mergeMsg        string
@@ -406,6 +411,11 @@ func (f *fakeForge) CommentIssue(n int, body string) error {
 func (f *fakeForge) CloseIssue(n int, comment string) error {
 	f.closed = append(f.closed, n)
 	return nil
+}
+
+func (f *fakeForge) HostRules(branch string) (HostRules, error) {
+	f.rulesAsks = append(f.rulesAsks, branch)
+	return f.rules, f.rulesErr
 }
 
 // shipSteps is res's steps as "step=result", space separated.

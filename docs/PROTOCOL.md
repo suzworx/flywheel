@@ -801,6 +801,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `host rules: <b>: pull request <on|off>, required checks <on|off>, up to date <on|off>` (or
   `inconclusive`) with a warning for each missing pull-request rule, required checks, strict
   "require branches to be up to date", or required `ship.required_checks` name (#686).
+  `flywheel ship`'s `preflight` reads the same host rules once its checks pass (not with `--no-merge`):
+  its `shipped` note is `status passed; <host rules line>` and each warning prints
+  `ship <task>: warning: <warning>`; host rules warnings never refuse a ship (#686).
 - The **ship signature** is `.flywheel/config.json` `"ship": {"signature": false}` to turn it off
   (absent or `true` means on; `flywheel ship --no-signature` turns it off for one run). When on,
   `flywheel ship` adds `Shipped-by: flywheel <version> (unit <task>, attempt <attempt>, <passed>/<total> gates)`

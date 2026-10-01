@@ -105,6 +105,27 @@ type Forge interface {
 	PRState(n int) (state, mergeCommit string, err error)
 	CommentIssue(n int, body string) error
 	CloseIssue(n int, comment string) error
+	// HostRules reads what the host enforces on branch (issue #686).
+	HostRules(branch string) (HostRules, error)
+}
+
+// HostRules reads branch's host rules with ReadHostRules through g's run
+// seam (issue #686). gh api takes no --repo, so a set Repo replaces the
+// {owner}/{repo} placeholder in the api path.
+func (g GhTracker) HostRules(branch string) (HostRules, error) {
+	run := g.Run
+	if run == nil {
+		run = runGhOutput
+	}
+	return ReadHostRules(branch, func(args ...string) ([]byte, error) {
+		if g.Repo != "" {
+			args = append([]string(nil), args...)
+			for i, a := range args {
+				args[i] = strings.ReplaceAll(a, "{owner}/{repo}", g.Repo)
+			}
+		}
+		return run(args...)
+	})
 }
 
 // gh runs gh with args, --repo Repo appended when repo is set, and returns
