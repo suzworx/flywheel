@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.56.0](https://github.com/suzworx/flywheel/compare/v0.55.0...v0.56.0) (2026-10-01)
+
+
+### Features
+
+* a brief names its agent skills: lint and run refuse a skill that is not installed where the worker loads skills ([#725](https://github.com/suzworx/flywheel/issues/725)) ([8b6d0ef](https://github.com/suzworx/flywheel/commit/8b6d0ef23b018bdb24150e100b1603a99f84b1d9)), closes [#695](https://github.com/suzworx/flywheel/issues/695)
+* a fix unit proves its regression test: lint --probe and inspect require a gate that is red on the base tree ([#723](https://github.com/suzworx/flywheel/issues/723)) ([2d32ded](https://github.com/suzworx/flywheel/commit/2d32deddaae5fceb7a0dd5849c02c5fcc587fc78)), closes [#648](https://github.com/suzworx/flywheel/issues/648)
+
 ## [0.55.0](https://github.com/suzworx/flywheel/compare/v0.54.0...v0.55.0) (2026-10-01)
 
 
