@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.62.0](https://github.com/suzworx/flywheel/compare/v0.61.1...v0.62.0) (2026-10-01)
+
+
+### Features
+
+* a worker's models_allowed list: config validate and flywheel run refuse a model outside it ([#749](https://github.com/suzworx/flywheel/issues/749)) ([2103deb](https://github.com/suzworx/flywheel/commit/2103deb3e8029d333954cb955caa4ec33095e3ad)), closes [#746](https://github.com/suzworx/flywheel/issues/746)
+* flywheel lint refuses a brief whose text names an existing path outside the checkout ([#747](https://github.com/suzworx/flywheel/issues/747)) ([4705fa7](https://github.com/suzworx/flywheel/commit/4705fa761a300a711052a224a6baed636c62686b)), closes [#746](https://github.com/suzworx/flywheel/issues/746)
+
 ## [0.61.1](https://github.com/suzworx/flywheel/compare/v0.61.0...v0.61.1) (2026-10-01)
 
 
