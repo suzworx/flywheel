@@ -141,6 +141,9 @@ type Event struct {
 	// Skills is a dispatched attempt's skills: list, the skills the dispatch
 	// prompt told the worker to load (issue #695).
 	Skills []string `json:"skills,omitempty"`
+	// SkillsLoaded is a claude attempt's finished event's skills its stream
+	// loaded through the Skill tool, in order, each once (issue #695).
+	SkillsLoaded []string `json:"skills_loaded,omitempty"`
 	// LeadBuilt marks an inspected event of a unit with no dispatched attempt
 	// after its latest planned event (issue #722), ChangedLines its changed
 	// lines, and Exception why a lead-built pass over
@@ -744,6 +747,9 @@ func Validate(e Event) error {
 	}
 	if len(e.Skills) > 0 && e.Kind != "dispatched" {
 		return fmt.Errorf("event skills %v: only a dispatched event may carry them", e.Skills)
+	}
+	if len(e.SkillsLoaded) > 0 && e.Kind != "finished" {
+		return fmt.Errorf("event skills_loaded %v: only a finished event may carry them (issue #695)", e.SkillsLoaded)
 	}
 	if (e.LeadBuilt || e.ChangedLines != 0 || e.Exception != "") && e.Kind != "inspected" {
 		return fmt.Errorf("event lead_built, changed_lines and exception: only an inspected event may carry them (issue #722)")

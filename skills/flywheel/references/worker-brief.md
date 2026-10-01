@@ -69,7 +69,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `<dir>/<name>/SKILL.md` where the worker loads skills (claude: `.claude/skills` in the worker's
   tree or home; opencode also `.opencode/skill(s)` and `~/.config/opencode/skill(s)`); a plugin
   skill such as `engineering:debug` is not checked. The dispatch prompt tells the worker to load
-  them before any other work ([#695](https://github.com/suzworx/flywheel/issues/695)).
+  them before any other work ([#695](https://github.com/suzworx/flywheel/issues/695)). A named
+  skill a claude worker never loads blocks the pass (validate exit 5, inspect rule
+  `skills-not-loaded`); correct it with `flywheel run <task> --delta <file>` asking it to load them.
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before

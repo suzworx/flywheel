@@ -121,6 +121,13 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if r := redFirstRefusal(events, task, header, cfg.LintRedFirst()); r != nil {
 			return r
 		}
+		// A named skill the claude worker never loaded (issue #695); a
+		// lead-built unit has no dispatched event, so it is never checkable.
+		if cfg.SkillsRequireLoaded() {
+			if missing, _ := skillsNotLoaded(events, task); len(missing) > 0 {
+				return &RuleRefusal{Rule: "skills-not-loaded", Fix: skillsNotLoadedFix(task, missing)}
+			}
+		}
 		if r := panelRefusal(events, task, tree, panelFor(events, task, tree, cfg.PanelDimensions()), cfg.ReviewRequired()); r != nil {
 			return r
 		}

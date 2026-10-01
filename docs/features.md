@@ -178,8 +178,17 @@ only gets a lint warning that its skills cannot be checked. `flywheel lint` repo
 (and an empty `skills:` line) as a problem; `flywheel run` refuses the dispatch (exit 6, rule
 `skills`) before any attempt is recorded, naming each directory it looked in. The fresh dispatch
 prompt adds `Load these skills before any other work: a, b.` and the `dispatched` event records
-`skills`. Checking from the worker's stream that it actually loaded them is part 2
-([#695](https://github.com/suzworx/flywheel/issues/695)).
+`skills`. The worker's own stream is the evidence that it loaded them
+([#695](https://github.com/suzworx/flywheel/issues/695)): each claude `Skill` tool call is collected
+and every `finished` event records `skills_loaded`. A named skill counts as loaded when an entry
+equals it, a plain name matches `<plugin>:<name>` and a plugin name matches its plain name; a
+resumed session keeps what an earlier attempt of the unit loaded. When the latest claude dispatch
+named a skill no finished attempt loaded, `flywheel validate` prints `<task> skills-not-loaded: a,
+b: ...` and exits 5 even with green gates, and `flywheel inspect --verdict pass` is refused (exit 6,
+rule `skills-not-loaded`, after `red-first`, before `panel`); correct it with `flywheel run <task>
+--delta <file>` asking the worker to load them. Other adapters' loading is not observable, so they
+are not checked; a lead-built unit is never refused by it. `flywheel config set
+skills.require_loaded false` turns the check off (default on).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
 A claude worker's Bash tool may run a foreground command for up to `limits.shell_timeout`, a Go

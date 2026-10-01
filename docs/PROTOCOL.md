@@ -384,6 +384,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
   gate's first 40 characters; live gates are not checked; omitted when empty, issue #365),
+  `skills_loaded` (on every finish of a claude attempt: the skills its stream loaded through the
+  `Skill` tool, the call's `input.skill`, in order, each once; omitted when none; `Validate`
+  accepts it only on a `finished` event, issue #695),
   `commit` (on a `stop` finish of a `--worktree` unit only, issue #391: workers never run git write
   commands, so flywheel commits the attempt itself on `fw/<task>` — built in a temporary index from
   HEAD plus every changed path inside the attempt's owns — the resolved brief's owns plus this
@@ -1314,6 +1317,17 @@ working exactly as before.
   dispatch a worker (flywheel run <task>) or record why with --exception "<why>"`. `--exception`
   passes it and is recorded; `--exception` on a unit that is not lead-built is an error (exit 1).
   `flywheel verify` checks the same as rule L1 (§2).
+- Skills not loaded (issue #695): with `skills.require_loaded` on (the default; `flywheel config
+  set skills.require_loaded false|true`, a non-boolean refused), a `pass` is refused (rule
+  `skills-not-loaded`, exit 6, after `red-first`, before `panel`) when the latest `dispatched`
+  event after the task's latest `planned` one has adapter `claude`, names `skills`, and some named
+  skill appears in no `skills_loaded` of any `finished` event after that `planned` one (a plain
+  name also matches `<plugin>:<name>`, a `<plugin>:<name>` its plain name; case-sensitive): `<a,
+  b>: the worker never loaded these skills; dispatch a correction with flywheel run <task> --delta
+  <file> asking it to load them`. Another adapter, no finished event yet, or a lead-built unit is
+  never refused by it. `flywheel validate` prints the same as `<task> skills-not-loaded: ...` and
+  exits 5; `flywheel explain` shows `skills loaded:` and `skills-not-loaded:` (JSON
+  `skills_loaded`, `skills_not_loaded`).
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.
@@ -1691,8 +1705,8 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
-| `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
-| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
+| `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off) | 2 usage, 1 other error |
+| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
