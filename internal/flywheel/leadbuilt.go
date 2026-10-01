@@ -90,19 +90,20 @@ func leadBuiltRefusal(lines, max int, exception, task string) *RuleRefusal {
 
 // commitChangedLines counts added plus deleted lines of git diff --numstat
 // from base to commit (base "" means commit's parent). A binary file ("-")
-// counts 0.
+// counts 0. Flywheel's own files (isFlywheelOwnPath) are not counted (issue
+// #729); --no-renames keeps the path field a plain path.
 func commitChangedLines(wd, base, commit string) (int, error) {
 	if base == "" {
 		base = commit + "^"
 	}
-	stat, err := gitRead(wd, []string{"diff", "--numstat", base, commit})
+	stat, err := gitRead(wd, []string{"diff", "--numstat", "--no-renames", base, commit})
 	if err != nil {
 		return 0, err
 	}
 	n := 0
 	for _, line := range strings.Split(stat, "\n") {
 		f := strings.SplitN(line, "\t", 3)
-		if len(f) < 3 {
+		if len(f) < 3 || isFlywheelOwnPath(strings.TrimSpace(f[2])) {
 			continue
 		}
 		added, _ := strconv.Atoi(f[0])

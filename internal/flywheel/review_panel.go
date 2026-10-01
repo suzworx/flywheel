@@ -299,11 +299,21 @@ func scopePanel(dir, task string, panel []PanelMember, minLines int, o ReviewPan
 // unitChangedLines counts the unit's changed lines (issue #459): added plus
 // deleted lines of git diff --numstat from base (HEAD when none; HEAD again
 // when git cannot use base) over unitChangedPaths, plus the lines of each new
-// untracked file among those paths. A binary file ("-") counts 0.
+// untracked file among those paths. A binary file ("-") counts 0. Flywheel's
+// own files (isFlywheelOwnPath) are not counted (issue #729).
 func unitChangedLines(workdir, base, task string) (int, error) {
-	paths, err := unitChangedPaths(workdir, base, task)
-	if err != nil || len(paths) == 0 {
+	all, err := unitChangedPaths(workdir, base, task)
+	if err != nil {
 		return 0, err
+	}
+	var paths []string
+	for _, p := range all {
+		if !isFlywheelOwnPath(p) {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return 0, nil
 	}
 	from := base
 	if from == "" {

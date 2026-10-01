@@ -658,8 +658,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (no explicit member list) and `review.panel_min_lines` N > 0 (issue #459). Before any member runs,
   it counts the unit's changed lines on the tree it is about to review: added plus deleted lines of
   `git diff --numstat <base> -- <paths>` (the unit's dispatch base and changed paths, as the review
-  diff uses; a binary file counts 0) plus the lines of each new untracked file among those paths.
-  Below N, only one member runs, the configured `correctness` member (else the first), and this event
+  diff uses; a binary file counts 0) plus the lines of each new untracked file among those paths;
+  flywheel's own files (`flywheel.md`, `.flywheel/`) are not counted (issue #729). Below N, only one member runs, the configured `correctness` member (else the first), and this event
   is appended first; the command prints `<task> review panel: <n> changed lines <
   review.panel_min_lines <N>; one reviewer: <persona>` and a one-line verdict matrix. At or above N,
   or with N = 0, the full panel runs and nothing is recorded.
@@ -1303,7 +1303,8 @@ working exactly as before.
   (no `dispatched` event after the task's latest `planned` one, issue #722) `lead_built` (`true`),
   `changed_lines` (added plus deleted lines from the unit's base — `UnitBase`, else the latest
   `planned` event's `base`, else HEAD — including new untracked files; with `--commit`, `git diff
-  --numstat <base> <commit>`, base defaulting to `<commit>^`) and `exception` (`--exception`'s
+  --numstat <base> <commit>`, base defaulting to `<commit>^`; flywheel's own files, `flywheel.md`
+  and `.flywheel/`, are not counted, issue #729) and `exception` (`--exception`'s
   text). `Validate` accepts the three only on an `inspected` event, and `exception` only with
   `lead_built`.
 - Lead-built cap (issue #722): a `pass` on a lead-built unit whose `changed_lines` exceed
