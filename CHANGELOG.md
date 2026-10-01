@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.57.1](https://github.com/suzworx/flywheel/compare/v0.57.0...v0.57.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* a lead-built unit's changed_lines and the panel's line count skip flywheel's own files ([#730](https://github.com/suzworx/flywheel/issues/730)) ([c664598](https://github.com/suzworx/flywheel/commit/c664598c4f454634b71bfcfe8ec9abf13172588d)), closes [#729](https://github.com/suzworx/flywheel/issues/729)
+
 ## [0.57.0](https://github.com/suzworx/flywheel/compare/v0.56.0...v0.57.0) (2026-10-01)
 
 
