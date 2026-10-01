@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.57.0](https://github.com/suzworx/flywheel/compare/v0.56.0...v0.57.0) (2026-10-01)
+
+
+### Features
+
+* factory and recover mark a lead-built unit "built by lead" with its changed lines ([#728](https://github.com/suzworx/flywheel/issues/728)) ([eafd540](https://github.com/suzworx/flywheel/commit/eafd54024b516bb76696a6066ef7e83fb672c63a)), closes [#722](https://github.com/suzworx/flywheel/issues/722)
+* lead-built units are recorded and capped: inspect refuses a pass with no dispatched attempt over lead_built.max_changed_lines ([#726](https://github.com/suzworx/flywheel/issues/726)) ([3fe927e](https://github.com/suzworx/flywheel/commit/3fe927e35017283ed5ddb22c60e44575b35d735b)), closes [#722](https://github.com/suzworx/flywheel/issues/722)
+
 ## [0.56.0](https://github.com/suzworx/flywheel/compare/v0.55.0...v0.56.0) (2026-10-01)
 
 
