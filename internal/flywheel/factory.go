@@ -95,6 +95,41 @@ type Unit struct {
 	// LeadBuilt is leadBuiltMark's mark for a unit with no dispatched attempt
 	// (issue #722); "" for a unit a worker built.
 	LeadBuilt string
+
+	// ResourceWait is a gate's live wait for a shared resource (issue #697):
+	// "resource <name> (<holder>) <age>", or "" when none.
+	ResourceWait string
+}
+
+// resourceWaitFor returns the task's live resource wait for attempt (issue
+// #697): its latest resource_wait event of that attempt, when no later
+// validated event of the same attempt and gate ended it and it is younger
+// than budget (a validate that died never wrote the ending reading). The
+// result is the note without its leading "waiting for ", a space and the
+// event's age; "" when there is no live wait. Events are scanned in order so
+// the last wait wins, the same way worktreeFor does.
+func resourceWaitFor(events []Event, task, attempt string, now time.Time, budget time.Duration) string {
+	var wait *Event
+	for i := range events {
+		e := &events[i]
+		if e.Task != task || e.Attempt != attempt {
+			continue
+		}
+		switch {
+		case e.Kind == "resource_wait":
+			wait = e
+		case e.Kind == "validated" && wait != nil && e.Gate == wait.Gate:
+			wait = nil
+		}
+	}
+	if wait == nil {
+		return ""
+	}
+	at, err := time.Parse(time.RFC3339Nano, wait.TS)
+	if err != nil || now.Sub(at) >= budget {
+		return ""
+	}
+	return strings.TrimPrefix(wait.Note, "waiting for ") + " " + HumanAge(ageOfTime(at, now))
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -707,6 +742,13 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			u.Peak = peakReasoningFor(ev, t.ID, t.Attempt)
 			u.Line = lineFor(ev, t.ID, t.Attempt)
 			u.Workdir, u.Base = worktreeFor(ev, t.ID, t.Attempt)
+			// a live resource wait shows for validate's quiet_wait budget plus
+			// a minute at most (issue #697); an unreadable budget keeps 30m.
+			budget, berr := cfg.Limits.QuietWaitDuration()
+			if berr != nil || budget <= 0 {
+				budget = 30 * time.Minute
+			}
+			u.ResourceWait = resourceWaitFor(ev, t.ID, t.Attempt, now, budget+time.Minute)
 			// stacked (issue #414): a done, unlanded unit in its own task
 			// worktree whose base landed as a squash. Computed only there,
 			// since it costs a few git reads, and never over a live state.

@@ -349,6 +349,12 @@ var kinds = map[string]bool{
 	// (the refusal text). It never changes a task's status; Derive shows it as
 	// TaskState.Refused until a later dispatched.
 	"dispatch_refused": true,
+	// resource_wait records validate starting to wait for a resource lock
+	// another holder has (issue #697): Task, Attempt, Gate, Command, Persona
+	// supervisor, Workdir and Note "waiting for resource <name> (<holder>)".
+	// It never changes a task's status; the gate's later validated event ends
+	// the wait, and the factory shows it live until then.
+	"resource_wait": true,
 }
 
 // ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
@@ -534,7 +540,10 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, panel_scoped, suspended, unsuspended", e.Kind)
+		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, panel_scoped, suspended, unsuspended, dispatch_refused, resource_wait", e.Kind)
+	}
+	if e.Kind == "resource_wait" && (!taskOK(e.Task) || e.Gate == "" || e.Note == "") {
+		return fmt.Errorf("resource_wait event must carry a task, a gate and a note")
 	}
 	if e.Kind == "gate_probed" && (e.Task == "" || e.Gate == "" || e.Command == "" || e.RC == nil) {
 		return fmt.Errorf("gate_probed event must carry a task, gate, command and rc")

@@ -428,7 +428,20 @@ func resourceGate(dir, wd, task, attempt, tree, commit string, resources []strin
 	if tune != nil {
 		tune(&timings)
 	}
-	release, note, busy, err := acquireResources(*lockDir, resources, timings)
+	// a lock another holder has is recorded as a resource_wait before the
+	// wait starts, so the factory shows it live; the reading ends it.
+	onWait := func(name, holder string) error {
+		ev := Event{
+			Task: task, Kind: "resource_wait", Attempt: attempt, Gate: gateID, Command: gate,
+			Persona: "supervisor", Workdir: workdirField(wd, dir),
+			Note: "waiting for resource " + name + " (" + holder + ")",
+		}
+		if err := AppendEvent(dir, ev); err != nil {
+			return fmt.Errorf("record resource_wait: %w", err)
+		}
+		return nil
+	}
+	release, note, busy, err := acquireResources(*lockDir, resources, timings, onWait)
 	defer release()
 	if err != nil {
 		return GateOut{}, err
