@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.61.0](https://github.com/suzworx/flywheel/compare/v0.60.0...v0.61.0) (2026-10-01)
+
+
+### Features
+
+* flywheel factory filters by one column (/NAME=pattern) and sorts by a column cursor (&lt; &gt; ~) ([#742](https://github.com/suzworx/flywheel/issues/742)) ([4f56f20](https://github.com/suzworx/flywheel/commit/4f56f20b394427d1fc7763a437a44f6c78fb2dd1)), closes [#583](https://github.com/suzworx/flywheel/issues/583)
+
+
+### Bug Fixes
+
+* validate's unknown-kind error lists every kind from the kinds map ([#740](https://github.com/suzworx/flywheel/issues/740)) ([fe948a8](https://github.com/suzworx/flywheel/commit/fe948a8db54ae0c2f58914d2e4b448e4a3d4f4ff)), closes [#739](https://github.com/suzworx/flywheel/issues/739)
+
 ## [0.60.0](https://github.com/suzworx/flywheel/compare/v0.59.0...v0.60.0) (2026-10-01)
 
 
