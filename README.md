@@ -308,7 +308,9 @@ same files and continues, and nothing is lost.
 1. **Plan** — the lead turns a goal into work orders: a brief with `owns:`, `needs:` and `gate:`
    lines, plus `skills:` naming the agent skills the unit's area needs (`flywheel brief
    --from-issue N` writes one from a tracker issue), recorded `planned`.
-2. **Brief** — `flywheel lint` checks each brief before it is dispatched.
+2. **Brief** — `flywheel lint` checks each brief before it is dispatched, including a problem
+   for each existing path the brief's text names outside the checkout, which a confined worker
+   cannot read ([#746](https://github.com/suzworx/flywheel/issues/746)).
 3. **Dispatch** — `flywheel run` sends it to a worker, in its own worktree, and records the run.
 4. **Review** — the gauges (`validate`, `inspect`, `verify`) re-measure every claim; the review
    agent and its panel read the diff (`flywheel review --agent`).
