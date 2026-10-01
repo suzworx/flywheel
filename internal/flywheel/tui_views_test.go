@@ -391,3 +391,139 @@ func TestTUIRunLogSteps(t *testing.T) {
 		t.Errorf("torn run = %q, want the head alone", got)
 	}
 }
+
+// TestTUIColumnFilter checks columnFilter and rowMatcher: NAME=pattern on a
+// header cell (any case, trimmed, several words) matches that cell alone; a
+// NAME no column has, a regex with `=`, is the row filter.
+func TestTUIColumnFilter(t *testing.T) {
+	t.Parallel()
+	header := []string{"TASK", "WHAT HAPPENED", "MODEL"}
+	row := []string{"T1", "gate failed", "claude-opus"}
+	for _, c := range []struct {
+		text    string
+		col     int
+		pattern string
+		match   bool
+	}{
+		{"what happened=gate", 1, "gate", true},
+		{" Model =opus", 2, "opus", true},
+		{"model=", 2, "", true},
+		{"!model=opus", 2, "!opus", false},
+		{"!task=opus", 0, "!opus", true},
+		{"model=-f cpus", 2, "-f cpus", true},
+		{"task=-f cpus", 0, "-f cpus", false},
+		{"task=opus", 0, "opus", false}, // only the MODEL cell has opus
+		{"nope=x|opus", -1, "", true},   // no NAME column: the row regex
+		{"opus", -1, "", true},
+	} {
+		col, pattern := columnFilter(header, c.text)
+		if col != c.col || pattern != c.pattern {
+			t.Errorf("columnFilter(%q) = %d, %q; want %d, %q", c.text, col, pattern, c.col, c.pattern)
+		}
+		if match, _ := rowMatcher(header, c.text); match(row) != c.match {
+			t.Errorf("rowMatcher(%q) on %q = %v, want %v", c.text, row, !c.match, c.match)
+		}
+	}
+}
+
+// TestTUIColumnFilterKeys checks /model=opus through the keys, and a column
+// filter on a column of another view's header only.
+func TestTUIColumnFilterKeys(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	m := NewTUI()
+	typed(m, d, "/model=opus")
+	if got := firstCells(m, d); got != "T1 T3" {
+		t.Errorf("/model=opus: rows %q, want T1 T3", got)
+	}
+	typed(m, d, ":w")
+	typed(m, d, "/adapter=claude")
+	if got := firstCells(m, d); got != "worker1" {
+		t.Errorf("/adapter=claude on workers: rows %q, want worker1", got)
+	}
+	esc(m, d)
+	typed(m, d, "/task=s2")
+	if got := firstCells(m, d); got != "" {
+		t.Errorf("/task=s2: rows %q, want none (s2 is T2's SESSION, not its TASK)", got)
+	}
+}
+
+// TestTUIColumnSort checks the column cursor: > > sorts by the second column,
+// ~ flips it, < walks back and stops at the first column, the title and the
+// header cell show the sort, the tree refuses and the sort survives a round
+// trip to another view.
+func TestTUIColumnSort(t *testing.T) {
+	t.Parallel()
+	d := makeTestTUIData()
+	m := NewTUI()
+	press(m, d, "~")
+	if !strings.Contains(m.flashLine(), "no sort to flip") {
+		t.Errorf("~ with no sort: flash %q", m.flashLine())
+	}
+	press(m, d, ">>")
+	if m.sort.key != "col:STAGE" || firstCells(m, d) != "T1 T3 T2" {
+		t.Errorf("> >: sort %+v rows %q; want col:STAGE, T1 T3 T2", m.sort, firstCells(m, d))
+	}
+	press(m, d, "~")
+	if !m.sort.desc || firstCells(m, d) != "T2 T1 T3" {
+		t.Errorf("~: sort %+v rows %q; want descending, T2 T1 T3", m.sort, firstCells(m, d))
+	}
+	if view := m.View(d, 120, 20, false); !strings.Contains(view, "↓stage") || !strings.Contains(view, "STAGE↓") {
+		t.Errorf("title or header lacks the descending stage sort:\n%s", view)
+	}
+	press(m, d, "<<")
+	if m.sort.key != "col:TASK" || m.sort.desc || !strings.Contains(m.flashLine(), "first column") {
+		t.Errorf("< < from STAGE: sort %+v flash %q; want col:TASK ascending, first column", m.sort, m.flashLine())
+	}
+	press(m, d, ">>>>")
+	view := m.View(d, 120, 20, false)
+	if m.sort.key != "col:MODEL" || !strings.Contains(view, "[3] ↑model") || !strings.Contains(view, "MODEL↑") {
+		t.Errorf("> x4: sort %+v; want col:MODEL, ↑model in the title, MODEL↑ in the header:\n%s", m.sort, view)
+	}
+	// The arrow is one rune of the MODEL column: STEPS stays over the steps.
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(view, "STEPS") {
+		t.Errorf("no STEPS header:\n%s", view)
+	}
+	for i, l := range lines {
+		if h := runeIndex([]rune(l), []rune("STEPS")); h >= 0 && i+1 < len(lines) {
+			if r := runeIndex([]rune(lines[i+1]), []rune("claude-opus  5")); r < 0 || r+len("claude-opus  ") != h {
+				t.Errorf("STEPS at rune %d, the first row's steps at %d:\n%s\n%s", h, r+len("claude-opus  "), l, lines[i+1])
+			}
+		}
+	}
+	typed(m, d, ":w")
+	press(m, d, "<")
+	if m.sort.key != "col:BUSY" {
+		t.Errorf("< on workers with no sort: %+v, want col:BUSY (the last column)", m.sort)
+	}
+	press(m, d, ">")
+	if m.sort.key != "col:BUSY" || !strings.Contains(m.flashLine(), "last column") {
+		t.Errorf("> at BUSY: sort %+v flash %q; want col:BUSY kept, last column", m.sort, m.flashLine())
+	}
+	esc(m, d)
+	if m.view != "units" || m.sort.key != "col:MODEL" {
+		t.Errorf("back on units: view %q sort %+v, want col:MODEL", m.view, m.sort)
+	}
+	typed(m, d, ":t")
+	press(m, d, ">")
+	if !strings.Contains(m.flashLine(), "the tree keeps its order") || m.sort.key != "" {
+		t.Errorf("> on the tree: flash %q sort %+v", m.flashLine(), m.sort)
+	}
+}
+
+// TestTUIHotkeySortKeys checks a hotkeys.json entry on ~ is skipped as
+// already bound.
+func TestTUIHotkeySortKeys(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "hotkeys.json"), []byte(`{"hotkeys": {"~": ":pulse", "K": ":andon"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if keys, msg := LoadHotkeys(dir); len(keys) != 1 || !strings.Contains(msg, "~ is already bound") {
+		t.Errorf("LoadHotkeys = %v, %q; want K only, ~ already bound", keys, msg)
+	}
+}
