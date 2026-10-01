@@ -192,7 +192,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
   later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before dispatch (only a `dispatch_refused` event is recorded), issue #456; without `--base` a new `fw/<task>` starts from `origin/<integration.branch>`, else the local `integration.branch`, when that is configured (neither resolving refuses the dispatch), else from HEAD with a progress warning when HEAD carries commits `origin/main` (else `origin/master`, else the local main or master) lacks, issue #550), `workdir` (the worker's tree, canonical absolute form, recorded only when it is not the flywheel root: the task worktree for `run --worktree`, or PATH for `flywheel run <task> --workdir PATH`, an existing tree the lead prepared, a merge in progress say, used as it is with no setup, checkpoints or attempt commit; `--workdir` with `--worktree`, a PATH that is not a directory, or one that is not a git working tree of the same repository (a different `git rev-parse --git-common-dir`) is refused (exit 6, rule `workdir`; with `--base`, rule `base`) before dispatch (only a `dispatch_refused` event is recorded); `validate` and `inspect` default to it, and a `--resume` or `--delta` with neither flag runs there again, issue #545), `increment` (N when
   `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
-  attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `note`.
+  attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `slot` (the
+  unit slot leased for the worker's tree and given to the worker, `worktree.setup` and every validate gate as
+  `FLYWHEEL_SLOT`: a lease per working tree in `<git common dir>/flywheel-slots/<n>`, the lowest free n from 1, reused
+  for the tree's life and reclaimed once its directory is gone; omitted outside a git repository; `Validate` accepts it
+  only on a `dispatched` event and only >= 1, issue #697), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
   `owns_checked` or `lost` event whose own `attempt` differs is stale and ignored (listed under
@@ -228,7 +232,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   command): the effective brief's `needs-state: <path> (link)` entries, each linked from
   the repo into the worktree (a directory junction on Windows, a symlink elsewhere; a path already
   present is left alone), then the `worktree.setup` command, run with bash (the gates' shell) in the
-  worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE` and `FLYWHEEL_ROOT` set and killed at
+  worktree with `FLYWHEEL_TASK`, `FLYWHEEL_WORKTREE`, `FLYWHEEL_ROOT` and `FLYWHEEL_SLOT` (the
+  worktree's unit slot, issue #697) set and killed at
   `worktree.setup_timeout` (default `10m`). Setup runs on every dispatch, so it must be idempotent.
   `flywheel rebase <task>` also writes one, with no attempt, when it re-runs `worktree.setup` after
   a rebase (issue #672; see `rebased`).

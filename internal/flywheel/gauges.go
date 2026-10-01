@@ -1037,6 +1037,12 @@ func runGateStages(wd, command, base string) (rc int, durMS int64, out []byte, s
 	if base != "" {
 		env = append(os.Environ(), "FLYWHEEL_BASE="+base)
 	}
+	// Every gate sees its tree's unit slot as FLYWHEEL_SLOT (issue #697).
+	slot, serr := LeaseSlot(wd)
+	if serr != nil {
+		return 0, 0, nil, nil, fmt.Errorf("gate in %s: %w", wd, serr)
+	}
+	env = slotEnv(env, slot)
 	argv := ShellArgv(command)
 	psPath := ""
 	if isBashArgv(argv) {
