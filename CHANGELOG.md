@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.55.0](https://github.com/suzworx/flywheel/compare/v0.54.0...v0.55.0) (2026-10-01)
+
+
+### Features
+
+* doctor reads the integration branch's host rules and warns when merges are not held to up-to-date branches ([#720](https://github.com/suzworx/flywheel/issues/720)) ([76ac097](https://github.com/suzworx/flywheel/commit/76ac097a1106183a4315c8b787c845fca190baf8)), closes [#686](https://github.com/suzworx/flywheel/issues/686)
+* FLYWHEEL_SLOT gives each working tree a unit slot for ports and databases ([#721](https://github.com/suzworx/flywheel/issues/721)) ([5273c4f](https://github.com/suzworx/flywheel/commit/5273c4fdfce7735770c12d978a66ed7d8fedea4c)), closes [#697](https://github.com/suzworx/flywheel/issues/697)
+* lint warns on an end-to-end or integration gate with no gate that resets state ([#718](https://github.com/suzworx/flywheel/issues/718)) ([0afb834](https://github.com/suzworx/flywheel/commit/0afb8347ae52363356931a5d92bf25b8193eb4e6)), closes [#636](https://github.com/suzworx/flywheel/issues/636)
+
 ## [0.54.0](https://github.com/suzworx/flywheel/compare/v0.53.0...v0.54.0) (2026-09-30)
 
 
