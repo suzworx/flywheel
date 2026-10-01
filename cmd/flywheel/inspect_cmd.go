@@ -16,12 +16,13 @@ func init() {
 
 // inspectOptions holds the parsed inspect flags.
 type inspectOptions struct {
-	dir     string
-	workdir string
-	verdict string
-	session string
-	note    string
-	commit  string
+	dir       string
+	workdir   string
+	verdict   string
+	session   string
+	note      string
+	commit    string
+	exception string
 }
 
 // inspectFlags defines inspect's flags once, so help and run share them.
@@ -35,11 +36,12 @@ func inspectFlags() (*flag.FlagSet, *inspectOptions) {
 	fs.StringVar(&o.session, "session", "", "inspector session, distinct from every worker session")
 	fs.StringVar(&o.note, "note", "", "optional inspection note")
 	fs.StringVar(&o.commit, "commit", "", "inspect this commit's tree instead of the working tree (an attested, merged commit)")
+	fs.StringVar(&o.exception, "exception", "", "why a lead-built unit over lead_built.max_changed_lines passes")
 	return fs, o
 }
 
 // inspectUsageLine is flywheel inspect's usage, shared by help and errors.
-const inspectUsageLine = "flywheel inspect <task> --verdict pass|rework|scrap|escalate --session <session> [--commit SHA] [--note NOTE] [--dir DIR] [--workdir PATH]"
+const inspectUsageLine = "flywheel inspect <task> --verdict pass|rework|scrap|escalate --session <session> [--commit SHA] [--exception WHY] [--note NOTE] [--dir DIR] [--workdir PATH]"
 
 // inspectUsage prints the flywheel inspect usage line.
 func inspectUsage(w io.Writer) {
@@ -69,7 +71,7 @@ func runInspect(args []string) {
 		os.Exit(2)
 	}
 	err = flywheel.InspectTask(o.dir, task, flywheel.InspectOptions{
-		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Note: o.note, Commit: o.commit,
+		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Note: o.note, Commit: o.commit, Exception: o.exception,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel inspect: %v\n", err)
