@@ -68,8 +68,15 @@ type BriefHeader struct {
 	Preflight []string `json:",omitempty"`
 	// preflightEmpty records an empty preflight: line; flywheel lint reports it.
 	preflightEmpty bool
-	Review         []string
-	Line           string `json:",omitempty"`
+	// Skills lists the agent skills a `skills:` line names (issue #695),
+	// accumulated across lines, each kept once, order kept: lint and run
+	// refuse one that is not installed where the worker loads skills, and the
+	// dispatch prompt tells the worker to load them.
+	Skills []string `json:",omitempty"`
+	// skillsEmpty records an empty skills: line; flywheel lint reports it.
+	skillsEmpty bool
+	Review      []string
+	Line        string `json:",omitempty"`
 	// Kind is the task's kind of work, the `kind:` line trimmed and
 	// lowercased, the last one winning (issue #475): routing scores models per
 	// kind. flywheel lint checks it against lint.kinds.
@@ -198,6 +205,16 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 				h.Preflight = append(h.Preflight, c)
 			} else {
 				h.preflightEmpty = true
+			}
+		case "skills":
+			// Agent skills the worker loads before any other work (issue #695).
+			if strings.TrimSpace(val) == "" {
+				h.skillsEmpty = true
+			}
+			for _, entry := range strings.Split(val, ",") {
+				if e := strings.TrimSpace(entry); e != "" && !slices.Contains(h.Skills, e) {
+					h.Skills = append(h.Skills, e)
+				}
 			}
 		case "exclusive":
 			h.Exclusive = append(h.Exclusive, val)

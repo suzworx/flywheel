@@ -63,6 +63,13 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   It runs before the dispatch lock, and a refused dispatch (any rule, or `dispatch-lock` when the
   lock stayed busy) leaves the unit's status alone but records `dispatch_refused`, shown by
   `flywheel status` as `refused: <rule>` (issue #651).
+- **skills:** — the agent skills the unit's area needs (the ones the project's AGENTS.md maps to
+  this kind of task): `skills: tdd, go-style`, repeatable, each kept once in order. `flywheel lint`
+  reports, and `flywheel run` refuses (exit 6, rule `skills`), a skill that is not installed as
+  `<dir>/<name>/SKILL.md` where the worker loads skills (claude: `.claude/skills` in the worker's
+  tree or home; opencode also `.opencode/skill(s)` and `~/.config/opencode/skill(s)`); a plugin
+  skill such as `engineering:debug` is not checked. The dispatch prompt tells the worker to load
+  them before any other work ([#695](https://github.com/suzworx/flywheel/issues/695)).
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before

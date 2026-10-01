@@ -93,7 +93,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `planned`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind planned --brief <path> [--session S --model M] [--goal G] [--note TEXT]`.
 - Carries: `task`, `brief` (the brief file's path), `header` (the parsed brief header — owns,
-  needs, needs-state, needs-env, preflight, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
+  needs, needs-state, needs-env, preflight, skills, gates, live-gates, exclusive, review, kind and sha256 — as recorded when the
   event was appended; `Kind` is the optional `kind:` line, issue #475, trimmed and lowercased, the
   last one winning, which routing and `flywheel stats --by model --kind` read and `flywheel lint`
   checks against `lint.kinds` in config, default `feature`, `fix`, `refactor`, `test`, `docs`,
@@ -164,6 +164,15 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   event is recorded, issue #652). An invalid pattern is not refused here; `flywheel lint` reports it.
   `flywheel validate` refuses the effective brief with the same rule (exit 6) before any gate runs,
   recording nothing, as it does for `needs-env`.
+- Not written when a skill the brief's `skills:` header names (a correction's unioned with the base
+  brief's) is not installed as `<dir>/<name>/SKILL.md` in a directory the dispatching worker's
+  adapter loads skills from (claude: `.claude/skills` in the worker's tree — the `--workdir`, an
+  existing task worktree, a correction's recorded workdir, else the flywheel root — then
+  `~/.claude/skills`; opencode: `.opencode/skill(s)`, `~/.config/opencode/skill(s)`, then the
+  claude ones): run refuses with rule `skills` (exit 6) naming each missing skill and every
+  directory looked in, before the dispatch lock (only a `dispatch_refused` event is recorded). A
+  plugin skill (a name with `:`) and an adapter with no known skill directory are not checked
+  (issue #695).
 - Red-first (issue #648) is not a dispatch refusal: a `kind: fix` brief whose gates all pass on the
   base tree is a `flywheel lint --probe` problem (config `lint.red_first` false turns it off), and
   `flywheel inspect --verdict pass` enforces it with rule `red-first` from the `gate_probed` events
@@ -200,7 +209,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   unit slot leased for the worker's tree and given to the worker, `worktree.setup` and every validate gate as
   `FLYWHEEL_SLOT`: a lease per working tree in `<git common dir>/flywheel-slots/<n>`, the lowest free n from 1, reused
   for the tree's life and reclaimed once its directory is gone; omitted outside a git repository; `Validate` accepts it
-  only on a `dispatched` event and only >= 1, issue #697), `note`.
+  only on a `dispatched` event and only >= 1, issue #697), `skills` (the brief's `skills:` list as
+  merged for the attempt, which the fresh dispatch prompt told the worker to load with
+  `Load these skills before any other work: a, b.`; omitted when none; `Validate` accepts it only on a
+  `dispatched` event, issue #695), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
   `owns_checked` or `lost` event whose own `attempt` differs is stale and ignored (listed under
@@ -212,7 +224,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:

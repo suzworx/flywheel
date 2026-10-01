@@ -691,6 +691,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// unioned in, as AttemptBrief does for validate, so the attempt commit and
 	// the checkpoint cover what validate measures.
 	attemptOwns := unionStrings(myOwns, promptHeader.Owns)
+	// The attempt's skills (issue #695), merged as preDispatchChecks checked
+	// them: a correction keeps the base brief's and adds its own.
+	attemptSkills := promptHeader.Skills
+	if o.Resume || o.DeltaPath != "" {
+		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+			attemptSkills = unionStrings(h.Skills, promptHeader.Skills)
+		}
+	}
 	// A correction delta inherits the base brief's needs-state links (issue
 	// #472): a delta that declares none must not drop them on a fresh
 	// worktree. A fresh dispatch links its own brief's, as before.
@@ -835,7 +843,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir), Slot: slot,
-		Line: usedLine, Lead: o.Lead, Route: route,
+		Skills: attemptSkills, Line: usedLine, Lead: o.Lead, Route: route,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1042,7 +1050,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Resume: o.Resume, Increment: o.Increment,
 		AllowedTools: worker.allowedTools(), DisallowedTools: claudeDisallowed(worker, cfg.WorkerPolicy),
 		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
-		MaxTurns: cfg.maxTurns(worker),
+		MaxTurns: cfg.maxTurns(worker), Skills: attemptSkills,
 	}
 	if unitCap > 0 {
 		req.MaxBudgetUSD = unitCap - unitSpent
@@ -2015,7 +2023,8 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // (fullSuiteRefusal) refuse with rule full-suite. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
-// there. A task with no
+// there. A skills: entry (issue #695, merged the same way) not installed where
+// w loads skills, looked up in dispatchTree, refuses with rule skills. A task with no
 // planned brief or an unreadable prompt checks nothing and returns "": Run's
 // own checks under the lock refuse it with today's error.
 func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt []byte, err error) {
@@ -2039,7 +2048,7 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	if perr != nil {
 		return src, b, nil
 	}
-	needs, pre, gates, owns := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns
+	needs, pre, gates, owns, skills := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns, ph.Skills
 	if o.Resume || o.DeltaPath != "" {
 		var baseHeader BriefHeader
 		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
@@ -2047,6 +2056,7 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		}
 		needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
 		pre = unionStrings(baseHeader.Preflight, ph.Preflight)
+		skills = unionStrings(baseHeader.Skills, ph.Skills)
 		// The gates the correction will be measured with are AttemptBrief's
 		// merge as if this prompt were already dispatched (issue #662).
 		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
@@ -2056,6 +2066,9 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	}
 	if fix := claudeDirProblem(w, owns); fix != "" {
 		return "", nil, &RuleRefusal{Rule: "claude-dir", Fix: fix}
+	}
+	if fix := skillsProblem(w, dispatchTree(dir, o, events), userHome(), skills); fix != "" {
+		return "", nil, &RuleRefusal{Rule: "skills", Fix: fix}
 	}
 	if r := needsEnvRefusal(needs); r != nil {
 		return "", nil, r
