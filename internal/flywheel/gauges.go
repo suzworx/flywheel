@@ -258,6 +258,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		if r := fullSuiteRefusal(o.Dir, cfg.Lint, header.Gates, header.Owns); r != nil {
 			return GaugeResult{}, r
 		}
+		// Required gates (issue #751): refuse as run does.
+		if r := requiredGatesRefusal(cfg.Lint, header.Gates, header.Owns); r != nil {
+			return GaugeResult{}, r
+		}
 	}
 	if len(header.Gates) == 0 {
 		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])

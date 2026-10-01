@@ -229,6 +229,39 @@ func TestConfigLintKinds(t *testing.T) {
 	}
 }
 
+// TestRequiredGatesConfigInvalid checks Validate reports one problem per
+// invalid lint.required_gates pattern, in sorted key then list order (issue
+// #751).
+func TestRequiredGatesConfigInvalid(t *testing.T) {
+	t.Parallel()
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m"}}, Lint: &LintConfig{RequiredGates: map[string][]string{
+		"scripts/": {"ok", "(", "["},
+		"":         {"*"},
+		"src/":     {"fine"},
+	}}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want invalid lint.required_gates patterns")
+	}
+	msg := err.Error()
+	wants := []string{`lint.required_gates[""][0]: "*" is not a valid regular expression`, `lint.required_gates["scripts/"][1]: "(" is not a valid regular expression`, `lint.required_gates["scripts/"][2]: "[" is not a valid regular expression`}
+	last := -1
+	for _, w := range wants {
+		i := strings.Index(msg, w)
+		if i < 0 || i < last {
+			t.Errorf("Validate() error = %v, want %q in sorted order", err, w)
+		}
+		last = i
+	}
+	if strings.Contains(msg, "src/") || strings.Contains(msg, `"ok"`) {
+		t.Errorf("Validate() error = %v, want no problem for valid patterns", err)
+	}
+	cfg.Lint.RequiredGates = map[string][]string{"scripts/": {"check:quality"}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() valid required_gates error = %v, want nil", err)
+	}
+}
+
 // TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
 // adapter names (issue #275) alongside opencode, sim, and claude.
 func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {

@@ -174,6 +174,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   event is recorded, issue #652). An invalid pattern is not refused here; `flywheel lint` reports it.
   `flywheel validate` refuses the effective brief with the same rule (exit 6) before any gate runs,
   recording nothing, as it does for `needs-env`.
+- Not written when config `lint.required_gates` has a key that applies (`""` always; any other key
+  when it prefixes an owned path) with a pattern none of those gates matches: run refuses with rule
+  `required-gates` (exit 6) naming each missed pattern, before the dispatch lock (only a
+  `dispatch_refused` event is recorded, issue #751). `flywheel validate` refuses the effective brief
+  with the same rule (exit 6) before any gate runs, recording nothing.
 - Not written when a skill the brief's `skills:` header names (a correction's unioned with the base
   brief's) is not installed as `<dir>/<name>/SKILL.md` in a directory the dispatching worker's
   adapter loads skills from (claude: `.claude/skills` in the worker's tree — the `--workdir`, an
@@ -234,7 +239,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `required-gates`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:

@@ -54,7 +54,9 @@ type LintResult struct {
 // and a problem (zero gates included) when lint.full_suite_required is set
 // (issue #652); owns under lint.full_suite_paths prefixes need each selected
 // prefix's pattern instead, one finding per miss (fullSuiteMissing);
-// an invalid lint.full_suite or lint.full_suite_paths pattern is a problem. When dir has go.mod and
+// an invalid lint.full_suite or lint.full_suite_paths pattern is a problem.
+// Each lint.required_gates pattern no gate matches, under every key that
+// applies, is a problem (requiredGatesMissing, issue #751). When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
 // that invokes a JavaScript test runner the repository does not use (config
@@ -76,7 +78,12 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 		return res, fmt.Errorf("parse brief %s: %w", path, err)
 	}
 	cfg, _, err := LoadConfig(dir)
-	if err != nil {
+	switch {
+	case err != nil && strings.Contains(err.Error(), "lint.required_gates"):
+		// An invalid lint.required_gates pattern fails the load (issue #751):
+		// the defaults would drop the required gates, so it is a problem.
+		res.Problems = append(res.Problems, fmt.Sprintf("config not read: %v", err))
+	case err != nil:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("config not read, lint defaults apply: %v", err))
 	}
 	res.Problems = append(res.Problems, kindProblems(path, header.Kind, cfg.LintKinds())...)
@@ -96,6 +103,15 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 			case len(header.Gates) > 0:
 				res.Warnings = append(res.Warnings, w.String()+"; set lint.full_suite_paths to change it)")
 			}
+		}
+	}
+	// Required gates (issue #751): explicit config is the opt-in, so every
+	// miss is a problem.
+	if missing, err := requiredGatesMissing(lc, header.Gates, header.Owns); err != nil {
+		res.Problems = append(res.Problems, err.Error())
+	} else {
+		for _, w := range missing {
+			res.Problems = append(res.Problems, w.String()+" (lint.required_gates)")
 		}
 	}
 	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
@@ -953,6 +969,52 @@ func fullSuiteMissing(dir string, lc *LintConfig, gates, owns []string) ([]fullS
 		}
 	}
 	return missing, nil
+}
+
+// requiredGateWant is one lint.required_gates pattern no gate matched (issue
+// #751): Prefix is its key, "" for every brief.
+type requiredGateWant struct {
+	Prefix, Pattern string
+}
+
+// String is the miss as lint and run report it.
+func (w requiredGateWant) String() string {
+	if w.Prefix == "" {
+		return "no gate matches required pattern " + w.Pattern
+	}
+	return "no gate matches required pattern " + w.Pattern + " for " + w.Prefix
+}
+
+// requiredGatesMissing returns the lint.required_gates patterns no gate in
+// gates matches (issue #751), sorted by prefix then pattern, de-duplicated.
+// The "" key applies to every brief; any other key applies when it prefixes
+// at least one owns path (slash form). Unlike lint.full_suite_paths, every
+// applicable key applies, not only the longest. An invalid pattern returns an
+// error naming its key.
+func requiredGatesMissing(lc *LintConfig, gates, owns []string) ([]requiredGateWant, error) {
+	if lc == nil || len(lc.RequiredGates) == 0 {
+		return nil, nil
+	}
+	var missing []requiredGateWant
+	for _, k := range slices.Sorted(maps.Keys(lc.RequiredGates)) {
+		applies := k == "" || slices.ContainsFunc(owns, func(o string) bool { return strings.HasPrefix(filepath.ToSlash(o), k) })
+		for _, p := range lc.RequiredGates[k] {
+			re, err := regexp.Compile(p)
+			if err != nil {
+				return nil, fmt.Errorf("config lint.required_gates[%q] %q is not a valid regular expression: %v", k, p, err)
+			}
+			if applies && !slices.ContainsFunc(gates, re.MatchString) {
+				missing = append(missing, requiredGateWant{Prefix: k, Pattern: p})
+			}
+		}
+	}
+	slices.SortFunc(missing, func(a, b requiredGateWant) int {
+		if c := strings.Compare(a.Prefix, b.Prefix); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Pattern, b.Pattern)
+	})
+	return slices.Compact(missing), nil
 }
 
 // jsRunnerDeps maps the package.json dependency that brings a JavaScript test

@@ -153,6 +153,12 @@ type LintConfig struct {
 	// owns path's pattern; when no owns path is under any prefix, FullSuite
 	// applies.
 	FullSuitePaths map[string]string `json:"full_suite_paths,omitempty"`
+	// RequiredGates maps an owns-path prefix (slash form, "" = every brief)
+	// to regular expressions (issue #751). Every key that prefixes at least
+	// one owns path, and the "" key always, applies: each of its patterns must
+	// be matched by at least one gate line, or lint reports a problem and
+	// flywheel run and validate refuse with rule required-gates.
+	RequiredGates map[string][]string `json:"required_gates,omitempty"`
 	// Importers turns the Go importer-coverage warning off when false; nil
 	// means on wherever go.mod exists.
 	Importers *bool `json:"importers,omitempty"`
@@ -1210,6 +1216,18 @@ func (c Config) validateLoad() error {
 				problems = append(problems, fmt.Sprintf("lint.kinds[%d] duplicates %q", j, k))
 			}
 			seenKind[k] = true
+		}
+		rgKeys := make([]string, 0, len(c.Lint.RequiredGates))
+		for k := range c.Lint.RequiredGates {
+			rgKeys = append(rgKeys, k)
+		}
+		sort.Strings(rgKeys)
+		for _, k := range rgKeys {
+			for j, p := range c.Lint.RequiredGates[k] {
+				if _, err := regexp.Compile(p); err != nil {
+					problems = append(problems, fmt.Sprintf("lint.required_gates[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
+				}
+			}
 		}
 	}
 	if c.Integration != nil {
