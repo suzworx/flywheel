@@ -25,6 +25,43 @@ func leadBuilt(events []Event, task string) bool {
 	return !dispatched
 }
 
+// leadBuiltMark is the mark factory and recover show for a lead-built unit
+// (issue #722): "built by lead, <n> changed lines" (plus ", exception: <why>")
+// from the latest inspected event after the latest planned one when it has
+// LeadBuilt, or "built by lead" for a lead-built unit validated but not yet
+// inspected. A unit a worker built never gets a mark.
+func leadBuiltMark(events []Event, task string) (string, bool) {
+	var inspected *Event
+	validated := false
+	for i, e := range events {
+		if e.Task != task {
+			continue
+		}
+		switch e.Kind {
+		case "planned":
+			inspected, validated = nil, false
+		case "validated":
+			validated = true
+		case "inspected":
+			inspected = &events[i]
+		}
+	}
+	if inspected != nil {
+		if !inspected.LeadBuilt || !leadBuilt(events, task) {
+			return "", false
+		}
+		mark := fmt.Sprintf("built by lead, %d changed lines", inspected.ChangedLines)
+		if inspected.Exception != "" {
+			mark += ", exception: " + inspected.Exception
+		}
+		return mark, true
+	}
+	if validated && leadBuilt(events, task) {
+		return "built by lead", true
+	}
+	return "", false
+}
+
 // leadBuiltBase is the commit a lead-built unit's changed lines are counted
 // from: UnitBase when the unit has one, else the latest planned event's Base
 // (HEAD when it was planned), else "".

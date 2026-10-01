@@ -258,7 +258,12 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			}
 		}
 	}
-	row := func(task, line, tree, stage, att, sess, model, steps, age, run string) string {
+	// who is the SESSION and MODEL cells; a lead-built unit has neither, so
+	// its mark (issue #722) spans both at the same total width.
+	who := func(sess, model string) string {
+		return fmt.Sprintf("%-*s %-*s", sessWd, sess, modelWd, model)
+	}
+	row := func(task, line, tree, stage, att, who, steps, age, run string) string {
 		cells := []string{fmt.Sprintf("%-*s", taskWd, task)}
 		if hasLine {
 			cells = append(cells, fmt.Sprintf("%-*s", lineW, line))
@@ -267,21 +272,23 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 			cells = append(cells, fmt.Sprintf("%-*s", treeW, tree))
 		}
 		cells = append(cells,
-			fmt.Sprintf("%-*s", stageW, stage), fmt.Sprintf("%-*s", attW, att),
-			fmt.Sprintf("%-*s", sessWd, sess), fmt.Sprintf("%-*s", modelWd, model),
+			fmt.Sprintf("%-*s", stageW, stage), fmt.Sprintf("%-*s", attW, att), who,
 			fmt.Sprintf("%*s", stepsW, steps), fmt.Sprintf("%*s", ageW, age), run)
 		return "  " + strings.Join(cells, " ")
 	}
-	fmt.Fprintf(w, "%s\n", row("TASK", "LINE", "TREE", "STAGE", "ATT", "SESSION", "MODEL", "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN")))
+	fmt.Fprintf(w, "%s\n", row("TASK", "LINE", "TREE", "STAGE", "ATT", who("SESSION", "MODEL"), "STEPS", "AGE", fmt.Sprintf("%-*s", runW, "RUN")))
 	for _, u := range f.Units {
 		panel := ""
 		if panelWd > 0 && u.Panel != "" {
 			panel = " panel " + u.Panel
 		}
 		run := paint(color, stateColor(u.RunState), padLeft(unitRunCell(u), runW))
+		cell := who(truncate(u.Session, sessWd), truncate(u.Model, modelWd))
+		if u.LeadBuilt != "" {
+			cell = fmt.Sprintf("%-*s", sessWd+1+modelWd, truncate(u.LeadBuilt, sessWd+1+modelWd))
+		}
 		fmt.Fprintf(w, "%s%s\n", row(truncate(u.Task, taskWd), truncate(u.Line, lineW), truncate(treeCell(u), treeW), truncate(u.Stage, stageW),
-			truncate(u.Attempt, attW), truncate(u.Session, sessWd), truncate(u.Model, modelWd),
-			fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run), panel)
+			truncate(u.Attempt, attW), cell, fmt.Sprintf("%d", u.Steps), HumanAge(u.LastAge), run), panel)
 	}
 }
 
@@ -368,10 +375,11 @@ type jUnit struct {
 	RunState      string `json:"run_state"`
 	PeakReasoning int    `json:"peak_reasoning"`
 	Station       string `json:"station,omitempty"`
-	ResetAt       string `json:"reset_at,omitempty"` // a rate-limited unit's reset, RFC 3339 (issue #383)
-	Workdir       string `json:"workdir,omitempty"`  // the unit's worktree (issue #394)
-	Base          string `json:"base,omitempty"`     // its base commit, first 7 characters
-	Panel         string `json:"panel,omitempty"`    // the verdict matrix cells (issue #420)
+	ResetAt       string `json:"reset_at,omitempty"`   // a rate-limited unit's reset, RFC 3339 (issue #383)
+	Workdir       string `json:"workdir,omitempty"`    // the unit's worktree (issue #394)
+	Base          string `json:"base,omitempty"`       // its base commit, first 7 characters
+	Panel         string `json:"panel,omitempty"`      // the verdict matrix cells (issue #420)
+	LeadBuilt     string `json:"lead_built,omitempty"` // the built-by-lead mark (issue #722)
 }
 
 type jAndon struct {
@@ -432,7 +440,7 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = js
 	for _, u := range f.Units {
-		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base, Panel: u.Panel}
+		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base, Panel: u.Panel, LeadBuilt: u.LeadBuilt}
 		if !u.ResetAt.IsZero() {
 			ju.ResetAt = u.ResetAt.UTC().Format(time.RFC3339)
 		}

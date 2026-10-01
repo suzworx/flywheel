@@ -895,6 +895,13 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   - the lease (`live`, `dead`, `none`).
   - the run file (`complete` when its last byte is a newline, `torn`, `missing`).
   - a stacked base, a paused model, and the task's checkpoints.
+  - the lead-built mark (issue #722, JSON `lead_built`, omitted when empty): when the latest
+    `inspected` event after the task's latest `planned` one has `lead_built`, `built by lead, <n>
+    changed lines` plus `, exception: <text>` when it carries one; with no such `inspected` event, a
+    lead-built task (no `dispatched` after its latest `planned`) with a `validated` event is `built by
+    lead`; otherwise empty. The text prints it under the task as `built by lead: <n> changed lines`.
+    The floor (`flywheel factory`, text and `--json` unit `lead_built`) shows the same mark in the
+    unit row's SESSION and MODEL cells, truncated to their combined width.
 
   A `landed` task is reported from the ledger alone (no worktree, lease, run-file or tree reads),
   and the tree hash is computed once per workdir, so recover stays fast on a large ledger (#628).
