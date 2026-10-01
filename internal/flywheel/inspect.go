@@ -92,6 +92,13 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if err != nil {
 			return err
 		}
+		header, _, err := AttemptBrief(o.Dir, events, task)
+		if err != nil {
+			return err
+		}
+		if r := redFirstRefusal(events, task, header, cfg.LintRedFirst()); r != nil {
+			return r
+		}
 		if r := panelRefusal(events, task, tree, panelFor(events, task, tree, cfg.PanelDimensions()), cfg.ReviewRequired()); r != nil {
 			return r
 		}

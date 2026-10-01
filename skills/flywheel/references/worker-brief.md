@@ -130,7 +130,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   --probe --task <id>` in the base checkout before `log --kind planned`: it runs each gate once
   there, so a wrong runner, path or missing tool is caught before a paid attempt, and `--task`
   records each probe as a `gate_probed` event so `validate` and `explain` can tell a broken gate
-  (it already failed on the base tree) from broken work (#544).
+  (it already failed on the base tree) from broken work (#544). A `kind: fix` brief needs a gate
+  that fails on the base tree (the regression test) and passes after the fix: run the probe with
+  `--task` before dispatch, or lint reports a problem and `flywheel inspect --verdict pass` refuses
+  with rule `red-first` (config `lint.red_first` false turns it off, #648).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
   provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own

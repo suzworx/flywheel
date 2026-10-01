@@ -79,6 +79,14 @@ func runLint(args []string) {
 		}
 		probes := flywheel.ProbeGates(o.dir, header.Gates)
 		probeLint(os.Stderr, brief, probes, &res)
+		cfg, _, err := flywheel.LoadConfig(o.dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
+			os.Exit(1)
+		}
+		if p := flywheel.RedFirstLintProblem(header.Kind, cfg.LintRedFirst(), probes); p != "" {
+			res.Problems = append(res.Problems, p)
+		}
 		if o.task != "" {
 			if err := flywheel.RecordGateProbes(o.dir, o.task, header.Gates, probes); err != nil {
 				fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
