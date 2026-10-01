@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.60.0](https://github.com/suzworx/flywheel/compare/v0.59.0...v0.60.0) (2026-10-01)
+
+
+### Features
+
+* the factory view shows a gate's live wait for a shared resource (resource_wait) ([#737](https://github.com/suzworx/flywheel/issues/737)) ([95f5412](https://github.com/suzworx/flywheel/commit/95f5412267f545da4317eba077c159282b75b539)), closes [#697](https://github.com/suzworx/flywheel/issues/697)
+
 ## [0.59.0](https://github.com/suzworx/flywheel/compare/v0.58.0...v0.59.0) (2026-10-01)
 
 
