@@ -260,7 +260,7 @@ func (m *TUI) openResult() {
 
 // boundRunes are the runes some view or drill-down already uses; a hotkey
 // never takes one, nor a named key, nor a bound Ctrl key.
-const boundRunes = " jkhlgGfwtdycFeJuHM WNASC123:/?q-[]virxZRps"
+const boundRunes = " jkhlgGfwtdycFeJuHM WNASC123:/?q-[]virxZRps<>~"
 
 // boundKey reports whether k already does something in the view.
 func boundKey(k term.Key) bool {

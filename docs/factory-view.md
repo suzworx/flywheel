@@ -77,6 +77,8 @@ Hiding the header or the crumbs gives their lines to the table.
 | `-` | table | swap to the previous view, and back |
 | `[` / `]` | table | step back / forward through the `:` commands entered |
 | `N` `A` `S` `C` (Shift) | table | sort by the first column, age, stage (or state), cost; again flips the direction |
+| `<` `>` | table | sort ascending by the column before / after the sorted one (see [Sort](#sort)) |
+| `~` | table | flip the direction of the sort |
 | `v` `i` `r` `x` | units, unit detail | validate, inspect, resume, withdraw the marked units or the one shown, after a `y/N` (see [Actions](#actions)) |
 | space | units | mark or unmark the row; Esc clears the marks first |
 | `Z` `R` (Shift) | units, unit detail | suspend, resume the factory, after a `y/N` |
@@ -169,6 +171,11 @@ keeps its cursor, filter and sort: coming back to it restores them.
   matches literally and the flash line says `literal match`.
 - `/!text`: the inverse, the rows the expression does not match.
 - `/-f text`: fuzzy, the rows holding every character of `text` in order.
+- `/NAME=pattern`: one column. When NAME (trimmed, in any case) is a header cell of the view
+  (`/stage=pass`, `/model=opus`, `/what happened=gate`), `pattern` is matched as above (`!re`,
+  `-f text`, the literal fallback) against that column's cell alone. `/!NAME=pattern` inverts it,
+  and an empty pattern (`/stage=`) keeps every row. When NAME is no header cell of this view, the
+  whole text is the row filter, so a regex holding `=` still works.
 
 ## Sort
 
@@ -176,8 +183,14 @@ Shift-N sorts by the first column (METRIC in the metrics table), Shift-A by age,
 stage), Shift-C by cost where the view has a cost column (none has yet; the flash says so). The
 same key again flips the direction; the title bar shows it (`↑stage`, `↓stage`). The sort is
 stable, so rows with equal keys keep their order. Ages sort as durations and numbers as numbers.
-Sorting by the column under a column cursor (k9s Shift-O with Shift-Left/Right) is not there: the
-terminal decoder does not report Shift-Left/Right. The tree keeps its order.
+
+Any column sorts through the column cursor, k9s's Shift-Left/Right on plain keys (the terminal
+decoder does not report Shift-Left/Right): `>` sorts ascending by the column after the one the sort
+is on, `<` by the one before; with no sort (or one this view has no column for) `>` picks the first
+column and `<` the last. It does not wrap: past either end the sort stays and the flash says
+`first column` or `last column`. `~` flips the direction of any sort (with none, the flash says
+`no sort to flip`). The title bar names a column sort by its header (`↑model`), and the sorted
+header cell carries the arrow (`MODEL↑`). The tree keeps its order.
 
 ## Unit detail
 
@@ -447,7 +460,3 @@ starts:
 A key is one `--keys` token: a single character or a named key such as `<ctrl-y>`. A key already
 bound, a command that opens no view, or a file that does not parse is skipped with one flash
 naming it; the rest load. A hotkey works in any table view, as if its command were typed after `:`.
-
-## Coming next
-
-- filtering by column, and sorting by the column under a cursor

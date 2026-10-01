@@ -114,8 +114,8 @@ type TUI struct {
 	cmdPos int
 
 	sort      tuiSort
-	matchText string // the filter text matchFn was built for
-	matchFn   func(string) bool
+	matchText string // the filter text and header matchFn was built for
+	matchFn   func([]string) bool
 	search    string // the `:s` query the search view shows
 	drillFind string // the drill-down scrolls to the first line holding it
 
@@ -231,8 +231,8 @@ type navLevel struct {
 	cursor       int
 }
 
-// tuiSort is a table's sort: the key (name, age, stage, cost; "" none) and
-// its direction.
+// tuiSort is a table's sort: the key (name, age, stage, cost, col:<HEADER>
+// for the column cursor; "" none) and its direction.
 type tuiSort struct {
 	key  string
 	desc bool
@@ -611,7 +611,8 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 				m.promptKind = ""
 				m.filter = m.prompt
 				m.cursor = 0
-				if _, literal := filterMatcher(m.filter); literal {
+				header, _ := m.Rows(d)
+				if _, literal := rowMatcher(header, m.filter); literal {
 					m.flash("literal match: /" + m.filter + " is not a valid regex")
 				}
 			}
@@ -692,6 +693,12 @@ func (m *TUI) Update(k term.Key, d TUIData) {
 			m.historyStep(1)
 		case 'N', 'A', 'S', 'C':
 			m.sortBy(sortKeys[k.Rune], d)
+		case '<':
+			m.sortStep(-1, d)
+		case '>':
+			m.sortStep(1, d)
+		case '~':
+			m.flipSort()
 		}
 	case term.KeyPgDn:
 		m.cursor += m.page
@@ -786,6 +793,66 @@ func (m *TUI) sortBy(key string, d TUIData) {
 		m.sort = tuiSort{key: key}
 	}
 	m.cursor = 0
+}
+
+// sortStep moves the column cursor: > (step 1) sorts ascending by the column
+// after the one the sort is on, < (step -1) by the one before; with no
+// column sorted, > picks the first column and < the last. It never wraps.
+func (m *TUI) sortStep(step int, d TUIData) {
+	if m.view == "tree" {
+		m.flash("the tree keeps its order")
+		return
+	}
+	header, _ := m.Rows(d)
+	if len(header) == 0 {
+		m.flash("no columns in this view")
+		return
+	}
+	next := sortColumn(header, m.sort.key) + step
+	if next-step < 0 {
+		next = 0
+		if step < 0 {
+			next = len(header) - 1
+		}
+	}
+	switch {
+	case next < 0:
+		m.flash("first column")
+		return
+	case next >= len(header):
+		m.flash("last column")
+		return
+	}
+	m.sort = tuiSort{key: "col:" + header[next]}
+	m.cursor = 0
+}
+
+// flipSort flips the direction of the current sort (~).
+func (m *TUI) flipSort() {
+	if m.view == "tree" {
+		m.flash("the tree keeps its order")
+		return
+	}
+	if m.sort.key == "" {
+		m.flash("no sort to flip")
+		return
+	}
+	m.sort.desc = !m.sort.desc
+	m.cursor = 0
+}
+
+// sortLabel is how the title bar names a sort key: a column sort by its
+// header in lower case (col:MODEL is model), the fixed keys as they are.
+func sortLabel(key string) string {
+	return strings.ToLower(strings.TrimPrefix(key, "col:"))
+}
+
+// sortArrow is ↑ for an ascending sort, ↓ for a descending one.
+func sortArrow(s tuiSort) string {
+	if s.desc {
+		return "↓"
+	}
+	return "↑"
 }
 
 // drillUnit opens a drill-down of task, unless it is not a unit.
@@ -979,8 +1046,9 @@ func (m *TUI) getTaskAtCursor(d TUIData) string {
 }
 
 // matchesFilter reports whether a row matches the current filter or prompt
-// filter (filterMatcher: a regex, `!` inverse, `-f` fuzzy).
-func (m *TUI) matchesFilter(row []string) bool {
+// filter (filterMatcher: a regex, `!` inverse, `-f` fuzzy) in a view with
+// header (rowMatcher: NAME=pattern filters the column NAME alone).
+func (m *TUI) matchesFilter(header, row []string) bool {
 	filterText := m.filter
 	if m.promptKind == "filter" {
 		filterText = m.prompt
@@ -988,11 +1056,13 @@ func (m *TUI) matchesFilter(row []string) bool {
 	if filterText == "" {
 		return true
 	}
-	if m.matchFn == nil || filterText != m.matchText {
-		m.matchFn, _ = filterMatcher(filterText)
-		m.matchText = filterText
+	// The header is in the key: another view may put the column elsewhere.
+	key := filterText + "\x00" + strings.Join(header, "\x00")
+	if m.matchFn == nil || key != m.matchText {
+		m.matchFn, _ = rowMatcher(header, filterText)
+		m.matchText = key
 	}
-	return m.matchFn(strings.Join(row, " "))
+	return m.matchFn(row)
 }
 
 // Rows returns the current view's rows after the filter and the sort, each
@@ -1036,7 +1106,7 @@ func (m *TUI) Rows(d TUIData) (header []string, rows [][]string) {
 	case "tree", "health", "learnings", "checkpoints", "search", "metrics", "ctx":
 		var kept [][]string
 		for _, row := range rows {
-			if m.matchesFilter(row) {
+			if m.matchesFilter(header, row) {
 				kept = append(kept, row)
 			}
 		}
@@ -1091,7 +1161,7 @@ func (m *TUI) rowsUnits(d TUIData) (header []string, rows [][]string) {
 		}
 		// WHY last (issue #583 k3): the frame cuts it to fit; the detail has it whole.
 		row = append(row, d.Why[u.Task])
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1109,7 +1179,7 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 			fmt.Sprintf("%d", l.MaxParallel),
 			fmt.Sprintf("%d", l.Busy),
 		}
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1128,7 +1198,7 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 			busy += " !"
 		}
 		row := []string{r.Name, adapter, r.ConfModel, "-", busy}
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1140,7 +1210,7 @@ func (m *TUI) rowsWorkers(d TUIData) (header []string, rows [][]string) {
 func (m *TUI) rowsAndon(d TUIData) (header []string, rows [][]string) {
 	header, all := andonRows(d)
 	for _, row := range all {
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1153,7 +1223,7 @@ func (m *TUI) rowsEvents(d TUIData) (header []string, rows [][]string) {
 	// Newest first.
 	for i := len(d.Events) - 1; i >= 0; i-- {
 		row := []string{d.Events[i]}
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1173,7 +1243,7 @@ func (m *TUI) rowsLines(d TUIData) (header []string, rows [][]string) {
 			fmt.Sprintf("%d", pl.Landed),
 			owns,
 		}
-		if m.matchesFilter(row) {
+		if m.matchesFilter(header, row) {
 			rows = append(rows, row)
 		}
 	}
@@ -1190,7 +1260,7 @@ const hintRows = 4
 // layoutHints close every menu.
 var (
 	tableHints  = []hint{{":", "view"}, {"/", "filter"}, {"esc", "back"}, {"-", "last view"}, {"[ ]", "history"}, {"ctrl-a", "views"}}
-	sortHints   = []hint{{"N/A/S/C", "sort"}}
+	sortHints   = []hint{{"N/A/S/C", "sort"}, {"</>", "sort column"}, {"~", "flip"}}
 	layoutHints = []hint{{"?", "help"}, {"q", "quit"}, {"ctrl-e", "header"}, {"ctrl-g", "crumbs"}, {"ctrl-w", "wide"}, {"ctrl-r", "reload"}}
 	scrollHints = []hint{{"j/k", "scroll"}, {"esc", "back"}}
 	unitHints   = []hint{{"enter", "why"}, {"l", "log"}}
@@ -1500,10 +1570,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		}
 		sortText := ""
 		if m.sort.key != "" {
-			sortText = " ↑" + m.sort.key
-			if m.sort.desc {
-				sortText = " ↓" + m.sort.key
-			}
+			sortText = " " + sortArrow(m.sort) + sortLabel(m.sort.key)
 		}
 		titleBar = fmt.Sprintf("── %s(%s)[%s]%s ──", viewName, filterText, count, sortText)
 	}
@@ -1547,8 +1614,12 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 			"  /re     case-insensitive regex (an invalid one matches literally)",
 			"  /!re    inverse: the rows the regex does not match",
 			"  /-f txt fuzzy: every character of txt, in order",
+			"  /NAME=re only the column NAME (a header, any case); /!NAME=re",
+			"          inverts; a NAME no column has filters the whole row",
 			"Sort (again flips the direction):",
 			"  N A S C by name, age, stage/state, cost",
+			"  < >     by the column before / after the sorted one",
+			"  ~       flip the direction of the sort",
 			"Drill-down:",
 			"  enter   a unit's detail (why and timeline), a learning, a",
 			"          checkpoint's paths, or a search result at its match",
@@ -1633,7 +1704,14 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		if !m.wide {
 			rows = cutCells(rows)
 		}
-		widths := m.computeColumnWidths(header, rows)
+		// The sorted column's header cell carries the sort's arrow (MODEL↑),
+		// counted in the column's width like any rune.
+		shownHeader := header
+		if c := sortColumn(header, m.sort.key); c >= 0 {
+			shownHeader = slices.Clone(header)
+			shownHeader[c] += sortArrow(m.sort)
+		}
+		widths := m.computeColumnWidths(shownHeader, rows)
 		// The andon's SIGNAL is the state its rows are coloured by.
 		paintHeader := header
 		if i := slices.Index(header, "SIGNAL"); i >= 0 {
@@ -1656,7 +1734,7 @@ func (m *TUI) View(d TUIData, width, height int, color bool) string {
 		}
 
 		// Print header row (with cursor prefix for alignment).
-		headerRow := m.formatRowWithColumns(header, widths)
+		headerRow := m.formatRowWithColumns(shownHeader, widths)
 		headerRowLine := "  " + headerRow
 		lines = append(lines, cutRunes(headerRowLine, width))
 

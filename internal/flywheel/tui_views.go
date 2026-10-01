@@ -40,6 +40,38 @@ func filterMatcher(text string) (match func(string) bool, literal bool) {
 	return re.MatchString, false
 }
 
+// columnFilter reads a `/` filter text of the form NAME=pattern, NAME one of
+// header's cells (trimmed, compared in any case): col is that column and
+// pattern what its cell must match; a `!` before the whole text inverts the
+// pattern. col is -1 when text is no column filter (the row filter).
+func columnFilter(header []string, text string) (col int, pattern string) {
+	rest, neg := strings.CutPrefix(text, "!")
+	name, pattern, ok := strings.Cut(rest, "=")
+	if !ok {
+		return -1, ""
+	}
+	name = strings.TrimSpace(name)
+	col = slices.IndexFunc(header, func(h string) bool { return strings.EqualFold(h, name) })
+	if col < 0 {
+		return -1, ""
+	}
+	if neg {
+		pattern = "!" + pattern
+	}
+	return col, pattern
+}
+
+// rowMatcher builds the `/` filter's row matcher for text in a view with
+// header: a column filter matches its one cell, else the whole row.
+func rowMatcher(header []string, text string) (match func([]string) bool, literal bool) {
+	if col, pattern := columnFilter(header, text); col >= 0 {
+		m, lit := filterMatcher(pattern)
+		return func(row []string) bool { return m(cell(row, col)) }, lit
+	}
+	m, lit := filterMatcher(text)
+	return func(row []string) bool { return m(strings.Join(row, " ")) }, lit
+}
+
 // fuzzyMatch reports whether every rune of needle appears in s, in order.
 func fuzzyMatch(needle []rune, s string) bool {
 	i := 0
@@ -53,8 +85,12 @@ func fuzzyMatch(needle []rune, s string) bool {
 
 // sortColumn is the index of the column key sorts by in header, -1 when
 // the view has none: name is METRIC (the metrics table) else the first
-// column, age AGE, stage STAGE (else STATE), cost COST.
+// column, age AGE, stage STAGE (else STATE), cost COST, and col:<HEADER>
+// (the column cursor) the header cell <HEADER> itself.
 func sortColumn(header []string, key string) int {
+	if name, ok := strings.CutPrefix(key, "col:"); ok {
+		return slices.Index(header, name)
+	}
 	switch key {
 	case "name":
 		if i := slices.Index(header, "METRIC"); i >= 0 {
