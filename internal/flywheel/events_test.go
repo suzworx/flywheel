@@ -1246,7 +1246,7 @@ func TestNoteEvent(t *testing.T) {
 	if err := Validate(Event{Kind: "note", Task: "bad task", Note: "x"}); err == nil {
 		t.Error("note with a malformed task was accepted")
 	}
-	if err := Validate(Event{Kind: "bogus", Task: "t1"}); err == nil || !strings.Contains(err.Error(), "finding_response, note") {
+	if err := Validate(Event{Kind: "bogus", Task: "t1"}); err == nil || !strings.Contains(err.Error(), ", note, ") {
 		t.Errorf("kind error text does not list note: %v", err)
 	}
 	learning := Event{Task: "t1", Kind: "learning", Severity: "P2", Title: "t", Observed: "o", Evidence: "e", Ask: "a"}
@@ -1479,5 +1479,33 @@ func TestSuspendedEventValidate(t *testing.T) {
 	}
 	if g := events[1]; g.Kind != "unsuspended" || g.Session != "lead" || g.Note != "thaw" {
 		t.Errorf("unsuspended round-trip = %+v, want %+v", g, thaw)
+	}
+}
+
+func TestValidateUnknownKindNamesEveryKind(t *testing.T) {
+	t.Parallel()
+	err := Validate(Event{TS: "2026-10-01T00:00:00Z", Task: "T1", Kind: "no-such-kind"})
+	if err == nil {
+		t.Fatal("Validate() error = nil, want an unknown-kind error")
+	}
+	_, list, ok := strings.Cut(err.Error(), "is not one of ")
+	if !ok {
+		t.Fatalf("Validate() error = %q, want it to list the kinds", err)
+	}
+	items := strings.Split(list, ", ")
+	got := map[string]bool{}
+	for i, item := range items {
+		got[item] = true
+		if i > 0 && items[i-1] >= item {
+			t.Errorf("kind list not sorted: %q before %q", items[i-1], item)
+		}
+	}
+	for k := range kinds {
+		if !got[k] {
+			t.Errorf("kind list %q is missing %q", list, k)
+		}
+	}
+	if len(got) != len(kinds) {
+		t.Errorf("kind list has %d items, kinds has %d", len(got), len(kinds))
 	}
 }
