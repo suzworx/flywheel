@@ -146,6 +146,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (exit 6) naming the variables, never their values, before dispatch (only a `dispatch_refused`
   event is recorded, issue #534);
   `flywheel validate` refuses the same way (exit 6) before any gate runs.
+- Not written when the worker's `models_allowed` list is non-empty and the final model (after
+  `--model`, routing, a resume's last model and the breaker's fallback) is not on it: run refuses
+  with rule `models-allowed` (exit 6) naming the model, the worker and the list, before any process
+  starts (only a `dispatch_refused` event is recorded). The breaker never falls back onto a model
+  outside the list, and `flywheel config validate` refuses a model, fallback or routing candidate
+  outside it ([#746](https://github.com/suzworx/flywheel/issues/746)).
 - Not written when a `preflight:` command exits non-zero: each `preflight: CMD` line the prompt
   names (a correction's unioned with the base brief's) runs in order in the repository root, as a
   gate runs, after the needs-env check; the first that exits non-zero or cannot start refuses with
@@ -228,7 +234,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:

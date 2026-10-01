@@ -406,6 +406,57 @@ type Worker struct {
 	// list does not name yet, such as one released after this build, is not
 	// a problem (issue #275). Loading a config never checks the catalog.
 	AllowUnknownModel bool `json:"allow_unknown_model,omitempty"`
+	// ModelsAllowed is the only models the worker may dispatch on (issue
+	// #746). Empty means no policy. Validate refuses a model, fallback or
+	// routing candidate outside it, and Run refuses (rule models-allowed) a
+	// dispatched model outside it, --model included.
+	ModelsAllowed []string `json:"models_allowed,omitempty"`
+}
+
+// modelAllowed reports whether model may be dispatched on w: true when w has
+// no models_allowed list or the list names model (issue #746).
+func (w Worker) modelAllowed(model string) bool {
+	if len(w.ModelsAllowed) == 0 {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	for _, m := range w.ModelsAllowed {
+		if strings.TrimSpace(m) == model {
+			return true
+		}
+	}
+	return false
+}
+
+// modelsAllowedProblems lists w's models_allowed violations, one per model,
+// fallback, routing candidate or empty entry outside the list (issue #746).
+func (w Worker) modelsAllowedProblems(where string) []string {
+	if len(w.ModelsAllowed) == 0 {
+		return nil
+	}
+	var problems []string
+	list := fmt.Sprintf("[%s]", strings.Join(w.ModelsAllowed, ", "))
+	for j, m := range w.ModelsAllowed {
+		if strings.TrimSpace(m) == "" {
+			problems = append(problems, fmt.Sprintf("%s: worker %q: models_allowed[%d] must not be empty", where, w.Name, j))
+		}
+	}
+	if w.Model != "" && !w.modelAllowed(w.Model) {
+		problems = append(problems, fmt.Sprintf("%s: worker %q: model %q is not in models_allowed %s", where, w.Name, w.Model, list))
+	}
+	for j, f := range w.Fallbacks {
+		if f.Model != "" && !w.modelAllowed(f.Model) {
+			problems = append(problems, fmt.Sprintf("%s: worker %q: fallbacks[%d] model %q is not in models_allowed %s", where, w.Name, j, f.Model, list))
+		}
+	}
+	if w.Routing != nil {
+		for j, m := range w.Routing.Candidates {
+			if m != "" && !w.modelAllowed(m) {
+				problems = append(problems, fmt.Sprintf("%s: worker %q: routing.candidates[%d] %q is not in models_allowed %s", where, w.Name, j, m, list))
+			}
+		}
+	}
+	return problems
 }
 
 // ModelProblems checks each worker's model and fallback models against the
@@ -1119,6 +1170,7 @@ func (c Config) validateLoad() error {
 				problems = append(problems, fmt.Sprintf("%s: fallback model %q must differ from the worker's model", where, f.Model))
 			}
 		}
+		problems = append(problems, w.modelsAllowedProblems(where)...)
 		if r := w.Routing; r != nil {
 			if len(r.Candidates) == 0 {
 				problems = append(problems, where+": routing.candidates must not be empty")
@@ -1592,6 +1644,8 @@ func workerValue(w Worker, key string) (string, bool) {
 	switch key {
 	case "model":
 		return w.Model, true
+	case "models_allowed":
+		return strings.Join(w.ModelsAllowed, ","), true
 	case "variant":
 		return w.Variant, true
 	case "permission_mode":
@@ -1940,7 +1994,7 @@ func (c *Config) Set(key, value string) error {
 
 // settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
 // default worker or as workers.<name>.<key>.
-var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "permission_mode", "stall_timeout", "unit_cost_usd", "variant"}
+var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "models_allowed", "permission_mode", "stall_timeout", "unit_cost_usd", "variant"}
 
 // parseMaxTurns parses a max_turns value: a non-negative integer, 0 clearing
 // it (issue #459).
@@ -1969,6 +2023,14 @@ func setWorkerValue(w *Worker, key, value string) error {
 		w.UnitCostUSD = f
 	case "model":
 		w.Model = value
+	case "models_allowed":
+		// A comma-separated list; an empty value clears it (issue #746).
+		w.ModelsAllowed = nil
+		if strings.TrimSpace(value) != "" {
+			for _, m := range strings.Split(value, ",") {
+				w.ModelsAllowed = append(w.ModelsAllowed, strings.TrimSpace(m))
+			}
+		}
 	case "variant":
 		w.Variant = value
 	case "permission_mode":

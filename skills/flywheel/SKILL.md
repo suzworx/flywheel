@@ -82,7 +82,9 @@ When you start a session, register yourself on the floor:
   `.flywheel/config.json`: read them with `flywheel config get model` and `flywheel config get
   variant`, set them with `flywheel config set model <m>` or `flywheel config set variant <v>`,
   or seed them at setup with `flywheel init --model <m> --variant <v>`. The user may choose
-  another model: change the config, not the commands. Never switch silently; resuming on a
+  another model: change the config, not the commands. A rule like "dispatch only model X" goes in
+  the worker's `models_allowed` (`flywheel config set workers.<name>.models_allowed X`), never in
+  prose: run refuses any other model, rule `models-allowed` ([#746](https://github.com/suzworx/flywheel/issues/746)). Never switch silently; resuming on a
   different model needs the user's OK
   ([references/worker-brief.md#8-blocker-protocol-do-not-take-over](references/worker-brief.md#8-blocker-protocol-do-not-take-over)).
   Never assert a metered model is free; providers cache most of each dispatch's ~46k-token harness
