@@ -37,7 +37,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   worker cannot write under `.claude/` (Claude Code protects it, even with `bypassPermissions`):
   `flywheel lint` reports such owns as a problem and `flywheel run` refuses them (rule
   `claude-dir`); own a staging path (e.g. `staging/claude/...`) and move the files after
-  inspection, or staff the unit with a non-claude worker. (`needs:`
+  inspection, or staff the unit with a non-claude worker. A unit whose change can move a
+  checked-in baseline or ratchet file (size or quality baselines, snapshots, golden files) lists
+  that file in `owns:`; a lead-side edit to a path outside owns after dispatch is declared with
+  `flywheel claim-edit --paths <p> --session <s>` before re-validating (issue #750). (`needs:`
   takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
   dependencies). An optional `line: <name>` puts the unit on a product line from `.flywheel/config.json`
   `lines` (otherwise the line whose `owns` cover the unit's is used).

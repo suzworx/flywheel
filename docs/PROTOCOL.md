@@ -1442,7 +1442,8 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
 
 ### `lead_edit`
 - Written by: the lead, via `flywheel claim-edit --paths <p1,p2> --session <session> [--note ...]`,
-  to declare an edit it made itself after a unit's dispatch (issue #228).
+  to declare an edit it made itself after a unit's dispatch (issue #228); validate's owns output
+  and inspect's T3 refusal name this command for an own-tree outside path (#750).
 - Carries: `session` (the declaring session, required), `owns` (the claimed repo-relative paths,
   reusing the field that means "these paths belong to this declaration"), `baseline` (path ->
   sha256 of the content the claim declared, the same map field a dispatched event uses; `"deleted"`

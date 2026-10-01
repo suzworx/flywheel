@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // logFinished records a finished event for a task with a worker session.
@@ -467,6 +468,80 @@ func TestInspectPassRefusedSplitAcrossTrees(t *testing.T) {
 	}
 	if got := refusalRule(t, err); got != "T3" {
 		t.Errorf("rule = %q, want T3", got)
+	}
+}
+
+// refusalFix returns the fix carried by err, failing when err is not a
+// RuleRefusal.
+func refusalFix(t *testing.T, err error) string {
+	t.Helper()
+	var r *RuleRefusal
+	if !errors.As(err, &r) {
+		t.Fatalf("error %v is not a RuleRefusal", err)
+	}
+	return r.Fix
+}
+
+// TestOwnsOutsideRefusalNamesClaimEdit checks issue #750: a pass whose latest
+// owns reading found a path outside owns is refused with a T3 fix naming the
+// path and the claim-edit command, since re-validating never clears it.
+func TestOwnsOutsideRefusalNamesClaimEdit(t *testing.T) {
+	t.Parallel()
+	dir, err := initTask(t, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTask() error = %v", err)
+	}
+	logFinished(t, dir, "T1", "w1")
+	tree, err := treeHash(dir)
+	if err != nil {
+		t.Fatalf("treeHash() error = %v", err)
+	}
+	rc := 0
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "validated", Gate: "1", Tree: tree, RC: &rc}); err != nil {
+		t.Fatalf("AppendEvent() validated error = %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree, Outside: []string{"scripts/baseline.json"}}); err != nil {
+		t.Fatalf("AppendEvent() owns_checked error = %v", err)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "i1"})
+	if err == nil {
+		t.Fatal("InspectTask() accepted a pass whose owns reading found a path outside owns")
+	}
+	if got := refusalRule(t, err); got != "T3" {
+		t.Errorf("rule = %q, want T3", got)
+	}
+	if fix := refusalFix(t, err); !strings.Contains(fix, "claim-edit --paths scripts/baseline.json") {
+		t.Errorf("fix = %q, want it to name claim-edit --paths scripts/baseline.json", fix)
+	}
+}
+
+// TestOwnsOutsideRefusalGeneric checks that the owns refusal keeps the generic
+// wording when there is no owns reading, or when a newer clean reading follows
+// one that found outside paths (issue #750).
+func TestOwnsOutsideRefusalGeneric(t *testing.T) {
+	t.Parallel()
+	const tree = "abc123"
+	generic := "no clean owns_checked for tree abc123 after the latest finished event; run: flywheel validate T1"
+	cases := []struct {
+		name   string
+		events []Event
+	}{
+		{"no reading", nil},
+		{"clean reading wins", []Event{
+			{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "owns_checked", Tree: tree, Outside: []string{"scripts/baseline.json"}},
+			{TS: "2026-09-16T01:00:01Z", Task: "T1", Kind: "owns_checked", Tree: tree},
+		}},
+	}
+	for _, c := range cases {
+		r := readingsRefusal(c.events, BriefHeader{}, "T1", tree, time.Time{})
+		if r.Rule != "T3" || r.Fix != generic {
+			t.Errorf("%s: readingsRefusal() = %+v, want T3 %q", c.name, r, generic)
+		}
+	}
+	// A sibling-only reading names the worktree form of the command.
+	r := readingsRefusal([]Event{{TS: "2026-09-16T01:00:00Z", Task: "T1", Kind: "owns_checked", Tree: tree, Outside: []string{"/wt/b: x.go"}}}, BriefHeader{}, "T1", tree, time.Time{})
+	if !strings.Contains(r.Fix, "claim-edit --worktree /wt/b --paths x.go") {
+		t.Errorf("sibling: fix = %q, want the --worktree claim-edit form", r.Fix)
 	}
 }
 

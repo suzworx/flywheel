@@ -150,6 +150,9 @@ func runValidate(args []string) {
 				break
 			}
 		}
+		for _, line := range outsideHints(task, res.Outside, res.Churn) {
+			fmt.Println(line)
+		}
 		for _, line := range churnHints(task, res.ChurnBase, res.Churn) {
 			fmt.Println(line)
 		}
@@ -184,6 +187,35 @@ func runValidate(args []string) {
 		os.Exit(0)
 	}
 	os.Exit(5)
+}
+
+// outsideHints returns one "owns: hint:" line, or none, for the outside paths
+// in the unit's own tree (issue #750): a sibling entry ("<worktree>: <path>")
+// has its own hint and a churn path gets churnHints' restore hint. It names,
+// sorted, the first 5 and the claim-edit command that attributes a lead edit.
+func outsideHints(task string, outside []string, churn map[string]string) []string {
+	var own []string
+	for _, o := range outside {
+		if strings.Contains(o, ": ") {
+			continue
+		}
+		if _, ok := churn[o]; ok {
+			continue
+		}
+		own = append(own, o)
+	}
+	if len(own) == 0 {
+		return nil
+	}
+	sort.Strings(own)
+	shown := own
+	more := ""
+	if len(own) > 5 {
+		shown = own[:5]
+		more = fmt.Sprintf(", ... (+%d more)", len(own)-5)
+	}
+	return []string{fmt.Sprintf("%s owns: hint: %s%s changed outside owns; if the lead made the edit, claim it: flywheel claim-edit --paths %s --session <your session>, then re-validate; if it is the unit's work, add it to the brief's owns: and re-dispatch",
+		task, strings.Join(shown, ", "), more, strings.Join(shown, ","))}
 }
 
 // churnHints returns one "owns: hint:" line per churn class (issue #647),
