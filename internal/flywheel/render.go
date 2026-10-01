@@ -302,6 +302,11 @@ func unitRunCell(u Unit) string {
 		// The last column: the reset clock may run past runW (issue #383).
 		cell = "rate-limited until " + u.ResetAt.Local().Format("15:04")
 	}
+	if u.ResourceWait != "" {
+		// A gate's live wait for a shared resource (issue #697); like the
+		// reset clock it may run past runW.
+		cell = "waiting for " + u.ResourceWait
+	}
 	return cell
 }
 

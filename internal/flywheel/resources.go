@@ -70,8 +70,11 @@ func resourceLockTimings(task, gateID string, wait time.Duration) repoLockTiming
 // to call. note says, for each lock that took at least 1s, "waited <dur> for
 // resource <name> (<holder>)", joined with "; ". When a lock stays held past
 // timings.wait, busy is "resource busy: <name> held by <holder>" and every
-// lock taken so far is already released.
-func acquireResources(lockDir string, names []string, timings repoLockTimings) (release func(), note, busy string, err error) {
+// lock taken so far is already released. onWait (may be nil) is called once
+// per resource whose lock file is already present when its turn comes, before
+// the wait starts, with the holder label ("another command" when the file
+// names none); its error releases every lock and is returned.
+func acquireResources(lockDir string, names []string, timings repoLockTimings, onWait func(name, holder string) error) (release func(), note, busy string, err error) {
 	var releases []func()
 	release = func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -91,6 +94,18 @@ func acquireResources(lockDir string, names []string, timings repoLockTimings) (
 	for _, name := range slices.Compact(sorted) {
 		p := resourceLockPath(lockDir, name)
 		holder := repoLockHolderLabel(p)
+		if onWait != nil {
+			if _, serr := os.Stat(p); serr == nil {
+				who := holder
+				if who == "" {
+					who = "another command"
+				}
+				if werr := onWait(name, who); werr != nil {
+					release()
+					return release, "", "", werr
+				}
+			}
+		}
 		start := clock()
 		rel, aerr := acquireLockFile(p, timings)
 		var lb *RepoLockBusy

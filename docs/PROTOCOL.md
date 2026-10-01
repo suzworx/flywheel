@@ -59,6 +59,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`gate_probed`](#gate_probed)
   - [`amended`](#amended)
   - [`validated`](#validated)
+  - [`resource_wait`](#resource_wait)
   - [`owns_checked`](#owns_checked)
   - [`inspected`](#inspected)
   - [`staffed`](#staffed)
@@ -80,7 +81,7 @@ first line stops matching `^# flywheel protocol v`.
 
 ## 1. Required entries per task
 
-Forty-three event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
+Forty-nine event kinds exist; `events.go`'s `kinds` map is the authority for the list, and
 `Validate` rejects anything else. A stamped event's `ts` is strictly after the previous event in
 its log (issue #650), so replay never sorts a re-plan before the finish it follows. Nine of the kinds
 carry a task's status (`state.go`'s `kindRank` orders them, together with some status-neutral
@@ -1271,6 +1272,25 @@ working exactly as before.
   unit's `owns:` against its first parent (T3). An external reading counts for T3 exactly like a
   measured one; verify fails one missing its evidence, session or commit, and names the evidence
   of a pass it relied on (`attested: <evidence>` on the T3 line).
+
+### `resource_wait`
+- Written by: the CLI only, via `flywheel validate <task>`
+  ([#697](https://github.com/suzworx/flywheel/issues/697)): when a gate that holds the brief's
+  resource locks finds a resource's lock file already present as it starts to take that
+  resource, validate appends one `resource_wait` for that resource before it starts waiting. A
+  free lock records nothing.
+- Carries: `task`, `attempt`, `gate` (the gate id exactly as the gate's `validated` event carries
+  it, e.g. `1` or `live2`), `command`, `persona` (`"supervisor"`), `workdir` (as on `validated`)
+  and `note` `waiting for resource <name> (<holder>)`, the holder the lock file names, or
+  `another command` when it names none.
+- Effect: no status change. `Validate` requires a task, a `gate` and a `note`. The gate's later
+  `validated` event (the `waited ...` note, or the `resource busy: ...` inconclusive reading) ends
+  the wait.
+- Live wait: `flywheel factory` shows a unit's RUN cell as `waiting for resource <name>
+  (<holder>) <age>` while its latest `resource_wait` of the unit's current attempt has no later
+  `validated` event of the same task, attempt and gate, and is younger than `limits.quiet_wait`
+  (default `30m`) plus one minute, so a validate that died before its reading never shows a wait
+  forever.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass, or `flywheel attest`

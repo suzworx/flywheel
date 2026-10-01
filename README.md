@@ -231,7 +231,10 @@ view, each marked with what exists today, are on the [screens page](https://suzw
   then holds an exclusive lock per resource, per repository (all its worktrees on this host),
   while a gate that uses it runs (`gate[resources]:`, or every gate when none is marked), so two
   units never run those gates at once; it serialises validate's gates, not the worker's own runs
-  ([#697](https://github.com/suzworx/flywheel/issues/697)).
+  ([#697](https://github.com/suzworx/flywheel/issues/697)). A gate waiting for another unit's
+  lock records a `resource_wait` event as the wait starts, and `flywheel factory` shows it live
+  in the unit's RUN cell (`waiting for resource e2e (<holder>) 2m`) until the gate's reading ends
+  it ([#697](https://github.com/suzworx/flywheel/issues/697)).
   `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
   `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
   `integration.branch` is set, and is refused when neither resolves; otherwise from the main
