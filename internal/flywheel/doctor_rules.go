@@ -126,6 +126,17 @@ func DoctorHostRules(dir string, run func(args ...string) ([]byte, error)) (line
 		run = runGhIn(dir)
 	}
 	r, err := ReadHostRules(b, run)
+	var required []string
+	if c, _, cerr := LoadConfig(dir); cerr == nil {
+		required = c.ShipRequiredChecks()
+	}
+	return hostRulesReport(b, r, err, required)
+}
+
+// hostRulesReport is the host-rules line and warnings for branch b's rules r
+// as read with error err, required being ship.required_checks (issue #686):
+// doctor and ship's preflight print exactly this text.
+func hostRulesReport(b string, r HostRules, err error, required []string) (line string, warnings []string) {
 	if err != nil {
 		return fmt.Sprintf("host rules: %s: inconclusive", b),
 			[]string{fmt.Sprintf("host rules for %s are inconclusive (%v); check the branch's ruleset on the host by hand (#686)", b, err)}
@@ -145,11 +156,9 @@ func DoctorHostRules(dir string, run func(args ...string) ([]byte, error)) (line
 	} else if !r.Strict {
 		warnings = append(warnings, fmt.Sprintf(`%s does not require branches to be up to date before merging: two PRs each green on an old base can merge together and break %s; enable "Require branches to be up to date before merging" (strict)`, b, b))
 	}
-	if c, _, err := LoadConfig(dir); err == nil {
-		for _, name := range c.ShipRequiredChecks() {
-			if i := sort.SearchStrings(r.Checks, name); i == len(r.Checks) || r.Checks[i] != name {
-				warnings = append(warnings, fmt.Sprintf("ship.required_checks names %s, which %s's rules do not require; add it to the required status checks", name, b))
-			}
+	for _, name := range required {
+		if i := sort.SearchStrings(r.Checks, name); i == len(r.Checks) || r.Checks[i] != name {
+			warnings = append(warnings, fmt.Sprintf("ship.required_checks names %s, which %s's rules do not require; add it to the required status checks", name, b))
 		}
 	}
 	return line, warnings

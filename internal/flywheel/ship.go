@@ -401,7 +401,17 @@ func shipPreflight(r *shipRun) (string, string, error) {
 		list := strings.Join(outside, ", ")
 		return "", "outside owns: " + list, &RuleRefusal{Rule: "owns", Fix: fmt.Sprintf("%s has changed paths outside %s's owns: %s; commit, move or discard them before shipping", r.wt, r.task, list)}
 	}
-	return "ok", "status passed", nil
+	if r.o.NoMerge {
+		return "ok", "status passed", nil
+	}
+	// Host rules that let stale greens merge are warnings only, never a
+	// refusal (issue #686): the same line and warnings doctor prints.
+	rules, rerr := r.o.Forge.HostRules(r.o.Integration)
+	line, warnings := hostRulesReport(r.o.Integration, rules, rerr, r.required)
+	for _, w := range warnings {
+		fmt.Fprintf(r.o.Progress, "ship %s: warning: %s\n", r.task, w)
+	}
+	return "ok", "status passed; " + line, nil
 }
 
 // shipCommit commits the changed owned paths left in the workdir on fw/<task>
