@@ -116,7 +116,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   and databases (`PORT=$((3000 + FLYWHEEL_SLOT))`, issue #697). A gate's exit status must
   be the checked command's: bash runs gates without pipefail, so a gate that filters output
   starts with `set -o pipefail;` (e.g. `set -o pipefail; go test ./... 2>&1 | tail -20`), and
-  `flywheel lint` warns on a gate that pipes into a filter without it. A JavaScript test gate
+  `flywheel lint` warns on a gate that pipes into a filter without it. Gates measure the state CI
+  starts from, not the worker's: a spec that reads shared state (a database, a cache, a fixtures
+  directory) seeds what it needs, and the brief carries a gate that runs it against a fresh stack
+  (a throwaway container or an emptied test database, e.g.
+  `docker compose down -v && docker compose up -d && <spec>`); `flywheel lint` warns when an
+  end-to-end or integration gate has no gate that resets state (#636). A JavaScript test gate
   uses the repository's runner (`npm test -- <file>`, or the runner its test script calls):
   `flywheel lint` warns on a gate running `node --test`, vitest, jest, mocha, ava or playwright
   that package.json's test scripts and dependencies do not name (config `lint.test_runners`

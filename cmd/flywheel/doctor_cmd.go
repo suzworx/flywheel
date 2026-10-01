@@ -41,7 +41,10 @@ func doctorFlags() (*flag.FlagSet, *doctorOptions) {
 // runDoctor implements `flywheel doctor`: probe the selected worker's model
 // then its fallbacks, in config order, through the worker's own adapter, and
 // print one "<model>: <class>" line per probe, with " (<detail>)" saying why
-// a probe is not ok. Exit 0 when every probe is
+// a probe is not ok. On stderr it then names the integration branch and the
+// host rules on it, warning when they lack a pull-request rule, required
+// checks, or strict up-to-date branches (issue #686); those warnings never
+// change the exit status. Exit 0 when every probe is
 // ok, 1 when any is not (or fails to run), 2 on a usage error.
 func runDoctor(args []string) {
 	fs, o := doctorFlags()
@@ -88,6 +91,13 @@ func runDoctor(args []string) {
 	line, w := flywheel.DoctorIntegrationBranch(o.dir)
 	fmt.Fprintf(os.Stderr, "flywheel doctor: %s\n", line)
 	if w != "" {
+		fmt.Fprintf(os.Stderr, "flywheel doctor: warning: %s\n", w)
+	}
+	hostLine, hostWarnings := flywheel.DoctorHostRules(o.dir, nil)
+	if hostLine != "" {
+		fmt.Fprintf(os.Stderr, "flywheel doctor: %s\n", hostLine)
+	}
+	for _, w := range hostWarnings {
 		fmt.Fprintf(os.Stderr, "flywheel doctor: warning: %s\n", w)
 	}
 	if o.record {

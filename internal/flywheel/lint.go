@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // LintResult is every problem and warning found in one brief. Problems make
@@ -330,6 +331,11 @@ func lintStructure(dir, path string) (LintResult, error) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d pipes into %s: the gate's exit status is %s's, not the command's; start it with "set -o pipefail;" or drop the filter`, i+1, f, f))
 		}
 	}
+	// An end-to-end or integration gate with no gate that resets state
+	// measures the worker's seeded data, not CI's fresh stack (issue #636).
+	if n := slices.IndexFunc(header.Gates, gateStateful); n >= 0 && !slices.ContainsFunc(header.Gates, gateResetsState) {
+		res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d runs an end-to-end or integration check and no gate resets its state: a spec that passes on the worker's seeded data can fail on CI's fresh stack; add a gate that runs it against a fresh stack (e.g. "docker compose down -v && docker compose up -d && <spec>") and have the spec seed its own data`, n+1))
+	}
 	for i, lg := range header.LiveGates {
 		if gateBacktickInDoubleQuotes(lg) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("live-gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
@@ -498,6 +504,45 @@ func gateDiffCheckAgainstHead(gate string) bool {
 // gateFilters are the command words whose exit status says nothing about the
 // command piped into them (issue #704).
 var gateFilters = []string{"grep", "egrep", "fgrep", "rg", "tail", "head", "sed", "awk", "cut", "sort", "uniq", "tee", "cat", "wc", "tr", "findstr"}
+
+// gateStateful reports whether a gate runs an end-to-end or integration check
+// (issue #636): such a check reads shared state (a database, a cache, a
+// fixtures directory), so it can pass on the worker's seeded data and fail on
+// CI's fresh stack. The lower-cased gate splits into words at whitespace and at
+// ;&|()"'` and a word counts when its base name is playwright, cypress, detox
+// or wdio, or when it contains e2e or integration.
+func gateStateful(gate string) bool {
+	words := strings.FieldsFunc(strings.ToLower(gate), func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(";&|()\"'`", r)
+	})
+	for _, w := range words {
+		switch w[strings.LastIndex(w, "/")+1:] {
+		case "playwright", "cypress", "detox", "wdio":
+			return true
+		}
+		if strings.Contains(w, "e2e") || strings.Contains(w, "integration") {
+			return true
+		}
+	}
+	return false
+}
+
+// gateStateResets are the lower-cased markers of a gate that resets state.
+var gateStateResets = []string{"down -v", "down --volumes", "reset", "fresh", "dropdb", "drop database", "truncate", "--rm", "tmpfs"}
+
+// gateResetsState is a heuristic marker that some gate starts the check from a
+// fresh stack (issue #636): the gate mentions a reset such as "docker compose
+// down -v", "db:reset" or "docker run --rm". A false negative only costs a
+// warning.
+func gateResetsState(gate string) bool {
+	g := strings.ToLower(gate)
+	for _, m := range gateStateResets {
+		if strings.Contains(g, m) {
+			return true
+		}
+	}
+	return false
+}
 
 // gateFilterMasks reports whether a gate's exit status is a filter's rather
 // than the checked command's (issue #704): gates run under `bash -c` without
