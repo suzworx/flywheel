@@ -163,6 +163,19 @@ type LintConfig struct {
 	// only at gate time (a tool on the gate shell's PATH then, not at lint or
 	// dispatch): flywheel lint and run always accept them (issue #662).
 	GateCommands []string `json:"gate_commands,omitempty"`
+	// RedFirst requires a kind: fix brief to have a gate that fails on the
+	// base tree before dispatch, a regression test (issue #648): lint --probe
+	// reports a problem and inspect refuses a pass with rule red-first. nil
+	// means on; false turns it off.
+	RedFirst *bool `json:"red_first,omitempty"`
+}
+
+// LintRedFirst is lint.red_first, true when unset (issue #648).
+func (c Config) LintRedFirst() bool {
+	if c.Lint == nil || c.Lint.RedFirst == nil {
+		return true
+	}
+	return *c.Lint.RedFirst
 }
 
 // DefaultKinds is the kind: values flywheel lint allows when lint.kinds is

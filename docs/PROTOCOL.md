@@ -164,6 +164,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   event is recorded, issue #652). An invalid pattern is not refused here; `flywheel lint` reports it.
   `flywheel validate` refuses the effective brief with the same rule (exit 6) before any gate runs,
   recording nothing, as it does for `needs-env`.
+- Red-first (issue #648) is not a dispatch refusal: a `kind: fix` brief whose gates all pass on the
+  base tree is a `flywheel lint --probe` problem (config `lint.red_first` false turns it off), and
+  `flywheel inspect --verdict pass` enforces it with rule `red-first` from the `gate_probed` events
+  recorded before this event.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
@@ -1111,6 +1115,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `rc` is non-zero, prints `<task> gate <N>: note: this gate already failed on the base tree
   before dispatch (exit <rc>): <reason>`; `flywheel explain` adds `(also failed on the base tree
   before dispatch, exit <rc>)` to the failed gate's line. Validate's exit code is unchanged.
+  Probes before the task's first `dispatched` event feed inspect's red-first rule (issue #648):
+  for a `kind: fix` task with `lint.red_first` on (the default), `flywheel inspect --verdict pass`
+  keeps the newest pre-dispatch probe per `command` and refuses (rule `red-first`, exit 6) unless
+  one has an `rc` other than 0, 126 and 127 on a command still among the effective brief's gates.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
@@ -1642,7 +1650,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
-| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, or `review` (an open blocking review finding) and its fix | 2 usage, 1 other error |
+| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off) or `panel` and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
