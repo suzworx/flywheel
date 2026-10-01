@@ -103,6 +103,8 @@ A brief is a plain-text file with these parts:
 14. **Catch external calls safely.** A catch around an external call must record the error class and
     status when the surrounding code has logging—never the content, always the diagnosis. Swallowing
     the error is a defect to report.
+15. **Specs seed their own data.** A spec you write seeds its own data; never rely on rows or
+    files already in your local stack, because the gates and CI run it against a fresh stack.
 
 ## Example shape
 
