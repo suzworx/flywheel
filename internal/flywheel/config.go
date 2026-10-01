@@ -72,6 +72,8 @@ type Config struct {
 	Ship        *ShipConfig        `json:"ship,omitempty"`
 	// WorkerPolicy is the project's worker command policy (issue #692).
 	WorkerPolicy *WorkerPolicy `json:"worker_policy,omitempty"`
+	// LeadBuilt caps a unit the lead built with no worker (issue #722).
+	LeadBuilt *LeadBuiltConfig `json:"lead_built,omitempty"`
 }
 
 // WorkerPolicy holds project-level worker command rules (issue #692).
@@ -176,6 +178,27 @@ func (c Config) LintRedFirst() bool {
 		return true
 	}
 	return *c.Lint.RedFirst
+}
+
+// LeadBuiltConfig caps a lead-built unit (issue #722): a unit with no
+// dispatched attempt after its latest planned event.
+type LeadBuiltConfig struct {
+	// MaxChangedLines is the most changed lines inspect passes on a
+	// lead-built unit without --exception; nil means
+	// DefaultLeadBuiltMaxChangedLines.
+	MaxChangedLines *int `json:"max_changed_lines,omitempty"`
+}
+
+// DefaultLeadBuiltMaxChangedLines is lead_built.max_changed_lines when unset.
+const DefaultLeadBuiltMaxChangedLines = 10
+
+// LeadBuiltMaxChangedLines is lead_built.max_changed_lines, 10 when unset
+// (issue #722).
+func (c Config) LeadBuiltMaxChangedLines() int {
+	if c.LeadBuilt == nil || c.LeadBuilt.MaxChangedLines == nil {
+		return DefaultLeadBuiltMaxChangedLines
+	}
+	return *c.LeadBuilt.MaxChangedLines
 }
 
 // DefaultKinds is the kind: values flywheel lint allows when lint.kinds is
@@ -1344,6 +1367,9 @@ func (c Config) validateLoad() error {
 			}
 		}
 	}
+	if n := c.LeadBuiltMaxChangedLines(); n < 0 {
+		problems = append(problems, fmt.Sprintf("lead_built.max_changed_lines: %d must not be negative", n))
+	}
 	if c.Review != nil {
 		if c.Review.PanelMinLines < 0 {
 			problems = append(problems, fmt.Sprintf("review.panel_min_lines: %d must not be negative", c.Review.PanelMinLines))
@@ -1505,6 +1531,8 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.Itoa(c.ReviewPanelMinLines()), nil
 	case "review.required":
 		return strconv.FormatBool(c.ReviewRequired()), nil
+	case "lead_built.max_changed_lines":
+		return strconv.Itoa(c.LeadBuiltMaxChangedLines()), nil
 	case "review.group_gates":
 		return strings.Join(c.ReviewGroupGates(), groupGatesSep), nil
 	case "review.allowed_tools":
@@ -1586,7 +1614,7 @@ func (c Config) validKeys() []string {
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1779,6 +1807,16 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Review.Required = b
 		return nil
+	case "lead_built.max_changed_lines":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			return fmt.Errorf("lead_built.max_changed_lines: value %q must be a non-negative integer", value)
+		}
+		if c.LeadBuilt == nil {
+			c.LeadBuilt = &LeadBuiltConfig{}
+		}
+		c.LeadBuilt.MaxChangedLines = &n
+		return nil
 	case "review.group_gates":
 		// Commands separated by ";;" or newlines; an empty value clears them.
 		var gates []string
@@ -1937,7 +1975,7 @@ func (c Config) settableKeys() []string {
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
 		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"factory.skin", "integration.branch", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

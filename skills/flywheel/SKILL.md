@@ -105,6 +105,11 @@ When you start a session, register yourself on the floor:
 - **DRY.** Dispatch with `flywheel run`, or the worker adapter's own CLI directly as the fallback.
   Do not copy scripts or scaffold a framework. The `opencode-delegate` skill is an optional
   integration, never a dependency to clone.
+- **A lead edit stays small.** A unit you build yourself, with no `flywheel run`, is lead-built:
+  `flywheel inspect` records its changed lines and refuses a pass over
+  `lead_built.max_changed_lines` (default 10; rule `lead-built`, exit 6). Anything bigger goes
+  through `flywheel run`; `--exception "<why>"` is for the rare change that truly cannot, and is
+  recorded (verify rule L1, #722).
 
 ## The loop (compact)
 

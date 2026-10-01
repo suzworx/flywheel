@@ -21,6 +21,10 @@ type InspectOptions struct {
 	// merged commit whose gates were attested passes T3 exactly like a
 	// measured tree.
 	Commit string
+	// Exception records why a lead-built unit over
+	// lead_built.max_changed_lines passes (issue #722); an error on a unit
+	// that is not lead-built.
+	Exception string
 }
 
 // RuleRefusal is a poka-yoke refusal: the transition rule that fired and the
@@ -71,6 +75,24 @@ func InspectTask(dir, task string, o InspectOptions) error {
 			return fmt.Errorf("inspect %s: commit %s is not in the repository at %s", task, o.Commit, work)
 		}
 	}
+	// A unit with no dispatched attempt is lead-built (issue #722): every
+	// verdict records its changed lines, and a pass is capped below.
+	lead := leadBuilt(events, task)
+	if o.Exception != "" && !lead {
+		return fmt.Errorf("inspect %s: --exception applies only to a lead-built unit", task)
+	}
+	var lines int
+	if lead {
+		base := leadBuiltBase(events, task)
+		if o.Commit != "" {
+			lines, err = commitChangedLines(work, base, o.Commit)
+		} else {
+			lines, err = unitChangedLines(work, base, task)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: count the lead-built unit's changed lines: %w", task, err)
+		}
+	}
 	var tree string
 	note := o.Note
 	if o.Verdict == "pass" {
@@ -102,6 +124,11 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if r := panelRefusal(events, task, tree, panelFor(events, task, tree, cfg.PanelDimensions()), cfg.ReviewRequired()); r != nil {
 			return r
 		}
+		if lead {
+			if r := leadBuiltRefusal(lines, cfg.LeadBuiltMaxChangedLines(), o.Exception, task); r != nil {
+				return r
+			}
+		}
 		if res.readingTree != "" {
 			suffix := fmt.Sprintf("reading from tree %s (diff outside owns)", res.readingTree)
 			if note != "" {
@@ -121,7 +148,8 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
 		Tree: tree, Commit: o.Commit, Session: o.Session, Note: note, Persona: "inspector",
-		Workdir: workdirField(work, o.Dir),
+		Workdir:   workdirField(work, o.Dir),
+		LeadBuilt: lead, ChangedLines: lines, Exception: o.Exception,
 	}); err != nil {
 		return err
 	}

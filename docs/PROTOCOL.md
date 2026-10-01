@@ -4,7 +4,7 @@ This is the protocol flywheel enforces today, in code — not the fuller factory
 building toward. The authority for everything below is the code itself:
 `internal/flywheel/events.go` (the `kinds` map and `Validate`), `internal/flywheel/state.go`
 (`Derive`'s status transitions), `internal/flywheel/verify.go` (`flywheel verify`: rules T1, T3,
-T4, T5, T8, R1, W1 and P1), `internal/flywheel/land.go` (`flywheel land` enforces T7 and T9 live)
+T4, T5, T8, R1, W1, P1 and L1), `internal/flywheel/land.go` (`flywheel land` enforces T7 and T9 live)
 and `internal/flywheel/chain.go` (the hash-chained log, checked by `flywheel verify --log`, with a
 chain per shard in the sharded layout). `docs/design/autonomous-shipping.md` describes a larger
 design — audits, nonconformances, andon signals, a hash-chained log — and much of it is built now
@@ -105,7 +105,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   placeholder phrase wrapped in `(...)` or `<...>` such as `(as the brief)`, on any host, `persona` (`planner`), `session` and `model` (the planner's identity, from
   `--session`/`--model`), `goal_id` (from `--goal`; an unknown goal is refused with exit 1 and
   nothing is appended), `note`, and `issue` (the tracker issue the plan links to, set by `flywheel
-  brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1).
+  brief --from-issue`, issue #457; `Validate` accepts it only on a `planned` event and only >= 1),
+  and `base` (the flywheel root's HEAD commit when the event was appended, omitted outside a git
+  repository or before the first commit, issue #722: the base a lead-built unit's changed lines are
+  counted from; `UnitBase` and every dispatch-base reader still ignore it).
   `owns`/`needs` are copied from the brief header when the event
   is appended. When `header` is present it is authoritative over the brief file, and `owns`/`needs`
   are its summary.
@@ -1289,7 +1292,20 @@ working exactly as before.
   how an attested, already-merged commit is inspected, issue #367),
   `workdir` (the git working tree inspected, canonical absolute form, recorded only when it
   differs from the flywheel root, issue #244), `persona` (always `"inspector"`, hardcoded by
-  `InspectTask` — see §4 for the only way a `"lead"` ever appears there).
+  `InspectTask` — see §4 for the only way a `"lead"` ever appears there), and on a lead-built unit
+  (no `dispatched` event after the task's latest `planned` one, issue #722) `lead_built` (`true`),
+  `changed_lines` (added plus deleted lines from the unit's base — `UnitBase`, else the latest
+  `planned` event's `base`, else HEAD — including new untracked files; with `--commit`, `git diff
+  --numstat <base> <commit>`, base defaulting to `<commit>^`) and `exception` (`--exception`'s
+  text). `Validate` accepts the three only on an `inspected` event, and `exception` only with
+  `lead_built`.
+- Lead-built cap (issue #722): a `pass` on a lead-built unit whose `changed_lines` exceed
+  `lead_built.max_changed_lines` (default `10`; `config set` refuses a negative or non-integer
+  value, and `Validate` a negative one) is refused (rule `lead-built`, exit 6, after `panel`): `task
+  <task> has no dispatched attempt and changes <n> lines, over lead_built.max_changed_lines <max>;
+  dispatch a worker (flywheel run <task>) or record why with --exception "<why>"`. `--exception`
+  passes it and is recorded; `--exception` on a unit that is not lead-built is an error (exit 1).
+  `flywheel verify` checks the same as rule L1 (§2).
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.
@@ -1497,12 +1513,18 @@ gates (exit 5) without touching the log's legality.
   order) fails with `withdrawn event at <ts> while attempt <attempt> was <status>; stop the run (or
   wait for it to finish) before withdrawing`. Live, `flywheel log` refuses such a withdrawal as rule
   `W1` (exit 6) before anything is written.
+- **L1 — no lead-built pass over the cap** (issue #722). Every `inspected` pass with `lead_built`
+  fails when its `changed_lines` exceed today's `lead_built.max_changed_lines` and it carries no
+  `exception` (the reason names the session, the lines and the cap); otherwise it passes as
+  `lead-built by <session>: <n> changed lines` (`; exception: <text>` when set). With no lead-built
+  pass, one passing item: `no lead-built pass over the cap`. Live, `InspectTask` refuses such a pass
+  as rule `lead-built` (see `inspected`).
 
 ## 3. Designed, not enforced
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, "by" attribution blocks). Of the T rules,
-T1, T3, T4, T5 and T8 exist in `verify.go` (alongside R1, W1 and P1, §2), and T7 and T9 are enforced
+T1, T3, T4, T5 and T8 exist in `verify.go` (alongside R1, W1, P1 and L1, §2), and T7 and T9 are enforced
 live by `flywheel land` (`land.go`, below). Only the kinds in `events.go`'s known-kinds map exist at
 all — `Validate` rejects any other kind by name — and `audited`, `signal`, `dismissed` and
 `learning` are all in that map, so each is a recognized record (`audited` is written by
@@ -1662,7 +1684,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, or a changed path is outside `owns:` | 2 usage, 1 other error |
-| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off) or `panel` and its fix | 2 usage, 1 other error |
+| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |

@@ -118,7 +118,34 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 		return nil, err
 	}
 	items = append(items, ruleP1(task, events, cfg.PanelDimensions(), cfg.ReviewRequired())...)
+	items = append(items, ruleL1(task, events, cfg.LeadBuiltMaxChangedLines())...)
 	return items, nil
+}
+
+// ruleL1 checks every inspected pass of a lead-built unit (issue #722): its
+// changed lines are at most max (today's lead_built.max_changed_lines), or
+// the pass records an exception.
+func ruleL1(task string, events []Event, max int) []VerifyItem {
+	var items []VerifyItem
+	for _, e := range events {
+		if e.Task != task || e.Kind != "inspected" || e.Verdict != "pass" || !e.LeadBuilt {
+			continue
+		}
+		if e.ChangedLines > max && e.Exception == "" {
+			items = append(items, VerifyItem{Task: task, Rule: "L1", Pass: false,
+				Reason: fmt.Sprintf("lead-built pass by %q changes %d lines, over lead_built.max_changed_lines %d, with no exception", e.Session, e.ChangedLines, max)})
+			continue
+		}
+		reason := fmt.Sprintf("lead-built by %s: %d changed lines", e.Session, e.ChangedLines)
+		if e.Exception != "" {
+			reason += "; exception: " + e.Exception
+		}
+		items = append(items, VerifyItem{Task: task, Rule: "L1", Pass: true, Reason: reason})
+	}
+	if len(items) == 0 {
+		return []VerifyItem{{Task: task, Rule: "L1", Pass: true, Reason: "no lead-built pass over the cap"}}
+	}
+	return items
 }
 
 // ruleP1 checks that no inspected pass was recorded on a tree the review

@@ -33,6 +33,8 @@ func RecordPlanned(dir, task, brief string) error {
 // exactly as given, the whole parsed header, the header's owns and needs
 // arrays (paths stored exactly as given in the header), the planner persona,
 // and the planner's identity (session, model) and the goal the event links to.
+// Base is dir's HEAD commit, omitted when dir has none (issue #722): the base a
+// lead-built unit, which has no dispatched base, is measured from.
 func RecordPlannedBy(dir, task, brief string, meta PlanMeta) error {
 	header, err := ParseBriefHeader(resolveBriefPath(dir, brief))
 	if err != nil {
@@ -42,6 +44,7 @@ func RecordPlannedBy(dir, task, brief string, meta PlanMeta) error {
 		Task:    task,
 		Kind:    "planned",
 		Brief:   brief,
+		Base:    headCommit(dir),
 		Owns:    header.Owns,
 		Needs:   header.Needs,
 		Header:  &header,
