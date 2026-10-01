@@ -770,7 +770,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (default `--base`, `main` when none), `flywheel review calibrate` (default `--main`
   `origin/<branch>`, `origin/main` when none) and `flywheel init --ci` (the audit workflow's push
   `branches`) read it; `flywheel doctor` prints `integration branch: <b> (integration.branch)` or
-  `(detected)` on stderr and warns when a configured branch does not resolve.
+  `(detected)` on stderr and warns when a configured branch does not resolve, then
+  `host rules: <b>: pull request <on|off>, required checks <on|off>, up to date <on|off>` (or
+  `inconclusive`) with a warning for each missing pull-request rule, required checks, strict
+  "require branches to be up to date", or required `ship.required_checks` name (#686).
 - The **ship signature** is `.flywheel/config.json` `"ship": {"signature": false}` to turn it off
   (absent or `true` means on; `flywheel ship --no-signature` turns it off for one run). When on,
   `flywheel ship` adds `Shipped-by: flywheel <version> (unit <task>, attempt <attempt>, <passed>/<total> gates)`
