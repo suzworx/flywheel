@@ -72,8 +72,8 @@ description: The approved design for the flywheel factory view, a k9s-style term
 <section id="units">
   <div class="meta"><h2>Units</h2><span class="kbd">:u</span><span class="status shipped">shipped</span></div>
   <p>The home screen. The header shows context on the left, the last 24 hours' numbers in the middle and the keys valid here on the right. Every row is drawn in the colour of its state; a row whose cells changed since the last read is drawn bold for two refreshes. Keys never wait: the view redraws from the data it has while the ledger is read in the background.</p>
-  <div class="scroll"><pre class="t">repo flywheel-main · main              <span class="d">throughput</span> <span class="h">7</span>/24h <span class="g">▂▃▅▇▅▃▂</span>   <span class="k">&lt;:&gt;</span> view     <span class="k">&lt;[ ]&gt;</span> history   <span class="k">&lt;N/A/S/C&gt;</span> sort
-factory <span class="c">running</span>                        <span class="d">wip</span> <span class="h">3</span>                      <span class="k">&lt;/&gt;</span> filter   <span class="k">&lt;ctrl-a&gt;</span> views  <span class="k">&lt;?&gt;</span> help
+  <div class="scroll"><pre class="t">repo flywheel-main · main              <span class="d">throughput</span> <span class="h">7</span>/24h <span class="g">▂▃▅▇▅▃▂</span>   <span class="k">&lt;:&gt;</span> view     <span class="k">&lt;[ ]&gt;</span> history   <span class="k">&lt;N/A/S/C&gt;</span> sort  <span class="k">&lt;&lt;/&gt;&gt;</span> sort column
+factory <span class="c">running</span>                        <span class="d">wip</span> <span class="h">3</span>                      <span class="k">&lt;/&gt;</span> filter   <span class="k">&lt;ctrl-a&gt;</span> views  <span class="k">&lt;?&gt;</span> help        <span class="k">&lt;~&gt;</span> flip
 lead lead-claude-c60c5d · workers 3/4  <span class="d">first-pass</span> <span class="h">71%</span>             <span class="k">&lt;esc&gt;</span> back   <span class="k">&lt;enter&gt;</span> why    <span class="k">&lt;q&gt;</span> quit
 health 2m ago                          <span class="d">andons</span> <span class="y">1</span>   <span class="d">spend 24h</span> <span class="h">$18.40</span>  <span class="k">&lt;-&gt;</span> last view <span class="k">&lt;l&gt;</span> log       <span class="k">&lt;ctrl-e&gt;</span> header
 flywheel v0.39.0                       <span class="d">workers</span> <span class="h">3/4</span> busy          <span class="k">&lt;ctrl-g&gt;</span> crumbs <span class="k">&lt;ctrl-w&gt;</span> wide <span class="k">&lt;ctrl-r&gt;</span> reload
@@ -172,7 +172,7 @@ tokens/step <span class="h">1.9k</span> →                                     
 
 <section id="metrics">
   <div class="meta"><h2>Metrics</h2><span class="kbd">:m</span><span class="status shipped">shipped</span></div>
-  <p>Every metric as a table row: value, trend and change against the previous window, and its one-line definition from <a href="metrics.html">metrics.md</a>. <span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span> pick the window, <span class="kbd">N</span> sorts by metric, <span class="kbd">/</span> filters, <span class="kbd">Enter</span> opens the drill-down. The same numbers print with <code>flywheel stats --metrics</code>.</p>
+  <p>Every metric as a table row: value, trend and change against the previous window, and its one-line definition from <a href="metrics.html">metrics.md</a>. <span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span> pick the window, <span class="kbd">N</span> sorts by metric, the column cursor <span class="kbd">&lt;</span> <span class="kbd">&gt;</span> by the previous or next column and <span class="kbd">~</span> flips it, <span class="kbd">/</span> filters, <span class="kbd">Enter</span> opens the drill-down. The same numbers print with <code>flywheel stats --metrics</code>.</p>
   <div class="scroll"><pre class="t"><span class="d">── Metrics 7d(all)[24] ──────────────────────────────────────────────────────────────────────────────────────</span>
   <span class="h">FAMILY       METRIC             VALUE     TREND      Δ PREV    DEFINITION</span>
   flow         throughput         31/wk     <span class="g">▂▃▅▇▆▅▇</span>    <span class="g">+24%</span>      units landed
@@ -252,10 +252,10 @@ wip <span class="h">4</span> → · units dispatched, running, finished or passe
 <section id="frozen">
   <div class="meta"><h2>Frozen factory</h2><span class="status shipped">shipped</span></div>
   <p>When every model's tokens run out, the factory freezes itself (reason <code>tokens-exhausted</code>) and thaws when they return, resuming each stopped unit in its own session. <code>flywheel suspend</code> and <code>flywheel resume</code> do the same by hand (see <a href="features.html#freeze-and-resume">Freeze and resume</a>). The header says FROZEN since and until when, one line per paused model, and each suspended unit says why.</p>
-  <div class="scroll"><pre class="t">repo flywheel-main · main                                                <span class="k">&lt;:&gt;</span> view   <span class="k">&lt;enter&gt;</span> why  <span class="k">&lt;?&gt;</span> help
-<span class="m">factory FROZEN</span> since 13:35 until 15:00 by lead-claude-c60c5d: tokens-exhausted  <span class="k">&lt;/&gt;</span> filter <span class="k">&lt;l&gt;</span> log      <span class="k">&lt;q&gt;</span> quit
-paused claude-opus-5-5 until 15:00                                       <span class="k">&lt;esc&gt;</span> back <span class="k">&lt;N/A/S/C&gt;</span> sort
-paused claude-sonnet-5 until 15:20
+  <div class="scroll"><pre class="t">repo flywheel-main · main                                                <span class="k">&lt;:&gt;</span> view   <span class="k">&lt;enter&gt;</span> why     <span class="k">&lt;?&gt;</span> help
+<span class="m">factory FROZEN</span> since 13:35 until 15:00 by lead-claude-c60c5d: tokens-exhausted  <span class="k">&lt;/&gt;</span> filter <span class="k">&lt;l&gt;</span> log         <span class="k">&lt;q&gt;</span> quit
+paused claude-opus-5-5 until 15:00                                       <span class="k">&lt;esc&gt;</span> back <span class="k">&lt;N/A/S/C&gt;</span> sort  <span class="k">&lt;&lt;/&gt;&gt;</span> sort column
+paused claude-sonnet-5 until 15:20                                                                  <span class="k">&lt;~&gt;</span> flip
 lead lead-claude-c60c5d · workers 0/4 · landed today 7 · $18.40
 <span class="d">── Units(all)[4] ────────────────────────────────────────────────────────────────────────────────────────────</span>
   <span class="h">TASK   STAGE     ATT  SESSION   MODEL            STEPS  AGE  STATE      WHY</span>
@@ -289,13 +289,13 @@ lead lead-claude-c60c5d · workers 0/4 · landed today 7 · $18.40
 <span class="k">j k</span>     down / up         <span class="k">:u</span>  units    <span class="k">:w</span>  workers       <span class="k">/re</span>    regex             <span class="k">w</span>  why + timeline
 <span class="k">g G</span>     top / bottom      <span class="k">:l</span>  lines    <span class="k">:a</span>  andon         <span class="k">/!re</span>   inverse           <span class="k">d</span>  explain
 <span class="k">PgUp/Dn</span> page              <span class="k">:e</span>  events   <span class="k">:t</span>  tree          <span class="k">/-f x</span>  fuzzy             <span class="k">y</span>  brief
-<span class="k">Enter</span>   open              <span class="k">:p</span>  pulse    <span class="k">:m</span>  metrics       <span class="k">N</span>      sort by name      <span class="k">l</span>  log (<span class="k">w</span> wrap <span class="k">t</span> time)
-<span class="k">Esc</span>     back              <span class="k">:h</span>  health   <span class="k">:lr</span> learnings     <span class="k">A</span>      sort by age       <span class="k">c</span>  checkpoints
-<span class="k">-</span>       last view         <span class="k">:c</span>  checkpoints               <span class="k">S</span>      sort by stage     <span class="k">F</span>  findings  <span class="k">e</span> events
-<span class="k">[ ]</span>     history           <span class="k">:s x</span> search  <span class="k">:q</span> quit        <span class="k">C</span>      sort by cost      <span class="k">J</span>  first unmet need
-<span class="h">METRICS</span>                   <span class="h">SCREEN</span>                                                     <span class="k">f</span>  fullscreen
-<span class="k">1 2 3</span>   24h / 7d / 30d    <span class="k">C-e</span> header  <span class="k">C-g</span> crumbs                                     <span class="k">G</span>  last line / follow
-<span class="k">h j k l</span> pulse panel       <span class="k">C-w</span> wide    <span class="k">C-r</span> reload
+<span class="k">Enter</span>   open              <span class="k">:p</span>  pulse    <span class="k">:m</span>  metrics       <span class="k">/NAME=re</span> one column      <span class="k">l</span>  log (<span class="k">w</span> wrap <span class="k">t</span> time)
+<span class="k">Esc</span>     back              <span class="k">:h</span>  health   <span class="k">:lr</span> learnings     <span class="k">N</span>      sort by name      <span class="k">c</span>  checkpoints
+<span class="k">-</span>       last view         <span class="k">:c</span>  checkpoints               <span class="k">A</span>      sort by age       <span class="k">F</span>  findings  <span class="k">e</span> events
+<span class="k">[ ]</span>     history           <span class="k">:s x</span> search  <span class="k">:q</span> quit           <span class="k">S</span>      sort by stage     <span class="k">J</span>  first unmet need
+<span class="h">METRICS</span>                   <span class="h">SCREEN</span>                         <span class="k">C</span>      sort by cost      <span class="k">f</span>  fullscreen
+<span class="k">1 2 3</span>   24h / 7d / 30d    <span class="k">C-e</span> header  <span class="k">C-g</span> crumbs         <span class="k">&lt; &gt;</span>    prev/next column  <span class="k">G</span>  last line / follow
+<span class="k">h j k l</span> pulse panel       <span class="k">C-w</span> wide    <span class="k">C-r</span> reload         <span class="k">~</span>      flip the sort
 <span class="k">h u</span>     chart / units
 <span class="h">ACTIONS</span> <span class="d">(each asks y/N; off with --readonly)</span>
 <span class="k">v</span> validate  <span class="k">i</span> inspect  <span class="k">r</span> resume  <span class="k">x</span> withdraw  <span class="k">space</span> mark  <span class="k">Z</span> suspend  <span class="k">R</span> resume factory  <span class="k">:result</span> output  .flywheel/hotkeys.json</pre></div>
