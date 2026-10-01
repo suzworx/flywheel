@@ -66,6 +66,11 @@ git still works.*
   checks each model against flywheel's list and names the closest known ID for a typo;
   `allow_unknown_model` on a worker accepts a newer model. Loading a config never checks the list
   ([#275](https://github.com/suzworx/flywheel/issues/275), [quickstart](quickstart.md#1-scaffold-the-factory)).
+  A worker's `models_allowed` list pins the models it may dispatch on (`flywheel config set
+  workers.<name>.models_allowed m1,m2`; empty clears it): `flywheel config validate` refuses a
+  model, fallback or routing candidate outside it, and `flywheel run` refuses (exit 6, rule
+  `models-allowed`) a dispatch whose final model — `--model`, routing, resume or breaker fallback —
+  is not on it ([#746](https://github.com/suzworx/flywheel/issues/746)).
 - **Run** — the lead records each work order as an event with `flywheel log --kind planned`;
   `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode`, `pi` or `sim`
   adapter and records the run automatically. For parallel units `flywheel run --worktree` is the

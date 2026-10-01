@@ -539,6 +539,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// models_allowed (issue #746): the model is final here — --model, routing,
+	// a resume's last model and the breaker fallback applied — and a model
+	// off the worker's list is refused before any event is appended.
+	if !worker.modelAllowed(model) {
+		return Result{}, &RuleRefusal{
+			Rule: "models-allowed",
+			Fix:  fmt.Sprintf("model %s is not in worker %q's models_allowed [%s]; dispatch with --model <one of them> or edit models_allowed", model, worker.Name, strings.Join(worker.ModelsAllowed, ", ")),
+		}
+	}
+
 	// A rate limit belongs to the subscription: while its reset is pending, no
 	// fresh attempt goes to the model (issue #383). A resume is exempt, since
 	// RunResumingLimits resumes only after the reset. The model dispatches
@@ -3020,9 +3030,10 @@ func breakerOpen(events []Event, model string, b Breaker, now time.Time) (open b
 
 // breakerFallback returns the first of w's approved fallbacks (config order)
 // whose own breaker is closed at now, or "" when there is none (issue #46).
+// A fallback outside w's models_allowed is skipped (issue #746).
 func breakerFallback(events []Event, w Worker, b Breaker, now time.Time) string {
 	for _, f := range w.Fallbacks {
-		if !f.Approved || f.Model == w.Model {
+		if !f.Approved || f.Model == w.Model || !w.modelAllowed(f.Model) {
 			continue
 		}
 		if open, _ := breakerOpen(events, f.Model, b, now); !open {
