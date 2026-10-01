@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.61.1](https://github.com/suzworx/flywheel/compare/v0.61.0...v0.61.1) (2026-10-01)
+
+
+### Documentation
+
+* the screens page draws the v0.61 sort and filter keys ([#744](https://github.com/suzworx/flywheel/issues/744)) ([603d39b](https://github.com/suzworx/flywheel/commit/603d39ba0e7315060ab6f366e57541c25bfe9b87)), closes [#743](https://github.com/suzworx/flywheel/issues/743)
+
 ## [0.61.0](https://github.com/suzworx/flywheel/compare/v0.60.0...v0.61.0) (2026-10-01)
 
 
