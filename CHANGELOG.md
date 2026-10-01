@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.63.0](https://github.com/suzworx/flywheel/compare/v0.62.0...v0.63.0) (2026-10-01)
+
+
+### Features
+
+* lint.required_gates: lint, run and validate refuse a brief missing a configured gate ([#753](https://github.com/suzworx/flywheel/issues/753)) ([3ad6a43](https://github.com/suzworx/flywheel/commit/3ad6a43ecd3e15943bf04558f65b3f79257ebb8a)), closes [#751](https://github.com/suzworx/flywheel/issues/751)
+
+
+### Bug Fixes
+
+* validate and inspect point to claim-edit when a path in the unit's own tree is outside owns ([#752](https://github.com/suzworx/flywheel/issues/752)) ([c76d4d0](https://github.com/suzworx/flywheel/commit/c76d4d0f8afa894c218c3b2649c2bc634193b3a0)), closes [#750](https://github.com/suzworx/flywheel/issues/750)
+
 ## [0.62.0](https://github.com/suzworx/flywheel/compare/v0.61.1...v0.62.0) (2026-10-01)
 
 
