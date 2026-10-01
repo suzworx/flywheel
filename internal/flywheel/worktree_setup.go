@@ -503,7 +503,8 @@ func resolveSetupCommand(command, wt, root string, exists func(string) bool) str
 // through the shell gates use (ShellArgv: Git for Windows' bash on Windows,
 // never the WSL launcher), after resolveSetupCommand, with FLYWHEEL_TASK,
 // FLYWHEEL_WORKTREE and FLYWHEEL_ROOT (both absolute) added to the
-// environment. The command is killed at timeout. It returns the exit code, the last 20 lines of combined
+// environment, plus FLYWHEEL_SLOT, the worktree's unit slot (LeaseSlot, issue
+// #697), when it is in a repository; a lease error is returned. The command is killed at timeout. It returns the exit code, the last 20 lines of combined
 // output and the elapsed time; a spawn failure or a timeout is an error.
 func runWorktreeSetup(dir, wt, task, command string, timeout time.Duration) (rc int, tail string, dur time.Duration, err error) {
 	absWT, err := filepath.Abs(wt)
@@ -518,12 +519,16 @@ func runWorktreeSetup(dir, wt, task, command string, timeout time.Duration) (rc 
 		_, err := os.Stat(p)
 		return err == nil
 	})
+	slot, err := LeaseSlot(absWT)
+	if err != nil {
+		return 0, "", 0, err
+	}
 	argv := ShellArgv(command)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = absWT
-	cmd.Env = append(os.Environ(), "FLYWHEEL_TASK="+task, "FLYWHEEL_WORKTREE="+absWT, "FLYWHEEL_ROOT="+absDir)
+	cmd.Env = slotEnv(append(os.Environ(), "FLYWHEEL_TASK="+task, "FLYWHEEL_WORKTREE="+absWT, "FLYWHEEL_ROOT="+absDir), slot)
 	// A grandchild holding the output pipe open must not outlive the kill.
 	cmd.WaitDelay = 5 * time.Second
 	var out bytes.Buffer

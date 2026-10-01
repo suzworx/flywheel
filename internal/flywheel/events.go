@@ -134,7 +134,10 @@ type Event struct {
 	// root (issue #244): the ledger says where a reading happened, so verify
 	// can resolve the tree object in the right repository. Omitted on
 	// ordinary same-dir readings, so existing ledgers are unchanged.
-	Workdir    string            `json:"workdir,omitempty"`
+	Workdir string `json:"workdir,omitempty"`
+	// Slot is a dispatched attempt's unit slot, FLYWHEEL_SLOT (issue #697);
+	// 0 when the worker's tree is not in a git repository.
+	Slot       int               `json:"slot,omitempty"`
 	Gate       string            `json:"gate,omitempty"`
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
@@ -724,6 +727,9 @@ func Validate(e Event) error {
 	}
 	if e.Increment < 0 || (e.Increment != 0 && e.Kind != "dispatched") {
 		return fmt.Errorf("event increment %d: only a dispatched event may carry one, and it must be >= 1", e.Increment)
+	}
+	if e.Slot < 0 || (e.Slot != 0 && e.Kind != "dispatched") {
+		return fmt.Errorf("event slot %d: only a dispatched event may carry one, and it must be >= 1", e.Slot)
 	}
 	if e.Issue < 0 || (e.Issue != 0 && e.Kind != "planned") {
 		return fmt.Errorf("event issue %d: only a planned event may carry one, and it must be >= 1", e.Issue)

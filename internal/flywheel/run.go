@@ -752,6 +752,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// Worktree: when --worktree, create or reuse task's own worktree
 	// (.flywheel/worktrees/<task>, branch fw/<task>) before computing baseline.
 	var wt string
+	// slot is the worker's tree's unit slot, FLYWHEEL_SLOT (issue #697):
+	// leased before setup so setup sees it too.
+	var slot int
 	if o.Worktree {
 		var err error
 		var note string
@@ -761,6 +764,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		if note != "" {
 			progress(o.Progress, o.Task+" "+note)
+		}
+		if slot, err = LeaseSlot(wt); err != nil {
+			return Result{}, err
 		}
 		// Setup (issue #430): link the brief's needs-state "(link)" paths and
 		// run worktree.setup in the worktree before the worker starts, every
@@ -790,6 +796,12 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		progress(o.Progress, o.Task+" resuming in workdir "+prev)
 	} else {
 		wt = dir
+	}
+	if !o.Worktree {
+		var err error
+		if slot, err = LeaseSlot(wt); err != nil {
+			return Result{}, err
+		}
 	}
 
 	// Baseline: hash every path dirty at dispatch (the same read-only git
@@ -822,7 +834,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
-		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir),
+		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir), Slot: slot,
 		Line: usedLine, Lead: o.Lead, Route: route,
 	}); err != nil {
 		return Result{}, err
@@ -1069,6 +1081,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if unitBase != "" {
 			cmd.Env = append(cmd.Env, "FLYWHEEL_BASE="+unitBase)
 		}
+		cmd.Env = slotEnv(cmd.Env, slot)
 		if len(guardEnv) > 0 {
 			cmd.Env = append(cmd.Env, guardEnv...)
 		}

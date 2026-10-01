@@ -225,6 +225,8 @@ view, each marked with what exists today, are on the [screens page](https://suzw
   `flywheel run` dispatches it to a worker through the `claude`, `codex`, `opencode` or `pi` adapter and
   records the run automatically. For parallel units `flywheel run --worktree` is the default: each
   unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
+  Each tree's worker, setup and gates get `FLYWHEEL_SLOT`, a per-tree number for ports and
+  databases, so parallel units never share them (#697).
   `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
   `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
   `integration.branch` is set, and is refused when neither resolves; otherwise from the main
