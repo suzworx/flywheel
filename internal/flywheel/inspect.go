@@ -347,7 +347,49 @@ func readingsRefusal(events []Event, header BriefHeader, task, tree string, afte
 			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for live-gate %d on tree %s after the latest finished event; run: flywheel validate %s --live", n, tree, task)}
 		}
 	}
+	if r, found := outsideRefusal(events, task, tree, after); found {
+		return r
+	}
 	return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no clean owns_checked for tree %s after the latest finished event; run: flywheel validate %s", tree, task)}
+}
+
+// outsideRefusal is the T3 refusal for a pass whose latest owns_checked on
+// tree after after found paths outside owns, naming the first entries and the
+// claim-edit command that attributes a lead edit, or ok=false when that
+// reading has none (issue #750). Re-running validate never clears such a path.
+func outsideRefusal(events []Event, task, tree string, after time.Time) (RuleRefusal, bool) {
+	var outside []string
+	var latest time.Time
+	for _, e := range events {
+		if e.Task != task || e.Kind != "owns_checked" || e.Tree != tree {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(after) && !t.Before(latest) {
+			latest, outside = t, e.Outside
+		}
+	}
+	if len(outside) == 0 {
+		return RuleRefusal{}, false
+	}
+	first := outside
+	if len(first) > 5 {
+		first = first[:5]
+	}
+	// A sibling entry reads "<worktree path>: <path>" (issue #362).
+	var own []string
+	for _, o := range first {
+		if !strings.Contains(o, ": ") {
+			own = append(own, o)
+		}
+	}
+	claim := ""
+	if len(own) > 0 {
+		claim = fmt.Sprintf("flywheel claim-edit --paths %s --session <your session>", strings.Join(own, ","))
+	} else {
+		wt, p, _ := strings.Cut(first[0], ": ")
+		claim = fmt.Sprintf("flywheel claim-edit --worktree %s --paths %s --session <your session>", wt, p)
+	}
+	return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("the latest owns reading on tree %s found paths outside owns: %s; if the lead made the edit, claim it: %s, then run: flywheel validate %s; if it is the unit's work, add it to the brief's owns:", tree, strings.Join(first, ", "), claim, task)}, true
 }
 
 // relaxedReadingTree implements the issue #218 relaxation: when the current

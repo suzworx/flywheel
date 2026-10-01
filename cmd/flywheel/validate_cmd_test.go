@@ -145,3 +145,31 @@ func TestChurnHints(t *testing.T) {
 		t.Errorf("churnHints() =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// TestOutsideHint checks the issue #750 hint: one line naming the own-tree
+// outside paths that are not churn, sorted, at most 5, with the claim-edit
+// command; none when only sibling or churn entries are outside.
+func TestOutsideHint(t *testing.T) {
+	t.Parallel()
+	const tail = " --session <your session>, then re-validate; if it is the unit's work, add it to the brief's owns: and re-dispatch"
+	cases := []struct {
+		name    string
+		outside []string
+		churn   map[string]string
+		want    []string
+	}{
+		{"none", nil, nil, nil},
+		{"sibling only", []string{"/wt/a: x.go"}, nil, nil},
+		{"churn only", []string{"a.txt"}, map[string]string{"a.txt": "line endings only"}, nil},
+		{"mixed", []string{"scripts/baseline.json", "/wt/a: x.go", "a.txt", "b.go"}, map[string]string{"a.txt": "whitespace only"},
+			[]string{"T1 owns: hint: b.go, scripts/baseline.json changed outside owns; if the lead made the edit, claim it: flywheel claim-edit --paths b.go,scripts/baseline.json" + tail}},
+		{"seven", []string{"g", "f", "e", "d", "c", "b", "a"}, nil,
+			[]string{"T1 owns: hint: a, b, c, d, e, ... (+2 more) changed outside owns; if the lead made the edit, claim it: flywheel claim-edit --paths a,b,c,d,e" + tail}},
+	}
+	for _, c := range cases {
+		got := outsideHints("T1", c.outside, c.churn)
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") || len(got) != len(c.want) {
+			t.Errorf("%s: outsideHints() =\n%q\nwant\n%q", c.name, got, c.want)
+		}
+	}
+}
