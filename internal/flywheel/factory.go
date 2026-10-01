@@ -91,6 +91,10 @@ type Unit struct {
 	// NeedsOwner counts the open blocking findings outside the effective
 	// brief's owns (issue #458): the worker cannot fix them; they need an owner.
 	NeedsOwner int
+
+	// LeadBuilt is leadBuiltMark's mark for a unit with no dispatched attempt
+	// (issue #722); "" for a unit a worker built.
+	LeadBuilt string
 }
 
 // worktreeFor returns the workdir and the 7-character base commit the task's
@@ -724,6 +728,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 		if (u.Station == "measure" || u.Station == "build") && latestIsAgentReview(ev, t.ID) {
 			u.Station = "inspect"
 		}
+		u.LeadBuilt, _ = leadBuiltMark(ev, t.ID)
 		u.Open = len(openBlockingIDs(ev, t.ID))
 		if u.Open > 0 {
 			u.NeedsOwner = len(needsOwnerFindings(dir, ev, t.ID))

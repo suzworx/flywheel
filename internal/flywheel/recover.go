@@ -166,6 +166,7 @@ type RecoverTask struct {
 	Lease       string   `json:"lease"`    // live, dead or none
 	RunFile     string   `json:"run_file"` // complete, torn or missing
 	Stacked     string   `json:"stacked,omitempty"`
+	LeadBuilt   string   `json:"lead_built,omitempty"` // leadBuiltMark's mark (issue #722)
 	PausedUntil string   `json:"paused_until,omitempty"`
 	Checkpoints []string `json:"checkpoints,omitempty"` // "<attempt> <sha7> (<paths>)"
 	// Dormant marks a non-landed unit whose latest event is older than
@@ -354,6 +355,7 @@ func Recover(dir string, now time.Time, o RecoverOptions) (RecoverReport, error)
 		f.Suspended = suspended
 		t.Next = nextAction(f)
 		t.Lead = leads[ts.ID]
+		t.LeadBuilt, _ = leadBuiltMark(byTask[ts.ID], ts.ID)
 		if last, err := time.Parse(time.RFC3339Nano, ts.UpdatedAt); err == nil && o.DormantAfter > 0 && ts.Status != "landed" && now.Sub(last) > o.DormantAfter {
 			t.Dormant = true
 		}
@@ -779,6 +781,10 @@ func (r RecoverReport) Text() string {
 		}
 		if t.Stacked != "" {
 			fmt.Fprintf(&b, "  stacked: %s\n", t.Stacked)
+		}
+		if t.LeadBuilt != "" {
+			// "built by lead, 3 changed lines" prints as "built by lead: 3 changed lines".
+			fmt.Fprintf(&b, "  %s\n", strings.Replace(t.LeadBuilt, "built by lead, ", "built by lead: ", 1))
 		}
 		for _, cp := range t.Checkpoints {
 			fmt.Fprintf(&b, "  checkpoint %s\n", cp)
