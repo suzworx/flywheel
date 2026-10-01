@@ -1238,6 +1238,28 @@ working exactly as before.
   `host busy: <tasks>` — unmeasured, never a failure, and not a pass for T3. While `quiet.lock` is
   held by a live process, `flywheel run` refuses every dispatch (exit 6, rule `quiet`: `a quiet
   gate (<task> gate <n>) is running on this host; dispatch after it ends`).
+- **Exclusive resources** ([#697](https://github.com/suzworx/flywheel/issues/697)): a
+  `resources: e2e, dev-db` header line names the shared host resources (ports, one local
+  database) a unit's heavy gates use. Names are lower case, `[a-z0-9][a-z0-9._-]*`; lines
+  accumulate and each name is kept once, in order, in the parsed header's `Resources`. Gate
+  markers are a comma list: `gate[resources]:` (or `gate[quiet,resources]:`,
+  `live-gate[resources]:`) records the gate's 1-based index in `ResourceGates` /
+  `ResourceLiveGates`. A gate marked `[resources]` holds the locks; when no gate of a list (gates
+  or live gates) is marked, every gate of that list holds them. While such a gate runs,
+  `flywheel validate` holds an exclusive lock per resource at
+  `<git common dir>/flywheel-locks/resource-<name>.lock` (outside a repository,
+  `<tree>/.flywheel/locks/resource-<name>.lock`), so the lock is per repository: every worktree
+  of it on this host shares it. Locks are taken in sorted name order (no deadlock between two
+  units naming one pair in different orders) and released in reverse once the reading is
+  recorded. A wait is bounded by `limits.quiet_wait` (default `30m`); a stale lock (no heartbeat
+  for 15s) is taken over. A gate that waited at least 1s records the `validated` note `waited
+  <dur> for resource <name> (<holder>)`, joined with `; ` to any other note. When a lock stays
+  held past the budget the gate does not run: it is recorded with `reason` `inconclusive`, no
+  `rc` and the note `resource busy: <name> held by <holder>`, not a pass for T3, and `flywheel
+  validate` exits as for any inconclusive gate. The lock serialises validate's gates only, never
+  the worker's own runs. With no `resources:` line nothing is locked. `flywheel lint` reports an
+  invalid name, an empty `resources:` line and a `[resources]` marker without a `resources:`
+  line as problems.
 - An **external** reading (`source` `"external"`, issue #367) is one flywheel did not measure:
   `flywheel attest <task> --commit <sha> --evidence <url> --session <lead>` records that a named
   run elsewhere (CI on the unit's PR) passed every gate on a commit. It writes one `validated` per

@@ -153,7 +153,16 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `limits.quiet_wait` (default `30m`), until no other task's worker runs on this host, and
   `flywheel run` refuses new dispatches while it runs; a host that never goes idle records the
   reading `inconclusive` (`host busy: <tasks>`), never a failure. `flywheel lint` warns on any
-  other `[marker]`.
+  other `[marker]`. Markers combine as a comma list: `gate[quiet,resources]:`.
+- **resources:** — optional, comma-separated, may repeat: the shared host resources the heavy
+  gates use (`resources: e2e, dev-db`; lower case, `[a-z0-9][a-z0-9._-]*`, issue #697). While a
+  gate that uses them runs, `flywheel validate` holds an exclusive lock per resource, shared by
+  every worktree of the repository on this host, so two units never run those gates at once. Mark
+  the gates that use them `gate[resources]:` / `live-gate[resources]:`; when no gate is marked,
+  every gate holds the locks. A wait of at least 1s is noted `waited <dur> for resource <name>
+  (<holder>)`; a lock held past `limits.quiet_wait` leaves the gate unrun and its reading
+  `inconclusive` (`resource busy: <name> held by <holder>`). The locks serialise validate's
+  gates, not the worker's own runs.
 - **kind:** — optional, one line: the kind of work (`feature`, `fix`, `refactor`, `test`, `docs`,
   `chore` or `perf` by default; config `lint.kinds` replaces the list, and `flywheel lint` refuses
   any other value or an empty line) so routing scores models on that kind's own record (issue #475).

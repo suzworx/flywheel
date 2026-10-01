@@ -51,7 +51,22 @@ type BriefHeader struct {
 	// for an idle host before they run.
 	QuietGates     []int `json:",omitempty"`
 	QuietLiveGates []int `json:",omitempty"`
-	Exclusive      []string
+	// Resources lists the shared host resources a `resources:` line names
+	// (issue #697), accumulated across lines, each kept once, order kept:
+	// validate holds an exclusive per-repository lock on each while a gate
+	// that uses them runs. ResourceGates and ResourceLiveGates are the
+	// 1-based indices of the gates marked `[resources]`; when none of a list
+	// is marked, every gate of that list holds the locks.
+	Resources         []string `json:",omitempty"`
+	ResourceGates     []int    `json:",omitempty"`
+	ResourceLiveGates []int    `json:",omitempty"`
+	// resourcesInvalid holds names that are not lower-case resource names,
+	// resourcesEmpty records an empty resources: line and resourcesDeclared
+	// any resources: line; flywheel lint reports them.
+	resourcesInvalid  []string
+	resourcesEmpty    bool
+	resourcesDeclared bool
+	Exclusive         []string
 	// NeedsEnv lists the environment variables a `needs-env:` line names
 	// (issue #534), accumulated across lines, each kept once, order kept:
 	// run and validate refuse while one is unset or empty. Values are never
@@ -132,13 +147,24 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 		// host to itself (issue #411): its command joins Gates/LiveGates like
 		// any other and its 1-based index is recorded as quiet. An unknown
 		// marker is kept as the plain key's line; flywheel lint warns on it.
+		// Markers are a comma list (issue #697): `gate[quiet,resources]:` is
+		// both quiet and a gate that holds the brief's resource locks.
 		if base, marker, found := gateMarker(key); found {
 			key = base
-			if marker == "quiet" {
-				if base == "gate" {
-					h.QuietGates = append(h.QuietGates, len(h.Gates)+1)
-				} else {
-					h.QuietLiveGates = append(h.QuietLiveGates, len(h.LiveGates)+1)
+			for _, m := range strings.Split(marker, ",") {
+				switch strings.TrimSpace(m) {
+				case "quiet":
+					if base == "gate" {
+						h.QuietGates = append(h.QuietGates, len(h.Gates)+1)
+					} else {
+						h.QuietLiveGates = append(h.QuietLiveGates, len(h.LiveGates)+1)
+					}
+				case "resources":
+					if base == "gate" {
+						h.ResourceGates = append(h.ResourceGates, len(h.Gates)+1)
+					} else {
+						h.ResourceLiveGates = append(h.ResourceLiveGates, len(h.LiveGates)+1)
+					}
 				}
 			}
 		}
@@ -214,6 +240,22 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			for _, entry := range strings.Split(val, ",") {
 				if e := strings.TrimSpace(entry); e != "" && !slices.Contains(h.Skills, e) {
 					h.Skills = append(h.Skills, e)
+				}
+			}
+		case "resources":
+			// Shared host resources the heavy gates use (issue #697).
+			h.resourcesDeclared = true
+			if strings.TrimSpace(val) == "" {
+				h.resourcesEmpty = true
+			}
+			for _, entry := range strings.Split(val, ",") {
+				e := strings.TrimSpace(entry)
+				switch {
+				case e == "":
+				case !resourceNameRE.MatchString(e):
+					h.resourcesInvalid = append(h.resourcesInvalid, e)
+				case !slices.Contains(h.Resources, e):
+					h.Resources = append(h.Resources, e)
 				}
 			}
 		case "exclusive":
