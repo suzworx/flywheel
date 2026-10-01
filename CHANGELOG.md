@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.59.0](https://github.com/suzworx/flywheel/compare/v0.58.0...v0.59.0) (2026-10-01)
+
+
+### Features
+
+* validate holds exclusive per-repository locks for the shared resources a brief's resources: line names ([#735](https://github.com/suzworx/flywheel/issues/735)) ([f1bb9dc](https://github.com/suzworx/flywheel/commit/f1bb9dca4df234e5061c0ea87dc19db0fde302a1)), closes [#697](https://github.com/suzworx/flywheel/issues/697)
+
 ## [0.58.0](https://github.com/suzworx/flywheel/compare/v0.57.1...v0.58.0) (2026-10-01)
 
 
