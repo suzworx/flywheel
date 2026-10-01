@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -379,6 +380,7 @@ func lintStructure(dir, path string) (LintResult, error) {
 			}
 		}
 	}
+	res.Problems = append(res.Problems, outsidePathProblems(dir, content)...)
 	if !header.NeedsDeclared {
 		res.Warnings = append(res.Warnings, "no needs: line")
 	}
@@ -386,6 +388,111 @@ func lintStructure(dir, path string) (LintResult, error) {
 		res.Warnings = append(res.Warnings, `write rule "At most one write per response" is absent`)
 	}
 	return res, nil
+}
+
+// outsidePathProblems is one problem per existing path outside the checkout
+// that the brief's text (not its header) points the worker at (issue #746):
+// workers are confined to their worktree, so the read fails and a gate over
+// the result can pass on nothing. The header is bounded as
+// ParseBriefHeaderBytes bounds it; gates run by command and needs-state: is
+// carried by flywheel, so header lines are never checked.
+func outsidePathProblems(dir, content string) []string {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil
+	}
+	root = filepath.Clean(root)
+	lines := strings.Split(content, "\n")
+	body := min(len(lines), 40)
+	for i := 0; i < len(lines) && i < 40; i++ {
+		if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "#") {
+			body = i + 1
+			break
+		}
+	}
+	var problems []string
+	seen := map[string]bool{}
+	for _, line := range lines[body:] {
+		for _, tok := range strings.Fields(line) {
+			tok = trimPathToken(tok)
+			p, ok := outsideCandidate(root, tok)
+			if !ok {
+				continue
+			}
+			key := p
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(p)
+			}
+			if seen[key] {
+				continue
+			}
+			if _, err := os.Stat(p); err != nil {
+				continue
+			}
+			seen[key] = true
+			problems = append(problems, fmt.Sprintf("brief names %s, outside the checkout; a worker cannot read it (#746): copy it into the repository, or carry repo-relative state with needs-state: <path> (copy)", tok))
+		}
+	}
+	return problems
+}
+
+// trimPathToken strips the backticks, quotes, parentheses and brackets around
+// a token and the punctuation that ends a sentence after it.
+func trimPathToken(tok string) string {
+	for {
+		t := strings.Trim(tok, "`\"'()[]")
+		t = strings.TrimRight(t, ",.;:")
+		if t == tok {
+			return t
+		}
+		tok = t
+	}
+}
+
+// outsideCandidate resolves a path-shaped token (drive letter, /, ~/ or ../)
+// and reports it with ok when it lies outside root. /dev/, /proc/ and bare
+// roots are never candidates.
+func outsideCandidate(root, tok string) (string, bool) {
+	if strings.HasPrefix(tok, "/dev/") || strings.HasPrefix(tok, "/proc/") {
+		return "", false
+	}
+	var p string
+	switch {
+	case len(tok) >= 3 && unicode.IsLetter(rune(tok[0])) && tok[1] == ':' && (tok[2] == '/' || tok[2] == '\\'):
+		p = tok
+	case strings.HasPrefix(tok, "~/") || strings.HasPrefix(tok, `~\`):
+		home, err := os.UserHomeDir()
+		if err != nil || len(tok) == 2 {
+			return "", false
+		}
+		p = filepath.Join(home, tok[2:])
+	case strings.HasPrefix(tok, "/"):
+		p = tok
+	case strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, `..\`):
+		p = filepath.Join(root, tok)
+	default:
+		return "", false
+	}
+	if !filepath.IsAbs(p) {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return "", false
+		}
+		p = abs
+	}
+	p = filepath.Clean(p)
+	if filepath.Dir(p) == p {
+		return "", false
+	}
+	r, c := root, p
+	if runtime.GOOS == "windows" {
+		r, c = strings.ToLower(r), strings.ToLower(c)
+	}
+	rel, err := filepath.Rel(r, c)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return p, true
+	}
+	return "", false
 }
 
 // refTree is the integration ref lint checks owns against (issue #694):

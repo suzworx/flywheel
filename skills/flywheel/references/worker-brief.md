@@ -78,6 +78,11 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   running any gate, when a declared path is missing from an isolated `--workdir`; give it with
   `--carry <path>` (repeatable) to copy that state from the repo into the workdir first. With no
   `--workdir` the declaration is a no-op — the tree already is the repo.
+- **No paths outside the checkout** — a worker is confined to its worktree, so a brief that
+  points it at a file outside the checkout (`D:/seed.json`, `/home/me/x`, `~/x`, `../other/x`)
+  leaves it reading nothing. `flywheel lint` reports each such existing path in the brief's text
+  ([#746](https://github.com/suzworx/flywheel/issues/746)): copy the file into the repository, or
+  carry repo-relative state with `needs-state:`.
   For a single git-ignored file the worker needs, `.env` with an API key say, annotate it `(copy)`
   — `needs-state: .env (copy)` — and it is copied from the repo into the task's worktree on every
   `flywheel run --worktree` dispatch, before `worktree.setup` (issue #471; `worktree.carry` does the
@@ -142,7 +147,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   (it already failed on the base tree) from broken work (#544). A `kind: fix` brief needs a gate
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
   `--task` before dispatch, or lint reports a problem and `flywheel inspect --verdict pass` refuses
-  with rule `red-first` (config `lint.red_first` false turns it off, #648).
+  with rule `red-first` (config `lint.red_first` false turns it off, #648). A gate over a
+  generated artifact asserts a minimum count of entries, so it fails on empty output; never gate
+  only on equality with another input that could be empty too (#746).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
   provider-facing contract that a mock cannot prove. A `live-gate:` command runs ONLY in the
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
