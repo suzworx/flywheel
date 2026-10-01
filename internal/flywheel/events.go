@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -357,6 +358,10 @@ var kinds = map[string]bool{
 	"resource_wait": true,
 }
 
+// kindList names every kind, sorted, for Validate's unknown-kind error (issue
+// #739): built from kinds so the message cannot drift from the map.
+var kindList = strings.Join(slices.Sorted(maps.Keys(kinds)), ", ")
+
 // ShipSteps are the steps `flywheel ship` runs, in order (issue #457); a
 // shipped event's Step must be one of them. The local half runs preflight
 // through gates; the remote half pushes, opens or reuses the PR, waits for
@@ -540,7 +545,7 @@ func Validate(e Event) error {
 		}
 	}
 	if !kinds[e.Kind] {
-		return fmt.Errorf("event kind %q is not one of planned, dispatched, started, worker_plan, no-plan, off-course, finished, report, reviewed, blocked, lost, withdrawn, landed, amended, lead_edit, validated, owns_checked, inspected, staffed, session_start, session_command, session_end, goal, learning, dismissed, signal, excepted, allow_untriaged, audited, probed, sharded, review_finding, finding_response, note, rebased, group_reviewed, worktree_setup, recovered, reanchored, release_audited, health, shipped, gate_probed, panel_scoped, suspended, unsuspended, dispatch_refused, resource_wait", e.Kind)
+		return fmt.Errorf("event kind %q is not one of %s", e.Kind, kindList)
 	}
 	if e.Kind == "resource_wait" && (!taskOK(e.Task) || e.Gate == "" || e.Note == "") {
 		return fmt.Errorf("resource_wait event must carry a task, a gate and a note")
