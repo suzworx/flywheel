@@ -327,6 +327,16 @@ func lintStructure(dir, path string) (LintResult, error) {
 	if header.skillsEmpty {
 		res.Problems = append(res.Problems, "skills: line is empty; name the skills the unit needs or remove the line")
 	}
+	// resources: (issue #697) is checked for shape only; lint takes no lock.
+	for _, n := range header.resourcesInvalid {
+		res.Problems = append(res.Problems, fmt.Sprintf("resources name %q is not a valid resource name (lower-case letters, digits, '.', '_' and '-', starting with a letter or digit)", n))
+	}
+	if header.resourcesEmpty {
+		res.Problems = append(res.Problems, "resources: line is empty; name the shared resources the gates use or remove the line")
+	}
+	if !header.resourcesDeclared && len(header.ResourceGates)+len(header.ResourceLiveGates) > 0 {
+		res.Problems = append(res.Problems, "a gate is marked [resources] but the brief has no resources: line; name the shared resources or drop the marker")
+	}
 	// preflight: (issue #635) is checked for shape only; lint never runs it.
 	if header.preflightEmpty {
 		res.Problems = append(res.Problems, "preflight: line is empty; name a command or remove the line")
@@ -352,15 +362,20 @@ func lintStructure(dir, path string) (LintResult, error) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("live-gate %d has a backtick inside double quotes: bash runs it as command substitution; use single quotes or a script file", i+1))
 		}
 	}
-	// gate[quiet]: and live-gate[quiet]: are the known markers (issue #411);
-	// any other marker parses as a plain gate, so it is flagged, not refused.
+	// gate[quiet]: and live-gate[quiet]: are the known markers (issue #411),
+	// with [resources] (issue #697), in a comma list; any other marker parses
+	// as a plain gate, so it is flagged, not refused.
 	for i, line := range strings.Split(content, "\n") {
 		if i >= 40 {
 			break
 		}
 		if key, _, ok := cutKey(strings.TrimSuffix(line, "\r")); ok {
-			if base, marker, found := gateMarker(key); found && marker != "quiet" {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("%s has unknown marker [%s]; the known marker is [quiet], and the line runs as a plain %s", key, marker, base))
+			if base, marker, found := gateMarker(key); found {
+				for _, m := range strings.Split(marker, ",") {
+					if m = strings.TrimSpace(m); m != "quiet" && m != "resources" {
+						res.Warnings = append(res.Warnings, fmt.Sprintf("%s has unknown marker [%s]; the known markers are [quiet] and [resources], and the line runs as a plain %s", key, m, base))
+					}
+				}
 			}
 		}
 	}

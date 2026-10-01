@@ -31,6 +31,10 @@ type ValidateOptions struct {
 	// ordinary gates: the lead's verification pass, never a worker's own
 	// mocked run (issue #152).
 	Live bool
+	// resourceTimings, when non-nil, adjusts each resource lock's timings
+	// before it is taken (issue #697): tests inject the clock, the sleep and
+	// the poll hook through it, so no test sleeps for real.
+	resourceTimings func(*repoLockTimings)
 }
 
 // GateOut reports one gate run.
@@ -312,6 +316,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// every gate sees the unit's base as FLYWHEEL_BASE (issue #470): the
 	// attempt commit has already moved HEAD past the unit's work.
 	base := UnitBase(events, task)
+	// the resource lock directory (issue #697), resolved with one git call by
+	// the first gate that holds a resource lock, never without a resources:
+	// line.
+	lockDir := ""
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
 		// HEAD is resolved per reading, not hoisted above the loop: a gate can
@@ -319,7 +327,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		// resolving once per pass would record a history position no reading
 		// was taken at (issue #240).
 		commit := headCommit(wd)
-		out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner)
+		holds := holdsResources(header.Resources, header.ResourceGates, i+1)
+		out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, n, gate, false, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
+			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote)
+		})
 		if err != nil {
 			return GaugeResult{}, err
 		}
@@ -338,7 +349,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			// at the moment it ran, never one hoisted from the pass start
 			// (issue #240).
 			commit := headCommit(wd)
-			out, err := hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner)
+			holds := holdsResources(header.Resources, header.ResourceLiveGates, i+1)
+			out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, "live"+n, gate, true, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
+				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote)
+			})
 			if err != nil {
 				return GaugeResult{}, err
 			}
@@ -362,8 +376,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // the note "host busy: <tasks>", never a failure. An ordinary gate holds a
 // shared marker while it runs, after waiting the same budget for another
 // process's quiet gate to end (gateTurn). base is the unit's base commit
-// (UnitBase), exported to the gate as FLYWHEEL_BASE (issue #470).
-func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string) (GateOut, error) {
+// (UnitBase), exported to the gate as FLYWHEEL_BASE (issue #470). resNote
+// (from resourceGate; may be empty) is joined to the reading's note.
+func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string, resNote string) (GateOut, error) {
 	if quiet {
 		release, busy, err := waitQuietGate(dir, task, gateID, wait, now, quietSleep)
 		if err != nil {
@@ -382,14 +397,54 @@ func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, 
 			}
 			return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: note, Live: live}, nil
 		}
-		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "")
+		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "", resNote)
 	}
 	release, note, err := gateTurn(dir, task, gateID, wait, now, quietSleep)
 	if err != nil {
 		return GateOut{}, err
 	}
 	defer release()
-	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note)
+	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note, resNote)
+}
+
+// resourceGate runs one gate through run under the brief's resource locks
+// (issue #697) when holds is set; otherwise it runs it untouched. The locks
+// are taken in sorted name order, waiting up to wait, and released in
+// reverse after run has recorded the reading, on every path. A wait of at
+// least 1s reaches run as the note "waited <dur> for resource <name>
+// (<holder>)". When a lock stays held past wait the gate never runs: its
+// reading is recorded inconclusive, like a busy quiet gate, with the note
+// "resource busy: <name> held by <holder>". *lockDir is resolved once per
+// pass (one git call) from the validated tree wd. tune (may be nil) adjusts
+// the lock timings; tests inject the clock through it.
+func resourceGate(dir, wd, task, attempt, tree, commit string, resources []string, lockDir *string, gateID, gate string, live, holds bool, wait time.Duration, tune func(*repoLockTimings), run func(resNote string) (GateOut, error)) (GateOut, error) {
+	if !holds {
+		return run("")
+	}
+	if *lockDir == "" {
+		*lockDir = resourceLockDir(wd)
+	}
+	timings := resourceLockTimings(task, gateID, wait)
+	if tune != nil {
+		tune(&timings)
+	}
+	release, note, busy, err := acquireResources(*lockDir, resources, timings)
+	defer release()
+	if err != nil {
+		return GateOut{}, err
+	}
+	if busy != "" {
+		ev := Event{
+			Task: task, Kind: "validated", Attempt: attempt, Gate: gateID, Command: gate,
+			Tree: tree, Commit: commit, Reason: "inconclusive", Note: busy,
+			Persona: "supervisor", Workdir: workdirField(wd, dir),
+		}
+		if err := AppendEvent(dir, ev); err != nil {
+			return GateOut{}, err
+		}
+		return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: busy, Live: live}, nil
+	}
+	return run(note)
 }
 
 // runAndRecordGate runs one declared gate — ordinary or live — through the
@@ -401,8 +456,9 @@ func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, 
 // gate's. owner (pathOwners, built once per pass; may be nil) names the
 // in-flight unit owning each path an inconclusive note lists (issue #365).
 // hostNote (from hostGate; may be empty) is recorded as the note when the
-// reading carries no other (issue #411).
-func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote string) (GateOut, error) {
+// reading carries no other (issue #411). resNote (a resource lock wait,
+// issue #697; may be empty) is joined with "; " to whatever note results.
+func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string) (GateOut, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, stages, err := runGateStages(wd, gate, base)
@@ -455,6 +511,10 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 	}
 	if note == "" && hostNote != "" {
 		note = hostNote
+		ev.Note = note
+	}
+	if resNote != "" {
+		note = joinNotes(note, resNote)
 		ev.Note = note
 	}
 	if err := AppendEvent(dir, ev); err != nil {

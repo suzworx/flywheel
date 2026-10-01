@@ -226,7 +226,12 @@ view, each marked with what exists today, are on the [screens page](https://suzw
   records the run automatically. For parallel units `flywheel run --worktree` is the default: each
   unit builds in its own `.flywheel/worktrees/<task>` on branch `fw/<task>`, against the main ledger.
   Each tree's worker, setup and gates get `FLYWHEEL_SLOT`, a per-tree number for ports and
-  databases, so parallel units never share them (#697).
+  databases, so parallel units never share them (#697). A resource they must share (one local
+  database, a fixed port) goes on a brief's `resources: e2e, dev-db` line: `flywheel validate`
+  then holds an exclusive lock per resource, per repository (all its worktrees on this host),
+  while a gate that uses it runs (`gate[resources]:`, or every gate when none is marked), so two
+  units never run those gates at once; it serialises validate's gates, not the worker's own runs
+  ([#697](https://github.com/suzworx/flywheel/issues/697)).
   `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
   `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
   `integration.branch` is set, and is refused when neither resolves; otherwise from the main

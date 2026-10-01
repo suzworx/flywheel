@@ -43,6 +43,10 @@ type repoLockTimings struct {
 	// it to change holders in lockstep with the waiter's polls, so no
 	// scheduling delay can decide them (issue #603).
 	poll func()
+	// now and sleep, when non-nil, replace the package clock and time.Sleep
+	// in the acquire loop (issue #697), so a test waits without sleeping.
+	now   func() time.Time
+	sleep func(time.Duration)
 	// holder labels the acquiring command on the lock file's second line
 	// ("cmd run o12", issue #651), so a waiter that times out can name who
 	// holds the lock. Empty writes no label.
@@ -139,6 +143,21 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(p), err)
 	}
+	return acquireLockFile(p, timings)
+}
+
+// acquireLockFile is acquireRepoLock's machinery for the lock file at p,
+// whose directory must exist: a resource lock (issue #697) lives outside
+// .flywheel. timings.now and timings.sleep, when set, replace the clock and
+// the retry sleep, so a test drives the wait without sleeping for real.
+func acquireLockFile(p string, timings repoLockTimings) (release func(), err error) {
+	now, sleep := now, time.Sleep
+	if timings.now != nil {
+		now = timings.now
+	}
+	if timings.sleep != nil {
+		sleep = timings.sleep
+	}
 	token := repoLockToken()
 	// The lock is not fair, so a waiter can lose every race while the lock
 	// changes hands many times (issue #588). Starvation is not a stuck
@@ -203,7 +222,7 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 			}
 			return nil, &RepoLockBusy{Path: p, Holder: repoLockHolderLabel(p), Waited: waited, Handovers: handovers}
 		}
-		time.Sleep(timings.retry)
+		sleep(timings.retry)
 	}
 }
 
