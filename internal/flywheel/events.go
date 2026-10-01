@@ -137,7 +137,10 @@ type Event struct {
 	Workdir string `json:"workdir,omitempty"`
 	// Slot is a dispatched attempt's unit slot, FLYWHEEL_SLOT (issue #697);
 	// 0 when the worker's tree is not in a git repository.
-	Slot       int               `json:"slot,omitempty"`
+	Slot int `json:"slot,omitempty"`
+	// Skills is a dispatched attempt's skills: list, the skills the dispatch
+	// prompt told the worker to load (issue #695).
+	Skills     []string          `json:"skills,omitempty"`
 	Gate       string            `json:"gate,omitempty"`
 	Command    string            `json:"command,omitempty"`
 	DurationMS int64             `json:"duration_ms,omitempty"`
@@ -730,6 +733,9 @@ func Validate(e Event) error {
 	}
 	if e.Slot < 0 || (e.Slot != 0 && e.Kind != "dispatched") {
 		return fmt.Errorf("event slot %d: only a dispatched event may carry one, and it must be >= 1", e.Slot)
+	}
+	if len(e.Skills) > 0 && e.Kind != "dispatched" {
+		return fmt.Errorf("event skills %v: only a dispatched event may carry them", e.Skills)
 	}
 	if e.Issue < 0 || (e.Issue != 0 && e.Kind != "planned") {
 		return fmt.Errorf("event issue %d: only a planned event may carry one, and it must be >= 1", e.Issue)

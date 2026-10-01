@@ -122,6 +122,14 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if p := claudeDirProblem(worker, header.Owns); p != "" {
 		res.Problems = append(res.Problems, p)
 	}
+	// skills: (issue #695): each named skill must be installed where the same
+	// worker loads skills, the tree being the flywheel dir.
+	if p := skillsProblem(worker, dir, userHome(), header.Skills); p != "" {
+		res.Problems = append(res.Problems, p)
+	}
+	if w := skillsWarning(worker, header.Skills); w != "" {
+		res.Warnings = append(res.Warnings, w)
+	}
 	return res, nil
 }
 
@@ -315,6 +323,9 @@ func lintStructure(dir, path string) (LintResult, error) {
 	}
 	if header.needsEnvEmpty {
 		res.Problems = append(res.Problems, "needs-env: line is empty; name variables or write needs-env: none")
+	}
+	if header.skillsEmpty {
+		res.Problems = append(res.Problems, "skills: line is empty; name the skills the unit needs or remove the line")
 	}
 	// preflight: (issue #635) is checked for shape only; lint never runs it.
 	if header.preflightEmpty {

@@ -167,6 +167,19 @@ but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issu
 A claude worker cannot write under `.claude/` (Claude Code protects it, even with
 `bypassPermissions`), so `flywheel lint` reports owns there as a problem, `flywheel run` refuses
 the dispatch (rule `claude-dir`) and such a denial is named as the protection (issue #696).
+
+**Brief skills.** A brief's `skills:` header names the agent skills its unit needs
+(`skills: tdd, go-style`, repeatable). A skill is installed when `<dir>/<name>/SKILL.md` exists in
+a directory the worker's adapter loads skills from: claude reads `.claude/skills` in the worker's
+tree, then `~/.claude/skills`; opencode reads `.opencode/skill`, `.opencode/skills`,
+`~/.config/opencode/skill`, `~/.config/opencode/skills` and the two claude directories. A plugin
+skill (a name with `:`, such as `engineering:debug`) is never reported missing, and another adapter
+only gets a lint warning that its skills cannot be checked. `flywheel lint` reports a missing skill
+(and an empty `skills:` line) as a problem; `flywheel run` refuses the dispatch (exit 6, rule
+`skills`) before any attempt is recorded, naming each directory it looked in. The fresh dispatch
+prompt adds `Load these skills before any other work: a, b.` and the `dispatched` event records
+`skills`. Checking from the worker's stream that it actually loaded them is part 2
+([#695](https://github.com/suzworx/flywheel/issues/695)).
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
 A claude worker's Bash tool may run a foreground command for up to `limits.shell_timeout`, a Go

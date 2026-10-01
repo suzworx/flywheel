@@ -48,6 +48,9 @@ type RunRequest struct {
 	// string (worker.mcpConfig(), populated by Run); empty means none
 	// (issue #425).
 	MCPConfig string
+	// Skills is the brief's skills: list (issue #695); a fresh prompt tells
+	// the worker to load them before any other work.
+	Skills []string
 }
 
 // emptyMCPConfig is the explicit empty MCP server set a claude dispatch
@@ -64,12 +67,17 @@ const (
 )
 
 // freshPrompt is the message a fresh dispatch leads with: freshMessage, plus
-// the increment instruction when r.Increment > 0 (issue #83).
+// the increment instruction when r.Increment > 0 (issue #83), then the skills
+// to load when r.Skills is non-empty (issue #695).
 func freshPrompt(r RunRequest) string {
+	p := freshMessage
 	if r.Increment > 0 {
-		return fmt.Sprintf("%s Do increment %d only, then report and STOP.", freshMessage, r.Increment)
+		p = fmt.Sprintf("%s Do increment %d only, then report and STOP.", p, r.Increment)
 	}
-	return freshMessage
+	if len(r.Skills) > 0 {
+		p = fmt.Sprintf("%s Load these skills before any other work: %s.", p, strings.Join(r.Skills, ", "))
+	}
+	return p
 }
 
 // Observation is one decoded event from a run stream.
