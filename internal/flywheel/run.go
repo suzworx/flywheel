@@ -2036,7 +2036,9 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // the base brief's, as AttemptBrief merges them) whose command word is not a
 // command refuses with rule gate-command. With lint.full_suite_required set
 // (issue #652), those gates and owns missing a full-suite pattern
-// (fullSuiteRefusal) refuse with rule full-suite. Owns under .claude/ (issue #696,
+// (fullSuiteRefusal) refuse with rule full-suite. Those gates and owns missing
+// a lint.required_gates pattern (requiredGatesRefusal, issue #751) refuse with
+// rule required-gates. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A skills: entry (issue #695, merged the same way) not installed where
@@ -2105,6 +2107,9 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	if r := fullSuiteRefusal(dir, cfg.Lint, gates, owns); r != nil {
 		return "", nil, r
 	}
+	if r := requiredGatesRefusal(cfg.Lint, gates, owns); r != nil {
+		return "", nil, r
+	}
 	for _, c := range pre {
 		if r := preflightRefusal(dir, []string{c}); r != nil {
 			return "", nil, r
@@ -2131,6 +2136,22 @@ func fullSuiteRefusal(dir string, lc *LintConfig, gates, owns []string) *RuleRef
 		msgs[i] = w.String() + ")"
 	}
 	return &RuleRefusal{Rule: "full-suite", Fix: strings.Join(msgs, "; ") + "; add one to the brief or unset lint.full_suite_required"}
+}
+
+// requiredGatesRefusal is the rule required-gates refusal (issue #751) when
+// gates and owns miss a lint.required_gates pattern (requiredGatesMissing),
+// its Fix listing every miss; else nil. An invalid pattern is nil: lint
+// reports it. Run and validate both refuse with it.
+func requiredGatesRefusal(lc *LintConfig, gates, owns []string) *RuleRefusal {
+	missing, err := requiredGatesMissing(lc, gates, owns)
+	if err != nil || len(missing) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(missing))
+	for i, w := range missing {
+		msgs[i] = w.String()
+	}
+	return &RuleRefusal{Rule: "required-gates", Fix: strings.Join(msgs, "; ") + "; add a matching gate: line to the brief or change lint.required_gates"}
 }
 
 // recordDispatchRefused appends one dispatch_refused event (issue #651) when
