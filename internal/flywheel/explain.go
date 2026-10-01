@@ -3,6 +3,7 @@ package flywheel
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -17,23 +18,28 @@ type ExplainEntry struct {
 
 // Explanation is a task's whole story folded from the event log.
 type Explanation struct {
-	Task         string         `json:"task"`
-	Status       string         `json:"status"`
-	Brief        string         `json:"brief,omitempty"`
-	BriefSHA256  string         `json:"brief_sha256,omitempty"`
-	Owns         []string       `json:"owns,omitempty"`
-	Needs        []string       `json:"needs,omitempty"`
-	Gates        []string       `json:"gates,omitempty"`
-	GoalID       string         `json:"goal_id,omitempty"`
-	Planner      string         `json:"planner,omitempty"`
-	PlannerModel string         `json:"planner_model,omitempty"`
-	Attempts     []string       `json:"attempts,omitempty"`
-	Steps        int            `json:"steps"`
-	Cost         float64        `json:"cost"`
-	Commit       string         `json:"commit,omitempty"`
-	Tree         string         `json:"tree,omitempty"`
-	Superseded   []string       `json:"superseded,omitempty"` // landed commits a land_corrected replaced (issue #673)
-	Timeline     []ExplainEntry `json:"timeline"`
+	Task         string   `json:"task"`
+	Status       string   `json:"status"`
+	Brief        string   `json:"brief,omitempty"`
+	BriefSHA256  string   `json:"brief_sha256,omitempty"`
+	Owns         []string `json:"owns,omitempty"`
+	Needs        []string `json:"needs,omitempty"`
+	Gates        []string `json:"gates,omitempty"`
+	GoalID       string   `json:"goal_id,omitempty"`
+	Planner      string   `json:"planner,omitempty"`
+	PlannerModel string   `json:"planner_model,omitempty"`
+	Attempts     []string `json:"attempts,omitempty"`
+	Steps        int      `json:"steps"`
+	Cost         float64  `json:"cost"`
+	Commit       string   `json:"commit,omitempty"`
+	Tree         string   `json:"tree,omitempty"`
+	Superseded   []string `json:"superseded,omitempty"` // landed commits a land_corrected replaced (issue #673)
+	// SkillsLoaded and SkillsNotLoaded split the skills the latest claude
+	// dispatch named by whether the worker's stream loaded them (issue #695);
+	// both empty when the unit is not checkable.
+	SkillsLoaded    []string       `json:"skills_loaded,omitempty"`
+	SkillsNotLoaded []string       `json:"skills_not_loaded,omitempty"`
+	Timeline        []ExplainEntry `json:"timeline"`
 }
 
 // explainLine formats one event as a one-line human summary.
@@ -303,6 +309,17 @@ func Explain(events []Event, task string) (Explanation, error) {
 	// supersedes the landed one (issue #673).
 	explanation.Commit, explanation.Tree, explanation.Superseded = landedCommit(taskEvents, task)
 
+	// The skills the brief named, split by whether the claude worker's stream
+	// loaded them (issue #695).
+	if named, missing, ok := skillsCheck(events, task); ok {
+		for _, n := range named {
+			if !slices.Contains(missing, n) {
+				explanation.SkillsLoaded = append(explanation.SkillsLoaded, n)
+			}
+		}
+		explanation.SkillsNotLoaded = missing
+	}
+
 	// Build timeline; a failed gate that already failed on the base tree
 	// before dispatch says so (issue #544).
 	probeFails := baseProbeFailures(events, task)
@@ -368,6 +385,13 @@ func RenderExplanation(w io.Writer, x Explanation) error {
 	}
 
 	fmt.Fprintf(&b, "- steps: %d, cost: $%.4f\n", x.Steps, x.Cost)
+
+	if len(x.SkillsLoaded) > 0 {
+		fmt.Fprintf(&b, "- skills loaded: %s\n", strings.Join(x.SkillsLoaded, ", "))
+	}
+	if len(x.SkillsNotLoaded) > 0 {
+		fmt.Fprintf(&b, "- skills-not-loaded: %s\n", strings.Join(x.SkillsNotLoaded, ", "))
+	}
 
 	if x.Commit != "" {
 		fmt.Fprintf(&b, "- landed: %s", x.Commit)

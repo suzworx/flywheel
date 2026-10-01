@@ -110,6 +110,9 @@ When you start a session, register yourself on the floor:
   `lead_built.max_changed_lines` (default 10; rule `lead-built`, exit 6). Anything bigger goes
   through `flywheel run`; `--exception "<why>"` is for the rare change that truly cannot, and is
   recorded (verify rule L1, #722).
+- **Named skills get loaded.** A skill the brief's `skills:` names that a claude worker never
+  loads blocks the pass (validate exit 5, inspect rule `skills-not-loaded`); correct it with
+  `flywheel run <task> --delta <file>` asking it to load them (#695).
 
 ## The loop (compact)
 

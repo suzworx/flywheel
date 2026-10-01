@@ -175,7 +175,12 @@ func runValidate(args []string) {
 		}
 		fmt.Printf("%s conflict markers: remove them, then run flywheel validate %s again\n", task, task)
 	}
-	if res.OK() {
+	// A named skill the claude worker never loaded fails the pass (issue
+	// #695), exit 5 below, even with green gates and a clean owns check.
+	if len(res.SkillsNotLoaded) > 0 {
+		fmt.Printf("%s skills-not-loaded: %s: the worker never loaded these skills; dispatch a correction with flywheel run %s --delta <file> asking it to load them\n", task, strings.Join(res.SkillsNotLoaded, ", "), task)
+	}
+	if res.OK() && len(res.SkillsNotLoaded) == 0 {
 		os.Exit(0)
 	}
 	os.Exit(5)

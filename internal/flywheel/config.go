@@ -74,6 +74,8 @@ type Config struct {
 	WorkerPolicy *WorkerPolicy `json:"worker_policy,omitempty"`
 	// LeadBuilt caps a unit the lead built with no worker (issue #722).
 	LeadBuilt *LeadBuiltConfig `json:"lead_built,omitempty"`
+	// Skills enforces the brief's skills: list (issue #695).
+	Skills *SkillsConfig `json:"skills,omitempty"`
 }
 
 // WorkerPolicy holds project-level worker command rules (issue #692).
@@ -187,6 +189,22 @@ type LeadBuiltConfig struct {
 	// lead-built unit without --exception; nil means
 	// DefaultLeadBuiltMaxChangedLines.
 	MaxChangedLines *int `json:"max_changed_lines,omitempty"`
+}
+
+// SkillsConfig sets how the brief's skills: list is enforced (issue #695).
+type SkillsConfig struct {
+	// RequireLoaded makes validate fail (exit 5) and inspect refuse a pass,
+	// rule skills-not-loaded, when a claude worker never loaded a skill its
+	// brief named. nil means on; false turns it off.
+	RequireLoaded *bool `json:"require_loaded,omitempty"`
+}
+
+// SkillsRequireLoaded is skills.require_loaded, true when unset (issue #695).
+func (c Config) SkillsRequireLoaded() bool {
+	if c.Skills == nil || c.Skills.RequireLoaded == nil {
+		return true
+	}
+	return *c.Skills.RequireLoaded
 }
 
 // DefaultLeadBuiltMaxChangedLines is lead_built.max_changed_lines when unset.
@@ -1533,6 +1551,8 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.FormatBool(c.ReviewRequired()), nil
 	case "lead_built.max_changed_lines":
 		return strconv.Itoa(c.LeadBuiltMaxChangedLines()), nil
+	case "skills.require_loaded":
+		return strconv.FormatBool(c.SkillsRequireLoaded()), nil
 	case "review.group_gates":
 		return strings.Join(c.ReviewGroupGates(), groupGatesSep), nil
 	case "review.allowed_tools":
@@ -1614,7 +1634,7 @@ func (c Config) validKeys() []string {
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",
@@ -1807,6 +1827,16 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.Review.Required = b
 		return nil
+	case "skills.require_loaded":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("skills.require_loaded: value %q must be true or false", value)
+		}
+		if c.Skills == nil {
+			c.Skills = &SkillsConfig{}
+		}
+		c.Skills.RequireLoaded = &b
+		return nil
 	case "lead_built.max_changed_lines":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 {
@@ -1975,7 +2005,7 @@ func (c Config) settableKeys() []string {
 		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
 		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
-		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
+		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
 		"staffing.inspector.adapter", "staffing.inspector.model", "staffing.inspector.session",
 		"staffing.auditor.adapter", "staffing.auditor.model", "staffing.auditor.session",

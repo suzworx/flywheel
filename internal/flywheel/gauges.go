@@ -124,6 +124,11 @@ type GaugeResult struct {
 	// the gate ids the worker never ran itself (issue #365). A reading, never
 	// a gate.
 	GatesUnrun []string
+	// SkillsNotLoaded are the skills the unit's claude dispatch named that
+	// its stream never loaded (skillsNotLoaded, issue #695), set only when
+	// skills.require_loaded is on. Not part of OK(): flywheel validate exits
+	// 5 on it, and inspect refuses a pass with rule skills-not-loaded.
+	SkillsNotLoaded []string `json:"skills_not_loaded,omitempty"`
 	// Stacked is the warning, also the owns_checked note, when the unit's
 	// base landed on main as a squash (issue #414): "base <sha7> (unit <T>)
 	// was squash-merged as <sha7>; run: flywheel rebase <task>". A reading,
@@ -288,6 +293,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.BriefPaths = briefPaths
 	res.GatesOK = true
 	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
+	// An unreadable config leaves cfg zero, which keeps the check on.
+	if cfg.SkillsRequireLoaded() {
+		res.SkillsNotLoaded, _ = skillsNotLoaded(events, task)
+	}
 	// one owner lookup per pass, from the pass's snapshot, never per gate
 	// (issue #365).
 	owner := pathOwners(o.Dir, events, task)

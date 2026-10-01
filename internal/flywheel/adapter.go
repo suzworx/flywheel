@@ -108,6 +108,9 @@ type Observation struct {
 	Denied string
 	// Command is the shell command of a shell tool call (issue #365).
 	Command string
+	// Skill is the skill a claude Skill tool call loaded, its input.skill
+	// (e.g. "tdd" or "plugin:name"); other adapters leave it unset (#695).
+	Skill string
 	// ResetText is a rate-limit message's reset clause, the text after
 	// "resets " (e.g. "10:20am (America/Los_Angeles)"); set only when Reason
 	// is "rate-limited" (issue #380).
@@ -746,6 +749,9 @@ func claudeAssistantObs(m map[string]json.RawMessage) (Observation, bool) {
 				Text:   strings.Join(texts, "\n"),
 				Tokens: tok,
 				Input:  string(block["input"]),
+			}
+			if rawString(block, "name") == "Skill" {
+				obs.Skill = strings.TrimSpace(claudeToolInput(block, "skill"))
 			}
 			if rawString(block, "name") == "Bash" {
 				obs.Command = claudeToolInput(block, "command")

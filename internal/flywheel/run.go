@@ -1208,6 +1208,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wroteSeen := map[string]bool{}
 	var wroteOrder []string
 	var commands []string // shell commands in order, at most 100 (issue #365)
+	// skillsLoaded are the skills a claude stream loaded with its Skill tool,
+	// in order, each once (issue #695); nil for other adapters.
+	var skillsLoaded []string
 	// Background shells started and not yet collected, shell id → command, in
 	// start order; pending holds a background call, tool_use id → command,
 	// until its tool_result names the shell id (issue #390).
@@ -1407,6 +1410,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 				commands = append(commands, c)
 			}
+			if obs.Skill != "" && worker.Adapter == "claude" && !slices.Contains(skillsLoaded, obs.Skill) {
+				skillsLoaded = append(skillsLoaded, obs.Skill)
+			}
 			// Any later tool call whose input names an open shell's id
 			// collects it, whatever the tool (issue #390).
 			if obs.Input != "" {
@@ -1540,7 +1546,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "suspended", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), Steps: steps, SHA256: runSHA,
-			Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, Checkpoint: checkpoint,
+			Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1576,7 +1582,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, attemptOwns)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, Checkpoint: checkpoint}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -1624,7 +1630,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
-			Commands: commands, Checkpoint: checkpoint,
+			Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint,
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1833,7 +1839,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, ResetAt: resetAt,
+		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, SkillsLoaded: skillsLoaded, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
 		Checkpoint: checkpoint, Uncommitted: uncommitted,
 	}); err != nil {
