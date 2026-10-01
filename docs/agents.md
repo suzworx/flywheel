@@ -218,6 +218,9 @@ Gates that actually measure:
   `go test ./... | tail -5` has tail's exit status, and `flywheel lint` warns. `flywheel validate`
   records such a masked gate as failed (reason `masked`, the failing stage's status); to ignore a
   stage's failure on purpose, write `{ cmd || true; } | grep ...`.
+- Gates measure the state CI starts from: a spec that reads shared state seeds its own data, and a
+  gate runs it against a fresh stack (e.g. `docker compose down -v && docker compose up -d && <spec>`);
+  `flywheel lint` warns on an end-to-end or integration gate with no gate that resets state.
 - Probe before planning (`flywheel lint <brief> --probe --task <id>`) so a wrong path or missing
   tool is caught before a paid attempt.
 
