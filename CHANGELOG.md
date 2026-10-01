@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.58.0](https://github.com/suzworx/flywheel/compare/v0.57.1...v0.58.0) (2026-10-01)
+
+
+### Features
+
+* ship's preflight prints the integration branch's host rules and warns when stale greens can merge ([#734](https://github.com/suzworx/flywheel/issues/734)) ([bbba9a1](https://github.com/suzworx/flywheel/commit/bbba9a106cac440237840979962c7b87a6f1743f)), closes [#686](https://github.com/suzworx/flywheel/issues/686)
+* validate and inspect check that the worker loaded every skill its brief names (skills-not-loaded) ([#732](https://github.com/suzworx/flywheel/issues/732)) ([5e80b86](https://github.com/suzworx/flywheel/commit/5e80b86da868b339365e4c023af7658821649ab9)), closes [#695](https://github.com/suzworx/flywheel/issues/695)
+
 ## [0.57.1](https://github.com/suzworx/flywheel/compare/v0.57.0...v0.57.1) (2026-10-01)
 
 
