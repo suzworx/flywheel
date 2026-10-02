@@ -198,7 +198,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Red-first (issue #648) is not a dispatch refusal: a `kind: fix` brief whose gates all pass on the
   base tree is a `flywheel lint --probe` problem (config `lint.red_first` false turns it off), and
   `flywheel inspect --verdict pass` enforces it with rule `red-first` from the `gate_probed` events
-  recorded before this event.
+  recorded before this event. Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
+  a correction after a `ci_failed` event needs a brief with a gate that event's `gates` lack.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
   `AdapterFor` in `adapter.go` rejects any other name), `worker` (the resolved worker's name, issue #469; omitted on events recorded before
@@ -1180,6 +1181,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   for a `kind: fix` task with `lint.red_first` on (the default), `flywheel inspect --verdict pass`
   keeps the newest pre-dispatch probe per `command` and refuses (rule `red-first`, exit 6) unless
   one has an `rc` other than 0, 126 and 127 on a command still among the effective brief's gates.
+  Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
@@ -1423,9 +1425,26 @@ working exactly as before.
   `lead_edit` claim covers it: the worker routed a denied write another way (Bash, an
   interpreter, a copy). The fix names the paths: revert them, or apply the content yourself and
   claim it with `flywheel claim-edit --paths <p> --session <you>`.
+- CI escape (issue #776): a `pass` is refused (rule `ci-escape`, exit 6, after `red-first`, before
+  `skills-not-loaded`; not configurable) while the task's newest `ci_failed` event's `gates` still
+  hold every gate command of the attempt's brief: `CI failed on <note> after every gate in the
+  brief passed; add a gate that reproduces it to the brief (flywheel run <task> --delta ...), then
+  validate again`. A brief with a gate command that event lacks passes.
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.
+
+### `ci_failed`
+- Written by: `flywheel ship`'s `ci` step when a check failed with none pending (a CI timeout or a
+  skipped required check is not an escape and writes none), appended before its failing `shipped`
+  event; and by `flywheel log --task <id> --kind ci_failed --note "<check(s)>"` for a PR merged
+  outside ship (`--task` and a non-empty `--note` are required, exit 2 otherwise).
+- Carries: `task` (required), `attempt`, `note` (`#<n>: <failing checks>` from ship; the
+  `--note` text from `flywheel log`) and `gates`: the gate commands of the attempt's brief
+  (`AttemptBrief`) when it was recorded, the gates the failing tree passed (issue #776). `Validate`
+  refuses `gates` on any other kind, and a `ci_failed` event without a task or a note.
+- Effect: none on the task's status. `flywheel inspect --verdict pass` refuses (rule `ci-escape`)
+  until the brief gains a gate, and `quality.ci_escapes` counts the unit once it lands.
 
 ### `staffed`
 - Written by: `flywheel staff --role <role> --session <session> [--model M]`.
@@ -1699,7 +1718,9 @@ Verify's T8 is the only persona check in the code, and it covers exactly three k
   flag form of `flywheel log` has no `--persona` flag at all.
 - Every other kind (`planned`, `dispatched`, `started`, `worker_plan`, `no-plan`, `finished`,
   `report`, `reviewed`, `blocked`, `lost`, `withdrawn`, `landed`, `amended`, `staffed`, `goal`)
-  carries no persona restriction in `ruleT8`; `withdrawn` is the lead's, through `flywheel log`. In practice most of them are written only by a specific CLI
+  carries no persona restriction in `ruleT8`; `withdrawn` is the lead's, through `flywheel log`;
+  `ci_failed` is written by `flywheel ship`'s `ci` step or the lead's `flywheel log --kind
+  ci_failed` (issue #776). In practice most of them are written only by a specific CLI
   command (`dispatched`/`started`/`worker_plan`/`no-plan`/`finished`/`report`/`worktree_setup` only by `flywheel
   run`; `landed` only by `flywheel land`; `blocked`/`lost` only by `flywheel controller`;
   `review_finding` only by `flywheel review --agent`; `finding_response` only by `flywheel review
@@ -1802,7 +1823,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off) | 2 usage, 1 other error |
-| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
+| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `ci-escape` (CI failed after every gate in the brief passed and the brief has gained no gate since the newest `ci_failed` event, issue #776), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |

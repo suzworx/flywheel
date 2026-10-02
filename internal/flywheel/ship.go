@@ -954,7 +954,12 @@ func shipCI(r *shipRun) (string, string, error) {
 		pending, failed, passed := r.keepChecks(cs.Pending), r.keepChecks(cs.Failed), r.keepChecks(cs.Passed)
 		if len(pending) == 0 && len(failed) > 0 {
 			list := strings.Join(failed, ", ")
-			return "", "failed: " + list, fmt.Errorf("%w on #%d: %s", ErrShipCI, n, list)
+			ciErr := fmt.Errorf("%w on #%d: %s", ErrShipCI, n, list)
+			// The tree passed every gate in the brief: a CI escape (issue #776).
+			if aerr := r.recordCIFailed(fmt.Sprintf("#%d: %s", n, list)); aerr != nil {
+				return "", "failed: " + list, fmt.Errorf("%w (and recording ci_failed failed: %v)", ciErr, aerr)
+			}
+			return "", "failed: " + list, ciErr
 		}
 		skipped, neutral := r.keepChecks(cs.Skipped), r.keepChecks(cs.Neutral)
 		// A check named in ship.required_checks must conclude SUCCESS: a skip

@@ -382,6 +382,11 @@ func runLog(args []string) {
 	case o.kind == "withdrawn" && strings.TrimSpace(o.note) == "":
 		// Taking a plan back says why (issue #479).
 		logFlagError(fs, args, "--kind withdrawn requires --note <why>", logWithout("note"), `--note "<why>"`)
+	case o.kind == "ci_failed" && o.task == "":
+		logFlagError(fs, args, "--kind ci_failed requires --task <id>", nil, "--task <id>")
+	case o.kind == "ci_failed" && strings.TrimSpace(o.note) == "":
+		// CI failing after every gate passed names the failing checks (issue #776).
+		logFlagError(fs, args, "--kind ci_failed requires --note <failing check(s)>", logWithout("note"), `--note "<failing check(s)>"`)
 	case o.kind == "note" && o.note == "":
 		// A note is a journal line (issue #409): the text is the whole event.
 		logFlagError(fs, args, "--kind note requires --note <text>", logWithout("note"), `--note "<text>"`)
@@ -422,6 +427,17 @@ func runLog(args []string) {
 		}
 		finishLog(o.dir, appendAcknowledgement(o.dir, flywheel.Event{Task: o.task, Kind: "amended", Attempt: o.attempt,
 			Note: o.note, Session: o.session, Model: o.model}), o.noState)
+		return
+	}
+	if o.kind == "ci_failed" {
+		// Gates come from the brief, as ship's ci step records them (issue #776).
+		e, err := flywheel.CIFailedEvent(o.dir, o.task, o.attempt, o.note, time.Now())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel log: %v\n", err)
+			os.Exit(1)
+		}
+		e.Session, e.Model = o.session, o.model
+		appendEvents(o.dir, []flywheel.Event{e}, o.noState)
 		return
 	}
 	if o.kind == "amended" {

@@ -71,6 +71,7 @@ per bucket:
 | `review_find_rate` | `findings / reviewed` | findings per reviewed unit |
 | `blocking_share` | `blocking / findings` | ratio |
 | `escapes` | landed units with a `planned` event after their landing (at any time) | units |
+| `ci_escapes` | landed units with a `ci_failed` event before their landing: CI failed after every gate in the brief passed (issue #776) | units |
 
 ## Reliability
 
@@ -128,6 +129,7 @@ task. Times in a `value` are UTC, `MM-DD HH:MM`.
 | `quality.review_find_rate` | `reviewed`, `findings`, `review_find_rate` | the window's review findings | `<severity> <title>` | the severity | 1 blocking, 0 other |
 | `quality.blocking_share` | `blocking`, `blocking_share` | the window's review findings | as above | `blocking` or `other` | 1 blocking, 0 other |
 | `quality.escapes` | `escapes` | landed units planned again | `planned again <time>, landed <time>` | `escaped` | seconds from landing to the new plan |
+| `quality.ci_escapes` | `ci_escapes` | landed units with a `ci_failed` event before landing | `ci failed <time>: <note>, landed <time>` | `ci-escaped` | seconds from the `ci_failed` event to landing |
 | `reliability.andons` | `andons`, `andon_total`, `andon_series`, `cleared` | the window's andons | `<kind> <time>, cleared in 3h10m` or `, open` | the kind | seconds to clear, or open until the window's end |
 | `reliability.mttr` | `mttr` | cleared andons | `<kind> cleared in <d>` | the kind | seconds to clear |
 | `reliability.frozen` | `frozen` | units an attempt of which ran while the factory was frozen | `held <d> (frozen <from> to <to>)` | `frozen` | seconds held |
