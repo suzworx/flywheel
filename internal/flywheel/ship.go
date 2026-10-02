@@ -551,6 +551,12 @@ func shipGates(r *shipRun) (string, string, error) {
 		note := "conflict markers: " + strings.Join(res.Markers, ", ")
 		return "", note, &RuleRefusal{Rule: "ship", Fix: fmt.Sprintf("the merged tree of fw/%s holds git conflict markers at %s: remove the markers, re-validate (flywheel validate %s), inspect, then ship again", r.task, strings.Join(res.Markers, ", "), r.task)}
 	}
+	// Lines the merged integration commits added that the tree dropped are
+	// refused the same way (issue #770).
+	if len(res.Dropped) > 0 {
+		note := "dropped upstream lines: " + strings.Join(res.Dropped, ", ")
+		return "", note, &RuleRefusal{Rule: "ship", Fix: droppedFix(fmt.Sprintf("the merged tree of fw/%s dropped lines the merged integration commits added (%s)", r.task, strings.Join(res.Dropped, ", ")), dispatchBase(r.events, r.task, ""), r.task)}
+	}
 	if res.OK() {
 		return "ok", fmt.Sprintf("%d gate(s) passed", len(res.Gates)), nil
 	}

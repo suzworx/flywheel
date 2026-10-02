@@ -178,6 +178,10 @@ type Event struct {
 	// Markers is an owns_checked event's "<path>:<line>" git conflict marker
 	// lines in the changed paths (issue #698); a reading with any is not clean.
 	Markers []string `json:"markers,omitempty"`
+	// Dropped is an owns_checked event's "<path>: <line>" lines the merged
+	// integration commits added to a changed owned file that the tree no
+	// longer holds (issue #770); a reading with any is not clean.
+	Dropped []string `json:"dropped,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git

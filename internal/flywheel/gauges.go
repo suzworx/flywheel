@@ -148,6 +148,16 @@ type GaugeResult struct {
 	// line in a changed path, owned or not (conflictMarkers, issue #698): any
 	// fails the pass, and the owns_checked event records them.
 	Markers []string
+	// Dropped lists, sorted, "<path>: <line>" for every line the integration
+	// commits the branch merged (unit base..fork) added to a changed owned file
+	// that the tree no longer holds (droppedUpstream, issue #770): any fails
+	// the pass, and the owns_checked event records them.
+	Dropped []string `json:"dropped,omitempty"`
+	// Pending is set when integration commits the branch has not merged yet
+	// (fork..integration ref) touch owned files (pendingUpstream, issue #770):
+	// "<n> integration commit(s) since the unit's base touch owned files ...:
+	// merge <ref> before landing". A reading, never a gate.
+	Pending string `json:"pending,omitempty"`
 }
 
 // baseDrift is GaugeResult.BaseDrift for task in wd measured against the
@@ -165,9 +175,10 @@ func baseDrift(wd, task, recorded, ref string) string {
 }
 
 // OK reports whether the whole pass succeeds: every gate passed and nothing
-// sits outside owns, and no changed file holds a conflict marker.
+// sits outside owns, no changed file holds a conflict marker, and no merged
+// integration line was dropped.
 func (r GaugeResult) OK() bool {
-	return r.Refused == "" && r.GatesOK && r.OwnsOK && len(r.Markers) == 0
+	return r.Refused == "" && r.GatesOK && r.OwnsOK && len(r.Markers) == 0 && len(r.Dropped) == 0
 }
 
 // attemptGatesUnrun returns the GatesUnrun of the latest finished event of
@@ -595,7 +606,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if unitBase != "" {
 		intRef = integrationRef(wd)
 	}
-	changed, fork, err := unitChangedPathsRef(wd, unitBase, task, intRef)
+	changed, fork, merged, err := unitChangedPathsWalk(wd, unitBase, task, intRef)
 	if err != nil {
 		return GaugeResult{}, err
 	}
@@ -702,6 +713,33 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	// Every changed path, owned or not: a marker committed anywhere breaks the
 	// tree (issue #698).
 	res.Markers = conflictMarkers(wd, changed)
+	// Integration lines a hand merge dropped, and integration commits not yet
+	// merged, on owned files (issue #770). A git error skips the reading; a
+	// branch that merged nothing (fork == unitBase) costs no git process.
+	var ownedChanged []string
+	for _, p := range changed {
+		if ownsContains(owns, p) {
+			ownedChanged = append(ownedChanged, p)
+		}
+	}
+	// A merge commit on the branch keeps the walk's fork at the base while the
+	// branch holds integration commits: only then is the merge-base looked up.
+	upstream := fork
+	if merged && intRef != "" && fork != "" {
+		if mb, err := gitRead(wd, []string{"merge-base", "HEAD", intRef}); err == nil && strings.TrimSpace(mb) != "" {
+			upstream = strings.TrimSpace(mb)
+		}
+	}
+	if unitBase != "" && upstream != "" && !strings.EqualFold(upstream, unitBase) {
+		if dropped, err := droppedUpstream(wd, unitBase, upstream, ownedChanged); err == nil {
+			res.Dropped = dropped
+		}
+	}
+	if intRef != "" && upstream != "" {
+		if pending, err := pendingUpstream(wd, upstream, intRef, ownedChanged, owns); err == nil {
+			res.Pending = pending
+		}
+	}
 	// A base squash-merged under the unit (issue #414) inflates the changed
 	// set with the base unit's pre-squash commits: warn, never refuse here.
 	if b, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
@@ -710,7 +748,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Churn: res.Churn, Baselined: baselined, Attributed: attributed,
-		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Persona: "supervisor", Workdir: workdirField(wd, dir),
+		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Dropped: res.Dropped, Persona: "supervisor", Workdir: workdirField(wd, dir),
 		Note: res.Stacked,
 	}); err != nil {
 		return GaugeResult{}, err
@@ -1306,12 +1344,21 @@ func unitChangedPaths(wd, base, task string) ([]string, error) {
 // ("" when it listed none): a fork other than base means the branch may have
 // been rebased outside flywheel, found without another git process.
 func unitChangedPathsRef(wd, base, task, ref string) (paths []string, fork string, err error) {
+	paths, fork, _, err = unitChangedPathsWalk(wd, base, task, ref)
+	return paths, fork, err
+}
+
+// unitChangedPathsWalk is unitChangedPathsRef that also reports merged, true
+// when the walk listed a merge commit: the branch merged other commits (the
+// integration branch, say) after fork, so fork alone does not say which
+// integration commits it holds (issue #770).
+func unitChangedPathsWalk(wd, base, task, ref string) (paths []string, fork string, merged bool, err error) {
 	changed, err := changedPaths(wd)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if base == "" {
-		return changed, "", nil
+		return changed, "", false, nil
 	}
 	revArgs := []string{"rev-list", "--first-parent", "--parents", base + "..HEAD"}
 	if ref != "" {
@@ -1319,7 +1366,7 @@ func unitChangedPathsRef(wd, base, task, ref string) (paths []string, fork strin
 	}
 	revs, err := gitRead(wd, revArgs)
 	if err != nil {
-		return changed, "", nil
+		return changed, "", false, nil
 	}
 	if lines := strings.Split(strings.TrimSpace(revs), "\n"); len(lines) > 0 {
 		if f := strings.Fields(lines[len(lines)-1]); len(f) > 1 {
@@ -1345,6 +1392,9 @@ func unitChangedPathsRef(wd, base, task, ref string) (paths []string, fork strin
 			continue
 		}
 		sha := fields[0]
+		if len(fields) > 2 {
+			merged = true
+		}
 		if owners, err := gitRead(wd, []string{"log", "-1", "--format=%(trailers:key=Flywheel-Task,valueonly,separator=%x2C)", sha}); err == nil {
 			if names := strings.TrimSpace(owners); names != "" {
 				mine := false
@@ -1368,7 +1418,7 @@ func unitChangedPathsRef(wd, base, task, ref string) (paths []string, fork strin
 			add(out)
 		}
 	}
-	return result, fork, nil
+	return result, fork, merged, nil
 }
 
 // dispatchBase returns the unit's base: the Base of the task's latest

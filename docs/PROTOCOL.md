@@ -1344,11 +1344,23 @@ working exactly as before.
   line in a changed path, owned or not: after one trailing `\r` is stripped, a line starting
   `<<<<<<< ` or `>>>>>>> `, or exactly `<<<<<<<`, `>>>>>>>` or `=======`; binary and deleted files
   are skipped; capped at 20 entries plus `"... and N more"`; any fails the pass, exit 5, issue
-  #698), `persona` (`"supervisor"`).
-- Effect: no status change. T3 requires an `owns_checked` with an empty `outside` and empty
-  `markers` on the same tree, and refuses a pass, naming the first entries, while the latest
-  `owns_checked` on that tree carries `markers`. `land --merge` and `ship` re-validate the tree
-  they merged, so a marker there is refused with exit 6 before the branch moves or is pushed.
+  #698), `dropped` (optional, sorted `"<path>: <line>"` entries for every non-blank line the
+  integration commits the branch merged — the unit's base up to its merge-base with the
+  integration branch — added to a changed owned file that the tree no longer holds, compared
+  without trailing space and `\r`; a deleted file drops all of them; lines trimmed and clipped to
+  80 characters; capped like `markers`; any fails the pass, exit 5, issue #770), `persona`
+  (`"supervisor"`).
+- Effect: no status change. T3 requires an `owns_checked` with an empty `outside`, empty
+  `markers` and empty `dropped` on the same tree, and refuses a pass, naming the first entries,
+  while the latest `owns_checked` on that tree carries `markers` or `dropped`. `land --merge` and
+  `ship` re-validate the tree they merged, so a marker or a dropped line there is refused with
+  exit 6 before the branch moves or is pushed. A dropped line is restored (`git diff
+  <base>..<fork> -- <path>` shows what the integration branch added), or, when the removal is
+  intended, the merged base is recorded (`flywheel log --task <t> --kind rebased --base <fork>`)
+  so the check starts there, and the tree re-validated. `flywheel validate` also warns, never
+  fails, when integration commits the branch has not merged touch owned files: `<task> base:
+  warning: <n> integration commit(s) since the unit's base touch owned files <files> (<sha7>, ...):
+  merge <ref> before landing` (JSON `pending`, issue #770).
 - The changed paths are the unit's changes since the attempt was dispatched — uncommitted and untracked
   files plus files touched by the branch's own commits since the `base` commit of the unit's first
   dispatched event, or of its latest `rebased` event (issue #414) (a correction attempt's check still
@@ -1537,7 +1549,7 @@ gates (exit 5) without touching the log's legality.
 - **T3 — a pass needs current readings, not old ones.** `inspected pass` (or a live `--verdict
   pass` inspection) needs, for the *same git tree hash* the unit actually built: a passing
   `validated` event from the supervisor for **every** gate the current attempt's prompt declares,
-  and a clean (`outside`- and `markers`-empty) `owns_checked` — both recorded after the latest `finished` event
+  and a clean (`outside`-, `markers`- and `dropped`-empty) `owns_checked` — both recorded after the latest `finished` event
   that precedes the check. On a shared working tree the hash can move between `validate` and
   `inspect` because other units keep writing, so the rule is relaxed (issue #218): when no reading
   exists on the current tree, the reading may be taken on another tree `T` whose difference from
