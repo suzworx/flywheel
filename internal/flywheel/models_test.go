@@ -18,6 +18,7 @@ func TestModelCatalog(t *testing.T) {
 	}{
 		{"claude", "claude-fable-5-1", true, ""},
 		{"claude", "claude-opus-5-5", true, ""},
+		{"claude", "claude-sonnet-5-5", true, ""},
 		{"claude", "claude-sonnet-5", true, ""},
 		{"claude", "claude-haiku-4-5-20251001", true, ""},
 		{"claude", "fable", true, ""},
@@ -25,6 +26,7 @@ func TestModelCatalog(t *testing.T) {
 		{"claude", "sonnet", true, ""},
 		{"claude", "haiku", false, `did you mean "claude-haiku-4-5-20251001"`},
 		{"claude", "claude-haiku-4-6", false, `did you mean "claude-haiku-4-5-20251001"`},
+		{"claude", "claude-sonnet-5-6", false, `did you mean "claude-sonnet-5-5"`},
 		{"opencode", "deepseek", false, "<provider>/<model>"},
 		{"opencode", "open router/x", false, "<provider>/<model>"},
 		{"opencode", "openrouter/x", true, ""},
@@ -55,7 +57,7 @@ func TestModelCatalog(t *testing.T) {
 		}
 	}
 	err := CheckModel("claude", "claude-haiku-4-6")
-	if err == nil || !strings.Contains(err.Error(), "known: claude-fable-5-1, claude-opus-5-5, claude-sonnet-5, claude-haiku-4-5-20251001, fable, opus, sonnet") {
+	if err == nil || !strings.Contains(err.Error(), "known: claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5-20251001, fable, opus, sonnet") {
 		t.Errorf("CheckModel(claude, typo) = %v, want the full known list", err)
 	}
 }

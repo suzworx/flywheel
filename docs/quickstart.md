@@ -105,7 +105,7 @@ an existing one.
 
 `flywheel config validate` checks each worker's model and fallback models against flywheel's
 list, so a lead runs it before a dispatch to catch a typo early. A claude model must be one of
-`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001` or the CLI
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001` or the CLI
 aliases `fable`, `opus` and `sonnet` (the claude CLI has no `haiku` alias). For an unknown model,
 the problem names the closest known ID. An opencode model must be `<provider>/<model>`, a
 codex model must not contain spaces, and a pi model must be `<provider>/<id>`, optionally with a
