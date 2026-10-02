@@ -120,7 +120,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   install --frozen-lockfile --offline`; `package-lock.json`/`npm-shrinkwrap.json` → `npm ci
   --prefer-offline --no-audit`). It is skipped while the lockfile is unchanged since the last
   install that exited 0 and every `(install)` path is present. No lockfile, a failed install, or a
-  path both `(link)` and `(install)` refuses the dispatch.
+  path both `(link)` and `(install)` refuses the dispatch. `flywheel validate` with a `--workdir`
+  re-checks the marker before the first gate and re-runs the install when the lockfile changed since
+  the last one (a merge, a rebase, your own dependency change); a failed re-install refuses (exit 6)
+  before any gate runs.
   A tree the lead prepared by hand — a merge with conflicts in progress, say — is dispatched with
   `flywheel run <task> --workdir <tree>` instead of `--worktree` (issue #545): no copies, links,
   installs or setup; its dirty and conflicted files are baselined at dispatch, events still go to

@@ -266,17 +266,6 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if len(header.Gates) == 0 {
 		return GaugeResult{}, fmt.Errorf("brief %s declares no gate: lines; add a `gate:` line to the brief header", briefPaths[0])
 	}
-	// An isolated Workdir does not hold machine state outside the repo (a
-	// database, a local stack, git-ignored env files); with no --workdir the
-	// tree is the repo and needs-state: is satisfied by definition (#136).
-	if !samePath(wd, o.Dir) {
-		if err := carryPaths(o.Dir, wd, o.Carry); err != nil {
-			return GaugeResult{}, err
-		}
-		if refusal := missingNeedsState(wd, header.NeedsState); refusal != "" {
-			return GaugeResult{Refused: refusal}, nil
-		}
-	}
 	attempt := ""
 	for _, e := range events {
 		if e.Task == task && e.Attempt != "" {
@@ -285,6 +274,41 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	}
 	if attempt == "" {
 		attempt = "r1"
+	}
+	// An isolated Workdir does not hold machine state outside the repo (a
+	// database, a local stack, git-ignored env files); with no --workdir the
+	// tree is the repo and needs-state: is satisfied by definition (#136).
+	if !samePath(wd, o.Dir) {
+		if err := carryPaths(o.Dir, wd, o.Carry); err != nil {
+			return GaugeResult{}, err
+		}
+		// Needs-state "(install)" (issue #769): a lockfile that moved since the
+		// last install (a merge, a rebase, the worker's own dependency change)
+		// re-runs it before the first gate, so no gate runs on stale
+		// dependencies; a failed install refuses before any gate.
+		if len(header.NeedsStateInstall) > 0 {
+			timeout, terr := cfg.SetupTimeoutDuration()
+			if cfgErr != nil || terr != nil {
+				timeout, _ = Config{}.SetupTimeoutDuration()
+			}
+			install, note, ierr := installNeedsState(o.Dir, wd, task, header.NeedsStateInstall, timeout)
+			if !strings.HasPrefix(install, "up to date (") {
+				const why = "validate: lockfile changed since the last install"
+				ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Installed: header.NeedsStateInstall, Install: install, Note: why}
+				if ierr != nil {
+					ev.Note = why + "\n" + clipSetupNote(note)
+				}
+				if err := AppendEvent(o.Dir, ev); err != nil {
+					return GaugeResult{}, err
+				}
+				if ierr != nil {
+					return GaugeResult{}, ierr
+				}
+			}
+		}
+		if refusal := missingNeedsState(wd, header.NeedsState); refusal != "" {
+			return GaugeResult{Refused: refusal}, nil
+		}
 	}
 	tree, err := treeHash(wd)
 	if err != nil {
