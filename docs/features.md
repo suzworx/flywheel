@@ -116,6 +116,14 @@ readings; `flywheel inspect` only passes a unit whose readings are on record (an
 session's verdict); `flywheel verify` checks every poka-yoke rule. `validate` exits 5 when a gate
 fails or a change sits outside `owns`, and an `inspect` refusal exits 6.
 
+Units split with disjoint `owns` but shared gates (one contract snapshot spanning every module)
+each fail those gates on their own tree by design. `flywheel validate --group <goal|tasks:a,b>
+--workdir <combined tree>` (issue [#775](https://github.com/suzworx/flywheel/issues/775)) runs
+each distinct gate of the group's members once on the combined tree and records the reading, and
+one `owns_checked`, for every member that declares it, each tagged with the event field `group`;
+each member's `inspect` then accepts them as its own. Two members owning one path refuse with
+rule `group-owns` (exit 6) before any gate runs.
+
 A gate that runs under bash is also measured for a masked pipeline (issue
 [#704](https://github.com/suzworx/flywheel/issues/704)): bash runs gates without pipefail, so in
 `runner | grep PASS` a crashed runner takes grep's exit status. `validate` records the exit status

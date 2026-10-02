@@ -1236,7 +1236,27 @@ working exactly as before.
 
 ### `validated`
 - Written by: the CLI only, via `flywheel validate <task>`, once per declared `gate:` line, or
-  `flywheel attest` (an external reading, below).
+  `flywheel attest` (an external reading, below), or `flywheel validate --group` (below).
+- **Group readings** ([#775](https://github.com/suzworx/flywheel/issues/775)):
+  `flywheel validate --group <goal|tasks:a,b> --workdir <combined tree> [--dir DIR]` validates
+  the members of a group (`GroupMembers`: a goal id or an explicit task list) together on one
+  combined tree, for units split with disjoint `owns:` but shared gates, whose own trees fail
+  those gates by design. It takes no task id, needs `--workdir`, and refuses `--live` and
+  `--carry` (exit 2). Before any gate runs it refuses (exit 6, rule `group-owns`, naming the path
+  and both tasks) when two members' `owns:` lists share an entry or a changed path (the union of
+  each member's changed paths since its dispatch base) matches two members' `owns:`. Walking the
+  members in order and each member's gates in order, every distinct gate command runs once on the
+  combined tree: its `validated` event is recorded for the first member that declares it, and
+  every other member declaring the same command gets a copy under its own `task`, `attempt` and
+  `gate` index. Then one `owns_checked` per member is recorded on the same `tree` and `commit`:
+  `outside` the group's outside list (a changed path no member's `owns:` or `needs-state:`
+  covers), `files` the changed paths in that member's own `owns:`, `markers` as usual. Every one
+  of these events carries `group` (`group:<id>`, `GroupTask`); `Validate` accepts `group` only on
+  `validated`, `owns_checked`, `inspected` and `landed`, and only in `group:<id>` form. The
+  readings match on task and tree, so each member's `inspect --verdict pass` accepts them as its
+  own. It prints one `group <id> gate <command>: pass|fail` line per distinct gate, `owns: ok` or
+  the outside paths, and `<task>: readings recorded on tree <short>` per member; exit 0, 5 on a
+  failing gate, an outside path or a conflict marker, 6 a refusal.
 - Carries: `task`, `attempt`, `gate` (1-based index, as a string), `command`, `tree` (git tree
   hash), `commit` (the repository HEAD at the moment **this** reading was taken, not at the start
   of the pass — each gate resolves it independently, so two readings in one pass may carry
@@ -1328,7 +1348,8 @@ working exactly as before.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass, or `flywheel attest`
-  (an external reading, see `validated` above).
+  (an external reading, see `validated` above), or `flywheel validate --group`, once per member
+  on the combined tree, carrying `group` (`group:<id>`, issue #775; see `validated` above).
 - Carries: `task`, `attempt`, `tree`, `commit` (the repository HEAD at the moment the owns check
   ran, resolved independently of the gates — each reading carries the HEAD at the time it was
   taken, so it may differ from the gates' commits and that is correct, not a bug; empty when the
@@ -1822,7 +1843,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
-| `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off) | 2 usage, 1 other error |
+| `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `full-suite`, `required-gates`, or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `ci-escape` (CI failed after every gate in the brief passed and the brief has gained no gate since the newest `ci_failed` event, issue #776), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |

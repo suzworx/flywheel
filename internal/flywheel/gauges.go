@@ -511,17 +511,31 @@ func resourceGate(dir, wd, task, attempt, tree, commit string, resources []strin
 // reading carries no other (issue #411). resNote (a resource lock wait,
 // issue #697; may be empty) is joined with "; " to whatever note results.
 func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string) (GateOut, error) {
+	res, ev, err := measureGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, hostNote, resNote)
+	if err != nil {
+		return GateOut{}, err
+	}
+	if err := AppendEvent(dir, ev); err != nil {
+		return GateOut{}, err
+	}
+	return res, nil
+}
+
+// measureGate is runAndRecordGate up to the append: it runs the gate, writes
+// its evidence log and returns the validated event unrecorded, so validate
+// --group (issue #775) can tag it with its group before recording it.
+func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string) (GateOut, Event, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, stages, err := runGateStages(wd, gate, base)
 	if err != nil {
-		return GateOut{}, err
+		return GateOut{}, Event{}, err
 	}
 	blocked := strings.Contains(string(out), hostBlocked)
 	if blocked {
 		rc2, dur2, out2, stages2, err2 := runGateStages(wd, gate, base)
 		if err2 != nil {
-			return GateOut{}, err2
+			return GateOut{}, Event{}, err2
 		}
 		rc, dur, out, stages = rc2, dur2, out2, stages2
 		blocked = strings.Contains(string(out), hostBlocked)
@@ -532,7 +546,7 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 		rc = status
 	}
 	if err := os.WriteFile(logPath, out, 0o644); err != nil {
-		return GateOut{}, fmt.Errorf("write %s: %w", logPath, err)
+		return GateOut{}, Event{}, fmt.Errorf("write %s: %w", logPath, err)
 	}
 	sum := sha256.Sum256(out)
 	rcPtr := new(int)
@@ -569,14 +583,11 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 		note = joinNotes(note, resNote)
 		ev.Note = note
 	}
-	if err := AppendEvent(dir, ev); err != nil {
-		return GateOut{}, err
-	}
 	return GateOut{
 		Gate: gateID, Command: gate, RC: rc, DurationMS: dur,
 		LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
 		Masked: masked, Live: live,
-	}, nil
+	}, ev, nil
 }
 
 // finishValidate runs the owns check, records owns_checked, refreshes derived
