@@ -169,9 +169,10 @@ every mode, `bypassPermissions` included. A tool the worker is denied raises the
 `permission-denied` andon live, while the run is still going (`andon: <task> <attempt>
 permission-denied <tool> (live)`), and `flywheel lint` warns when a brief asks for web research
 but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issue #526).
-A claude worker cannot write under `.claude/` (Claude Code protects it, even with
-`bypassPermissions`), so `flywheel lint` reports owns there as a problem, `flywheel run` refuses
-the dispatch (rule `claude-dir`) and such a denial is named as the protection (issue #696).
+A claude worker cannot write under `.claude/` or to `.mcp.json` (Claude Code protects them, even
+with `bypassPermissions`), so `flywheel lint` reports owns there as a problem, `flywheel run`
+refuses the dispatch (rule `claude-dir`) and such a denial is named as the protection (issues #696,
+#756).
 
 **Brief skills.** A brief's `skills:` header names the agent skills its unit needs
 (`skills: tdd, go-style`, repeatable). A skill is installed when `<dir>/<name>/SKILL.md` exists in

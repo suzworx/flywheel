@@ -34,7 +34,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   investigation brief uses `owns: none` (or `owns: -`): the unit owns no paths, never collides at
   dispatch, and any file it changes fails its owns check. List every
   file a unit may create up front, in `owns:`, rather than inviting it to add one later. A claude
-  worker cannot write under `.claude/` (Claude Code protects it, even with `bypassPermissions`):
+  worker cannot write under `.claude/` or to `.mcp.json` (Claude Code protects them, even with
+  `bypassPermissions`):
   `flywheel lint` reports such owns as a problem and `flywheel run` refuses them (rule
   `claude-dir`); own a staging path (e.g. `staging/claude/...`) and move the files after
   inspection, or staff the unit with a non-claude worker. A unit whose change can move a
