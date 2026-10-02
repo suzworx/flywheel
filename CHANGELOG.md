@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.64.0](https://github.com/suzworx/flywheel/compare/v0.63.1...v0.64.0) (2026-10-02)
+
+
+### Features
+
+* a brief names a claude agent: run passes it inline with --agents/--agent ([#764](https://github.com/suzworx/flywheel/issues/764)) ([beb0d09](https://github.com/suzworx/flywheel/commit/beb0d09a85b879010edc2865fef38f07b8df498d)), closes [#755](https://github.com/suzworx/flywheel/issues/755)
+
+
+### Documentation
+
+* shared-tree fan-out: several --workdir units in one worktree on disjoint owns ([#762](https://github.com/suzworx/flywheel/issues/762)) ([f93706f](https://github.com/suzworx/flywheel/commit/f93706f0c93295f451c961f607f070acb05bf825)), closes [#761](https://github.com/suzworx/flywheel/issues/761)
+
 ## [0.63.1](https://github.com/suzworx/flywheel/compare/v0.63.0...v0.63.1) (2026-10-02)
 
 
