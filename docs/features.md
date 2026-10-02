@@ -122,7 +122,13 @@ each fail those gates on their own tree by design. `flywheel validate --group <g
 each distinct gate of the group's members once on the combined tree and records the reading, and
 one `owns_checked`, for every member that declares it, each tagged with the event field `group`;
 each member's `inspect` then accepts them as its own. Two members owning one path refuse with
-rule `group-owns` (exit 6) before any gate runs.
+rule `group-owns` (exit 6) before any gate runs. `flywheel inspect --group <group> --verdict pass
+--session S` then checks every member against every inspect rule first and records the
+inspections only when all pass (a refusal names the member and records nothing), and after the
+merge `flywheel land --group <group> --commit SHA` lands every passed member on that one commit
+(a member not passed refuses rule T5 before anything lands; a rerun skips members already landed
+on it). Both events carry `group`, and `flywheel stats` counts such landings as `group landed`,
+never as first pass.
 
 A gate that runs under bash is also measured for a masked pipeline (issue
 [#704](https://github.com/suzworx/flywheel/issues/704)): bash runs gates without pipefail, so in

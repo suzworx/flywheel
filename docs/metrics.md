@@ -61,7 +61,7 @@ per bucket:
 | Metric | Definition | Unit |
 |---|---|---|
 | `landed` | landed units | units |
-| `first_pass` | landed units whose only attempt is `r1` and that never got an `inspected` or `reviewed` verdict `correct` or `rework` | units |
+| `first_pass` | landed units whose only attempt is `r1`, that never got an `inspected` or `reviewed` verdict `correct` or `rework`, and that did not land in a group (first-pass yield is single-unit yield) | units |
 | `first_pass_yield` | `first_pass / landed` | ratio |
 | `corrections` | over landed units, the distinct attempts beyond the first | attempts |
 | `rework_rate` | `corrections / landed` | corrections per landed unit |
@@ -72,6 +72,7 @@ per bucket:
 | `blocking_share` | `blocking / findings` | ratio |
 | `escapes` | landed units with a `planned` event after their landing (at any time) | units |
 | `ci_escapes` | landed units with a `ci_failed` event before their landing: CI failed after every gate in the brief passed (issue #776) | units |
+| `group_landed` | landed units whose first `landed` event carries `group` (`flywheel land --group`, issue #775); counted in `landed`, never in `first_pass` | units |
 
 ## Reliability
 
@@ -123,7 +124,7 @@ task. Times in a `value` are UTC, `MM-DD HH:MM`.
 | `flow.wip` | `wip` | units in progress at the window's end; stale units too, apart | `<status> for <since dispatch>`; a stale unit `stale: <status>, last event <age> ago` | the status; `stale` for a stale unit | seconds since the first dispatch; for a stale unit seconds since its last event |
 | `flow.lead_time`, `flow.cycle_time`, `flow.queue_time`, `flow.touch_time` | the Dist of that name | landed units with that time | `lead 9h12m`, `cycle …`, `queued …`, `touch …` | `landed` | the time in seconds |
 | `flow.flow_efficiency` | `flow_efficiency` | landed units with a positive cycle time | `33% (touch 30m of cycle 1h30m)` | `landed` | 1 - touch / cycle |
-| `quality.first_pass_yield` | `landed`, `first_pass`, `first_pass_yield` | landed units | `first pass`, `corrected x<n>`, `sent back by a verdict`, `no r1 attempt` | `first pass` or `corrected` | 0 first pass, else corrections + 1 |
+| `quality.first_pass_yield` | `landed`, `first_pass`, `first_pass_yield` | landed units | `first pass`, `corrected x<n>`, `sent back by a verdict`, `no r1 attempt`, `landed in a group` | `first pass`, `corrected` or `group landed` | 0 first pass, else corrections + 1 |
 | `quality.rework_rate` | `corrections`, `rework_rate` | landed units | `<n> corrections` | as first-pass yield | corrections |
 | `quality.gates` | `gates` | the window's conclusive gate readings | `gate <id> rc <rc> on <attempt>` | `pass` or `fail` | 1 fail, 0 pass |
 | `quality.review_find_rate` | `reviewed`, `findings`, `review_find_rate` | the window's review findings | `<severity> <title>` | the severity | 1 blocking, 0 other |

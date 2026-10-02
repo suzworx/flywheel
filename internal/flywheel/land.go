@@ -58,6 +58,12 @@ type landAdvance func() (commit string, undo func() error, err error)
 // is set, commit is ignored and the landing records the commit advance
 // returns, so no rule can refuse a landing after the branch has moved.
 func landTask(dir, task, commit, note string, leadImplemented bool, reason, exception, session, allowUntriaged string, advance landAdvance) error {
+	return landTaskGroup(dir, task, commit, note, leadImplemented, reason, exception, session, allowUntriaged, advance, "")
+}
+
+// landTaskGroup is landTask whose landed event carries group (GroupTask of
+// the group the task lands under, issue #775), or no group when "".
+func landTaskGroup(dir, task, commit, note string, leadImplemented bool, reason, exception, session, allowUntriaged string, advance landAdvance, group string) error {
 	if dir == "" {
 		dir = "."
 	}
@@ -220,7 +226,7 @@ func landTask(dir, task, commit, note string, leadImplemented bool, reason, exce
 	// An exception, allow_untriaged, and the landing it permits are appended in one write
 	// (AppendEvents): a failure can never leave events without their
 	// landing for a later landing to reuse.
-	batch := []Event{{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented}}
+	batch := []Event{{Task: task, Kind: "landed", Commit: commit, Tree: tree, Note: note, LeadImplemented: leadImplemented, Group: group}}
 	if len(mine) > 0 && allowUntriaged != "" {
 		batch = append([]Event{{Task: task, Kind: "allow_untriaged", Commit: commit, Note: allowUntriaged, Signals: signalList(mine)}}, batch...)
 	}
