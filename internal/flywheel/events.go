@@ -146,6 +146,10 @@ type Event struct {
 	// Skills is a dispatched attempt's skills: list, the skills the dispatch
 	// prompt told the worker to load (issue #695).
 	Skills []string `json:"skills,omitempty"`
+	// Agent is a dispatched attempt's agent: name and AgentSHA256 the sha256
+	// hex of the agent file it passed to claude --agents (issue #755).
+	Agent       string `json:"agent,omitempty"`
+	AgentSHA256 string `json:"agent_sha256,omitempty"`
 	// SkillsLoaded is a claude attempt's finished event's skills its stream
 	// loaded through the Skill tool, in order, each once (issue #695).
 	SkillsLoaded []string `json:"skills_loaded,omitempty"`
@@ -765,6 +769,9 @@ func Validate(e Event) error {
 	}
 	if len(e.Skills) > 0 && e.Kind != "dispatched" {
 		return fmt.Errorf("event skills %v: only a dispatched event may carry them", e.Skills)
+	}
+	if (e.Agent != "" || e.AgentSHA256 != "") && e.Kind != "dispatched" {
+		return fmt.Errorf("event agent and agent_sha256: only a dispatched event may carry them (issue #755)")
 	}
 	if len(e.SkillsLoaded) > 0 && e.Kind != "finished" {
 		return fmt.Errorf("event skills_loaded %v: only a finished event may carry them (issue #695)", e.SkillsLoaded)

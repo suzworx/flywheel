@@ -147,6 +147,14 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if w := skillsWarning(worker, header.Skills); w != "" {
 		res.Warnings = append(res.Warnings, w)
 	}
+	// agent: (issue #755): the named agent file must resolve for the same
+	// worker, the tree being the flywheel dir. A malformed name is a shape
+	// problem below and is not looked up.
+	if agentNameRE.MatchString(header.Agent) {
+		if p := agentProblem(worker, dir, userHome(), header.Agent); p != "" {
+			res.Problems = append(res.Problems, p)
+		}
+	}
 	return res, nil
 }
 
@@ -352,6 +360,16 @@ func lintStructure(dir, path string) (LintResult, error) {
 	}
 	if header.skillsEmpty {
 		res.Problems = append(res.Problems, "skills: line is empty; name the skills the unit needs or remove the line")
+	}
+	// agent: (issue #755) is one name per brief.
+	if header.agentEmpty {
+		res.Problems = append(res.Problems, "agent: line is empty; name the claude agent or remove the line")
+	}
+	if header.agentRepeated {
+		res.Problems = append(res.Problems, "agent: appears more than once; a brief names one agent")
+	}
+	if header.Agent != "" && !agentNameRE.MatchString(header.Agent) {
+		res.Problems = append(res.Problems, fmt.Sprintf("agent name %q is not a valid agent name (letters, digits, '.', '_' and '-', starting with a letter or digit)", header.Agent))
 	}
 	// resources: (issue #697) is checked for shape only; lint takes no lock.
 	for _, n := range header.resourcesInvalid {

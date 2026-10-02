@@ -51,6 +51,11 @@ type RunRequest struct {
 	// Skills is the brief's skills: list (issue #695); a fresh prompt tells
 	// the worker to load them before any other work.
 	Skills []string
+	// Agent is the brief's agent: name and AgentJSON its definition as the
+	// claude --agents value (issue #755, populated by Run); the claude adapter
+	// passes --agents AgentJSON --agent Agent when Agent is set.
+	Agent     string
+	AgentJSON string
 }
 
 // emptyMCPConfig is the explicit empty MCP server set a claude dispatch
@@ -468,7 +473,10 @@ func (a claudeAdapter) Name() string {
 // when it is empty, so a worker loads no MCP server — not the user's mail,
 // calendar, drive or plugin servers that --setting-sources user would still
 // load — unless its worker config lists them (issue #425). The review agent
-// sets no MCPConfig and so inherits the empty set.
+// sets no MCPConfig and so inherits the empty set. A brief's agent: (r.Agent,
+// issue #755) adds --agents r.AgentJSON --agent r.Agent before --resume, on
+// fresh and resumed runs alike: --setting-sources user hides a project's
+// .claude/agents/, so the definition is passed inline.
 func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	resuming := r.Resume && r.Session != ""
 	mode := r.PermissionMode
@@ -507,6 +515,9 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 		mcp = emptyMCPConfig
 	}
 	args = append(args, "--strict-mcp-config", "--mcp-config", mcp)
+	if r.Agent != "" {
+		args = append(args, "--agents", r.AgentJSON, "--agent", r.Agent)
+	}
 	if resuming {
 		args = append(args, "--resume", r.Session)
 	}

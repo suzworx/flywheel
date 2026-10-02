@@ -188,6 +188,13 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   directory looked in, before the dispatch lock (only a `dispatch_refused` event is recorded). A
   plugin skill (a name with `:`) and an adapter with no known skill directory are not checked
   (issue #695).
+- Not written when the brief's `agent:` header (issue #755; a correction keeps the base brief's,
+  and one naming a different agent is refused) names an agent the dispatching worker cannot run:
+  the worker's adapter is not `claude`, no `.claude/agents/<name>.md` exists in the worker's tree
+  (as for `skills:`) or under `~/.claude/agents/`, or the file has no `---` frontmatter or an empty
+  body. run refuses with rule `agent` (exit 6) before the dispatch lock (only a `dispatch_refused`
+  event is recorded). The claude dispatch passes the file inline as
+  `--agents '{"<name>":{"description":...,"prompt":...,"tools":[...]}}' --agent <name>`.
 - Red-first (issue #648) is not a dispatch refusal: a `kind: fix` brief whose gates all pass on the
   base tree is a `flywheel lint --probe` problem (config `lint.red_first` false turns it off), and
   `flywheel inspect --verdict pass` enforces it with rule `red-first` from the `gate_probed` events
@@ -227,7 +234,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   only on a `dispatched` event and only >= 1, issue #697), `skills` (the brief's `skills:` list as
   merged for the attempt, which the fresh dispatch prompt told the worker to load with
   `Load these skills before any other work: a, b.`; omitted when none; `Validate` accepts it only on a
-  `dispatched` event, issue #695), `note`.
+  `dispatched` event, issue #695), `agent` and `agent_sha256` (the brief's `agent:` name as kept
+  for the attempt and the sha256 hex of the agent file passed to claude `--agents`; omitted when
+  none; `Validate` accepts them only on a `dispatched` event, issue #755), `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
   `owns_checked` or `lost` event whose own `attempt` differs is stale and ignored (listed under
@@ -239,7 +248,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `required-gates`, `claude-dir`, `skills`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `required-gates`, `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
