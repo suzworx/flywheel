@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.67.0](https://github.com/suzworx/flywheel/compare/v0.66.0...v0.67.0) (2026-10-02)
+
+
+### Features
+
+* brief stage: lines map a staging dir onto .claude/, and validate applies them before the gates ([#782](https://github.com/suzworx/flywheel/issues/782)) ([aff6f47](https://github.com/suzworx/flywheel/commit/aff6f47160a9a7a9df4f4e08ace8bf85fd2c1602))
+* flywheel unstage removes a unit's staging copies once validate applied them, recorded and resumable ([#784](https://github.com/suzworx/flywheel/issues/784)) ([ba8989f](https://github.com/suzworx/flywheel/commit/ba8989f99d3229317ab0719eef714ae0d2a60024)), closes [#781](https://github.com/suzworx/flywheel/issues/781)
+
 ## [0.66.0](https://github.com/suzworx/flywheel/compare/v0.65.1...v0.66.0) (2026-10-02)
 
 
