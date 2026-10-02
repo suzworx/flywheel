@@ -23,6 +23,7 @@ type inspectOptions struct {
 	note      string
 	commit    string
 	exception string
+	group     string
 }
 
 // inspectFlags defines inspect's flags once, so help and run share them.
@@ -37,20 +38,21 @@ func inspectFlags() (*flag.FlagSet, *inspectOptions) {
 	fs.StringVar(&o.note, "note", "", "optional inspection note")
 	fs.StringVar(&o.commit, "commit", "", "inspect this commit's tree instead of the working tree (an attested, merged commit)")
 	fs.StringVar(&o.exception, "exception", "", "why a lead-built unit over lead_built.max_changed_lines passes")
+	fs.StringVar(&o.group, "group", "", "inspect every member of a group (a goal id or tasks:<a>,<b>): each is checked first and recorded only when all pass")
 	return fs, o
 }
 
 // inspectUsageLine is flywheel inspect's usage, shared by help and errors.
-const inspectUsageLine = "flywheel inspect <task> --verdict pass|rework|scrap|escalate --session <session> [--commit SHA] [--exception WHY] [--note NOTE] [--dir DIR] [--workdir PATH]"
+const inspectUsageLine = "flywheel inspect <task>|--group <goal|tasks:a,b> --verdict pass|rework|scrap|escalate --session <session> [--commit SHA] [--exception WHY] [--note NOTE] [--dir DIR] [--workdir PATH]"
 
 // inspectUsage prints the flywheel inspect usage line.
 func inspectUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: "+inspectUsageLine)
 }
 
-// runInspect implements `flywheel inspect <task>`. Each poka-yoke refusal
-// exits 6 with the rule id and the fix; a usage error exits 2; any other
-// error exits 1.
+// runInspect implements `flywheel inspect <task>` and `flywheel inspect
+// --group <group>`. Each poka-yoke refusal exits 6 with the rule id and the
+// fix; a usage error exits 2; any other error exits 1.
 func runInspect(args []string) {
 	fs, o := inspectFlags()
 	pos, err := parseArgs(fs, args)
@@ -59,26 +61,44 @@ func runInspect(args []string) {
 		inspectUsage(os.Stderr)
 		os.Exit(2)
 	}
-	if len(pos) != 1 {
+	if o.group != "" && len(pos) != 0 {
+		fmt.Fprintf(os.Stderr, "flywheel inspect: --group takes no task id\n")
+		inspectUsage(os.Stderr)
+		os.Exit(2)
+	}
+	if o.group == "" && len(pos) != 1 {
 		fmt.Fprintf(os.Stderr, "flywheel inspect: exactly one task id is required\n")
 		inspectUsage(os.Stderr)
 		os.Exit(2)
 	}
-	task := pos[0]
 	if o.commit != "" && !flywheel.CommitOK(o.commit) {
 		fmt.Fprintf(os.Stderr, "flywheel inspect: --commit %q is not 7 to 40 hex characters\n", o.commit)
 		inspectUsage(os.Stderr)
 		os.Exit(2)
 	}
-	err = flywheel.InspectTask(o.dir, task, flywheel.InspectOptions{
+	opts := flywheel.InspectOptions{
 		Dir: o.dir, Workdir: o.workdir, Verdict: o.verdict, Session: o.session, Note: o.note, Commit: o.commit, Exception: o.exception,
-	})
-	if err != nil {
+	}
+	exit := func(err error) {
 		fmt.Fprintf(os.Stderr, "flywheel inspect: %v\n", err)
 		if flywheel.IsRuleRefusal(err) {
 			os.Exit(6)
 		}
 		os.Exit(1)
+	}
+	if o.group != "" {
+		tasks, err := flywheel.InspectGroup(o.dir, o.group, opts)
+		for _, t := range tasks {
+			fmt.Printf("%s inspected %s (group %s)\n", t, o.verdict, flywheel.GroupID(o.group))
+		}
+		if err != nil {
+			exit(err)
+		}
+		return
+	}
+	task := pos[0]
+	if err := flywheel.InspectTask(o.dir, task, opts); err != nil {
+		exit(err)
 	}
 	fmt.Printf("%s inspected %s\n", task, o.verdict)
 }

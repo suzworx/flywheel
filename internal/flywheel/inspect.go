@@ -26,6 +26,12 @@ type InspectOptions struct {
 	// lead_built.max_changed_lines passes (issue #722); an error on a unit
 	// that is not lead-built.
 	Exception string
+	// Group, when set, is the group spec (a goal id or tasks:a,b) the task is
+	// inspected under (issue #775): the inspected event carries GroupTask(Group).
+	Group string
+	// check runs every refusal and returns before anything is appended
+	// (InspectGroup's check pass over every member).
+	check bool
 }
 
 // RuleRefusal is a poka-yoke refusal: the transition rule that fired and the
@@ -161,11 +167,18 @@ func InspectTask(dir, task string, o InspectOptions) error {
 			return err
 		}
 	}
+	if o.check {
+		return nil
+	}
+	group := ""
+	if o.Group != "" {
+		group = GroupTask(o.Group)
+	}
 	if err := AppendEvent(o.Dir, Event{
 		TS: "", Task: task, Kind: "inspected", Verdict: o.Verdict,
 		Tree: tree, Commit: o.Commit, Session: o.Session, Note: note, Persona: "inspector",
 		Workdir:   workdirField(work, o.Dir),
-		LeadBuilt: lead, ChangedLines: lines, Exception: o.Exception,
+		LeadBuilt: lead, ChangedLines: lines, Exception: o.Exception, Group: group,
 	}); err != nil {
 		return err
 	}

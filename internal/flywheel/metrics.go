@@ -213,8 +213,10 @@ type attemptSpan struct {
 
 // unitTimes is one unit's milestones: the first planned, dispatched and
 // landed times (zero when absent), its distinct attempts in order and spans.
+// Grouped is set when its first landed event carries a group (issue #775).
 type unitTimes struct {
 	Planned, Dispatched, Landed time.Time
+	Grouped                     bool
 	Attempts                    []string
 	Spans                       []attemptSpan
 }
@@ -255,8 +257,8 @@ func unitTimeline(ev []timed) map[string]*unitTimes {
 				delete(open, k)
 			}
 		case "lost", "withdrawn", "landed":
-			if e.Kind == "landed" {
-				first(&u.Landed)
+			if e.Kind == "landed" && u.Landed.IsZero() {
+				u.Landed, u.Grouped = e.At, e.Group != ""
 			}
 			u.closeOpen(open, e.At)
 		}
@@ -395,6 +397,7 @@ type QualityMetrics struct {
 	BlockingShare  float64    `json:"blocking_share"`   // blocking / findings
 	Escapes        int        `json:"escapes"`          // units landed in the window planned again after landing
 	CIEscapes      int        `json:"ci_escapes"`       // units landed in the window with a ci_failed event before landing (issue #776)
+	GroupLanded    int        `json:"group_landed"`     // units landed in the window whose landed event carries a group; never first pass (issue #775)
 }
 
 // GateRate is one gate's conclusive readings: Gate the gate id (its 1-based
@@ -423,7 +426,10 @@ func qualityMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow) Qu
 		u := units[id]
 		q.Landed++
 		q.Corrections += max(len(u.Attempts)-1, 0)
-		if len(u.Attempts) == 1 && u.Attempts[0] == "r1" && !corrected[id] {
+		// First-pass yield is single-unit yield: a group landing never counts.
+		if u.Grouped {
+			q.GroupLanded++
+		} else if len(u.Attempts) == 1 && u.Attempts[0] == "r1" && !corrected[id] {
 			q.FirstPass++
 		}
 		for _, e := range ev {
@@ -823,7 +829,9 @@ func (e evidence) quality(ev []timed, units map[string]*unitTimes, w MetricsWind
 		u := units[id]
 		n := max(len(u.Attempts)-1, 0)
 		group, value, bad := "first pass", "first pass", 0.0
-		if len(u.Attempts) != 1 || u.Attempts[0] != "r1" || corrected[id] {
+		if u.Grouped {
+			group, value, bad = "group landed", "landed in a group", float64(n+1)
+		} else if len(u.Attempts) != 1 || u.Attempts[0] != "r1" || corrected[id] {
 			group, value, bad = "corrected", fmt.Sprintf("corrected x%d", n), float64(n+1)
 			switch {
 			case n > 0:

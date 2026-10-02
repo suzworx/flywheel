@@ -29,6 +29,7 @@ type landOptions struct {
 	merge          bool
 	onto           string
 	correct        string
+	group          string
 }
 
 // landFlags defines land's flags once, so help and run share them.
@@ -47,11 +48,12 @@ func landFlags() (*flag.FlagSet, *landOptions) {
 	fs.BoolVar(&o.merge, "merge", false, "land a passed unit from its worktree through the local queue: rebase onto the integration branch, re-run the gates, fast-forward")
 	fs.StringVar(&o.onto, "onto", "", "integration branch (default: the branch checked out in --dir)")
 	fs.StringVar(&o.correct, "correct", "", "correct a wrong landing to this commit, recording a land_corrected event (requires --reason and --session; the old landing stays in the log)")
+	fs.StringVar(&o.group, "group", "", "land every passed member of a group (a goal id or tasks:<a>,<b>) on one --commit; a member already landed on it is skipped")
 	return fs, o
 }
 
 // landUsageLine is the flywheel land usage, shared by help and errors.
-const landUsageLine = "flywheel land <task> [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--correct <sha> --reason TEXT --session S] [--note TEXT] [--dir DIR]"
+const landUsageLine = "flywheel land <task>|--group <goal|tasks:a,b> [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--correct <sha> --reason TEXT --session S] [--note TEXT] [--dir DIR]"
 
 // landUsage prints the flywheel land usage line.
 func landUsage(w io.Writer) {
@@ -69,6 +71,10 @@ func runLand(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
 		landUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.group != "" {
+		runLandGroup(pos, o)
+		return
 	}
 	if len(pos) != 1 {
 		fmt.Fprintf(os.Stderr, "flywheel land: exactly one task id is required\n")
@@ -232,4 +238,48 @@ func runLandCorrect(task string, o *landOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s landing corrected to %s\n", task, o.correct)
+}
+
+// runLandGroup implements `flywheel land --group <group> --commit SHA`
+// (issue #775): a task id, --merge, --by-lead, --exception or --correct, or a
+// missing or malformed commit is a usage error (exit 2); a refusal exits 6; a
+// commit that cannot be verified exits 8; any other error exits 1.
+func runLandGroup(pos []string, o *landOptions) {
+	usage := func(msg string) {
+		fmt.Fprintf(os.Stderr, "flywheel land: %s\n", msg)
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+	switch {
+	case len(pos) != 0:
+		usage("--group takes no task id")
+	case o.merge:
+		usage("--group and --merge are mutually exclusive")
+	case o.byLead:
+		usage("--group and --by-lead are mutually exclusive")
+	case o.exception != "":
+		usage("--group and --exception are mutually exclusive")
+	case o.correct != "":
+		usage("--group and --correct are mutually exclusive")
+	case o.commit == "":
+		usage("--group requires --commit")
+	case !flywheel.CommitOK(o.commit):
+		usage(fmt.Sprintf("commit %q is not 7 to 40 hex characters", o.commit))
+	}
+	tasks, err := flywheel.LandGroup(o.dir, o.group, o.commit, o.note, o.allowUntriaged)
+	for _, t := range tasks {
+		fmt.Printf("%s landed %s (group %s)\n", t, o.commit, flywheel.GroupID(o.group))
+	}
+	if err != nil {
+		var inc *flywheel.InconclusiveError
+		if errors.As(err, &inc) {
+			fmt.Fprintf(os.Stderr, "flywheel land: inconclusive: %s\n", inc.Fix)
+			os.Exit(8)
+		}
+		fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
 }

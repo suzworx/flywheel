@@ -1000,8 +1000,19 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   manages them; `restore` refuses over uncommitted changes to the checkpoint's paths unless `--force`.
 
 ### `landed`
-- Written by: the CLI only, via `flywheel land <task> --commit <sha>`.
-- Carries: `task`, `commit`, `note`.
+- Written by: the CLI only, via `flywheel land <task> --commit <sha>` or `flywheel land --group`.
+- Carries: `task`, `commit`, `note`, and `group` (`group:<id>`) when landed by `land --group`.
+- **Group landing** ([#775](https://github.com/suzworx/flywheel/issues/775)):
+  `flywheel land --group <goal|tasks:a,b> --commit <sha> [--note N] [--allow-untriaged R]`
+  lands every member of a group (`GroupMembers`) on the one merge commit. It takes no task id and
+  refuses `--merge`, `--by-lead`, `--exception` and `--correct` (exit 2). First every member not
+  already landed on that commit must be `passed`, else it refuses (exit 6, rule T5, naming the
+  member) and nothing lands; then each member lands through the same checks as `land --commit`
+  (the commit must touch that member's files, T9, `stacked`, `group`), its `landed` event
+  carrying `group`. A member already landed on the commit is skipped, so a rerun resumes after a
+  failure. `--allow-untriaged` applies to the members with untriaged signals. It prints `<task>
+  landed <sha> (group <id>)` per member landed. `flywheel stats` counts such units as
+  `group_landed` and never as first pass.
 - Effect: `Derive` sets status `landed`. Verify's T5 (`ruleT5`) requires an earlier `inspected pass`
   or a recorded `excepted` event for the task; `LandTask` itself refuses **live** (exit 6, rule T5)
   unless the task's derived status is already `passed` or an exception is provided, refuses
@@ -1421,7 +1432,15 @@ working exactly as before.
   --numstat <base> <commit>`, base defaulting to `<commit>^`; flywheel's own files, `flywheel.md`
   and `.flywheel/`, are not counted, issue #729) and `exception` (`--exception`'s
   text). `Validate` accepts the three only on an `inspected` event, and `exception` only with
-  `lead_built`.
+  `lead_built`. `group` (`group:<id>`) when recorded by `inspect --group`.
+- **Group inspection** ([#775](https://github.com/suzworx/flywheel/issues/775)):
+  `flywheel inspect --group <goal|tasks:a,b> --verdict V --session S [--commit SHA] [--note N]
+  [--workdir PATH]` inspects every member of a group (`GroupMembers`), typically after
+  `flywheel validate --group` on the combined tree. It takes no task id (exit 2). It first checks
+  every member against every rule below exactly as `flywheel inspect <task>` would, recording
+  nothing; the first refusal exits 6 naming the member, and no member's inspection is recorded.
+  Only when every member passes the check is each member's `inspected` event recorded, in member
+  order, each carrying `group`. It prints `<task> inspected <verdict> (group <id>)` per member.
 - Lead-built cap (issue #722): a `pass` on a lead-built unit whose `changed_lines` exceed
   `lead_built.max_changed_lines` (default `10`; `config set` refuses a negative or non-integer
   value, and `Validate` a negative one) is refused (rule `lead-built`, exit 6, after `panel`): `task
@@ -1848,6 +1867,8 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
+| `flywheel inspect --group <group> --verdict ... --session ...` | every member's inspection recorded | **6** — the first member's `RuleRefusal` (any rule `inspect <task>` refuses), naming the member; nothing recorded | 2 usage (a task id with `--group`), 1 other error |
+| `flywheel land --group <group> --commit <sha>` | every member landed, or already landed on the commit | **6** — `RuleRefusal` naming T5 (a member not passed: nothing lands) or a member's `land --commit` refusal | 8 inconclusive, 2 usage (a task id, or `--merge`, `--by-lead`, `--exception`, `--correct`), 1 other error |
 | `flywheel land <task> --correct <sha> --reason TEXT --session S` | `land_corrected` recorded | **6** — `RuleRefusal` naming T5 (no landed event, the commit is already the effective one, or it fails land's commit checks) or T4 (a worker session) | 8 inconclusive (the commit does not resolve: run `git fetch`), 2 usage (a conflicting flag, or no --reason or --session), 1 other error |
 | `flywheel run <task>` | `rc == 0` and finish `reason` was `stop` | — | **3** silent (no output within the start timeout); **7** stalled (the run-file gap watchdog fired mid-stream, issue #158); **6** suspended (a `flywheel suspend --stop` stopped the worker, issue #572); **4** any other outcome (nonzero `rc`, or `reason` `length`/`error`/`start-failed`); 2 usage or no worker configured; 1 other error |
 
