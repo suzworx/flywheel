@@ -140,7 +140,7 @@ type MetricUnit struct {
 // docs/metrics.md's order.
 var MetricIDs = []string{
 	"flow.throughput", "flow.wip", "flow.lead_time", "flow.cycle_time", "flow.queue_time", "flow.touch_time", "flow.flow_efficiency",
-	"quality.first_pass_yield", "quality.rework_rate", "quality.gates", "quality.review_find_rate", "quality.blocking_share", "quality.escapes",
+	"quality.first_pass_yield", "quality.rework_rate", "quality.gates", "quality.review_find_rate", "quality.blocking_share", "quality.escapes", "quality.ci_escapes",
 	"reliability.andons", "reliability.mttr", "reliability.frozen", "reliability.paused",
 	"cost.spend", "cost.cost_per_unit", "cost.cost_per_landed", "cost.tokens_per_step", "cost.by_model",
 	"capacity.utilization", "capacity.idle_share",
@@ -394,6 +394,7 @@ type QualityMetrics struct {
 	ReviewFindRate float64    `json:"review_find_rate"` // findings / reviewed
 	BlockingShare  float64    `json:"blocking_share"`   // blocking / findings
 	Escapes        int        `json:"escapes"`          // units landed in the window planned again after landing
+	CIEscapes      int        `json:"ci_escapes"`       // units landed in the window with a ci_failed event before landing (issue #776)
 }
 
 // GateRate is one gate's conclusive readings: Gate the gate id (its 1-based
@@ -428,6 +429,12 @@ func qualityMetrics(ev []timed, units map[string]*unitTimes, w MetricsWindow) Qu
 		for _, e := range ev {
 			if e.Task == id && e.Kind == "planned" && e.At.After(u.Landed) {
 				q.Escapes++
+				break
+			}
+		}
+		for _, e := range ev {
+			if e.Task == id && e.Kind == "ci_failed" && e.At.Before(u.Landed) {
+				q.CIEscapes++
 				break
 			}
 		}
@@ -831,6 +838,12 @@ func (e evidence) quality(ev []timed, units map[string]*unitTimes, w MetricsWind
 		for _, x := range ev {
 			if x.Task == id && x.Kind == "planned" && x.At.After(u.Landed) {
 				e.add("quality.escapes", id, "planned again "+evAt(x.At)+", landed "+evAt(u.Landed), "escaped", x.At.Sub(u.Landed).Seconds())
+				break
+			}
+		}
+		for _, x := range ev {
+			if x.Task == id && x.Kind == "ci_failed" && x.At.Before(u.Landed) {
+				e.add("quality.ci_escapes", id, "ci failed "+evAt(x.At)+": "+x.Note+", landed "+evAt(u.Landed), "ci-escaped", u.Landed.Sub(x.At).Seconds())
 				break
 			}
 		}

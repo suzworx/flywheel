@@ -122,6 +122,11 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if r := redFirstRefusal(events, task, header, cfg.LintRedFirst()); r != nil {
 			return r
 		}
+		// CI failed after every gate in the brief passed (issue #776): the
+		// next pass needs a brief with a gate that reproduces it.
+		if r := ciEscapeRefusal(events, task, header); r != nil {
+			return r
+		}
 		// A named skill the claude worker never loaded (issue #695); a
 		// lead-built unit has no dispatched event, so it is never checkable.
 		if cfg.SkillsRequireLoaded() {

@@ -8,6 +8,7 @@
 {"ts":"2026-09-01T02:05:00Z","task":"a-first","kind":"validated","attempt":"r1","gate":"1","command":"go test ./...","rc":0,"persona":"supervisor"}
 {"ts":"2026-09-01T02:06:00Z","task":"a-first","kind":"validated","attempt":"r1","gate":"2","command":"go test -count=1 -run 'TestMetricsEveryFamilyOnTheFixture' ./internal/flywheel/ ./cmd/flywheel/","rc":0,"persona":"supervisor"}
 {"ts":"2026-09-01T02:10:00Z","task":"a-first","kind":"inspected","verdict":"pass","persona":"supervisor"}
+{"ts":"2026-09-01T02:30:00Z","task":"a-first","kind":"ci_failed","attempt":"r1","note":"#1: lint","gates":["go test ./..."]}
 {"ts":"2026-09-01T03:00:00Z","task":"a-first","kind":"landed"}
 {"ts":"2026-09-01T04:00:00Z","task":"b-corrected","kind":"planned","brief":"briefs/b-corrected.md"}
 {"ts":"2026-09-01T05:00:00Z","task":"b-corrected","kind":"dispatched","attempt":"r1","adapter":"claude","model":"m1","worker":"w1","session":"s-b"}

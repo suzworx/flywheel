@@ -67,6 +67,8 @@ var metricDefs = []metricDef{
 		value: func(r MetricsReport) float64 { return r.Quality.BlockingShare }},
 	{id: "quality.escapes", name: "escapes", kind: "n", chart: "groups", def: "landed units planned again after landing",
 		value: func(r MetricsReport) float64 { return float64(r.Quality.Escapes) }},
+	{id: "quality.ci_escapes", name: "ci escapes", kind: "n", chart: "groups", def: "landed units whose CI failed after every gate in the brief passed",
+		value: func(r MetricsReport) float64 { return float64(r.Quality.CIEscapes) }},
 	{id: "reliability.andons", name: "andons", kind: "n", chart: "bars", def: "signals, and stalled, silent, capped or rate-limited finishes",
 		value: func(r MetricsReport) float64 { return float64(r.Reliability.AndonTotal) }, series: func(r MetricsReport) []float64 { return r.Reliability.AndonSeries }, bars: andonBars},
 	distDef("reliability.mttr", "MTTR", "hist", "per cleared andon: the andon to its first clearing event (p50)", func(r MetricsReport) Dist { return r.Reliability.MTTR }),

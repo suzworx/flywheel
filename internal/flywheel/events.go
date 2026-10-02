@@ -256,6 +256,9 @@ type Event struct {
 	// step) and Note (the reason, conflict paths or failing gates).
 	Step   string `json:"step,omitempty"`
 	Result string `json:"result,omitempty"`
+	// Gates is a ci_failed event's gate commands of the brief the failing
+	// tree passed (issue #776); only the ci_failed kind may carry them.
+	Gates []string `json:"gates,omitempty"`
 	// Route is a dispatched event's routing choice (issue #474); omitted when
 	// the worker has no routing block, when --model was given, and on older events.
 	Route *RouteChoice `json:"route,omitempty"`
@@ -340,6 +343,12 @@ var kinds = map[string]bool{
 	// shipped records one step of `flywheel ship` (issue #457): Step, Result,
 	// Attempt, Commit (fw/<task>'s HEAD after the step) and Note.
 	"shipped": true,
+	// ci_failed records CI failing on a unit's PR after every gate in its
+	// brief passed (issue #776): Task, Attempt, Note "<PR ref>: <failing
+	// checks>" and Gates (the brief's gate commands at that moment). Written
+	// by ship's ci step and by flywheel log; inspect refuses the next pass
+	// (rule ci-escape) until the brief gains a gate.
+	"ci_failed": true,
 	// gate_probed records one gate run on the base tree by `flywheel lint
 	// --probe --task` (issue #544): Gate (the 1-based index), Command, RC,
 	// DurationMS, Reason (the first output line) and Commit. Informational: it
@@ -644,6 +653,12 @@ func Validate(e Event) error {
 	}
 	if e.Kind == "withdrawn" && (!taskOK(e.Task) || e.Note == "") {
 		return fmt.Errorf("withdrawn event must carry a task and a note (why the plan is taken back)")
+	}
+	if e.Kind == "ci_failed" && (!taskOK(e.Task) || e.Note == "") {
+		return fmt.Errorf("ci_failed event must carry a task and a note (the PR and its failing checks)")
+	}
+	if len(e.Gates) > 0 && e.Kind != "ci_failed" {
+		return fmt.Errorf("event kind %q cannot carry gates", e.Kind)
 	}
 	if e.Kind == "dispatch_refused" && (!taskOK(e.Task) || e.Rule == "") {
 		return fmt.Errorf("dispatch_refused event must carry a task and a rule")
