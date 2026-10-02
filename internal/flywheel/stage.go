@@ -183,3 +183,24 @@ func stagedOwns(owns []string, files []StagedFile) []string {
 	}
 	return out
 }
+
+// recordedStaged is every file task's staged and unstaged events record,
+// de-duplicated by To with the latest record winning (issue #781): a
+// destination stays owned through its source after flywheel unstage removed
+// the source, so the next validate pass does not see it outside owns.
+func recordedStaged(events []Event, task string) []StagedFile {
+	var out []StagedFile
+	for _, e := range events {
+		if e.Task != task || (e.Kind != "staged" && e.Kind != "unstaged") {
+			continue
+		}
+		for _, f := range e.Staged {
+			if i := slices.IndexFunc(out, func(g StagedFile) bool { return g.To == f.To }); i >= 0 {
+				out[i] = f
+			} else {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
+}

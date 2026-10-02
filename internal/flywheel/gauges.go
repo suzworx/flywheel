@@ -161,6 +161,10 @@ type GaugeResult struct {
 	// Staged lists the files the brief's stage: lines copied before the gates
 	// (applyStage, issue #781); the owns_checked event records them.
 	Staged []StagedFile `json:"staged,omitempty"`
+	// StagingLeft lists the From paths of this pass's staged files, still in
+	// the tree (issue #781): flywheel unstage removes them before landing. A
+	// reading, never a failure.
+	StagingLeft []string `json:"staging_left,omitempty"`
 }
 
 // baseDrift is GaugeResult.BaseDrift for task in wd measured against the
@@ -340,7 +344,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			return GaugeResult{}, err
 		}
 	}
-	owns := stagedOwns(header.Owns, staged)
+	// A destination stays owned through the files earlier passes staged and
+	// flywheel unstage recorded, after its staging copy is gone.
+	owns := stagedOwns(header.Owns, append(slices.Clone(staged), recordedStaged(events, task)...))
 	tree, err := treeHash(wd)
 	if err != nil {
 		return GaugeResult{}, err
@@ -357,6 +363,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.GatesOK = true
 	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
 	res.Staged = staged
+	for _, f := range staged {
+		res.StagingLeft = append(res.StagingLeft, f.From)
+	}
 	// An unreadable config leaves cfg zero, which keeps the check on.
 	if cfg.SkillsRequireLoaded() {
 		res.SkillsNotLoaded, _ = skillsNotLoaded(events, task)

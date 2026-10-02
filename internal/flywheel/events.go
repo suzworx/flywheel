@@ -339,6 +339,9 @@ var kinds = map[string]bool{
 	// staged records `flywheel validate` applying the brief's stage: lines
 	// before the gates (issue #781): Staged the files, Attempt and Workdir.
 	"staged": true,
+	// unstaged records `flywheel unstage` removing the staging copies validate
+	// applied (issue #781): Staged the files whose sources it removed, Workdir.
+	"unstaged": true,
 	// recovered records `flywheel recover --apply` (issue #422): Note the
 	// safe actions applied, Paths the tasks they touched.
 	"recovered": true,
@@ -580,8 +583,8 @@ func Validate(e Event) error {
 	if !kinds[e.Kind] {
 		return fmt.Errorf("event kind %q is not one of %s", e.Kind, kindList)
 	}
-	if e.Kind == "staged" && len(e.Staged) == 0 {
-		return fmt.Errorf("staged event must carry the staged files")
+	if (e.Kind == "staged" || e.Kind == "unstaged") && len(e.Staged) == 0 {
+		return fmt.Errorf("%s event must carry the staged files", e.Kind)
 	}
 	if e.Kind == "resource_wait" && (!taskOK(e.Task) || e.Gate == "" || e.Note == "") {
 		return fmt.Errorf("resource_wait event must carry a task, a gate and a note")

@@ -67,6 +67,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"suspend":    func() (*flag.FlagSet, any) { fs, o := suspendFlags(); return fs, o },
 	"resume":     func() (*flag.FlagSet, any) { fs, o := resumeFlags(); return fs, o },
 	"fleet":      func() (*flag.FlagSet, any) { fs, o := fleetFlags("add"); return fs, o },
+	"unstage":    func() (*flag.FlagSet, any) { fs, o := unstageFlags(); return fs, o },
 }
 
 // TestFleetFlagsBind checks add's --name and list/status's --json reach the

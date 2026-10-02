@@ -32,6 +32,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`dispatch_refused`](#dispatch_refused)
   - [`worktree_setup`](#worktree_setup)
   - [`staged`](#staged)
+  - [`unstaged`](#unstaged)
   - [`started`](#started)
   - [`worker_plan`](#worker_plan)
   - [`no-plan`](#no-plan)
@@ -335,8 +336,25 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `staged`.
 - Effect: no status change. The pass's tree includes the destinations, and the owns check treats
   each destination as owned when its `from` is owned (a destination whose source is not owned stays
-  outside `owns:`); the pass's `owns_checked` carries the same `staged`. `validate --group` does not
-  apply stage lines.
+  outside `owns:`); the pass's `owns_checked` carries the same `staged`. Ownership persists: every
+  later pass also treats each destination recorded on the task's earlier `staged` and `unstaged`
+  events (latest record per `to` wins) as owned through its owned `from`, so it stays owned after
+  `flywheel unstage` removed the source. `validate` prints `<task> note: staging copies remain (<n>
+  files under <dirs>): run flywheel unstage <task> before landing` when the pass staged a file (a
+  reading, never a failure). `validate --group` does not apply stage lines.
+
+### `unstaged`
+- Written by: the CLI only, via `flywheel unstage <task> [--workdir DIR]` (issue #781), after
+  removing the source files of the task's latest `staged` event (and the now-empty directories
+  under each stage line's `<from>`, `<from>` included); each destination is kept. Every source must
+  still hold its recorded `sha256` and every destination the same bytes, or it refuses before
+  removing anything (exit 6, rule `stage`: "staged content changed since validate measured it:
+  re-run flywheel validate"). No `staged` event is an error (exit 1). A second call with every
+  source already gone and an `unstaged` event newer than the latest `staged` records nothing.
+- Carries: `task`, `workdir` (as on `validated`), `staged` (the files whose sources it removed, as on
+  `staged`). `Validate` requires a non-empty `staged`.
+- Effect: no status change. The tree changed, so the lead validates again before inspect and land
+  (validate -> unstage -> validate -> inspect -> land); that pass keeps the destinations owned.
 
 ### `started`
 - Written by: the CLI, from the run's first parsed `start` observation.
