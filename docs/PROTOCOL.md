@@ -297,6 +297,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `up to date (<lockfile>)` when `.flywheel/install.sha256` in the worktree, written after an
   install exits 0, holds the lockfile's name and SHA-256 and every installed path is a directory).
   `rc`, `duration_ms` stay the setup command's; an install failure's exit and tail go in `note`.
+  `flywheel validate` in an isolated workdir appends this event too (issue #769) when it re-runs
+  the install because the lockfile changed since the last one, with `installed`, `install` and
+  `note` "validate: lockfile changed since the last install" (followed by the failure's tail when
+  it fails; a failed re-install refuses with rule `setup`, exit 6, before any gate).
 - Effect: no status change. An `(install)` path that is also a `(link)` entry (a linked tree is
   shared and must never be installed into), no lockfile at the worktree root, or an install that
   does not exit 0 refuses the dispatch with rule `setup` and an event whose `note` says why; setup
