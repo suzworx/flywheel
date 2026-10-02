@@ -150,26 +150,35 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	return res, nil
 }
 
-// claudeDirOwns returns, in order, the owns entries (patterns too) any of
-// whose slash-separated path segments is exactly ".claude", after normalising
-// `\` to `/` (issue #696). Negated entries ("!...") never count.
+// claudeProtectedPath is the single list of paths Claude Code protects from
+// the claude adapter (issues #696, #756): true when p (a path or pattern, `\`
+// read as `/`) has a segment exactly ".claude" or its last segment is exactly
+// ".mcp.json". Add the next protected path here.
+func claudeProtectedPath(p string) bool {
+	segs := strings.Split(strings.ReplaceAll(p, `\`, "/"), "/")
+	return slices.Contains(segs, ".claude") || segs[len(segs)-1] == ".mcp.json"
+}
+
+// claudeDirOwns returns, in order, the owns entries (patterns too) on a path
+// Claude Code protects (claudeProtectedPath; issues #696, #756). Negated
+// entries ("!...") never count.
 func claudeDirOwns(owns []string) []string {
 	var out []string
 	for _, o := range owns {
 		if strings.HasPrefix(o, "!") {
 			continue
 		}
-		if slices.Contains(strings.Split(strings.ReplaceAll(o, `\`, "/"), "/"), ".claude") {
+		if claudeProtectedPath(o) {
 			out = append(out, o)
 		}
 	}
 	return out
 }
 
-// claudeDirProblem names the owns entries under .claude/ when w is a claude
-// worker (issue #696): Claude Code protects .claude/, so every Write or Edit
-// there is denied, even with bypassPermissions. Empty means no problem. Lint
-// reports it as a problem; Run refuses with rule claude-dir.
+// claudeDirProblem names the owns entries on paths Claude Code protects
+// (.claude/, .mcp.json) when w is a claude worker (issues #696, #756): every
+// Write or Edit there is denied, even with bypassPermissions. Empty means no
+// problem. Lint reports it as a problem; Run refuses with rule claude-dir.
 func claudeDirProblem(w Worker, owns []string) string {
 	if w.Adapter != "claude" {
 		return ""
@@ -178,7 +187,7 @@ func claudeDirProblem(w Worker, owns []string) string {
 	if len(hits) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("owns %s under .claude/: worker %q (claude) cannot write there (Claude Code protects .claude/, even with bypassPermissions); own a staging path (e.g. staging/claude/...) and let the lead move the files after inspection, or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
+	return fmt.Sprintf("owns %s on paths Claude Code protects (.claude/, .mcp.json): worker %q (claude) cannot write there (even with bypassPermissions); own a staging path (e.g. staging/claude/...) and let the lead move the files after inspection, or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
 }
 
 // webResearchWords are the brief phrases that ask for web research (issue
