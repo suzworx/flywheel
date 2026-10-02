@@ -834,6 +834,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   to its ship commit (beside `Flywheel-Task:`) and to the squash-merge message's final trailer
   paragraph, and a `Shipped by [flywheel](...) <version> · unit ... · <passed>/<total> gates · <n> correction(s)`
   footer to the PR body; each once, all built from the ledger and the binary's version.
+- The **ship draft** is `.flywheel/config.json` `"ship": {"draft": false}` to open the PR ready
+  (absent or `true` means on, issue #765). When on, `flywheel ship`'s `pr` step opens the PR as a draft
+  (`opened draft #<n> <url>`) and its `ci` step marks it ready for review (`gh pr ready`) when CI passes,
+  its note ending ` (marked ready for review)`; `merge` marks it ready again before merging, so a resumed
+  ship never merges a draft. A failed mark-ready fails the step. A reused PR is left as it is.
 - The **ship required checks** are `.flywheel/config.json` `"ship": {"required_checks": ["test", "lint"]}`
   (issue #640): the check names `flywheel ship`'s `ci` step waits for on the PR's head commit before it
   merges; it may name a commit status. Absent or empty means the names of the check runs (never commit

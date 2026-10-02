@@ -94,6 +94,10 @@ type ShipConfig struct {
 	// trailer on its commits and squash merge, and a footer on the PR body.
 	// nil means on; false turns it off.
 	Signature *bool `json:"signature,omitempty"`
+	// Draft opens the PR as a draft and marks it ready for review when ci
+	// passes. nil means on; false opens it ready, for hosts or plans without
+	// draft PRs (issue #765).
+	Draft *bool `json:"draft,omitempty"`
 	// RequiredChecks names the checks ship's ci step waits for on the PR's
 	// head commit before it merges (issue #640); it may name a commit status.
 	// Empty means the check runs (never commit statuses) reported on the head
@@ -113,6 +117,11 @@ func (c Config) ShipRequiredChecks() []string {
 // ShipSignature is ship.signature, true when unset.
 func (c Config) ShipSignature() bool {
 	return c.Ship == nil || c.Ship.Signature == nil || *c.Ship.Signature
+}
+
+// ShipDraft is ship.draft, true when unset (issue #765).
+func (c Config) ShipDraft() bool {
+	return c.Ship == nil || c.Ship.Draft == nil || *c.Ship.Draft
 }
 
 // FactoryConfig tunes the interactive factory view (issue #583 k6).

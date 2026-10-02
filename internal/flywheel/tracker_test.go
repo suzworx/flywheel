@@ -72,7 +72,8 @@ func ghScript(replies map[string]func() ([]byte, error)) (func(args ...string) (
 
 func ghOut(s string) func() ([]byte, error) { return func() ([]byte, error) { return []byte(s), nil } }
 
-// TestGhForgePRs: PR, CreatePR and PRState build the gh argv (with --repo)
+// TestGhForgePRs: PR, CreatePR (with and without --draft), Ready and PRState
+// build the gh argv (with --repo)
 // and parse gh's output; no PR found or a closed one is not found.
 func TestGhForgePRs(t *testing.T) {
 	t.Parallel()
@@ -82,6 +83,7 @@ func TestGhForgePRs(t *testing.T) {
 		"pr view fw/N":   func() ([]byte, error) { return nil, errors.New(`no pull requests found for branch "fw/N"`) },
 		"pr create":      ghOut("Creating pull request\nhttps://github.com/o/r/pull/12\n"),
 		"pr view 12 ":    ghOut(`{"number":12,"url":"u","state":"OPEN","mergeCommit":null}`),
+		"pr ready 12":    ghOut("✓ Pull request o/r#12 is marked as \"ready for review\"\n"),
 		"issue comment ": ghOut(""),
 		"issue close ":   ghOut(""),
 	})
@@ -94,8 +96,14 @@ func TestGhForgePRs(t *testing.T) {
 			t.Errorf("PR(%s) = %v, %v; want not found", b, ok, err)
 		}
 	}
-	if pr, err := g.CreatePR("main", "fw/A", "Ti", "Bo"); err != nil || pr.Number != 12 || pr.URL != "https://github.com/o/r/pull/12" {
+	if pr, err := g.CreatePR("main", "fw/A", "Ti", "Bo", false); err != nil || pr.Number != 12 || pr.URL != "https://github.com/o/r/pull/12" || pr.Draft {
 		t.Errorf("CreatePR = %+v, %v", pr, err)
+	}
+	if pr, err := g.CreatePR("main", "fw/A", "Ti", "Bo", true); err != nil || pr.Number != 12 || !pr.Draft {
+		t.Errorf("CreatePR(draft) = %+v, %v", pr, err)
+	}
+	if err := g.Ready(12); err != nil {
+		t.Errorf("Ready = %v", err)
 	}
 	if st, mc, err := g.PRState(12); err != nil || st != "OPEN" || mc != "" {
 		t.Errorf("PRState = %q, %q, %v", st, mc, err)
@@ -111,6 +119,8 @@ func TestGhForgePRs(t *testing.T) {
 		"pr view fw/C --json number,url,state,mergeCommit --repo o/r",
 		"pr view fw/N --json number,url,state,mergeCommit --repo o/r",
 		"pr create --base main --head fw/A --title Ti --body Bo --repo o/r",
+		"pr create --base main --head fw/A --title Ti --body Bo --draft --repo o/r",
+		"pr ready 12 --repo o/r",
 		"pr view 12 --json number,url,state,mergeCommit --repo o/r",
 		"issue comment 3 --body hi --repo o/r",
 		"issue close 3 --repo o/r",
