@@ -114,6 +114,10 @@ type Event struct {
 	// (<lockfile>)" when the lockfile's marker matched (issue #460).
 	Installed []string `json:"installed,omitempty"`
 	Install   string   `json:"install,omitempty"`
+	// Staged is a staged event's, and an owns_checked event's, files the
+	// brief's stage: lines copied before the gates (issue #781): from, to,
+	// sha256 and copied (false when the destination already held the bytes).
+	Staged []StagedFile `json:"staged,omitempty"`
 	// Commands are the shell commands a worker ran, in order, at most 100,
 	// each clipped to 300 characters (issue #365).
 	Commands []string `json:"commands,omitempty"`
@@ -332,6 +336,9 @@ var kinds = map[string]bool{
 	// Copied (issue #471), Installed and Install (issue #460), RC, DurationMS
 	// and Note (the setup output tail).
 	"worktree_setup": true,
+	// staged records `flywheel validate` applying the brief's stage: lines
+	// before the gates (issue #781): Staged the files, Attempt and Workdir.
+	"staged": true,
 	// recovered records `flywheel recover --apply` (issue #422): Note the
 	// safe actions applied, Paths the tasks they touched.
 	"recovered": true,
@@ -572,6 +579,9 @@ func Validate(e Event) error {
 	}
 	if !kinds[e.Kind] {
 		return fmt.Errorf("event kind %q is not one of %s", e.Kind, kindList)
+	}
+	if e.Kind == "staged" && len(e.Staged) == 0 {
+		return fmt.Errorf("staged event must carry the staged files")
 	}
 	if e.Kind == "resource_wait" && (!taskOK(e.Task) || e.Gate == "" || e.Note == "") {
 		return fmt.Errorf("resource_wait event must carry a task, a gate and a note")

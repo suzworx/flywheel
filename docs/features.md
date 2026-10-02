@@ -186,7 +186,11 @@ but the default claude worker has no WebSearch/WebFetch in `allowed_tools` (issu
 A claude worker cannot write under `.claude/` or to `.mcp.json` (Claude Code protects them, even
 with `bypassPermissions`), so `flywheel lint` reports owns there as a problem, `flywheel run`
 refuses the dispatch (rule `claude-dir`) and such a denial is named as the protection (issues #696,
-#756). Every denied write is recorded on the finished event (`denied_writes`), and `flywheel
+#756). The unit owns a staging path instead and maps it with a `stage:` line, e.g. `stage:
+staging/claude/ -> .claude/`: `flywheel validate` copies every staged file to its destination
+before the gates, records a `staged` event, and treats each destination as owned through its owned
+source; an invalid stage line refuses (rule `stage`) and lint warns on one whose source the unit
+owns nothing under (issue #781). Every denied write is recorded on the finished event (`denied_writes`), and `flywheel
 inspect` refuses a pass (rule `denied-write`) when such a path changed anyway with no lead claim:
 revert it, or apply the content yourself and `flywheel claim-edit --paths <p> --session <you>`
 (issue #757).
