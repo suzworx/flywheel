@@ -37,8 +37,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   worker cannot write under `.claude/` or to `.mcp.json` (Claude Code protects them, even with
   `bypassPermissions`):
   `flywheel lint` reports such owns as a problem and `flywheel run` refuses them (rule
-  `claude-dir`); own a staging path (e.g. `staging/claude/...`) and move the files after
-  inspection, or staff the unit with a non-claude worker. A path whose write was denied but that
+  `claude-dir`); own a staging path and map it with a `stage:` line, or staff the unit with a
+  non-claude worker. A path whose write was denied but that
   changed anyway (Bash, an interpreter) is refused by `flywheel inspect` (rule `denied-write`):
   revert it, or apply the content yourself and `flywheel claim-edit --paths <p> --session <you>`
   (issue #757). A unit whose change can move a
@@ -48,6 +48,13 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   takes a comma-separated list, or one line per id; `needs: none` — or no `needs:` line — means no
   dependencies). An optional `line: <name>` puts the unit on a product line from `.flywheel/config.json`
   `lines` (otherwise the line whose `owns` cover the unit's is used).
+- **stage:** — `stage: <from> -> <to>` (repeatable, issue #781) maps a staging directory onto one
+  the worker cannot write, e.g. `owns: staging/claude/` plus `stage: staging/claude/ -> .claude/`.
+  `flywheel validate` copies every file under `<from>` to the same path under `<to>` before the
+  gates (a `staged` event), so the gates measure the real paths, and treats each destination as
+  owned through its owned source. An invalid line (no `->`, an absolute or `..` path, a side
+  inside the other, a protected `<from>`) refuses validate (rule `stage`) and is a lint problem; a
+  `<from>` the unit owns nothing under is a lint warning.
 - **exclusive:** — an optional **named resource** this task alone may hold while it runs: a shared
   database, build cache or device. `flywheel run` refuses (exit 6) a dispatch whose `exclusive:`
   name an in-flight task already holds, before dispatch (only a `dispatch_refused` event is

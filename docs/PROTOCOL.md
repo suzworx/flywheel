@@ -31,6 +31,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`dispatched`](#dispatched)
   - [`dispatch_refused`](#dispatch_refused)
   - [`worktree_setup`](#worktree_setup)
+  - [`staged`](#staged)
   - [`started`](#started)
   - [`worker_plan`](#worker_plan)
   - [`no-plan`](#no-plan)
@@ -317,6 +318,25 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (install)` instead); with `worktree.strict_links` true (default `false`) it also refuses
   the dispatch (rule `setup`, the event still recorded with `escaped` and a `note` saying it was
   refused, and setup does not run).
+
+### `staged`
+- Written by: the CLI only, via `flywheel validate <task>` (issue #781), before the gates and before
+  the tree is hashed, when the effective brief's `stage: <from> -> <to>` lines (e.g. `stage:
+  staging/claude/ -> .claude/`) staged at least one file. Each regular file under `<from>` in the
+  workdir (symlinks skipped; a missing `<from>` stages nothing) is copied to the same relative path
+  under `<to>`, atomically, unless the destination already holds the same bytes. A correction's
+  stage lines union with the base brief's. A stage line with no `->`, an empty side, an absolute
+  path or a `..` segment, the same path twice, one side inside the other, or a `<from>` Claude Code
+  protects is refused before any gate (exit 6, rule `stage`) and is a `flywheel lint` problem; a
+  valid line whose `<from>` the unit owns nothing under is a lint warning.
+- Carries: `task`, `attempt`, `workdir` (as on `validated`), `staged` (one entry per staged file,
+  sorted by `from`: `from` and `to` repo-relative paths, `sha256` the content's hex SHA-256, and
+  `copied`, false when the destination already held the bytes). `Validate` requires a non-empty
+  `staged`.
+- Effect: no status change. The pass's tree includes the destinations, and the owns check treats
+  each destination as owned when its `from` is owned (a destination whose source is not owned stays
+  outside `owns:`); the pass's `owns_checked` carries the same `staged`. `validate --group` does not
+  apply stage lines.
 
 ### `started`
 - Written by: the CLI, from the run's first parsed `start` observation.
@@ -1382,8 +1402,9 @@ working exactly as before.
   integration commits the branch merged — the unit's base up to its merge-base with the
   integration branch — added to a changed owned file that the tree no longer holds, compared
   without trailing space and `\r`; a deleted file drops all of them; lines trimmed and clipped to
-  80 characters; capped like `markers`; any fails the pass, exit 5, issue #770), `persona`
-  (`"supervisor"`).
+  80 characters; capped like `markers`; any fails the pass, exit 5, issue #770), `staged`
+  (optional, the files the brief's `stage:` lines staged before the gates, as on `staged`, issue
+  #781), `persona` (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside`, empty
   `markers` and empty `dropped` on the same tree, and refuses a pass, naming the first entries,
   while the latest `owns_checked` on that tree carries `markers` or `dropped`. `land --merge` and
@@ -1862,7 +1883,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
-| `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `full-suite`, `required-gates`, or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
+| `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `stage` (an invalid `stage:` line, issue #781), `full-suite`, `required-gates`, or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `ci-escape` (CI failed after every gate in the brief passed and the brief has gained no gate since the newest `ci_failed` event, issue #776), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |

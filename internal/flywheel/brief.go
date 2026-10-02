@@ -14,7 +14,8 @@ var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
-// live-gate, exclusive, review, line, kind.
+// live-gate, exclusive, review, line, kind, stage (`stage: <from> -> <to>`,
+// repeatable, issue #781).
 type BriefHeader struct {
 	Owns []string // comma-separated, annotations stripped, "none" and "-" dropped
 	// OwnsNone is true when the header has an owns line and every entry on
@@ -103,8 +104,16 @@ type BriefHeader struct {
 	// Kind is the task's kind of work, the `kind:` line trimmed and
 	// lowercased, the last one winning (issue #475): routing scores models per
 	// kind. flywheel lint checks it against lint.kinds.
-	Kind   string `json:",omitempty"`
-	SHA256 string
+	Kind string `json:",omitempty"`
+	// Stage lists the `stage: <from> -> <to>` lines (issue #781), order kept,
+	// each once: flywheel validate copies every file under From to the same
+	// path under To before the gates (applyStage), so a unit can stage files
+	// for a path its worker cannot write (staging/claude/ -> .claude/).
+	Stage []StageMap `json:",omitempty"`
+	// stageInvalid holds the raw value of each invalid stage: line (parseStage
+	// says why); flywheel lint reports it and validate refuses with rule stage.
+	stageInvalid []string
+	SHA256       string
 }
 
 // ParseBriefHeader reads the file at path and parses its header block; it is
@@ -284,6 +293,13 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Line = val
 		case "kind":
 			h.Kind = strings.ToLower(val)
+		case "stage":
+			// A staging dir mapped onto a protected one (issue #781).
+			if m, why := parseStage(val); why != "" {
+				h.stageInvalid = append(h.stageInvalid, val)
+			} else if !slices.Contains(h.Stage, m) {
+				h.Stage = append(h.Stage, m)
+			}
 		}
 	}
 	// `owns: none` (or `-`, any case) declares a unit that owns no paths

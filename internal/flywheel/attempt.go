@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 )
 
 // errNoPlannedBrief is AttemptBrief's error when a task has no planned or
@@ -61,6 +62,9 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 		if attempt != "" && attempt[0] == 'r' {
 			if h := freshDispatchedHeader(events, task, attempt); h != nil {
 				eff := *h
+				// The recorded header is JSON: an invalid stage: line (issue
+				// #781) is not in it, so the base brief's parse supplies them.
+				eff.stageInvalid = header.stageInvalid
 				for _, a := range amendedAfterDispatch(events, task, attempt) {
 					eff.Owns = unionStrings(eff.Owns, a.Owns)
 					eff.Exclusive = unionStrings(eff.Exclusive, a.Exclusive)
@@ -101,6 +105,14 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 	merged.Exclusive = unionStrings(header.Exclusive, prompt.Exclusive)
 	// A correction cannot drop an environment requirement (issue #534).
 	merged.NeedsEnv = unionStrings(header.NeedsEnv, prompt.NeedsEnv)
+	// Stage lines union as owns do (issue #781).
+	merged.Stage = header.Stage
+	for _, m := range prompt.Stage {
+		if !slices.Contains(merged.Stage, m) {
+			merged.Stage = append(merged.Stage, m)
+		}
+	}
+	merged.stageInvalid = unionStrings(header.stageInvalid, prompt.stageInvalid)
 	return merged, paths, nil
 }
 

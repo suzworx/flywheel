@@ -158,6 +158,9 @@ type GaugeResult struct {
 	// "<n> integration commit(s) since the unit's base touch owned files ...:
 	// merge <ref> before landing". A reading, never a gate.
 	Pending string `json:"pending,omitempty"`
+	// Staged lists the files the brief's stage: lines copied before the gates
+	// (applyStage, issue #781); the owns_checked event records them.
+	Staged []StagedFile `json:"staged,omitempty"`
 }
 
 // baseDrift is GaugeResult.BaseDrift for task in wd measured against the
@@ -261,6 +264,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	if r := needsEnvRefusal(header.NeedsEnv); r != nil {
 		return GaugeResult{}, r
 	}
+	// Stage (issue #781): an invalid stage: line refuses before any gate.
+	if r := stageRefusal(header); r != nil {
+		return GaugeResult{}, r
+	}
 	// Full suite (issue #652): with lint.full_suite_required set, an effective
 	// brief (re-planned after dispatch, say) whose gates miss a full-suite want
 	// refuses as run does. An unreadable config skips this check.
@@ -321,6 +328,19 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			return GaugeResult{Refused: refusal}, nil
 		}
 	}
+	// Stage (issue #781): copy each staged file to its destination before the
+	// tree is hashed, so the reading's tree holds the applied destinations,
+	// and treat a destination as owned through its owned staged source.
+	staged, err := applyStage(wd, header.Stage)
+	if err != nil {
+		return GaugeResult{}, err
+	}
+	if len(staged) > 0 {
+		if err := AppendEvent(o.Dir, Event{Task: task, Kind: "staged", Attempt: attempt, Staged: staged, Workdir: workdirField(wd, o.Dir)}); err != nil {
+			return GaugeResult{}, err
+		}
+	}
+	owns := stagedOwns(header.Owns, staged)
 	tree, err := treeHash(wd)
 	if err != nil {
 		return GaugeResult{}, err
@@ -336,6 +356,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.BriefPaths = briefPaths
 	res.GatesOK = true
 	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
+	res.Staged = staged
 	// An unreadable config leaves cfg zero, which keeps the check on.
 	if cfg.SkillsRequireLoaded() {
 		res.SkillsNotLoaded, _ = skillsNotLoaded(events, task)
@@ -368,7 +389,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		commit := headCommit(wd)
 		holds := holdsResources(header.Resources, header.ResourceGates, i+1)
 		out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, n, gate, false, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote)
+			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote)
 		})
 		if err != nil {
 			return GaugeResult{}, err
@@ -390,7 +411,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			commit := headCommit(wd)
 			holds := holdsResources(header.Resources, header.ResourceLiveGates, i+1)
 			out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, "live"+n, gate, true, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, header.Owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote)
+				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote)
 			})
 			if err != nil {
 				return GaugeResult{}, err
@@ -406,7 +427,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// after every gate, so hoisting the resolution to the pass start would
 	// record a history position no reading was taken at (issue #240).
 	commit := headCommit(wd)
-	return finishValidate(o.Dir, wd, task, attempt, tree, commit, header.Owns, header.NeedsState, events, res)
+	return finishValidate(o.Dir, wd, task, attempt, tree, commit, owns, header.NeedsState, events, res)
 }
 
 // hostGate runs one gate under the host gate lock (issue #411). A quiet gate
@@ -760,7 +781,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Churn: res.Churn, Baselined: baselined, Attributed: attributed,
 		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Dropped: res.Dropped, Persona: "supervisor", Workdir: workdirField(wd, dir),
-		Note: res.Stacked,
+		Note: res.Stacked, Staged: res.Staged,
 	}); err != nil {
 		return GaugeResult{}, err
 	}

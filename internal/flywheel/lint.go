@@ -139,6 +139,17 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	if p := claudeDirProblem(worker, header.Owns); p != "" {
 		res.Problems = append(res.Problems, p)
 	}
+	// stage: (issue #781): an invalid line is a problem, a valid one mapping a
+	// From the unit owns nothing under a warning.
+	for _, raw := range header.stageInvalid {
+		_, why := parseStage(raw)
+		res.Problems = append(res.Problems, fmt.Sprintf("stage: %s is invalid: %s; write it as `stage: staging/claude/ -> .claude/`", raw, why))
+	}
+	for _, m := range header.Stage {
+		if !ownsUnder(header.Owns, m.From) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("stage maps %s but owns nothing under it; own %s so validate treats %s as owned", m.From, m.From, m.To))
+		}
+	}
 	// skills: (issue #695): each named skill must be installed where the same
 	// worker loads skills, the tree being the flywheel dir.
 	if p := skillsProblem(worker, dir, userHome(), header.Skills); p != "" {
@@ -195,7 +206,7 @@ func claudeDirProblem(w Worker, owns []string) string {
 	if len(hits) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("owns %s on paths Claude Code protects (.claude/, .mcp.json): worker %q (claude) cannot write there (even with bypassPermissions); own a staging path (e.g. staging/claude/...) and let the lead move the files after inspection, or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
+	return fmt.Sprintf("owns %s on paths Claude Code protects (.claude/, .mcp.json): worker %q (claude) cannot write there (even with bypassPermissions); own a staging path and map it with `stage: staging/claude/ -> .claude/` (flywheel validate copies it), or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
 }
 
 // webResearchWords are the brief phrases that ask for web research (issue
