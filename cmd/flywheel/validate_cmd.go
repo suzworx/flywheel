@@ -14,7 +14,7 @@ import (
 
 func init() {
 	register("validate", "run a task's gates and check owns", runValidate)
-	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]... [--live]", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
+	registerHelp("validate", "flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]... [--live] | --group <goal|tasks:a,b> --workdir PATH", func() *flag.FlagSet { fs, _ := validateFlags(); return fs })
 }
 
 // validateOptions holds the parsed validate flags.
@@ -23,6 +23,7 @@ type validateOptions struct {
 	workdir string
 	carry   repeatable
 	live    bool
+	group   string
 }
 
 // validateFlags defines validate's flags once, so help and run share them.
@@ -34,12 +35,78 @@ func validateFlags() (*flag.FlagSet, *validateOptions) {
 	fs.StringVar(&o.workdir, "workdir", "", "git working tree the gates run in")
 	fs.Var(&o.carry, "carry", "repo-relative path to copy from dir into workdir before gates run (repeatable)")
 	fs.BoolVar(&o.live, "live", false, "also run the brief's declared live-gate: lines (the lead's verification pass)")
+	fs.StringVar(&o.group, "group", "", "validate a group (goal id or tasks:a,b,...) on the combined tree --workdir, recording a reading per member")
 	return fs, o
 }
 
-// validateUsage prints the flywheel validate usage line.
+// validateUsage prints the flywheel validate usage lines.
 func validateUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: flywheel validate <task> [--dir DIR] [--workdir PATH] [--carry PATH]... [--live]")
+	fmt.Fprintln(w, "       flywheel validate --group <goal|tasks:a,b> --workdir PATH [--dir DIR]")
+}
+
+// runValidateGroup implements `flywheel validate --group <group> --workdir
+// PATH` (issue #775): each distinct gate of the group's members runs once on
+// the combined tree and every member gets its readings. Exit codes: 0 every
+// gate passes and nothing is outside the group's owns, 5 otherwise, 6 a rule
+// refusal (group-owns), 2 usage, 1 any other error.
+func runValidateGroup(o *validateOptions, pos []string) {
+	var bad string
+	switch {
+	case len(pos) > 0:
+		bad = "--group takes no task id"
+	case o.workdir == "":
+		bad = "--group needs --workdir (the combined tree)"
+	case o.live:
+		bad = "--live is not supported with --group"
+	case len(o.carry) > 0:
+		bad = "--carry is not supported with --group"
+	}
+	if bad != "" {
+		fmt.Fprintf(os.Stderr, "flywheel validate: %s\n", bad)
+		validateUsage(os.Stderr)
+		os.Exit(2)
+	}
+	res, err := flywheel.ValidateGroup(o.dir, o.group, flywheel.ValidateOptions{Dir: o.dir, Workdir: o.workdir})
+	if err != nil {
+		var refusal *flywheel.RuleRefusal
+		if errors.As(err, &refusal) {
+			fmt.Fprintf(os.Stderr, "validate: %v\n", refusal)
+			os.Exit(6)
+		}
+		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
+		os.Exit(1)
+	}
+	id := flywheel.GroupID(o.group)
+	for _, g := range res.Gates {
+		switch {
+		case g.HostBlocked:
+			fmt.Printf("group %s gate %s: %s\n", id, g.Command, g.Note)
+		case g.RC == 0:
+			fmt.Printf("group %s gate %s: pass (%dms)\n", id, g.Command, g.DurationMS)
+		default:
+			fmt.Printf("group %s gate %s: fail (rc=%d, %dms)\n", id, g.Command, g.RC, g.DurationMS)
+		}
+	}
+	if len(res.Outside) == 0 {
+		fmt.Printf("group %s owns: ok\n", id)
+	} else {
+		fmt.Printf("group %s owns: outside %s\n", id, strings.Join(res.Outside, ", "))
+	}
+	if len(res.Markers) > 0 {
+		fmt.Printf("group %s conflict markers: %s\n", id, strings.Join(res.Markers, ", "))
+	}
+	short := res.Tree
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	for _, m := range res.Members {
+		fmt.Printf("%s: readings recorded on tree %s\n", m.Task, short)
+	}
+	if res.OK() {
+		os.Exit(0)
+	}
+	os.Exit(5)
 }
 
 // runValidate implements `flywheel validate <task>`: run the task's declared
@@ -53,6 +120,10 @@ func runValidate(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel validate: %v\n", err)
 		validateUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.group != "" {
+		runValidateGroup(o, pos)
+		return
 	}
 	if len(pos) != 1 {
 		fmt.Fprintf(os.Stderr, "flywheel validate: exactly one task id is required\n")

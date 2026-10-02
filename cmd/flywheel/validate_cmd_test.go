@@ -66,6 +66,32 @@ func TestNeedsEnvValidateRefusal(t *testing.T) {
 	}
 }
 
+// TestValidateGroupUsage checks flywheel validate --group exits 2 with a
+// positional task id, without --workdir, and with --live or --carry, which
+// group mode does not support (issue #775). Each case re-execs the child
+// TestNeedsEnvValidateRefusal serves, since runValidate exits the process.
+func TestValidateGroupUsage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cases := map[string][]string{
+		"task id":    {"T1", "--group", "g1", "--workdir", dir, "--dir", dir},
+		"no workdir": {"--group", "g1", "--dir", dir},
+		"live":       {"--group", "g1", "--workdir", dir, "--live", "--dir", dir},
+		"carry":      {"--group", "g1", "--workdir", dir, "--carry", "x", "--dir", dir},
+	}
+	for name, args := range cases {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestNeedsEnvValidateRefusal$")
+		cmd.Env = append(os.Environ(), runValidateHelperEnv+"="+strings.Join(args, "\x1f"))
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		var e *exec.ExitError
+		if !errors.As(err, &e) || e.ExitCode() != 2 {
+			t.Errorf("%s: validate %v = %v, want exit 2; stderr:\n%s", name, args, err, stderr.String())
+		}
+	}
+}
+
 // TestValidateBaseProbeNote checks validate notes a failed gate whose newest
 // probe on the base tree also failed, matched by command, and prints nothing
 // extra for one whose newest probe passed or that was never probed (issue #544).

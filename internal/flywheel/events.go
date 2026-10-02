@@ -266,6 +266,11 @@ type Event struct {
 	// RuleRefusal's Rule, or dispatch-lock when the dispatch lock could not be
 	// taken; only dispatch_refused may carry it.
 	Rule string `json:"rule,omitempty"`
+	// Group is the group:<id> (GroupTask) a reading or record was made for
+	// (issue #775): flywheel validate --group runs a group's gates once on one
+	// combined tree and records a reading per member, each tagged with it. Only
+	// validated, owns_checked, inspected and landed may carry it.
+	Group string `json:"group,omitempty"`
 	// Prev is the lineHash of the log's last complete line when this event was
 	// appended (issue #57): the tamper-evidence chain `flywheel verify --log`
 	// checks. Set by AppendEvents only; any value a caller supplies is overwritten.
@@ -665,6 +670,16 @@ func Validate(e Event) error {
 	}
 	if e.Rule != "" && e.Kind != "dispatch_refused" {
 		return fmt.Errorf("event kind %q cannot carry a rule", e.Kind)
+	}
+	if e.Group != "" {
+		switch e.Kind {
+		case "validated", "owns_checked", "inspected", "landed":
+		default:
+			return fmt.Errorf("event kind %q cannot carry a group", e.Kind)
+		}
+		if !groupTaskOK(e.Group) {
+			return fmt.Errorf("group %q is not group:<id>", e.Group)
+		}
 	}
 	if e.Kind == "rebased" && (e.Base == "" || e.Note == "") {
 		return fmt.Errorf("rebased event must carry a base (the new base) and a note (the old base and onto ref)")
