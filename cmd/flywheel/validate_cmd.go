@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -260,6 +262,16 @@ func runValidate(args []string) {
 	}
 	if res.Pending != "" {
 		fmt.Printf("%s base: warning: %s\n", task, res.Pending)
+	}
+	// Staging copies still in the tree (issue #781): a reading, never a failure.
+	if len(res.StagingLeft) > 0 {
+		var dirs []string
+		for _, f := range res.StagingLeft {
+			if d := path.Dir(f) + "/"; !slices.Contains(dirs, d) {
+				dirs = append(dirs, d)
+			}
+		}
+		fmt.Printf("%s note: staging copies remain (%d files under %s): run flywheel unstage %s before landing\n", task, len(res.StagingLeft), strings.Join(dirs, ", "), task)
 	}
 	// A named skill the claude worker never loaded fails the pass (issue
 	// #695), exit 5 below, even with green gates and a clean owns check.

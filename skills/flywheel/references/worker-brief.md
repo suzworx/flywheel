@@ -54,7 +54,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   gates (a `staged` event), so the gates measure the real paths, and treats each destination as
   owned through its owned source. An invalid line (no `->`, an absolute or `..` path, a side
   inside the other, a protected `<from>`) refuses validate (rule `stage`) and is a lint problem; a
-  `<from>` the unit owns nothing under is a lint warning.
+  `<from>` the unit owns nothing under is a lint warning. After inspecting the work the lead runs
+  `flywheel unstage <task>` to remove the staging copies (recorded; the destinations stay owned),
+  then validates and inspects again before landing.
 - **exclusive:** — an optional **named resource** this task alone may hold while it runs: a shared
   database, build cache or device. `flywheel run` refuses (exit 6) a dispatch whose `exclusive:`
   name an in-flight task already holds, before dispatch (only a `dispatch_refused` event is
