@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.63.1](https://github.com/suzworx/flywheel/compare/v0.63.0...v0.63.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* a worker that routes a denied write another way is caught: inspect refuses a changed path whose write was denied ([#760](https://github.com/suzworx/flywheel/issues/760)) ([e9e4795](https://github.com/suzworx/flywheel/commit/e9e47953c9ec246f778242a50843751136fd63a4)), closes [#757](https://github.com/suzworx/flywheel/issues/757)
+* claude workers cannot write .mcp.json either: lint and run refuse owns on every path Claude Code protects ([#758](https://github.com/suzworx/flywheel/issues/758)) ([9e40907](https://github.com/suzworx/flywheel/commit/9e40907635ace8c8fea0c230721b57cfe70b8614)), closes [#756](https://github.com/suzworx/flywheel/issues/756)
+
 ## [0.63.0](https://github.com/suzworx/flywheel/compare/v0.62.0...v0.63.0) (2026-10-01)
 
 
