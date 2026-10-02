@@ -493,6 +493,20 @@ resource, not a file**. A deliberate crossing dispatches under `--allow-overlap`
 the dispatched event's note (`exclusive-overlap: <name> with <task>`) so it stays visible in the
 ledger.
 
+**Shared-tree fan-out (#761).** Several units may run at once in one tree — a feature-branch
+worktree — each dispatched with `flywheel run <task> --workdir <tree>`, when their `owns:` are
+disjoint. The guards above still apply to `--workdir` dispatches: `flywheel run` refuses (exit 6) one
+whose `owns:` overlaps an in-flight unit's or whose `exclusive:` an in-flight unit holds, unless
+`--allow-overlap`. Files dirty in the tree at dispatch are baselined, so the owns check ignores them
+unless this unit changed them, and `flywheel validate` attributes a changed path inside a sibling's
+`owns:` to that sibling (`<path> -> <task>`) instead of failing this unit's owns check. A full-repo
+gate can still fail on a sibling's half-written file: give scoped gates, or validate after the
+siblings finish. `--workdir` runs get no setup, timed checkpoints or attempt commit (#545), so the
+lead inspects each unit and commits only its owned paths (`git commit -- <paths>`, never
+`git add -A`), one unit at a time. No tree-rewriting command (see "Shared tree means no
+tree-rewriting commands" below). Best for doc and config units: a unit that compiles against a
+sibling's in-progress file belongs in its own worktree.
+
 **Gate scoping.** Under concurrency, a worker's full-repo gate can fail on another worker's
 half-written files. Give workers a scoped gate (the affected tests plus typecheck) and run the full
 gate yourself only when nothing is in flight.
