@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.65.1](https://github.com/suzworx/flywheel/compare/v0.65.0...v0.65.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* the claude model catalog knows claude-sonnet-5-5 ([#771](https://github.com/suzworx/flywheel/issues/771)) ([9ff319a](https://github.com/suzworx/flywheel/commit/9ff319ad3c9e565e93f773a840274f953dabcc42)), closes [#768](https://github.com/suzworx/flywheel/issues/768)
+* validate fails a tree that dropped merged upstream lines, and warns on unmerged ones ([#774](https://github.com/suzworx/flywheel/issues/774)) ([eeea4ed](https://github.com/suzworx/flywheel/commit/eeea4ed4c26a5360c2497f3265e618eeaf3f5563)), closes [#770](https://github.com/suzworx/flywheel/issues/770)
+* validate re-installs needs-state (install) paths when the lockfile moved ([#772](https://github.com/suzworx/flywheel/issues/772)) ([0a70557](https://github.com/suzworx/flywheel/commit/0a705576c4bb9436c1ef60e560501146534e949f)), closes [#769](https://github.com/suzworx/flywheel/issues/769)
+
 ## [0.65.0](https://github.com/suzworx/flywheel/compare/v0.64.0...v0.65.0) (2026-10-02)
 
 
