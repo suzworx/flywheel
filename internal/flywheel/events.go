@@ -95,6 +95,10 @@ type Event struct {
 	// from the tree, not from a tool observation: a shell write, say (issue
 	// #463).
 	WroteFromTree []string `json:"wrote_from_tree,omitempty"`
+	// DeniedWrites is a finished event's worktree-relative, slash-separated,
+	// sorted, distinct paths whose Write, Edit, MultiEdit or NotebookEdit the
+	// harness denied during the attempt (issue #757).
+	DeniedWrites []string `json:"denied_writes,omitempty"`
 	// Linked is a worktree_setup event's needs-state "(link)" paths linked
 	// from the repo into the task's worktree (issue #430).
 	Linked []string `json:"linked,omitempty"`

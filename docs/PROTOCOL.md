@@ -391,7 +391,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   paths the worker changed in the tree since dispatch — changed at finish and not dirty at dispatch,
   or with a sha that differs from the dispatch baseline, `.flywheel/` excluded — so MultiEdit,
   NotebookEdit and shell writes count, issue #463), `wrote_from_tree` (the subset of `wrote` that
-  came only from the tree, not from a tool observation; omitted when empty, issue #463), `commands` (the shell commands
+  came only from the tree, not from a tool observation; omitted when empty, issue #463),
+  `denied_writes` (the worktree-relative, slash-separated, sorted, distinct paths whose Write, Edit,
+  MultiEdit or NotebookEdit the harness denied during the attempt, from the claude result line's
+  `permission_denials`, whatever the finish reason; omitted when none, issue #757), `commands` (the shell commands
   the worker ran, in order, at most 100, each clipped to 300 characters; omitted when it ran none,
   issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
@@ -1384,6 +1387,12 @@ working exactly as before.
   never refused by it. `flywheel validate` prints the same as `<task> skills-not-loaded: ...` and
   exits 5; `flywheel explain` shows `skills loaded:` and `skills-not-loaded:` (JSON
   `skills_loaded`, `skills_not_loaded`).
+- Denied write (issue #757): a `pass` is refused (rule `denied-write`, exit 6, after
+  `skills-not-loaded`, before `panel`) when a path in the `denied_writes` of any of the task's
+  `finished` events is among the unit's changed paths since its dispatch base and no lead
+  `lead_edit` claim covers it: the worker routed a denied write another way (Bash, an
+  interpreter, a copy). The fix names the paths: revert them, or apply the content yourself and
+  claim it with `flywheel claim-edit --paths <p> --session <you>`.
 - Effect: `Derive` maps `pass`→`passed`, `rework`→`needs-correction`, `scrap`→`rejected`,
   `escalate`→`blocked`. `InspectTask` enforces T4, and for a `pass` verdict T3 too, **before** the
   event is even appended — a refused inspection never reaches the log at all.
@@ -1763,7 +1772,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
 | `flywheel validate <task>` | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off) | 2 usage, 1 other error |
-| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
+| `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |

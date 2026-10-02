@@ -1,9 +1,45 @@
 package flywheel
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 )
+
+// fileWriteTools are the tools whose denial entry "<tool> <path>" names a
+// refused file write.
+var fileWriteTools = []string{"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+// deniedWritePaths returns the paths of the file-write denials among denials
+// (issue #757): every entry "<tool> <path>" whose tool is one of
+// fileWriteTools gives its path, made relative to wt when absolute (a path
+// outside wt is skipped) and slash-separated; the result is distinct and
+// sorted. Pure: no I/O.
+func deniedWritePaths(wt string, denials []string) []string {
+	var out []string
+	for _, d := range denials {
+		tool, p, ok := strings.Cut(d, " ")
+		p = strings.TrimSpace(p)
+		if !ok || p == "" || !slices.Contains(fileWriteTools, tool) {
+			continue
+		}
+		p = filepath.FromSlash(strings.ReplaceAll(p, `\`, "/"))
+		if filepath.IsAbs(p) {
+			rel, err := filepath.Rel(wt, p)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			p = rel
+		}
+		p = filepath.ToSlash(filepath.Clean(p))
+		if p == "." || p == ".." || strings.HasPrefix(p, "../") {
+			continue
+		}
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
 
 // attributeFileDenial names why a denied file write failed when the cause is
 // Claude Code's protected paths (issues #696, #756): an entry "<tool> <path>"
@@ -13,7 +49,7 @@ import (
 // Any other entry is returned unchanged.
 func attributeFileDenial(entry string) string {
 	tool, p, ok := strings.Cut(entry, " ")
-	if !ok || !slices.Contains([]string{"Write", "Edit", "MultiEdit", "NotebookEdit"}, tool) {
+	if !ok || !slices.Contains(fileWriteTools, tool) {
 		return entry
 	}
 	if !claudeProtectedPath(p) {

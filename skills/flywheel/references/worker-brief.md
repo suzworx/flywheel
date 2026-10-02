@@ -38,7 +38,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `bypassPermissions`):
   `flywheel lint` reports such owns as a problem and `flywheel run` refuses them (rule
   `claude-dir`); own a staging path (e.g. `staging/claude/...`) and move the files after
-  inspection, or staff the unit with a non-claude worker. A unit whose change can move a
+  inspection, or staff the unit with a non-claude worker. A path whose write was denied but that
+  changed anyway (Bash, an interpreter) is refused by `flywheel inspect` (rule `denied-write`):
+  revert it, or apply the content yourself and `flywheel claim-edit --paths <p> --session <you>`
+  (issue #757). A unit whose change can move a
   checked-in baseline or ratchet file (size or quality baselines, snapshots, golden files) lists
   that file in `owns:`; a lead-side edit to a path outside owns after dispatch is declared with
   `flywheel claim-edit --paths <p> --session <s>` before re-validating (issue #750). (`needs:`

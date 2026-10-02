@@ -3,6 +3,7 @@ package flywheel
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -128,6 +129,9 @@ func InspectTask(dir, task string, o InspectOptions) error {
 				return &RuleRefusal{Rule: "skills-not-loaded", Fix: skillsNotLoadedFix(task, missing)}
 			}
 		}
+		if r := deniedWriteRefusal(work, events, task, time.Now()); r != nil {
+			return r
+		}
 		if r := panelRefusal(events, task, tree, panelFor(events, task, tree, cfg.PanelDimensions()), cfg.ReviewRequired()); r != nil {
 			return r
 		}
@@ -162,6 +166,45 @@ func InspectTask(dir, task string, o InspectOptions) error {
 	}
 	_, _ = WriteState(o.Dir)
 	return nil
+}
+
+// deniedWriteRefusal refuses a pass (rule denied-write, issue #757) when a
+// path whose write the harness denied in any attempt of task changed anyway:
+// the path is among the unit's changed paths since its dispatch base (the
+// latest finished event's Wrote when git cannot list them) and no lead
+// claim-edit covers it (leadClaimingSession at now). A denied write routed
+// another way (Bash, an interpreter, a copy) is caught here.
+func deniedWriteRefusal(work string, events []Event, task string, now time.Time) *RuleRefusal {
+	denied := map[string]bool{}
+	var wrote []string
+	for _, e := range events {
+		if e.Task != task || e.Kind != "finished" {
+			continue
+		}
+		for _, p := range e.DeniedWrites {
+			denied[p] = true
+		}
+		wrote = e.Wrote
+	}
+	if len(denied) == 0 {
+		return nil
+	}
+	changed, err := unitChangedPaths(work, dispatchBase(events, task, ""), task)
+	if err != nil {
+		changed = wrote
+	}
+	var bad []string
+	for _, p := range changed {
+		if denied[p] && leadClaimingSession(work, events, task, p, now) == "" {
+			bad = append(bad, p)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	bad = slices.Compact(bad)
+	return &RuleRefusal{Rule: "denied-write", Fix: fmt.Sprintf("the worker's write to %s was denied but it changed anyway (a denied write routed another way); revert it, or apply the content yourself and claim it: flywheel claim-edit --paths %s --session <you>", strings.Join(bad, ", "), strings.Join(bad, ","))}
 }
 
 // openBlockingIDs lists the ids of the task's open blocking review findings

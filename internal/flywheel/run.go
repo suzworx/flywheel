@@ -131,6 +131,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
 - Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets.
 - Your working directory is already the worktree: never prefix a command with cd.
+- A refused write ends that write: never create or change that file another way (Bash, an interpreter, a copy); put the content in your report and stop.
 - Never end your turn while a background job you started is running: run long commands in the foreground and wait for them; a foreground command may run up to limits.shell_timeout (60m by default) on the claude adapter.
 - Your first message, before any tool call, starts with four plain-text lines: PLAN files-to-read: ..., PLAN files-to-change: ..., PLAN order: ..., PLAN checks: ... (no markdown).
 `
@@ -1556,7 +1557,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "suspended", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), Steps: steps, SHA256: runSHA,
-			Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint,
+			Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint, DeniedWrites: deniedWritePaths(wt, denials),
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1592,7 +1593,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		runSHA := hex.EncodeToString(hasher.Sum(nil))
 		gitWrote, gitNote := gitWriteCheck(wt, histBefore, histOK, guardBin)
 		checkpoint, cpNote := checkpointUnclean(wt, o.Task, attempt, "silent", wrote, attemptOwns)
-		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint}); err != nil {
+		if err := AppendEvent(dir, Event{TS: "", Task: o.Task, Kind: "finished", Attempt: attempt, Model: model, Reason: "silent", Note: joinNote(joinNote(joinNote(note, gitNote), outsideNote), cpNote), SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint, DeniedWrites: deniedWritePaths(wt, denials)}); err != nil {
 			return Result{}, err
 		}
 		if err := recordSignal(dir, o.Task, attempt, session, "silent", runRel); err != nil {
@@ -1640,7 +1641,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
 			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
-			Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint,
+			Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint, DeniedWrites: deniedWritePaths(wt, denials),
 		}); err != nil {
 			return Result{}, err
 		}
@@ -1851,7 +1852,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
 		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, SkillsLoaded: skillsLoaded, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
-		Checkpoint: checkpoint, Uncommitted: uncommitted,
+		Checkpoint: checkpoint, Uncommitted: uncommitted, DeniedWrites: deniedWritePaths(wt, denials),
 	}); err != nil {
 		return Result{}, err
 	}
