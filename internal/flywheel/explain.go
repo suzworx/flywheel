@@ -66,14 +66,19 @@ func explainLine(e Event) string {
 		return line
 
 	case "dispatched":
+		// The agent the claude worker ran as (issue #755).
+		agent := ""
+		if e.Agent != "" {
+			agent = " as agent " + e.Agent
+		}
 		if r := e.Route; r != nil {
 			line := words("dispatched", e.Attempt, "to", e.Adapter, e.Model, "routed", r.Pick, "by", r.Objective)
 			if r.Basis == "kind" {
 				line += " on " + r.Kind
 			}
-			return line
+			return line + agent
 		}
-		return words("dispatched", e.Attempt, "to", e.Adapter, e.Model)
+		return words("dispatched", e.Attempt, "to", e.Adapter, e.Model) + agent
 
 	case "started":
 		return words("started", e.Attempt, "session", e.Session)

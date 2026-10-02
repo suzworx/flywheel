@@ -710,6 +710,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			attemptSkills = unionStrings(h.Skills, promptHeader.Skills)
 		}
 	}
+	// The attempt's agent (issue #755): a correction keeps the base brief's;
+	// preDispatchChecks refused a delta naming a different one.
+	attemptAgent := promptHeader.Agent
+	if o.Resume || o.DeltaPath != "" {
+		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil && h.Agent != "" {
+			attemptAgent = h.Agent
+		}
+	}
 	// A correction delta inherits the base brief's needs-state links (issue
 	// #472): a delta that declares none must not drop them on a fresh
 	// worktree. A fresh dispatch links its own brief's, as before.
@@ -849,12 +857,24 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// worktree, and the flywheel root becomes one of the others) (#333 review).
 	worktrees := otherWorktrees(wt)
 
+	// The agent file (issue #755), read and parsed once in the worker's tree:
+	// its definition goes inline to claude --agents and its sha256 onto the
+	// dispatched event.
+	var agentJSON, agentSHA string
+	if attemptAgent != "" {
+		_, ab, def, p := loadAgent(wt, userHome(), attemptAgent)
+		if p != "" {
+			return Result{}, &RuleRefusal{Rule: "agent", Fix: p}
+		}
+		agentJSON, agentSHA = def.inlineJSON(attemptAgent), contentSHA(ab)
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir), Slot: slot,
-		Skills: attemptSkills, Line: usedLine, Lead: o.Lead, Route: route,
+		Skills: attemptSkills, Agent: attemptAgent, AgentSHA256: agentSHA, Line: usedLine, Lead: o.Lead, Route: route,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -1062,6 +1082,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		AllowedTools: worker.allowedTools(), DisallowedTools: claudeDisallowed(worker, cfg.WorkerPolicy),
 		MCPConfig: worker.mcpConfig(), PermissionMode: worker.PermissionMode,
 		MaxTurns: cfg.maxTurns(worker), Skills: attemptSkills,
+		Agent: attemptAgent, AgentJSON: agentJSON,
 	}
 	if unitCap > 0 {
 		req.MaxBudgetUSD = unitCap - unitSpent
@@ -2043,7 +2064,10 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A skills: entry (issue #695, merged the same way) not installed where
-// w loads skills, looked up in dispatchTree, refuses with rule skills. A task with no
+// w loads skills, looked up in dispatchTree, refuses with rule skills. An
+// agent: (issue #755, a correction keeping the base brief's and refused when it
+// names another) that w cannot run or that does not resolve in dispatchTree or
+// the home directory refuses with rule agent. A task with no
 // planned brief or an unreadable prompt checks nothing and returns "": Run's
 // own checks under the lock refuse it with today's error.
 func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt []byte, err error) {
@@ -2067,7 +2091,7 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	if perr != nil {
 		return src, b, nil
 	}
-	needs, pre, gates, owns, skills := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns, ph.Skills
+	needs, pre, gates, owns, skills, agent := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns, ph.Skills, ph.Agent
 	if o.Resume || o.DeltaPath != "" {
 		var baseHeader BriefHeader
 		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
@@ -2076,6 +2100,14 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
 		pre = unionStrings(baseHeader.Preflight, ph.Preflight)
 		skills = unionStrings(baseHeader.Skills, ph.Skills)
+		// A correction keeps the base brief's agent (issue #755) and may not
+		// name a different one.
+		if baseHeader.Agent != "" {
+			if ph.Agent != "" && ph.Agent != baseHeader.Agent {
+				return "", nil, &RuleRefusal{Rule: "agent", Fix: fmt.Sprintf("the correction names agent %q but the unit runs as agent %q; drop agent: from the delta or name %q", ph.Agent, baseHeader.Agent, baseHeader.Agent)}
+			}
+			agent = baseHeader.Agent
+		}
 		// The gates the correction will be measured with are AttemptBrief's
 		// merge as if this prompt were already dispatched (issue #662).
 		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
@@ -2088,6 +2120,9 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	}
 	if fix := skillsProblem(w, dispatchTree(dir, o, events), userHome(), skills); fix != "" {
 		return "", nil, &RuleRefusal{Rule: "skills", Fix: fix}
+	}
+	if fix := agentProblem(w, dispatchTree(dir, o, events), userHome(), agent); fix != "" {
+		return "", nil, &RuleRefusal{Rule: "agent", Fix: fix}
 	}
 	if r := needsEnvRefusal(needs); r != nil {
 		return "", nil, r

@@ -198,6 +198,17 @@ rule `skills-not-loaded`, after `red-first`, before `panel`); correct it with `f
 --delta <file>` asking the worker to load them. Other adapters' loading is not observable, so they
 are not checked; a lead-built unit is never refused by it. `flywheel config set
 skills.require_loaded false` turns the check off (default on).
+
+**Brief agent.** A brief's `agent: <name>` header runs its claude worker as a named Claude Code
+agent, with that agent's system prompt and tools ([#755](https://github.com/suzworx/flywheel/issues/755)).
+flywheel reads `.claude/agents/<name>.md` from the worker's tree, else `~/.claude/agents/<name>.md`,
+and passes it inline as `--agents '{"<name>":{...}}' --agent <name>` on fresh and resumed runs:
+workers run with `--setting-sources user`, under which claude does not find a project agent. The
+file's `description`, `tools` and body are passed; its `model` is ignored (the worker's model
+wins). `flywheel lint` reports, and `flywheel run` refuses (exit 6, rule `agent`), a non-claude
+worker or a missing or malformed file; lint also reports an empty, repeated or malformed `agent:`
+line, and run refuses a correction naming a different agent; the `dispatched` event records `agent` and `agent_sha256`, and `flywheel explain`
+shows `as agent <name>` on the dispatch line.
 A claude worker's `--max-turns` is its `max_turns`, else `limits.max_turns`, else 200
 (`flywheel config set workers.<name>.max_turns N`; issue #459).
 A claude worker's Bash tool may run a foreground command for up to `limits.shell_timeout`, a Go

@@ -79,6 +79,16 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   them before any other work ([#695](https://github.com/suzworx/flywheel/issues/695)). A named
   skill a claude worker never loads blocks the pass (validate exit 5, inspect rule
   `skills-not-loaded`); correct it with `flywheel run <task> --delta <file>` asking it to load them.
+- **agent:** — one Claude Code agent the claude worker runs as: `agent: reviewer`
+  ([#755](https://github.com/suzworx/flywheel/issues/755)). flywheel looks the file up as
+  `.claude/agents/<name>.md` in the worker's tree, then `~/.claude/agents/<name>.md`, reads it and
+  passes it inline (`--agents '{"<name>":{...}}' --agent <name>`): workers run with user settings
+  only (`--setting-sources user`), so claude itself would not find a project agent. The file's
+  `description`, `tools` and body (the prompt) are used; its `model` is ignored (the worker
+  config's model wins) and its `tools` list is passed through as the agent's tools. One `agent:`
+  line per brief; a non-claude worker, a missing file or a file without frontmatter or body is a
+  `flywheel lint` problem and a `flywheel run` refusal (exit 6, rule `agent`). A correction keeps
+  the base brief's agent and may not name another.
 - **needs-state:** — machine state the gates need that the repo does not carry: a database, a
   local stack, git-ignored env files. A repo-relative path or directory (trailing `/` for a
   directory), comma-separated or repeated across lines. `flywheel validate` refuses, before

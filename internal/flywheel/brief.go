@@ -90,8 +90,16 @@ type BriefHeader struct {
 	Skills []string `json:",omitempty"`
 	// skillsEmpty records an empty skills: line; flywheel lint reports it.
 	skillsEmpty bool
-	Review      []string
-	Line        string `json:",omitempty"`
+	// Agent is the Claude Code agent an `agent:` line names (issue #755), one
+	// per brief, the first line kept: lint and run refuse one whose file is
+	// missing, and the claude adapter passes it inline with --agents/--agent.
+	Agent string `json:",omitempty"`
+	// agentEmpty and agentRepeated record an empty and a second agent: line;
+	// flywheel lint reports them.
+	agentEmpty    bool
+	agentRepeated bool
+	Review        []string
+	Line          string `json:",omitempty"`
 	// Kind is the task's kind of work, the `kind:` line trimmed and
 	// lowercased, the last one winning (issue #475): routing scores models per
 	// kind. flywheel lint checks it against lint.kinds.
@@ -241,6 +249,16 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 				if e := strings.TrimSpace(entry); e != "" && !slices.Contains(h.Skills, e) {
 					h.Skills = append(h.Skills, e)
 				}
+			}
+		case "agent":
+			// The Claude Code agent the worker runs as (issue #755).
+			switch v := strings.TrimSpace(val); {
+			case h.Agent != "" || h.agentEmpty:
+				h.agentRepeated = true
+			case v == "":
+				h.agentEmpty = true
+			default:
+				h.Agent = v
 			}
 		case "resources":
 			// Shared host resources the heavy gates use (issue #697).
