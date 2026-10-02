@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.65.0](https://github.com/suzworx/flywheel/compare/v0.64.0...v0.65.0) (2026-10-02)
+
+
+### Features
+
+* ship opens its PR as a draft and marks it ready only when CI passes ([#766](https://github.com/suzworx/flywheel/issues/766)) ([9b7879f](https://github.com/suzworx/flywheel/commit/9b7879f14be227483a0f8492fea45081f6bf1ad3)), closes [#765](https://github.com/suzworx/flywheel/issues/765)
+
 ## [0.64.0](https://github.com/suzworx/flywheel/compare/v0.63.1...v0.64.0) (2026-10-02)
 
 

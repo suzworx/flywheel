@@ -11,7 +11,7 @@ description: >-
   implementation yourself.
 license: MIT
 metadata:
-  version: 0.64.0 # x-release-please-version
+  version: 0.65.0 # x-release-please-version
 ---
 
 # Flywheel
