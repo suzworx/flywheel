@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.66.0](https://github.com/suzworx/flywheel/compare/v0.65.1...v0.66.0) (2026-10-02)
+
+
+### Features
+
+* inspect --group and land --group pass and land a group's members on one combined tree ([#780](https://github.com/suzworx/flywheel/issues/780)) ([5a6771e](https://github.com/suzworx/flywheel/commit/5a6771eb1ac9eb93d6ce3d63fb93d29052f9db13)), closes [#775](https://github.com/suzworx/flywheel/issues/775)
+* ship records ci_failed, inspect refuses a pass until the brief gains a gate, stats count CI escapes ([#777](https://github.com/suzworx/flywheel/issues/777)) ([0c6dd81](https://github.com/suzworx/flywheel/commit/0c6dd812169fa9d722b7cd4f25b717c3e1a4beb4)), closes [#776](https://github.com/suzworx/flywheel/issues/776)
+* validate --group runs a group's gates once on one combined tree and records a reading per member ([#779](https://github.com/suzworx/flywheel/issues/779)) ([14403ba](https://github.com/suzworx/flywheel/commit/14403ba5159744f3c56a39e235528dccf771c52a))
+
 ## [0.65.1](https://github.com/suzworx/flywheel/compare/v0.65.0...v0.65.1) (2026-10-02)
 
 
