@@ -584,33 +584,50 @@ func hasCleanOwnsChecked(events []Event, task, tree string, after time.Time) boo
 }
 
 // ownsReadingClean reports whether an owns_checked event is a clean owns
-// reading: nothing outside owns and no conflict marker (issue #698).
+// reading: nothing outside owns, no conflict marker (issue #698) and no
+// dropped integration line (issue #770).
 func ownsReadingClean(e Event) bool {
-	return len(e.Outside) == 0 && len(e.Markers) == 0
+	return len(e.Outside) == 0 && len(e.Markers) == 0 && len(e.Dropped) == 0
 }
 
 // markersRefusal is the T3 refusal for a pass whose latest owns_checked on
-// tree after after found conflict markers, naming the first entries, or
-// ok=false when that reading has none (issue #698).
+// tree after after found conflict markers (issue #698) or dropped integration
+// lines (issue #770), naming the first entries, or ok=false when that reading
+// has neither.
 func markersRefusal(events []Event, task, tree string, after time.Time) (RuleRefusal, bool) {
-	var markers []string
+	var markers, dropped []string
 	var latest time.Time
 	for _, e := range events {
 		if e.Task != task || e.Kind != "owns_checked" || e.Tree != tree {
 			continue
 		}
 		if t, err := time.Parse(time.RFC3339Nano, e.TS); err == nil && t.After(after) && !t.Before(latest) {
-			latest, markers = t, e.Markers
+			latest, markers, dropped = t, e.Markers, e.Dropped
 		}
 	}
-	if len(markers) == 0 {
-		return RuleRefusal{}, false
+	firstOf := func(s []string) string {
+		if len(s) > 5 {
+			s = s[:5]
+		}
+		return strings.Join(s, ", ")
 	}
-	first := markers
-	if len(first) > 5 {
-		first = first[:5]
+	if len(markers) > 0 {
+		return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("the latest owns_checked for tree %s found git conflict markers at %s: remove the markers, then run: flywheel validate %s, and inspect again", tree, firstOf(markers), task)}, true
 	}
-	return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("the latest owns_checked for tree %s found git conflict markers at %s: remove the markers, then run: flywheel validate %s, and inspect again", tree, strings.Join(first, ", "), task)}, true
+	if len(dropped) > 0 {
+		return RuleRefusal{Rule: "T3", Fix: droppedFix(fmt.Sprintf("the latest owns_checked for tree %s found lines the merged integration commits added that the tree dropped (%s)", tree, firstOf(dropped)), dispatchBase(events, task, ""), task)}, true
+	}
+	return RuleRefusal{}, false
+}
+
+// droppedFix is the fix for dropped integration lines (issue #770) after
+// what: restore them, or record the merged base so the check moves past them.
+// <fork> is the branch's merge-base with the integration branch.
+func droppedFix(what, base, task string) string {
+	if base == "" {
+		base = "<base>"
+	}
+	return fmt.Sprintf("%s: restore the lines the integration branch added (git diff %s..<fork> -- <path>, <fork> being git merge-base HEAD <integration ref>), or, if the removal is intended, record the merged base (flywheel log --task %s --kind rebased --base <fork>) and re-validate (flywheel validate %s)", what, base, task, task)
 }
 
 // sessionClash reports which worker session collides with sess, or "" when

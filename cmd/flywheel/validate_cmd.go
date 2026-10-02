@@ -178,6 +178,18 @@ func runValidate(args []string) {
 		}
 		fmt.Printf("%s conflict markers: remove them, then run flywheel validate %s again\n", task, task)
 	}
+	// A line the merged integration commits added that the tree dropped fails
+	// the pass (issue #770), exit 5 below; unmerged ones are a warning.
+	if len(res.Dropped) > 0 {
+		fmt.Printf("%s dropped upstream lines:\n", task)
+		for _, d := range res.Dropped {
+			fmt.Printf("  %s\n", d)
+		}
+		fmt.Printf("%s dropped upstream lines: restore them, then run flywheel validate %s again\n", task, task)
+	}
+	if res.Pending != "" {
+		fmt.Printf("%s base: warning: %s\n", task, res.Pending)
+	}
 	// A named skill the claude worker never loaded fails the pass (issue
 	// #695), exit 5 below, even with green gates and a clean owns check.
 	if len(res.SkillsNotLoaded) > 0 {

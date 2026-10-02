@@ -151,6 +151,11 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 	if len(validation.Markers) > 0 {
 		return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("the tree rebased or merged onto %s in %s holds git conflict markers at %s: remove the markers, re-validate (flywheel validate %s), inspect, then land again", onto, workdir, strings.Join(validation.Markers, ", "), task)}
 	}
+	// So do lines the merged integration commits added that the tree dropped
+	// (issue #770).
+	if len(validation.Dropped) > 0 {
+		return result, &RuleRefusal{Rule: "land", Fix: droppedFix(fmt.Sprintf("the tree rebased or merged onto %s in %s dropped lines the merged integration commits added (%s)", onto, workdir, strings.Join(validation.Dropped, ", ")), dispatchBase(events, task, ""), task)}
+	}
 	if !validation.OK() {
 		return result, &RuleRefusal{Rule: "land", Fix: fmt.Sprintf("gates fail after rebase onto %s (the branch in %s stays rebased): flywheel explain %s", onto, workdir, task)}
 	}
