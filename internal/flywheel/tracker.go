@@ -65,12 +65,14 @@ func (g GhTracker) Issue(n int) (TrackerIssue, error) {
 }
 
 // PullRequest is one pull request on a forge (issue #457): State is OPEN,
-// MERGED or CLOSED, MergeCommit the squash commit once merged.
+// MERGED or CLOSED, MergeCommit the squash commit once merged, Draft true
+// when CreatePR opened it as a draft (issue #765).
 type PullRequest struct {
 	Number      int
 	URL         string
 	State       string
 	MergeCommit string
+	Draft       bool
 }
 
 // ChecksState is a pull request's checks, check runs and commit statuses
@@ -91,13 +93,15 @@ type ChecksState struct {
 
 // Forge is the pull-request half of a tracker that `flywheel ship` drives
 // (issue #457). PR returns the open or merged PR whose head is branch;
-// Checks the checks on PR n's head commit; MergedPRHeads the head commits of
-// the last n pull requests merged into base, newest first; CommitCheckRuns
-// the names of the check runs (not commit statuses) reported on commit sha
-// (issue #640).
+// CreatePR opens one, as a draft when draft is set, and Ready marks PR n
+// ready for review, a no-op on a PR that already is (issue #765); Checks the
+// checks on PR n's head commit; MergedPRHeads the head commits of the last n
+// pull requests merged into base, newest first; CommitCheckRuns the names of
+// the check runs (not commit statuses) reported on commit sha (issue #640).
 type Forge interface {
 	PR(branch string) (PullRequest, bool, error)
-	CreatePR(base, head, title, body string) (PullRequest, error)
+	CreatePR(base, head, title, body string, draft bool) (PullRequest, error)
+	Ready(n int) error
 	Checks(n int) (ChecksState, error)
 	MergedPRHeads(base string, n int) ([]string, error)
 	CommitCheckRuns(sha string) ([]string, error)
@@ -183,10 +187,14 @@ func (g GhTracker) PR(branch string) (PullRequest, bool, error) {
 	return v.pullRequest(), true, nil
 }
 
-// CreatePR runs `gh pr create --base --head --title --body` and reads the
-// new PR's number from the URL gh prints.
-func (g GhTracker) CreatePR(base, head, title, body string) (PullRequest, error) {
-	out, err := g.gh(true, "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+// CreatePR runs `gh pr create --base --head --title --body`, with --draft
+// when draft is set, and reads the new PR's number from the URL gh prints.
+func (g GhTracker) CreatePR(base, head, title, body string, draft bool) (PullRequest, error) {
+	args := []string{"pr", "create", "--base", base, "--head", head, "--title", title, "--body", body}
+	if draft {
+		args = append(args, "--draft")
+	}
+	out, err := g.gh(true, args...)
 	if err != nil {
 		return PullRequest{}, err
 	}
@@ -200,7 +208,14 @@ func (g GhTracker) CreatePR(base, head, title, body string) (PullRequest, error)
 	if url == "" || cerr != nil {
 		return PullRequest{}, fmt.Errorf("gh pr create: no PR URL in output: %s", strings.TrimSpace(string(out)))
 	}
-	return PullRequest{Number: n, URL: url, State: "OPEN"}, nil
+	return PullRequest{Number: n, URL: url, State: "OPEN", Draft: draft}, nil
+}
+
+// Ready runs `gh pr ready <n>`, which exits 0 on a PR that is already ready
+// for review, so Ready is idempotent (issue #765).
+func (g GhTracker) Ready(n int) error {
+	_, err := g.gh(true, "pr", "ready", strconv.Itoa(n))
+	return err
 }
 
 // PRState runs `gh pr view <n> --json number,url,state,mergeCommit`.

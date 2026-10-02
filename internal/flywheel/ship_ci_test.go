@@ -42,7 +42,7 @@ func TestShipCIWaitsForExpected(t *testing.T) {
 		{Passed: []string{"ext", "test-a", "test-b"}},
 	}}
 	ci, err := ciShip(t, f, ff, ShipOptions{})
-	if err != nil || ci.Result != "ok" || ci.Note != "3 check(s) passed on #7 (expected: test-a, test-b)" || ff.checkCalls != 4 || ff.merges != 1 {
+	if err != nil || ci.Result != "ok" || ci.Note != "3 check(s) passed on #7 (expected: test-a, test-b) (marked ready for review)" || ff.checkCalls != 4 || ff.merges != 1 {
 		t.Fatalf("ci = %+v, %v, checks called %d, merges %d", ci, err, ff.checkCalls, ff.merges)
 	}
 	if !slices.Equal(ff.mergedAsks, []string{"main/3"}) || !slices.Equal(ff.commits, []string{"m1"}) {
@@ -63,7 +63,7 @@ func TestShipCIIgnoresPushOnly(t *testing.T) {
 		main: append([]string{"deploy", "release-please"}, pr...), "m1": pr, "m2": pr, "m3": pr,
 	}, checks: []ChecksState{{Passed: pr}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
-	if err != nil || ci.Note != "2 check(s) passed on #7 (expected: checks, test (ubuntu-latest))" || ff.merges != 1 {
+	if err != nil || ci.Note != "2 check(s) passed on #7 (expected: checks, test (ubuntu-latest)) (marked ready for review)" || ff.merges != 1 {
 		t.Fatalf("ci = %+v, %v, merges %d", ci, err, ff.merges)
 	}
 }
@@ -77,7 +77,7 @@ func TestShipCIIntersectsMergedHeads(t *testing.T) {
 		"m1": {"test", "flaky-once"}, "m2": {"test"}, "m3": {"test", "old"}, "m4": {"test", "older"},
 	}, checks: []ChecksState{{Passed: []string{"test"}}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
-	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test)" || len(ff.commits) != 3 {
+	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test) (marked ready for review)" || len(ff.commits) != 3 {
 		t.Fatalf("ci = %+v, %v, CommitCheckRuns asked %q", ci, err, ff.commits)
 	}
 }
@@ -90,7 +90,7 @@ func TestShipCISkippedExpected(t *testing.T) {
 	ff := &fakeForge{mergedHeads: []string{"m1"}, commitChecks: map[string][]string{"m1": {"test", "docs"}},
 		checks: []ChecksState{{Passed: []string{"test"}, Skipped: []string{"docs"}}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
-	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: docs, test)" || ff.merges != 1 {
+	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: docs, test) (marked ready for review)" || ff.merges != 1 {
 		t.Fatalf("ci = %+v, %v, merges %d", ci, err, ff.merges)
 	}
 }
@@ -107,7 +107,7 @@ func TestShipCISettles(t *testing.T) {
 		{Passed: []string{"ext", "build", "lint"}},
 	}}
 	ci, err := ciShip(t, f, ff, ShipOptions{})
-	if err != nil || ci.Result != "ok" || ci.Note != "3 check(s) passed on #7" || ff.checkCalls != 4 {
+	if err != nil || ci.Result != "ok" || ci.Note != "3 check(s) passed on #7 (marked ready for review)" || ff.checkCalls != 4 {
 		t.Fatalf("ci = %+v, %v, checks called %d; want ok at poll 4", ci, err, ff.checkCalls)
 	}
 }
@@ -160,7 +160,7 @@ func TestShipCIRequiredConfig(t *testing.T) {
 	setRequiredChecks(t, f.dir, "test-a", "lint")
 	ff := &fakeForge{mergedHeads: []string{"m1"}, commitChecks: map[string][]string{"m1": {"never"}}, checks: []ChecksState{{Passed: []string{"test-a"}}}}
 	ci, err := ciShip(t, f, ff, ShipOptions{IgnoreChecks: []string{"lint"}})
-	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test-a)" || len(ff.mergedAsks)+len(ff.commits) != 0 {
+	if err != nil || ci.Note != "1 check(s) passed on #7 (expected: test-a) (marked ready for review)" || len(ff.mergedAsks)+len(ff.commits) != 0 {
 		t.Fatalf("ci = %+v, %v, MergedPRHeads asked %q, CommitCheckRuns asked %q", ci, err, ff.mergedAsks, ff.commits)
 	}
 	f = newShipFixture(t, "exit 0", true)
@@ -246,7 +246,7 @@ func TestShipCIIgnoresVanishedStatus(t *testing.T) {
 	f := newShipFixture(t, "exit 0", true)
 	ff := merged()
 	ci, err := ciShip(t, f, ff, ShipOptions{CITimeout: 5 * time.Millisecond})
-	if err != nil || ci.Note != "2 check(s) passed on #7 (expected: a, b)" || ff.merges != 1 {
+	if err != nil || ci.Note != "2 check(s) passed on #7 (expected: a, b) (marked ready for review)" || ff.merges != 1 {
 		t.Fatalf("default: ci = %+v, %v, merges %d", ci, err, ff.merges)
 	}
 	f = newShipFixture(t, "exit 0", true)

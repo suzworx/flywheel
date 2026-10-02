@@ -12,9 +12,9 @@ type sigForge struct {
 	body string
 }
 
-func (f *sigForge) CreatePR(base, head, title, body string) (PullRequest, error) {
+func (f *sigForge) CreatePR(base, head, title, body string, draft bool) (PullRequest, error) {
 	f.body = body
-	return f.fakeForge.CreatePR(base, head, title, body)
+	return f.fakeForge.CreatePR(base, head, title, body, draft)
 }
 
 const (

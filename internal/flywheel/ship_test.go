@@ -295,6 +295,13 @@ type fakeForge struct {
 	rules     HostRules
 	rulesErr  error
 	rulesAsks []string
+	// readyErr is what Ready returns; draft records the draft flag CreatePR
+	// got, readies the Ready calls and calls the order of Ready and Merge
+	// calls (issue #765).
+	readyErr error
+	draft    bool
+	readies  int
+	calls    []string
 
 	created, merges, checkCalls int
 	mergeTitle, mergeMsg        string
@@ -359,11 +366,23 @@ func (f *fakeForge) PR(branch string) (PullRequest, bool, error) {
 	return *f.pr, true, nil
 }
 
-func (f *fakeForge) CreatePR(base, head, title, body string) (PullRequest, error) {
+func (f *fakeForge) CreatePR(base, head, title, body string, draft bool) (PullRequest, error) {
 	f.created++
-	f.base = base
-	f.pr = &PullRequest{Number: 7, URL: "https://example.test/o/r/pull/7", State: "OPEN"}
+	f.base, f.draft = base, draft
+	f.pr = &PullRequest{Number: 7, URL: "https://example.test/o/r/pull/7", State: "OPEN", Draft: draft}
 	return *f.pr, nil
+}
+
+func (f *fakeForge) Ready(n int) error {
+	f.readies++
+	f.calls = append(f.calls, "ready")
+	if f.readyErr != nil {
+		return f.readyErr
+	}
+	if f.pr != nil {
+		f.pr.Draft = false
+	}
+	return nil
 }
 
 func (f *fakeForge) Checks(n int) (ChecksState, error) {
@@ -388,6 +407,7 @@ func (f *fakeForge) Checks(n int) (ChecksState, error) {
 
 func (f *fakeForge) Merge(n int, title, message string) error {
 	f.merges++
+	f.calls = append(f.calls, "merge")
 	f.mergeTitle, f.mergeMsg = title, message
 	f.pr.State = "MERGED"
 	if f.mergeState != "" {

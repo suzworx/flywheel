@@ -72,6 +72,7 @@ type shipRun struct {
 	base                   string      // <remote>/<integration>'s commit merge-base saw, recorded on its event
 	trailer                string      // the Shipped-by: trailer, "" with the signature off
 	required               []string    // ship.required_checks from config, nil when unset
+	draft                  bool        // ship.draft: open the PR as a draft, mark it ready when ci passes (issue #765)
 	// gitMemo holds this run's successful read-only git queries in the
 	// workdir (issue #619), and changed its changed paths when changedOK:
 	// each git process costs 0.1-3s on a loaded Windows host. forget empties
@@ -191,7 +192,7 @@ func Ship(dir, task string, o ShipOptions) (ShipResult, error) {
 	if err != nil {
 		return ShipResult{}, err
 	}
-	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events, required: cfg.ShipRequiredChecks()}
+	r := &shipRun{dir: abs, task: task, attempt: attempt, wt: wt, o: o, events: events, required: cfg.ShipRequiredChecks(), draft: cfg.ShipDraft()}
 	r.remoteDefaults()
 	if !o.NoSignature && cfg.ShipSignature() {
 		var footer string
@@ -823,8 +824,9 @@ func shipPush(r *shipRun) (string, string, error) {
 	return "ok", fmt.Sprintf("pushed %s at %s to %s", branch, short7(r.fwHead()), r.o.Remote), nil
 }
 
-// shipPR reuses fw/<task>'s open or merged PR (skip) or opens one against the
-// integration branch with Title and Body.
+// shipPR reuses fw/<task>'s open or merged PR (skip), left as it is, or opens
+// one against the integration branch with Title and Body, as a draft unless
+// ship.draft is false (issue #765).
 func shipPR(r *shipRun) (string, string, error) {
 	found, err := r.lookupPR()
 	if err != nil {
@@ -834,12 +836,25 @@ func shipPR(r *shipRun) (string, string, error) {
 		return "skip", fmt.Sprintf("reusing #%d %s (%s)", r.pr.Number, r.pr.URL, r.pr.State), nil
 	}
 	if err := r.retry("pr", func() (err error) {
-		r.pr, err = r.o.Forge.CreatePR(r.o.Integration, "fw/"+r.task, r.o.Title, r.o.Body)
+		r.pr, err = r.o.Forge.CreatePR(r.o.Integration, "fw/"+r.task, r.o.Title, r.o.Body, r.draft)
 		return err
 	}); err != nil {
 		return "", "", err
 	}
+	if r.draft {
+		return "ok", fmt.Sprintf("opened draft #%d %s", r.pr.Number, r.pr.URL), nil
+	}
 	return "ok", fmt.Sprintf("opened #%d %s", r.pr.Number, r.pr.URL), nil
+}
+
+// markReady marks the PR ready for review, a no-op with ship.draft false. The
+// forge's ready is idempotent, so a reused or already ready PR is fine
+// (issue #765).
+func (r *shipRun) markReady() error {
+	if !r.draft {
+		return nil
+	}
+	return r.retry("ready", func() error { return r.o.Forge.Ready(r.pr.Number) })
 }
 
 // keepChecks is names without IgnoreChecks.
@@ -966,7 +981,15 @@ func shipCI(r *shipRun) (string, string, error) {
 			}
 		}
 		if len(pending) == 0 && len(missing) == 0 && len(passed) > 0 && settled {
-			return "ok", fmt.Sprintf("%d check(s) passed on #%d%s", len(passed), n, exp), nil
+			// Green CI is when the draft becomes ready for review (issue #765).
+			if err := r.markReady(); err != nil {
+				return "", fmt.Sprintf("marking #%d ready failed", n), fmt.Errorf("marking #%d ready for review: %w", n, err)
+			}
+			note := fmt.Sprintf("%d check(s) passed on #%d%s", len(passed), n, exp)
+			if r.draft {
+				note += " (marked ready for review)"
+			}
+			return "ok", note, nil
 		}
 		if waited >= r.o.CITimeout {
 			var still []string
@@ -1016,6 +1039,11 @@ func shipMerge(r *shipRun) (string, string, error) {
 	if !in {
 		note := fmt.Sprintf("%s/%s moved to %s after CI ran on %s", r.o.Remote, r.o.Integration, short7(cur), short7(r.fwHead()))
 		return "", note, fmt.Errorf("%w: %s", ErrShipStale, note)
+	}
+	// A resumed ship that trusted ci's record may still hold a draft: mark it
+	// ready before merging (issue #765).
+	if err := r.markReady(); err != nil {
+		return "", fmt.Sprintf("marking #%d ready failed", n), fmt.Errorf("marking #%d ready for review: %w", n, err)
 	}
 	title := fmt.Sprintf("%s (#%d)", r.o.Title, n)
 	msg := scrubMessage(r.o.Body)
