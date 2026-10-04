@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.68.0](https://github.com/suzworx/flywheel/compare/v0.67.0...v0.68.0) (2026-10-04)
+
+
+### Features
+
+* lint.owns_companions makes a brief that owns a path also own the files that change with it ([#786](https://github.com/suzworx/flywheel/issues/786)) ([23e2713](https://github.com/suzworx/flywheel/commit/23e27134d98523022f417bebae1598d9fc51c7f3)), closes [#785](https://github.com/suzworx/flywheel/issues/785)
+
 ## [0.67.0](https://github.com/suzworx/flywheel/compare/v0.66.0...v0.67.0) (2026-10-02)
 
 
