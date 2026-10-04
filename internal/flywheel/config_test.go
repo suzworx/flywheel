@@ -262,6 +262,24 @@ func TestRequiredGatesConfigInvalid(t *testing.T) {
 	}
 }
 
+// TestOwnsCompanionsConfigInvalid checks Validate refuses a lint.owns_companions
+// path that escapes the repository or is absolute, and accepts a relative one
+// (issue #785).
+func TestOwnsCompanionsConfigInvalid(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"../x", "/abs", " "} {
+		cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m"}}, Lint: &LintConfig{OwnsCompanions: map[string][]string{"a/": {p}}}}
+		want := `lint.owns_companions["a/"][0]: "` + p + `" must be a relative path inside the repository`
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate(%q) error = %v, want %q", p, err, want)
+		}
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "w", Adapter: "claude", Model: "m"}}, Lint: &LintConfig{OwnsCompanions: map[string][]string{"": {".env.example"}}}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate(.env.example) error = %v, want nil", err)
+	}
+}
+
 // TestConfigValidateAcceptsCodexAdapter checks "codex" joins the valid
 // adapter names (issue #275) alongside opencode, sim, and claude.
 func TestConfigValidateAcceptsCodexAdapter(t *testing.T) {

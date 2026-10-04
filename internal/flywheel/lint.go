@@ -56,7 +56,8 @@ type LintResult struct {
 // prefix's pattern instead, one finding per miss (fullSuiteMissing);
 // an invalid lint.full_suite or lint.full_suite_paths pattern is a problem.
 // Each lint.required_gates pattern no gate matches, under every key that
-// applies, is a problem (requiredGatesMissing, issue #751). When dir has go.mod and
+// applies, is a problem (requiredGatesMissing, issue #751), and so is each
+// lint.owns_companions path owns lacks (ownsCompanionsMissing, issue #785). When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
 // that invokes a JavaScript test runner the repository does not use (config
@@ -113,6 +114,11 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 		for _, w := range missing {
 			res.Problems = append(res.Problems, w.String()+" (lint.required_gates)")
 		}
+	}
+	// Owns companions (issue #785): a file that changes with an owned path
+	// must be owned too, or the worker cannot update it.
+	for _, w := range ownsCompanionsMissing(lc, header.Owns) {
+		res.Problems = append(res.Problems, w.String()+" (lint.owns_companions)")
 	}
 	res.Warnings = append(res.Warnings, gateRunnerWarnings(dir, header.Gates, lc.TestRunners)...)
 	res.Problems = append(res.Problems, gateCommandProblems(dir, header.Gates, lc.GateCommands)...)
@@ -1053,6 +1059,49 @@ func requiredGatesMissing(lc *LintConfig, gates, owns []string) ([]requiredGateW
 		return strings.Compare(a.Pattern, b.Pattern)
 	})
 	return slices.Compact(missing), nil
+}
+
+// ownsCompanionWant is one lint.owns_companions path the brief's owns: lacks
+// (issue #785): Prefix is its key, "" for every brief.
+type ownsCompanionWant struct {
+	Prefix, Companion string
+}
+
+// String is the miss as lint and run report it.
+func (w ownsCompanionWant) String() string {
+	if w.Prefix == "" {
+		return "owns no companion " + w.Companion + " required for every brief"
+	}
+	return "owns no companion " + w.Companion + " required for " + w.Prefix
+}
+
+// ownsCompanionsMissing returns the lint.owns_companions paths owns does not
+// contain (ownsContains, so globs, dir/ prefixes and negations count; issue
+// #785), sorted by prefix then companion, de-duplicated. A key applies as in
+// requiredGatesMissing: "" always, any other key when it prefixes at least one
+// owns path (slash form).
+func ownsCompanionsMissing(lc *LintConfig, owns []string) []ownsCompanionWant {
+	if lc == nil || len(lc.OwnsCompanions) == 0 {
+		return nil
+	}
+	var missing []ownsCompanionWant
+	for _, k := range slices.Sorted(maps.Keys(lc.OwnsCompanions)) {
+		if k != "" && !slices.ContainsFunc(owns, func(o string) bool { return strings.HasPrefix(filepath.ToSlash(o), k) }) {
+			continue
+		}
+		for _, c := range lc.OwnsCompanions[k] {
+			if !ownsContains(owns, c) {
+				missing = append(missing, ownsCompanionWant{Prefix: k, Companion: c})
+			}
+		}
+	}
+	slices.SortFunc(missing, func(a, b ownsCompanionWant) int {
+		if c := strings.Compare(a.Prefix, b.Prefix); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Companion, b.Companion)
+	})
+	return slices.Compact(missing)
 }
 
 // jsRunnerDeps maps the package.json dependency that brings a JavaScript test
