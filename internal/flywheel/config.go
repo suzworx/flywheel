@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -168,6 +169,13 @@ type LintConfig struct {
 	// be matched by at least one gate line, or lint reports a problem and
 	// flywheel run and validate refuse with rule required-gates.
 	RequiredGates map[string][]string `json:"required_gates,omitempty"`
+	// OwnsCompanions maps an owns-path prefix (slash form, "" = every brief)
+	// to paths that must also appear in the brief's owns: (issue #785). Every
+	// key that prefixes at least one owns path, and the "" key always, applies:
+	// each of its companions must be owned (a glob, dir/ prefix or exact entry),
+	// or lint reports a problem and flywheel run and validate refuse with rule
+	// owns-companions.
+	OwnsCompanions map[string][]string `json:"owns_companions,omitempty"`
 	// Importers turns the Go importer-coverage warning off when false; nil
 	// means on wherever go.mod exists.
 	Importers *bool `json:"importers,omitempty"`
@@ -1235,6 +1243,19 @@ func (c Config) validateLoad() error {
 			for j, p := range c.Lint.RequiredGates[k] {
 				if _, err := regexp.Compile(p); err != nil {
 					problems = append(problems, fmt.Sprintf("lint.required_gates[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
+				}
+			}
+		}
+		ocKeys := make([]string, 0, len(c.Lint.OwnsCompanions))
+		for k := range c.Lint.OwnsCompanions {
+			ocKeys = append(ocKeys, k)
+		}
+		sort.Strings(ocKeys)
+		for _, k := range ocKeys {
+			for j, p := range c.Lint.OwnsCompanions[k] {
+				s := filepath.ToSlash(p)
+				if strings.TrimSpace(p) == "" || filepath.IsAbs(p) || strings.HasPrefix(s, "/") || slices.Contains(strings.Split(s, "/"), "..") {
+					problems = append(problems, fmt.Sprintf("lint.owns_companions[%q][%d]: %q must be a relative path inside the repository", k, j, p))
 				}
 			}
 		}
