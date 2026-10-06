@@ -424,8 +424,9 @@ func lintStructure(dir, path string) (LintResult, error) {
 		}
 	}
 	// gate[quiet]: and live-gate[quiet]: are the known markers (issue #411),
-	// with [resources] (issue #697), in a comma list; any other marker parses
-	// as a plain gate, so it is flagged, not refused.
+	// with [resources] (issue #697) and [vs-base] (issue #788), in a comma
+	// list; any other marker parses as a plain gate, so it is flagged, not
+	// refused.
 	for i, line := range strings.Split(content, "\n") {
 		if i >= 40 {
 			break
@@ -433,12 +434,25 @@ func lintStructure(dir, path string) (LintResult, error) {
 		if key, _, ok := cutKey(strings.TrimSuffix(line, "\r")); ok {
 			if base, marker, found := gateMarker(key); found {
 				for _, m := range strings.Split(marker, ",") {
-					if m = strings.TrimSpace(m); m != "quiet" && m != "resources" {
-						res.Warnings = append(res.Warnings, fmt.Sprintf("%s has unknown marker [%s]; the known markers are [quiet] and [resources], and the line runs as a plain %s", key, m, base))
+					if m = strings.TrimSpace(m); m != "quiet" && m != "resources" && m != "vs-base" {
+						res.Warnings = append(res.Warnings, fmt.Sprintf("%s has unknown marker [%s]; the known markers are [quiet], [resources] and [vs-base], and the line runs as a plain %s", key, m, base))
 					}
 				}
 			}
 		}
+	}
+	// fail-match: (issue #788) names the failing-test lines a vs-base gate
+	// compares; it must compile, and it means nothing without such a gate.
+	vsBase := len(header.VsBaseGates) > 0 || len(header.VsBaseLiveGates) > 0
+	if header.FailMatch != "" {
+		if _, err := regexp.Compile(header.FailMatch); err != nil {
+			res.Problems = append(res.Problems, fmt.Sprintf("fail-match: %q does not compile: %v", header.FailMatch, err))
+		}
+		if !vsBase {
+			res.Warnings = append(res.Warnings, "fail-match: is set and no gate is marked [vs-base]; it is never used")
+		}
+	} else if vsBase {
+		res.Warnings = append(res.Warnings, "a gate is marked [vs-base] with no fail-match: line: it compares the exit status only: any new failure passes while the base fails")
 	}
 	res.Problems = append(res.Problems, outsidePathProblems(dir, content)...)
 	if !header.NeedsDeclared {

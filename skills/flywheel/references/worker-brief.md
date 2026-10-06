@@ -194,6 +194,14 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `flywheel run` refuses new dispatches while it runs; a host that never goes idle records the
   reading `inconclusive` (`host busy: <tasks>`), never a failure. `flywheel lint` warns on any
   other `[marker]`. Markers combine as a comma list: `gate[quiet,resources]:`.
+- **gate[vs-base]:** / **live-gate[vs-base]:** with **fail-match:** — for a gate whose suite
+  already fails on the unit's base (local-only failures). `fail-match: <Go regexp>` names the
+  failing-test lines (`fail-match: ^--- FAIL`, one per brief, the last wins). When the gate
+  fails, `flywheel validate` reruns it at the unit's base in a temporary worktree (cached per
+  base) and passes it only when the base fails too and every matched line the unit prints also
+  fails on base; a failure with no matched line never passes. Without `fail-match:` only exit
+  statuses are compared, and `flywheel lint` warns. The pass is recorded with reason `vs-base`
+  and printed with the base's failing count, so the debt stays visible.
 - **resources:** — optional, comma-separated, may repeat: the shared host resources the heavy
   gates use (`resources: e2e, dev-db`; lower case, `[a-z0-9][a-z0-9._-]*`, issue #697). While a
   gate that uses them runs, `flywheel validate` holds an exclusive lock per resource, shared by

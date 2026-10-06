@@ -1346,7 +1346,8 @@ working exactly as before.
   `rc`, `duration_ms`, `sha256` (of the gate's combined output),
   `path` (`.flywheel/evidence/<task>/<attempt>/gate-<n>.log`), `persona` (always `"supervisor"`,
   hardcoded — see §4), `reason`/`note` (`host-blocked` when Windows Smart App Control blocked the
-  freshly built binary twice in a row).
+  freshly built binary twice in a row; `vs-base` when a vs-base gate passed against its unit's
+  base, see below), `vs_base` (a vs-base gate's comparison against the unit's base, issue #788).
 - Effect: no status change. `Validate` requires `gate` and `tree` to be non-empty. A `host-blocked`
   reading never counts as passing for T3, matching `ValidateTask`'s own `GatesOK=false` for it.
 - A gate that fails for a reason attributable entirely to a changed path outside the unit's own
@@ -1369,6 +1370,28 @@ working exactly as before.
   `host busy: <tasks>` — unmeasured, never a failure, and not a pass for T3. While `quiet.lock` is
   held by a live process, `flywheel run` refuses every dispatch (exit 6, rule `quiet`: `a quiet
   gate (<task> gate <n>) is running on this host; dispatch after it ends`).
+- A **vs-base gate** ([#788](https://github.com/suzworx/flywheel/issues/788)) is a
+  `gate[vs-base]:` or `live-gate[vs-base]:` header line (combinable: `gate[quiet,vs-base]:`); the
+  parsed header lists its 1-based index in `VsBaseGates` / `VsBaseLiveGates`. A `fail-match: <Go
+  regexp>` header line (`FailMatch`, the last line wins) names the failing-test lines of every
+  vs-base gate; `flywheel lint` reports a regexp that does not compile as a problem, and warns
+  when fail-match is set with no vs-base gate or a vs-base gate has no fail-match. Only a
+  vs-base gate whose own reading is a plain failure (non-zero, not host-blocked, masked or
+  inconclusive) is compared: the same command runs at the unit's base (`UnitBase`) in a temporary
+  detached worktree with the brief's needs-state carried in, its output in
+  `.flywheel/evidence/<task>/<attempt>/gate-<n>.base.log`, and the base reading is cached in
+  `.flywheel/cache/vs-base/<base>-<sha256(command NUL fail-match)[:16]>.json` (`base`,
+  `command`, `fail_match`, `rc`, `failing`). The failing lines are the output's lines (CR
+  stripped, trailing space trimmed) that fail-match matches, deduplicated and sorted. With
+  fail-match the gate passes when the base fails, the unit's failing set is non-empty and every
+  unit line fails on base too; without it, when the base fails. The validated event then carries
+  `rc` 0, `reason` `vs-base`, the note `passed vs base <base12>: <n> failing on base too` (or
+  `base fails too (rc <n>)`) and a `vs_base` object: `base`, `rc` (the unit's own exit code),
+  `base_rc`, `failing` and `base_failing` (counts), `new` (unit lines not on base, at most 20),
+  `cached`, `base_log`. A failure keeps the unit's `rc` and `vs_base`, its note naming `<n> new
+  failing vs base <base12>: <lines>`, `base passes` or `no fail-match line in the output`. No
+  recorded base fails with `vs-base: no unit base recorded`; a base that cannot be measured (a
+  setup error, a host-blocked run) is never cached and the gate stays failed with a note why.
 - **Exclusive resources** ([#697](https://github.com/suzworx/flywheel/issues/697)): a
   `resources: e2e, dev-db` header line names the shared host resources (ports, one local
   database) a unit's heavy gates use. Names are lower case, `[a-z0-9][a-z0-9._-]*`; lines
