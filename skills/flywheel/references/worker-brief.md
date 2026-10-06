@@ -198,7 +198,7 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   already fails on the unit's base (local-only failures). `fail-match: <Go regexp>` names the
   failing-test lines (`fail-match: ^--- FAIL`, one per brief, the last wins). When the gate
   fails, `flywheel validate` reruns it at the unit's base in a temporary worktree (cached per
-  base) and passes it only when the base fails too and every matched line the unit prints also
+  base; a lead-built unit uses the base it was planned on) and passes it only when the base fails too and every matched line the unit prints also
   fails on base; a failure with no matched line never passes. Without `fail-match:` only exit
   statuses are compared, and `flywheel lint` warns. The pass is recorded with reason `vs-base`
   and printed with the base's failing count, so the debt stays visible: `flywheel factory`
