@@ -113,7 +113,8 @@ When you start a session, register yourself on the floor:
   through `flywheel run`; `--exception "<why>"` is for the rare change that truly cannot, and is
   recorded (verify rule L1, #722). Review a committed unit with
   `flywheel review <id> --agent --base <commit before it> --session <s>`; an empty diff is refused
-  (rule `review-empty`, exit 6, #789).
+  (rule `review-empty`, exit 6, #789). `flywheel recover` shows `review owed: <command>` (and
+  `flywheel next` a `REVIEW_OWED` action) for a lead-built `--exception` pass until that review runs.
 - **Named skills get loaded.** A skill the brief's `skills:` names that a claude worker never
   loads blocks the pass (validate exit 5, inspect rule `skills-not-loaded`); correct it with
   `flywheel run <task> --delta <file>` asking it to load them (#695).

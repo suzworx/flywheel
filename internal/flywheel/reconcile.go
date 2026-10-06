@@ -714,5 +714,24 @@ func NextActions(dir string, now time.Time) ([]Action, error) {
 			}
 		}
 	}
+	// A lead-built exception unit owes an agent review (issue #789), listed
+	// in ledger order after the reconciler's actions. The events are indexed
+	// by task once, so each task's check walks only its own events.
+	byTask := map[string][]Event{}
+	var ids []string
+	for _, e := range events {
+		if e.Task == "" {
+			continue
+		}
+		if _, ok := byTask[e.Task]; !ok {
+			ids = append(ids, e.Task)
+		}
+		byTask[e.Task] = append(byTask[e.Task], e)
+	}
+	for _, id := range ids {
+		if cmd, ok := reviewOwed(byTask[id], id); ok {
+			actions = append(actions, Action{Kind: "REVIEW_OWED", Task: id, Reason: cmd})
+		}
+	}
 	return actions, nil
 }

@@ -997,6 +997,15 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
     lead`; otherwise empty. The text prints it under the task as `built by lead: <n> changed lines`.
     The floor (`flywheel factory`, text and `--json` unit `lead_built`) shows the same mark in the
     unit row's SESSION and MODEL cells, truncated to their combined width.
+  - the review owed (issue #789, JSON `review_owed`, omitted when empty; landed tasks included):
+    when the task's latest `inspected` event with verdict `pass` has `lead_built` and an
+    `exception`, and no agent `reviewed` event (persona `reviewer` or `reviewer:<dim>` with an
+    `adapter`) follows it, whatever its verdict, the command that pays it: `flywheel review <task>
+    --agent --base <leadBuiltBase> --session <reviewer>` (`--base <the commit before the unit>`
+    when no base is recorded). The text prints `review owed: <command>` after the built-by-lead
+    line. The task's next action is unchanged. `flywheel next` appends one `REVIEW_OWED` action
+    per owing task (reason: the command), in ledger order after the reconciler's actions
+    (`MARK_LOST`, `REQUEST_INSPECTION`, `BLOCK`, `WAIT`, `DISPATCH`, `HOLD`); nothing applies it.
 
   A `landed` task is reported from the ledger alone (no worktree, lease, run-file or tree reads),
   and the tree hash is computed once per workdir, so recover stays fast on a large ledger (#628).
