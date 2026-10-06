@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.68.1](https://github.com/suzworx/flywheel/compare/v0.68.0...v0.68.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* recover and next list the agent review a lead-built exception owes ([#792](https://github.com/suzworx/flywheel/issues/792)) ([d24c249](https://github.com/suzworx/flywheel/commit/d24c249483b89c127fba7d847da37c9fad0de3a2)), closes [#789](https://github.com/suzworx/flywheel/issues/789)
+* review --agent refuses an empty diff and takes --base for a single task ([#790](https://github.com/suzworx/flywheel/issues/790)) ([245a667](https://github.com/suzworx/flywheel/commit/245a6671b54308247d6242278d504abe5f7a3415))
+
 ## [0.68.0](https://github.com/suzworx/flywheel/compare/v0.67.0...v0.68.0) (2026-10-04)
 
 
