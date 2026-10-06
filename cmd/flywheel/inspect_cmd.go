@@ -101,4 +101,15 @@ func runInspect(args []string) {
 		exit(err)
 	}
 	fmt.Printf("%s inspected %s\n", task, o.verdict)
+	if o.verdict == "pass" {
+		// A vs-base pass's inherited debt is shown at inspection (issue #788);
+		// the pass is already recorded, so a read error only warns.
+		lines, err := flywheel.VsBaseSummary(o.dir, task)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "flywheel inspect: warning: vs-base summary: %v\n", err)
+		}
+		for _, l := range lines {
+			fmt.Println(l)
+		}
+	}
 }

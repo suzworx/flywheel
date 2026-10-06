@@ -282,6 +282,10 @@ func renderUnits(w io.Writer, f Floor, taskWd, modelWd int, color bool) {
 		if panelWd > 0 && u.Panel != "" {
 			panel = " panel " + u.Panel
 		}
+		if u.VsBaseFailing > 0 {
+			// Debt a vs-base gate pass inherited from the base (issue #788).
+			panel += fmt.Sprintf(" vs-base %d", u.VsBaseFailing)
+		}
 		run := paint(color, stateColor(u.RunState), padLeft(unitRunCell(u), runW))
 		cell := who(truncate(u.Session, sessWd), truncate(u.Model, modelWd))
 		if u.LeadBuilt != "" {
@@ -380,11 +384,12 @@ type jUnit struct {
 	RunState      string `json:"run_state"`
 	PeakReasoning int    `json:"peak_reasoning"`
 	Station       string `json:"station,omitempty"`
-	ResetAt       string `json:"reset_at,omitempty"`   // a rate-limited unit's reset, RFC 3339 (issue #383)
-	Workdir       string `json:"workdir,omitempty"`    // the unit's worktree (issue #394)
-	Base          string `json:"base,omitempty"`       // its base commit, first 7 characters
-	Panel         string `json:"panel,omitempty"`      // the verdict matrix cells (issue #420)
-	LeadBuilt     string `json:"lead_built,omitempty"` // the built-by-lead mark (issue #722)
+	ResetAt       string `json:"reset_at,omitempty"`        // a rate-limited unit's reset, RFC 3339 (issue #383)
+	Workdir       string `json:"workdir,omitempty"`         // the unit's worktree (issue #394)
+	Base          string `json:"base,omitempty"`            // its base commit, first 7 characters
+	Panel         string `json:"panel,omitempty"`           // the verdict matrix cells (issue #420)
+	LeadBuilt     string `json:"lead_built,omitempty"`      // the built-by-lead mark (issue #722)
+	VsBaseFailing int    `json:"vs_base_failing,omitempty"` // failing on base too, over the vs-base passes (issue #788)
 }
 
 type jAndon struct {
@@ -445,7 +450,7 @@ func RenderJSON(w io.Writer, f Floor) {
 	}
 	j.Staffing = js
 	for _, u := range f.Units {
-		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base, Panel: u.Panel, LeadBuilt: u.LeadBuilt}
+		ju := jUnit{Task: u.Task, Line: u.Line, Stage: u.Stage, Attempt: u.Attempt, Session: u.Session, Model: u.Model, Steps: u.Steps, LastAge: u.LastAge, RunState: u.RunState, PeakReasoning: u.Peak, Station: u.Station, Workdir: u.Workdir, Base: u.Base, Panel: u.Panel, LeadBuilt: u.LeadBuilt, VsBaseFailing: u.VsBaseFailing}
 		if !u.ResetAt.IsZero() {
 			ju.ResetAt = u.ResetAt.UTC().Format(time.RFC3339)
 		}

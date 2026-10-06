@@ -119,7 +119,61 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 	}
 	items = append(items, ruleP1(task, events, cfg.PanelDimensions(), cfg.ReviewRequired())...)
 	items = append(items, ruleL1(task, events, cfg.LeadBuiltMaxChangedLines())...)
+	items = append(items, ruleV1(task, events)...)
 	return items, nil
+}
+
+// ruleV1 checks that every vs-base gate pass of the task is consistent (issue
+// #788): reason vs-base with rc 0 and a vs_base reading whose base is named,
+// whose unit and base runs both failed and which found no new failing line.
+// A passing reading that carries vs_base under another reason is forged.
+func ruleV1(task string, events []Event) []VerifyItem {
+	var items []VerifyItem
+	k, failing := 0, 0
+	for _, e := range events {
+		if e.Task != task || e.Kind != "validated" {
+			continue
+		}
+		rc0 := e.RC != nil && *e.RC == 0
+		if e.Reason != "vs-base" {
+			if e.VsBase != nil && rc0 {
+				items = append(items, VerifyItem{Task: task, Rule: "V1", Pass: false,
+					Reason: fmt.Sprintf("gate %s at %s passed with a vs_base reading under reason %q, not vs-base", e.Gate, e.TS, e.Reason)})
+			}
+			continue
+		}
+		v := e.VsBase
+		var why string
+		switch {
+		case !rc0:
+			why = "rc is not 0"
+		case v == nil:
+			why = "no vs_base reading"
+		case v.Base == "":
+			why = "no base recorded"
+		case v.RC == 0:
+			why = "the unit's own run passed (vs_base.rc 0)"
+		case v.BaseRC == 0:
+			why = "the base passes (vs_base.base_rc 0)"
+		case len(v.New) > 0:
+			why = fmt.Sprintf("%d new failing lines vs base", len(v.New))
+		}
+		if why != "" {
+			items = append(items, VerifyItem{Task: task, Rule: "V1", Pass: false,
+				Reason: fmt.Sprintf("vs-base pass of gate %s at %s is inconsistent: %s", e.Gate, e.TS, why)})
+			continue
+		}
+		k++
+		failing += v.Failing
+	}
+	if len(items) > 0 {
+		return items
+	}
+	reason := "no vs-base pass"
+	if k > 0 {
+		reason = fmt.Sprintf("%d vs-base passes, %d failing on base too", k, failing)
+	}
+	return []VerifyItem{{Task: task, Rule: "V1", Pass: true, Reason: reason}}
 }
 
 // ruleL1 checks every inspected pass of a lead-built unit (issue #722): its

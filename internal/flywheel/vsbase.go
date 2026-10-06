@@ -182,3 +182,62 @@ func compareVsBase(dir, task, attempt, logSuffix, base, gate string, rc int, out
 	}
 	return true, reading, fmt.Sprintf("passed vs base %s: %d failing on base too", short, len(c.Failing)), nil
 }
+
+// vsBasePasses returns, per gate id in order of first appearance, the task's
+// latest validated event on tree when it is a vs-base pass (Reason "vs-base"
+// with a vs_base reading): a later plain pass or failure of the same gate on
+// the same tree supersedes it.
+func vsBasePasses(events []Event, task, tree string) []Event {
+	var order []string
+	latest := map[string]Event{}
+	for _, e := range events {
+		if e.Task != task || e.Kind != "validated" || e.Tree != tree || tree == "" {
+			continue
+		}
+		if _, ok := latest[e.Gate]; !ok {
+			order = append(order, e.Gate)
+		}
+		latest[e.Gate] = e
+	}
+	var out []Event
+	for _, g := range order {
+		if e := latest[g]; e.Reason == "vs-base" && e.VsBase != nil {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// vsBaseFailing sums the failing lines of the vs-base passes on tree: the
+// debt the unit inherited from its base.
+func vsBaseFailing(events []Event, task, tree string) int {
+	n := 0
+	for _, e := range vsBasePasses(events, task, tree) {
+		n += e.VsBase.Failing
+	}
+	return n
+}
+
+// VsBaseSummary returns one line per vs-base pass on the tree of the task's
+// latest inspected pass, nil when it has none (issue #788).
+func VsBaseSummary(dir, task string) ([]string, error) {
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return nil, err
+	}
+	tree, found := "", false
+	for _, e := range events {
+		if e.Task == task && e.Kind == "inspected" && e.Verdict == "pass" {
+			tree, found = e.Tree, true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	var lines []string
+	for _, e := range vsBasePasses(events, task, tree) {
+		v := e.VsBase
+		lines = append(lines, fmt.Sprintf("gate %s passed vs base %s: %d failing on base too (%d on base)", e.Gate, v.Base[:min(12, len(v.Base))], v.Failing, v.BaseFailing))
+	}
+	return lines, nil
+}
