@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.68.2](https://github.com/suzworx/flywheel/compare/v0.68.1...v0.68.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* review --agent drops flywheel's own files from the unit's changed paths ([#794](https://github.com/suzworx/flywheel/issues/794)) ([eb5f768](https://github.com/suzworx/flywheel/commit/eb5f76828f82607f55a4e401d34d8d76bf09638e)), closes [#793](https://github.com/suzworx/flywheel/issues/793)
+
 ## [0.68.1](https://github.com/suzworx/flywheel/compare/v0.68.0...v0.68.1) (2026-10-06)
 
 
