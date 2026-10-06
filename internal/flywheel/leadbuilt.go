@@ -78,6 +78,33 @@ func leadBuiltBase(events []Event, task string) string {
 	return base
 }
 
+// reviewOwed reports the agent review a lead-built exception unit owes
+// (issue #789): its latest passing inspected event has LeadBuilt and an
+// Exception, and no agent review (agentReviewed) of the task follows it,
+// whatever that review's verdict. The string is the command that pays it.
+func reviewOwed(events []Event, task string) (string, bool) {
+	pass, reviewed := -1, false
+	for i, e := range events {
+		if e.Task != task {
+			continue
+		}
+		switch {
+		case e.Kind == "inspected" && e.Verdict == "pass":
+			pass, reviewed = i, false
+		case pass >= 0 && agentReviewed(e):
+			reviewed = true
+		}
+	}
+	if pass < 0 || reviewed || !events[pass].LeadBuilt || events[pass].Exception == "" {
+		return "", false
+	}
+	base := leadBuiltBase(events, task)
+	if base == "" {
+		base = "<the commit before the unit>"
+	}
+	return fmt.Sprintf("flywheel review %s --agent --base %s --session <reviewer>", task, base), true
+}
+
 // leadBuiltRefusal refuses a pass (rule lead-built) of a lead-built unit
 // whose lines exceed max, unless an exception records why.
 func leadBuiltRefusal(lines, max int, exception, task string) *RuleRefusal {
