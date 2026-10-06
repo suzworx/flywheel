@@ -329,11 +329,29 @@ func nextReviewRound(events []Event, task string) int {
 	return n + 1
 }
 
+// reviewChangedPaths is the unit's changed paths for a review:
+// unitChangedPaths without flywheel's own files (isFlywheelOwnPath), which
+// are never the unit's change, so they never make a diff non-empty (issue
+// #793).
+func reviewChangedPaths(workdir, base, task string) ([]string, error) {
+	all, err := unitChangedPaths(workdir, base, task)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range all {
+		if !isFlywheelOwnPath(p) {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
 // reviewDiff is the unit's change for the reviewer: git diff from the unit's
 // dispatch base (HEAD when none was recorded) over its changed paths, then
 // the full text of each new untracked file, capped at maxReviewDiff.
 func reviewDiff(workdir, base, task string) (string, error) {
-	paths, err := unitChangedPaths(workdir, base, task)
+	paths, err := reviewChangedPaths(workdir, base, task)
 	if err != nil {
 		return "", err
 	}
@@ -696,7 +714,7 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	if res.Base, err = reviewBase(workdir, events, task, o.Base); err != nil {
 		return ReviewAgentResult{}, err
 	}
-	changed, err := unitChangedPaths(workdir, res.Base, task)
+	changed, err := reviewChangedPaths(workdir, res.Base, task)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
