@@ -124,6 +124,7 @@ type ReviewPanelOptions struct {
 	Panel    []PanelMember // the members; default: the configured review.panel
 	Session  string        // the reviewer session label, shared by every member
 	Workdir  string        // the unit's worktree; default: the recorded workdir, else dir
+	Base     string        // the ref the unit's diff starts from; default: reviewBase's (issue #789)
 	Round    int           // the panel round; <= 0 means the task's next round
 	Progress io.Writer
 	Stdout   io.Writer
@@ -201,9 +202,23 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 			return PanelResult{}, fmt.Errorf("review panel: no persona %q; known: %s", m.Persona, strings.Join(PanelPersonas(), ", "))
 		}
 	}
+	// One base for the whole panel (issue #789): an empty diff is refused
+	// once, before scoping or running any member. A workdir git cannot list
+	// is left to the members, each of which reports that error itself.
+	events, err := ReadEvents(dir)
+	if err != nil {
+		return PanelResult{}, err
+	}
+	workdir := wd(o.Workdir, dir, events, task)
+	base, err := reviewBase(workdir, events, task, o.Base)
+	if err != nil {
+		return PanelResult{}, err
+	}
+	if changed, err := unitChangedPaths(workdir, base, task); err == nil && len(changed) == 0 {
+		return PanelResult{}, emptyReviewRefusal(task, base)
+	}
 	if minLines > 0 {
-		var err error
-		if panel, err = scopePanel(dir, task, panel, minLines, o); err != nil {
+		if panel, err = scopePanel(dir, task, panel, minLines, base, o); err != nil {
 			return PanelResult{}, err
 		}
 	}
@@ -225,7 +240,7 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 	for _, m := range panel {
 		ao := ReviewAgentOptions{
 			Worker: m.Worker, Adapter: m.Adapter, Model: m.Model, Dimension: m.Persona,
-			Session: o.Session, Workdir: o.Workdir, Round: res.Round,
+			Session: o.Session, Workdir: o.Workdir, Base: o.Base, Round: res.Round,
 			Progress: o.Progress, Stdout: o.Stdout, Stderr: o.Stderr,
 		}
 		r, err := review(dir, task, ao)
@@ -249,7 +264,7 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 		res.Members = append(res.Members, r)
 		res.Tree = r.Tree
 	}
-	events, err := ReadEvents(dir)
+	events, err = ReadEvents(dir)
 	if err != nil {
 		return res, err
 	}
@@ -259,17 +274,17 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 
 // scopePanel applies review.panel_min_lines (issue #459): it counts the
 // unit's changed lines on the tree the members are about to review
-// (unitChangedLines, from the unit's dispatch base, as reviewDiff does) and,
-// below minLines, returns only the correctness member (else the first),
-// after recording a panel_scoped event for that tree. Otherwise it returns
-// panel unchanged and records nothing.
-func scopePanel(dir, task string, panel []PanelMember, minLines int, o ReviewPanelOptions) ([]PanelMember, error) {
+// (unitChangedLines, from base, the review's resolved base, as reviewDiff
+// does) and, below minLines, returns only the correctness member (else the
+// first), after recording a panel_scoped event for that tree. Otherwise it
+// returns panel unchanged and records nothing.
+func scopePanel(dir, task string, panel []PanelMember, minLines int, base string, o ReviewPanelOptions) ([]PanelMember, error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return nil, err
 	}
 	workdir := wd(o.Workdir, dir, events, task)
-	n, err := unitChangedLines(workdir, dispatchBase(events, task, ""), task)
+	n, err := unitChangedLines(workdir, base, task)
 	if err != nil {
 		return nil, err
 	}

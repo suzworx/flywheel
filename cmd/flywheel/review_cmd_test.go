@@ -2,11 +2,37 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
+
+// runReviewHelperEnv carries runReview's arguments to the re-executed test
+// binary, separated by \x1f, so a test can observe its stderr and exit status.
+const runReviewHelperEnv = "FLYWHEEL_TEST_RUNREVIEW_ARGS"
+
+// TestReviewBaseNeedsAgent checks --base on a hand verdict (no --agent, no
+// --group) stays a usage error, exit 2 (issue #789).
+func TestReviewBaseNeedsAgent(t *testing.T) {
+	t.Parallel()
+	if v, ok := os.LookupEnv(runReviewHelperEnv); ok {
+		runReview(strings.Split(v, "\x1f"))
+		os.Exit(0)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReviewBaseNeedsAgent$")
+	cmd.Env = append(os.Environ(), runReviewHelperEnv+"="+strings.Join([]string{"T1", "--verdict", "pass", "--session", "rev-1", "--base", "HEAD~1", "--dir", t.TempDir()}, "\x1f"))
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var e *exec.ExitError
+	if !errors.As(err, &e) || e.ExitCode() != 2 || !strings.Contains(stderr.String(), "--base needs --agent") {
+		t.Errorf("review --base without --agent = %v, stderr %q; want exit 2 naming --agent", err, stderr.String())
+	}
+}
 
 // fixDir returns an initialised flywheel dir with a cheap default worker and
 // a strong one, and T1 last dispatched with the given worker, adapter and
