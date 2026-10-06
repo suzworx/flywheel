@@ -581,7 +581,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   review agent and the panel (`--panel`, one refusal before any member) refuse before writing a
   prompt, running a reviewer or appending any event; the fix names the base used and the remedy,
   `flywheel review <task> --agent --base <the commit before the unit>` or `--workdir <the unit's
-  worktree>`. The `--fix` loop exits 6 on it too.
+  worktree>`. The `--fix` loop exits 6 on it too. flywheel's own files (`.flywheel/`,
+  `flywheel.md`) are not the unit's change, so they never make a diff non-empty (issue #793).
 - Carries: `task`, `verdict` (`pass`, `correct`, `reject`, or `crashed` — a panel member whose run
   failed twice, only with a `category`, issue #469 — enforced by `Validate`), `session`,
   `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`). The review agent's

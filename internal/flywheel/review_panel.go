@@ -214,7 +214,7 @@ func ReviewPanel(dir, task string, o ReviewPanelOptions) (PanelResult, error) {
 	if err != nil {
 		return PanelResult{}, err
 	}
-	if changed, err := unitChangedPaths(workdir, base, task); err == nil && len(changed) == 0 {
+	if changed, err := reviewChangedPaths(workdir, base, task); err == nil && len(changed) == 0 {
 		return PanelResult{}, emptyReviewRefusal(task, base)
 	}
 	if minLines > 0 {
