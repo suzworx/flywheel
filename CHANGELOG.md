@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.69.0](https://github.com/suzworx/flywheel/compare/v0.68.2...v0.69.0) (2026-10-06)
+
+
+### Features
+
+* gate[vs-base] passes a gate that fails the same way on the unit's base ([#796](https://github.com/suzworx/flywheel/issues/796)) ([140f8f2](https://github.com/suzworx/flywheel/commit/140f8f2848236db9596d8b557e2c5a5335efe296))
+
 ## [0.68.2](https://github.com/suzworx/flywheel/compare/v0.68.1...v0.68.2) (2026-10-06)
 
 
