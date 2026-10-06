@@ -37,8 +37,11 @@ type VsBaseReading struct {
 
 // vsBaseSpec is what a vs-base gate needs beyond an ordinary gate: the
 // brief's fail-match and the needs-state carried into the base worktree the
-// way run --worktree carries it (prepareWorktree). nil marks an ordinary gate.
+// way run --worktree carries it (prepareWorktree), and the base it is compared
+// against: leadBuiltBase, so a lead-built unit compares against the base it
+// was planned on (issue #798). nil marks an ordinary gate.
 type vsBaseSpec struct {
+	Base                    string
 	FailMatch               string
 	Links, Copies, Installs []string
 	SetupTimeout            time.Duration
@@ -142,8 +145,9 @@ func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseS
 // failing set is non-empty (a failure no line names, a build break, never
 // passes) and every unit line fails on base; without it, when the base fails.
 // note is the reading's note either way; reading is nil when the base could
-// not be measured.
-func compareVsBase(dir, task, attempt, logSuffix, base, gate string, rc int, out []byte, spec *vsBaseSpec) (pass bool, reading *VsBaseReading, note string, err error) {
+// not be measured. The base is spec.Base, not the gate's FLYWHEEL_BASE.
+func compareVsBase(dir, task, attempt, logSuffix, gate string, rc int, out []byte, spec *vsBaseSpec) (pass bool, reading *VsBaseReading, note string, err error) {
+	base := spec.Base
 	if base == "" {
 		return false, nil, "vs-base: no unit base recorded", nil
 	}

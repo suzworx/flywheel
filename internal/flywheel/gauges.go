@@ -393,7 +393,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// attempt commit has already moved HEAD past the unit's work.
 	base := UnitBase(events, task)
 	// a vs-base gate (issue #788) carries the brief's fail-match and
-	// needs-state into its base worktree; nil for any other gate.
+	// needs-state into its base worktree; nil for any other gate. It compares
+	// against leadBuiltBase: a lead-built unit has no dispatched base, only
+	// the base it was planned on (issue #798).
+	vsBase := leadBuiltBase(events, task)
 	vsSpec := func(marked []int, n int) *vsBaseSpec {
 		if !isQuiet(marked, n) {
 			return nil
@@ -402,7 +405,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		if cfgErr != nil || terr != nil {
 			timeout, _ = Config{}.SetupTimeoutDuration()
 		}
-		return &vsBaseSpec{FailMatch: header.FailMatch, Links: header.NeedsStateLink, Copies: header.NeedsStateCopy,
+		return &vsBaseSpec{Base: vsBase, FailMatch: header.FailMatch, Links: header.NeedsStateLink, Copies: header.NeedsStateCopy,
 			Installs: header.NeedsStateInstall, SetupTimeout: timeout}
 	}
 	// the resource lock directory (issue #697), resolved with one git call by
@@ -633,7 +636,7 @@ func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []strin
 	// code stays in vs_base.rc.
 	var vsReading *VsBaseReading
 	if vs != nil && !blocked && !masked && !inconclusive && rc != 0 {
-		pass, reading, vnote, err := compareVsBase(dir, task, attempt, logSuffix, base, gate, rc, out, vs)
+		pass, reading, vnote, err := compareVsBase(dir, task, attempt, logSuffix, gate, rc, out, vs)
 		if err != nil {
 			return GateOut{}, Event{}, err
 		}

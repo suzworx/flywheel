@@ -1377,7 +1377,9 @@ working exactly as before.
   vs-base gate; `flywheel lint` reports a regexp that does not compile as a problem, and warns
   when fail-match is set with no vs-base gate or a vs-base gate has no fail-match. Only a
   vs-base gate whose own reading is a plain failure (non-zero, not host-blocked, masked or
-  inconclusive) is compared: the same command runs at the unit's base (`UnitBase`) in a temporary
+  inconclusive) is compared: the same command runs at the unit's base (its dispatched or rebased
+  base, `UnitBase`; for a lead-built unit, which has neither, the latest `planned` event's `base`,
+  [#798](https://github.com/suzworx/flywheel/issues/798)) in a temporary
   detached worktree with the brief's needs-state carried in, its output in
   `.flywheel/evidence/<task>/<attempt>/gate-<n>.base.log`, and the base reading is cached in
   `.flywheel/cache/vs-base/<base>-<sha256(command NUL fail-match)[:16]>.json` (`base`,
@@ -1390,7 +1392,8 @@ working exactly as before.
   `base_rc`, `failing` and `base_failing` (counts), `new` (unit lines not on base, at most 20),
   `cached`, `base_log`. A failure keeps the unit's `rc` and `vs_base`, its note naming `<n> new
   failing vs base <base12>: <lines>`, `base passes` or `no fail-match line in the output`. No
-  recorded base fails with `vs-base: no unit base recorded`; a base that cannot be measured (a
+  recorded base (neither a dispatched/rebased base nor a planned `base`) fails with
+  `vs-base: no unit base recorded`; a base that cannot be measured (a
   setup error, a host-blocked run) is never cached and the gate stays failed with a note why.
   The pass's debt stays visible: for each gate the latest validated event on the unit's
   measured tree that is a vs-base pass counts, and `flywheel factory` appends ` vs-base <n>` to
