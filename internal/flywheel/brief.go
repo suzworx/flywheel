@@ -52,6 +52,14 @@ type BriefHeader struct {
 	// for an idle host before they run.
 	QuietGates     []int `json:",omitempty"`
 	QuietLiveGates []int `json:",omitempty"`
+	// VsBaseGates and VsBaseLiveGates are the 1-based indices into Gates and
+	// LiveGates of the lines marked `[vs-base]` (issue #788): gates that pass
+	// when the unit adds no failure its base lacks. FailMatch is the
+	// `fail-match:` line's Go regexp naming the failing-test lines of every
+	// vs-base gate, the last line winning.
+	VsBaseGates     []int  `json:",omitempty"`
+	VsBaseLiveGates []int  `json:",omitempty"`
+	FailMatch       string `json:",omitempty"`
 	// Resources lists the shared host resources a `resources:` line names
 	// (issue #697), accumulated across lines, each kept once, order kept:
 	// validate holds an exclusive per-repository lock on each while a gate
@@ -182,6 +190,12 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 					} else {
 						h.ResourceLiveGates = append(h.ResourceLiveGates, len(h.LiveGates)+1)
 					}
+				case "vs-base":
+					if base == "gate" {
+						h.VsBaseGates = append(h.VsBaseGates, len(h.Gates)+1)
+					} else {
+						h.VsBaseLiveGates = append(h.VsBaseLiveGates, len(h.LiveGates)+1)
+					}
 				}
 			}
 		}
@@ -285,6 +299,9 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 					h.Resources = append(h.Resources, e)
 				}
 			}
+		case "fail-match":
+			// The failing-test lines of the vs-base gates (issue #788).
+			h.FailMatch = val
 		case "exclusive":
 			h.Exclusive = append(h.Exclusive, val)
 		case "review":

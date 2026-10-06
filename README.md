@@ -234,7 +234,11 @@ view, each marked with what exists today, are on the [screens page](https://suzw
   ([#697](https://github.com/suzworx/flywheel/issues/697)). A gate waiting for another unit's
   lock records a `resource_wait` event as the wait starts, and `flywheel factory` shows it live
   in the unit's RUN cell (`waiting for resource e2e (<holder>) 2m`) until the gate's reading ends
-  it ([#697](https://github.com/suzworx/flywheel/issues/697)).
+  it ([#697](https://github.com/suzworx/flywheel/issues/697)). A gate whose suite already fails
+  on the unit's base is written `gate[vs-base]:` with a `fail-match: <regexp>` line naming the
+  failing-test lines: validate reruns it at the base (cached) and passes it only when the unit
+  adds no failing line the base lacks, printing the debt (`passed vs base <sha>: 24 failing on
+  base too`) ([#788](https://github.com/suzworx/flywheel/issues/788)).
   `--worktree --base REF` branches a new `fw/<task>` from REF, without checking REF out. Without
   `--base` a new `fw/<task>` starts from `origin/<integration.branch>` (else the local branch) when
   `integration.branch` is set, and is refused when neither resolves; otherwise from the main

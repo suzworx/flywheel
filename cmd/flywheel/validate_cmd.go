@@ -167,10 +167,17 @@ func runValidate(args []string) {
 			fmt.Printf("%s gate %s: %s\n", task, g.Gate, g.Note)
 		} else if g.Inconclusive {
 			fmt.Printf("%s gate %s: inconclusive (%s)\n", task, g.Gate, g.Note)
+		} else if g.RC == 0 && g.VsBase != nil {
+			// passed only against the base's failures (issue #788): the debt
+			// stays visible, never silent.
+			fmt.Printf("%s gate %s: %s\n", task, g.Gate, g.Note)
 		} else if g.RC == 0 {
 			fmt.Printf("%s gate %s: pass (%dms)\n", task, g.Gate, g.DurationMS)
 		} else {
 			fmt.Printf("%s gate %s: failed (rc=%d)\n", task, g.Gate, g.RC)
+			if strings.Contains(g.Note, "vs base") || strings.HasPrefix(g.Note, "vs-base") {
+				fmt.Printf("%s gate %s: %s\n", task, g.Gate, g.Note)
+			}
 			if p, ok := probeFails[g.Command]; ok {
 				note := fmt.Sprintf("%s gate %s: note: this gate already failed on the base tree before dispatch (exit %d)", task, g.Gate, *p.RC)
 				if p.Reason != "" {
@@ -189,6 +196,8 @@ func runValidate(args []string) {
 			fmt.Printf("%s live-gate %s: %s\n", task, n, g.Note)
 		} else if g.Inconclusive {
 			fmt.Printf("%s live-gate %s: inconclusive (%s)\n", task, n, g.Note)
+		} else if g.RC == 0 && g.VsBase != nil {
+			fmt.Printf("%s live-gate %s: %s\n", task, n, g.Note)
 		} else if g.RC == 0 {
 			fmt.Printf("%s live-gate %s: pass (%dms)\n", task, n, g.DurationMS)
 		} else {

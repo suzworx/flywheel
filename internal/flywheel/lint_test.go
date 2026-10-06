@@ -364,7 +364,7 @@ func TestLintBriefQuietGateMarkers(t *testing.T) {
 	want(t, res, nil, nil)
 	res = lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate[loud]: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, nil, []string{"gate[loud] has unknown marker [loud]; the known markers are [quiet] and [resources], and the line runs as a plain gate"})
+	want(t, res, nil, []string{"gate[loud] has unknown marker [loud]; the known markers are [quiet], [resources] and [vs-base], and the line runs as a plain gate"})
 }
 
 // suiteBrief is a structurally clean brief with the given owns and one gate.

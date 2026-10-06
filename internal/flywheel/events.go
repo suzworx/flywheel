@@ -119,6 +119,9 @@ type Event struct {
 	// brief's stage: lines copied before the gates (issue #781): from, to,
 	// sha256 and copied (false when the destination already held the bytes).
 	Staged []StagedFile `json:"staged,omitempty"`
+	// VsBase is a vs-base gate's comparison against the unit's base (issue
+	// #788), set on its validated event when its own reading failed plainly.
+	VsBase *VsBaseReading `json:"vs_base,omitempty"`
 	// Commands are the shell commands a worker ran, in order, at most 100,
 	// each clipped to 300 characters (issue #365).
 	Commands []string `json:"commands,omitempty"`

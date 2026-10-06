@@ -61,6 +61,9 @@ type GateOut struct {
 	// Live is true for a live-gate: entry (issue #152), false for an
 	// ordinary gate: entry.
 	Live bool
+	// VsBase is a vs-base gate's comparison against the unit's base (issue
+	// #788); RC is 0 and Note says so when it passed on it.
+	VsBase *VsBaseReading
 }
 
 // FileShape reports one changed file's measured shape: its repo-relative path,
@@ -389,6 +392,19 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	// every gate sees the unit's base as FLYWHEEL_BASE (issue #470): the
 	// attempt commit has already moved HEAD past the unit's work.
 	base := UnitBase(events, task)
+	// a vs-base gate (issue #788) carries the brief's fail-match and
+	// needs-state into its base worktree; nil for any other gate.
+	vsSpec := func(marked []int, n int) *vsBaseSpec {
+		if !isQuiet(marked, n) {
+			return nil
+		}
+		timeout, terr := cfg.SetupTimeoutDuration()
+		if cfgErr != nil || terr != nil {
+			timeout, _ = Config{}.SetupTimeoutDuration()
+		}
+		return &vsBaseSpec{FailMatch: header.FailMatch, Links: header.NeedsStateLink, Copies: header.NeedsStateCopy,
+			Installs: header.NeedsStateInstall, SetupTimeout: timeout}
+	}
 	// the resource lock directory (issue #697), resolved with one git call by
 	// the first gate that holds a resource lock, never without a resources:
 	// line.
@@ -402,7 +418,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		commit := headCommit(wd)
 		holds := holdsResources(header.Resources, header.ResourceGates, i+1)
 		out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, n, gate, false, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote)
+			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseGates, i+1))
 		})
 		if err != nil {
 			return GaugeResult{}, err
@@ -424,7 +440,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			commit := headCommit(wd)
 			holds := holdsResources(header.Resources, header.ResourceLiveGates, i+1)
 			out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, "live"+n, gate, true, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote)
+				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseLiveGates, i+1))
 			})
 			if err != nil {
 				return GaugeResult{}, err
@@ -450,8 +466,9 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // shared marker while it runs, after waiting the same budget for another
 // process's quiet gate to end (gateTurn). base is the unit's base commit
 // (UnitBase), exported to the gate as FLYWHEEL_BASE (issue #470). resNote
-// (from resourceGate; may be empty) is joined to the reading's note.
-func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string, resNote string) (GateOut, error) {
+// (from resourceGate; may be empty) is joined to the reading's note. vs is
+// the vs-base spec (issue #788), nil for an ordinary gate.
+func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string, resNote string, vs *vsBaseSpec) (GateOut, error) {
 	if quiet {
 		release, busy, err := waitQuietGate(dir, task, gateID, wait, now, quietSleep)
 		if err != nil {
@@ -470,14 +487,14 @@ func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, 
 			}
 			return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: note, Live: live}, nil
 		}
-		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "", resNote)
+		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "", resNote, vs)
 	}
 	release, note, err := gateTurn(dir, task, gateID, wait, now, quietSleep)
 	if err != nil {
 		return GateOut{}, err
 	}
 	defer release()
-	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note, resNote)
+	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note, resNote, vs)
 }
 
 // resourceGate runs one gate through run under the brief's resource locks
@@ -544,8 +561,8 @@ func resourceGate(dir, wd, task, attempt, tree, commit string, resources []strin
 // hostNote (from hostGate; may be empty) is recorded as the note when the
 // reading carries no other (issue #411). resNote (a resource lock wait,
 // issue #697; may be empty) is joined with "; " to whatever note results.
-func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string) (GateOut, error) {
-	res, ev, err := measureGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, hostNote, resNote)
+func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec) (GateOut, error) {
+	res, ev, err := measureGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, hostNote, resNote, vs)
 	if err != nil {
 		return GateOut{}, err
 	}
@@ -557,8 +574,10 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 
 // measureGate is runAndRecordGate up to the append: it runs the gate, writes
 // its evidence log and returns the validated event unrecorded, so validate
-// --group (issue #775) can tag it with its group before recording it.
-func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string) (GateOut, Event, error) {
+// --group (issue #775) can tag it with its group before recording it. vs
+// (nil for an ordinary gate) makes it a vs-base gate (issue #788): a plain
+// failure is compared against base (compareVsBase).
+func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec) (GateOut, Event, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
 	rc, dur, out, stages, err := runGateStages(wd, gate, base)
@@ -609,6 +628,22 @@ func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []strin
 			ev.Note = note
 		}
 	}
+	// A vs-base gate's plain failure is judged against the unit's base (issue
+	// #788): on a pass the reading's RC is the gate's verdict, 0, and the raw
+	// code stays in vs_base.rc.
+	var vsReading *VsBaseReading
+	if vs != nil && !blocked && !masked && !inconclusive && rc != 0 {
+		pass, reading, vnote, err := compareVsBase(dir, task, attempt, logSuffix, base, gate, rc, out, vs)
+		if err != nil {
+			return GateOut{}, Event{}, err
+		}
+		vsReading, ev.VsBase = reading, reading
+		note, ev.Note = vnote, vnote
+		if pass {
+			rc, *rcPtr = 0, 0
+			ev.Reason = "vs-base"
+		}
+	}
 	if note == "" && hostNote != "" {
 		note = hostNote
 		ev.Note = note
@@ -620,7 +655,7 @@ func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []strin
 	return GateOut{
 		Gate: gateID, Command: gate, RC: rc, DurationMS: dur,
 		LogPath: logRel, HostBlocked: blocked, Inconclusive: inconclusive, Note: note,
-		Masked: masked, Live: live,
+		Masked: masked, Live: live, VsBase: vsReading,
 	}, ev, nil
 }
 
