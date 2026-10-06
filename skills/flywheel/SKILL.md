@@ -259,7 +259,8 @@ refuses the unit (T9) until you triage it.
   exit 5 means a gate failed or an owned-file violation (recorded in .flywheel/evidence). A passing
   reading is what vouches for the tree *as it is now*; `flywheel inspect` and `flywheel verify`
   refuse without one. Never pass on the worker's claim alone — run the gauges and let the reading
-  speak.
+  speak. A `vs-base <n>` on the floor (also printed by `inspect --verdict pass`) is debt the unit
+  inherited from its base through a `gate[vs-base]:` pass, not a failure it caused.
 - **Review loop (`flywheel review <task> --agent --fix --session <reviewer>`):** after validate and
   before inspect, run the independent reviewer
   ([`flywheel-reviewer`](../flywheel-reviewer/SKILL.md)). It reads the brief, the readings and the

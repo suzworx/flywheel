@@ -99,6 +99,11 @@ type Unit struct {
 	// ResourceWait is a gate's live wait for a shared resource (issue #697):
 	// "resource <name> (<holder>) <age>", or "" when none.
 	ResourceWait string
+
+	// VsBaseFailing sums the failing lines of the vs-base gate passes on the
+	// unit's measured tree (issue #788): debt it inherited from its base, 0
+	// when none.
+	VsBaseFailing int
 }
 
 // resourceWaitFor returns the task's live resource wait for attempt (issue
@@ -550,6 +555,11 @@ func (w *Watcher) Refresh(dir string, now time.Time) (Floor, error) {
 			}
 			units[i].Panel = panelCells(ev, units[i].Task, units[i].Attempt, need)
 		}
+	}
+	for i := range units {
+		// A vs-base pass's inherited debt stays on the floor (issue #788).
+		ev := byTask[units[i].Task]
+		units[i].VsBaseFailing = vsBaseFailing(ev, units[i].Task, measuredTree(ev, units[i].Task, units[i].Attempt))
 	}
 	fl.Units = units
 	fl.Groups = st.Groups

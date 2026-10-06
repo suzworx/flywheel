@@ -4,7 +4,7 @@ This is the protocol flywheel enforces today, in code — not the fuller factory
 building toward. The authority for everything below is the code itself:
 `internal/flywheel/events.go` (the `kinds` map and `Validate`), `internal/flywheel/state.go`
 (`Derive`'s status transitions), `internal/flywheel/verify.go` (`flywheel verify`: rules T1, T3,
-T4, T5, T8, R1, W1, P1 and L1), `internal/flywheel/land.go` (`flywheel land` enforces T7 and T9 live)
+T4, T5, T8, R1, W1, P1, L1 and V1), `internal/flywheel/land.go` (`flywheel land` enforces T7 and T9 live)
 and `internal/flywheel/chain.go` (the hash-chained log, checked by `flywheel verify --log`, with a
 chain per shard in the sharded layout). `docs/design/autonomous-shipping.md` describes a larger
 design — audits, nonconformances, andon signals, a hash-chained log — and much of it is built now
@@ -1392,6 +1392,12 @@ working exactly as before.
   failing vs base <base12>: <lines>`, `base passes` or `no fail-match line in the output`. No
   recorded base fails with `vs-base: no unit base recorded`; a base that cannot be measured (a
   setup error, a host-blocked run) is never cached and the gate stays failed with a note why.
+  The pass's debt stays visible: for each gate the latest validated event on the unit's
+  measured tree that is a vs-base pass counts, and `flywheel factory` appends ` vs-base <n>` to
+  the unit's row (`vs_base_failing` in `--json`; n is the sum of their `failing`, shown only
+  when above 0); `flywheel inspect --verdict pass` prints, after `inspected pass`, one line per
+  such pass on the inspected tree: `gate <id> passed vs base <base12>: <failing> failing on base
+  too (<base_failing> on base)`. `flywheel verify` checks every vs-base pass with rule V1 (§2).
 - **Exclusive resources** ([#697](https://github.com/suzworx/flywheel/issues/697)): a
   `resources: e2e, dev-db` header line names the shared host resources (ports, one local
   database) a unit's heavy gates use. Names are lower case, `[a-z0-9][a-z0-9._-]*`; lines
@@ -1679,8 +1685,8 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
 
 ## 2. Transitions the code enforces
 
-`flywheel verify` runs eight rules against every task it is asked about — `VerifyTasks` calls
-`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1`, `ruleW1`, `ruleP1` in that order — and the same
+`flywheel verify` runs ten rules against every task it is asked about — `VerifyTasks` calls
+`ruleT1`, `ruleT3`, `ruleT4`, `ruleT5`, `ruleT8`, `ruleR1`, `ruleW1`, `ruleP1`, `ruleL1`, `ruleV1` in that order — and the same
 rules are enforced **live**, before the record is written, inside `InspectTask` (T3, T4, T8, R1 as
 the refusal rule `review`, and P1 as the refusal rule `panel`) and `LandTask` (T5).
 `ValidateTask` produces the readings T3 needs but enforces nothing itself; it can fail its own
@@ -1785,12 +1791,17 @@ gates (exit 5) without touching the log's legality.
   `lead-built by <session>: <n> changed lines` (`; exception: <text>` when set). With no lead-built
   pass, one passing item: `no lead-built pass over the cap`. Live, `InspectTask` refuses such a pass
   as rule `lead-built` (see `inspected`).
+- **V1 — a vs-base pass is consistent** (issue #788). Every `validated` event with `reason`
+  `vs-base` fails (the reason names the gate and its `ts`) unless its `rc` is 0 and it carries a
+  `vs_base` with a non-empty `base`, a non-zero `rc` and `base_rc` and an empty `new`. A
+  `validated` event with `rc` 0 that carries `vs_base` under another reason fails too. Otherwise
+  one passing item: `no vs-base pass` or `<k> vs-base passes, <n> failing on base too`.
 
 ## 3. Designed, not enforced
 
 `docs/design/autonomous-shipping.md` describes ten transition rules, T1-T10, and a fuller event
 vocabulary (`audited`, `signal`, `dismissed`, `learning`, "by" attribution blocks). Of the T rules,
-T1, T3, T4, T5 and T8 exist in `verify.go` (alongside R1, W1, P1 and L1, §2), and T7 and T9 are enforced
+T1, T3, T4, T5 and T8 exist in `verify.go` (alongside R1, W1, P1, L1 and V1, §2), and T7 and T9 are enforced
 live by `flywheel land` (`land.go`, below). Only the kinds in `events.go`'s known-kinds map exist at
 all — `Validate` rejects any other kind by name — and `audited`, `signal`, `dismissed` and
 `learning` are all in that map, so each is a recognized record (`audited` is written by
@@ -1898,7 +1909,7 @@ Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard,
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1 for the requested
+`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1/L1/V1 for the requested
 tasks (`--all` derives the task list from every `task` seen in the log) and prints one
 `PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
 "items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when
