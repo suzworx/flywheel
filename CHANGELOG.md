@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.70.0](https://github.com/suzworx/flywheel/compare/v0.69.0...v0.70.0) (2026-10-06)
+
+
+### Features
+
+* factory, inspect and verify surface a vs-base gate pass ([#799](https://github.com/suzworx/flywheel/issues/799)) ([1bc6ab9](https://github.com/suzworx/flywheel/commit/1bc6ab91e45a9da9953e55dcf6a1b371b5713778)), closes [#788](https://github.com/suzworx/flywheel/issues/788)
+
+
+### Bug Fixes
+
+* gate[vs-base] on a lead-built unit compares against its planned base ([#801](https://github.com/suzworx/flywheel/issues/801)) ([0befec2](https://github.com/suzworx/flywheel/commit/0befec29f4ce504db3ff37bbf38dabcbba1f2850)), closes [#798](https://github.com/suzworx/flywheel/issues/798)
+
 ## [0.69.0](https://github.com/suzworx/flywheel/compare/v0.68.2...v0.69.0) (2026-10-06)
 
 
