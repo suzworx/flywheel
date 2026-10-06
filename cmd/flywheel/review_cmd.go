@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,9 +16,9 @@ import (
 // reviewUsageLine is the flywheel review usage: a verdict passed in, or the
 // review agent (--agent, issue #389).
 const reviewUsageLine = "usage: flywheel review <task> --verdict pass|correct|reject --session <session> [--model M] [--note NOTE] [--check TEXT]... [--dir DIR] [--workdir PATH]\n" +
-	"       flywheel review <task> --agent --session <session> [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
-	"       flywheel review <task> --agent --fix --session <session> [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--allow-overlap] [--dir DIR]\n" +
-	"       flywheel review <task> --agent --panel --session <session> [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree] [--allow-overlap]] [--dir DIR] [--workdir PATH]\n" +
+	"       flywheel review <task> --agent --session <session> [--base REF] [--worker NAME] [--round N] [--dir DIR] [--workdir PATH]\n" +
+	"       flywheel review <task> --agent --fix --session <session> [--base REF] [--rounds N] [--worker NAME] [--fix-worker NAME] [--worktree] [--allow-overlap] [--dir DIR]\n" +
+	"       flywheel review <task> --agent --panel --session <session> [--base REF] [--round N] [--fix [--rounds N] [--fix-worker NAME] [--worktree] [--allow-overlap]] [--dir DIR] [--workdir PATH]\n" +
 	"       flywheel review --group <goal|tasks:a,b> --agent --session <session> [--base REF] [--worker NAME] [--dir DIR]\n" +
 	"       flywheel review <task> --dismiss <finding-id> --session <lead> --note <why> [--dir DIR]\n" +
 	"       flywheel review calibrate --cases FILE --session <reviewer> [--sample N] [--seed S] [--worker NAME] [--window L] [--main REF] [--panel [dims]] [--out FILE] [--dir DIR]"
@@ -77,7 +78,7 @@ func reviewFlags() (*flag.FlagSet, *reviewOptions) {
 	fs.BoolVar(&o.overlap, "allow-overlap", false, "with --fix: skip the owns-collision refusal for the correction dispatch; the dispatched note records the overlap")
 	fs.StringVar(&o.dismiss, "dismiss", "", "record the lead's dismissal of this finding id (needs --session and --note)")
 	fs.StringVar(&o.group, "group", "", "with --agent: review a group together, a goal id or tasks:<a>,<b>,... (issue #420)")
-	fs.StringVar(&o.base, "base", "", "with --group: the ref the integration tree starts from (default integration.branch, else main)")
+	fs.StringVar(&o.base, "base", "", "the commit the unit's diff starts from (default: its dispatch base, a lead-built unit's planned base); with --group: the ref the integration tree starts from (default integration.branch, else main)")
 	return fs, o
 }
 
@@ -107,8 +108,8 @@ func runReview(args []string) {
 		runReviewGroup(pos, o)
 		return
 	}
-	if o.base != "" {
-		fmt.Fprintf(os.Stderr, "flywheel review: --base needs --group\n")
+	if o.base != "" && !o.agent {
+		fmt.Fprintf(os.Stderr, "flywheel review: --base needs --agent (or --group); a hand verdict reviews the working tree\n")
 		reviewUsage(os.Stderr)
 		os.Exit(2)
 	}
@@ -178,8 +179,9 @@ func runReview(args []string) {
 
 // runReviewAgent implements `flywheel review <task> --agent`: one line per
 // finding, then the verdict. It exits 0 on pass and 1 when the verdict is
-// correct (so a script can loop), 6 on a rule refusal, 2 on a usage error,
-// and 1 on any other error.
+// correct (so a script can loop), 6 on a rule refusal (review-empty on an
+// empty diff), 8 on a --base that does not resolve, 2 on a usage error, and
+// 1 on any other error.
 func runReviewAgent(task string, o *reviewOptions) {
 	if o.verdict != "" || o.note != "" || o.model != "" || len(o.checklist) > 0 {
 		fmt.Fprintf(os.Stderr, "flywheel review: --agent records its own verdict; drop --verdict, --note, --model and --check\n")
@@ -192,14 +194,10 @@ func runReviewAgent(task string, o *reviewOptions) {
 		os.Exit(2)
 	}
 	res, err := flywheel.ReviewAgent(o.dir, task, flywheel.ReviewAgentOptions{
-		Worker: o.worker, Session: o.session, Workdir: o.workdir, Round: o.round, Progress: os.Stderr,
+		Worker: o.worker, Session: o.session, Workdir: o.workdir, Base: o.base, Round: o.round, Progress: os.Stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
-		if flywheel.IsRuleRefusal(err) {
-			os.Exit(6)
-		}
-		os.Exit(1)
+		reviewFail(err)
 	}
 	for _, f := range res.Findings {
 		fmt.Printf("[%s] %s:%d %s\n", f.Severity, f.File, f.Line, f.Claim)
@@ -208,6 +206,22 @@ func runReviewAgent(task string, o *reviewOptions) {
 	if res.Verdict != "pass" {
 		os.Exit(1)
 	}
+}
+
+// reviewFail prints an agent review's error and exits: 8 when it is
+// inconclusive (a --base that does not resolve, issue #789), 6 on a rule
+// refusal (review-empty among them), else 1.
+func reviewFail(err error) {
+	var inc *flywheel.InconclusiveError
+	if errors.As(err, &inc) {
+		fmt.Fprintf(os.Stderr, "flywheel review: inconclusive: %s\n", inc.Fix)
+		os.Exit(8)
+	}
+	fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
+	if flywheel.IsRuleRefusal(err) {
+		os.Exit(6)
+	}
+	os.Exit(1)
 }
 
 // runReviewFix implements `flywheel review <task> --agent --fix` (issue
@@ -235,7 +249,7 @@ func runReviewFix(task string, o *reviewOptions) {
 		Rounds: o.rounds, ReviewSession: o.session, Worker: worker, ReviewWorker: o.worker, Progress: os.Stderr,
 		Review: func(round int) (flywheel.ReviewAgentResult, error) {
 			return flywheel.ReviewAgent(o.dir, task, flywheel.ReviewAgentOptions{
-				Worker: o.worker, Session: o.session, Workdir: o.workdir, Round: round, Progress: os.Stderr,
+				Worker: o.worker, Session: o.session, Workdir: o.workdir, Base: o.base, Round: round, Progress: os.Stderr,
 			})
 		},
 		Correct: func(delta string) (flywheel.Result, error) {
@@ -243,11 +257,7 @@ func runReviewFix(task string, o *reviewOptions) {
 		},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
-		if flywheel.IsRuleRefusal(err) {
-			os.Exit(6)
-		}
-		os.Exit(1)
+		reviewFail(err)
 	}
 	for _, f := range res.Open {
 		fmt.Printf("OPEN %s [%s] %s:%d %s\n", f.Finding, f.Severity, f.Path, f.LineNo, f.Title)
@@ -532,18 +542,12 @@ func runReviewPanelChecked(task string, o *reviewOptions) {
 	var last flywheel.PanelResult
 	panel := func(round int) error {
 		res, err := flywheel.ReviewPanel(o.dir, task, flywheel.ReviewPanelOptions{
-			Session: o.session, Workdir: o.workdir, Round: round, Progress: os.Stderr,
+			Session: o.session, Workdir: o.workdir, Base: o.base, Round: round, Progress: os.Stderr,
 		})
 		last = res
 		return err
 	}
-	fail := func(err error) {
-		fmt.Fprintf(os.Stderr, "flywheel review: %v\n", err)
-		if flywheel.IsRuleRefusal(err) {
-			os.Exit(6)
-		}
-		os.Exit(1)
-	}
+	fail := reviewFail
 	if !o.fix {
 		if err := panel(o.round); err != nil {
 			fail(err)

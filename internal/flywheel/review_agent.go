@@ -160,6 +160,7 @@ type ReviewAgentOptions struct {
 	Dimension string
 	Session   string    // the reviewer session label; required, never a worker session of the task
 	Workdir   string    // the unit's worktree; default: the recorded workdir, else dir
+	Base      string    // the ref the unit's diff starts from; default: reviewBase's (issue #789)
 	Round     int       // review round; <= 0 means the task's next round
 	Progress  io.Writer // one line per step; optional
 	Stdout    io.Writer // the reviewer's text as it arrives; optional
@@ -184,6 +185,41 @@ type ReviewAgentResult struct {
 	// reviewed event (issue #459).
 	Tokens Tokens
 	Cost   float64
+	// Base is the commit the reviewed diff started from ("" = the working
+	// tree's HEAD), recorded on the reviewed event (issue #789).
+	Base string
+}
+
+// reviewBase is the commit a single-task review's diff starts from (issue
+// #789): ref resolved to a commit when given (an InconclusiveError when it
+// does not resolve), else the unit's dispatch base, else a lead-built unit's
+// planned base (leadBuiltBase), else "" (the working tree's HEAD).
+func reviewBase(workdir string, events []Event, task, ref string) (string, error) {
+	if ref != "" {
+		out, err := gitRead(workdir, []string{"rev-parse", "--verify", "--quiet", ref + "^{commit}"})
+		if c := strings.TrimSpace(out); err == nil && c != "" {
+			return c, nil
+		}
+		return "", &InconclusiveError{Fix: fmt.Sprintf("--base %s does not resolve to a commit in %s", ref, workdir)}
+	}
+	if b := dispatchBase(events, task, ""); b != "" {
+		return b, nil
+	}
+	if leadBuilt(events, task) {
+		return leadBuiltBase(events, task), nil
+	}
+	return "", nil
+}
+
+// emptyReviewRefusal refuses (rule review-empty) a review whose base gives
+// no changed paths: there is nothing to review, so no reviewer runs.
+func emptyReviewRefusal(task, base string) *RuleRefusal {
+	from := "the working tree's HEAD"
+	if base != "" {
+		from = shortSHA(base)
+	}
+	return &RuleRefusal{Rule: "review-empty", Fix: fmt.Sprintf("task %s has no changed paths since %s; nothing reviewed, nothing recorded. Name the commit before the unit (flywheel review %s --agent --base <ref>) or the unit's worktree (--workdir <the unit's worktree>)",
+		task, from, task)}
 }
 
 // reviewWorker resolves who runs the review: the named worker; else the
@@ -655,7 +691,19 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 	if res.Round <= 0 {
 		res.Round = nextReviewRound(events, task)
 	}
-	diff, err := reviewDiff(workdir, dispatchBase(events, task, ""), task)
+	// One base for the diff and the changed paths (issue #789); an empty
+	// diff is refused before anything is written, run or recorded.
+	if res.Base, err = reviewBase(workdir, events, task, o.Base); err != nil {
+		return ReviewAgentResult{}, err
+	}
+	changed, err := unitChangedPaths(workdir, res.Base, task)
+	if err != nil {
+		return ReviewAgentResult{}, err
+	}
+	if len(changed) == 0 {
+		return ReviewAgentResult{}, emptyReviewRefusal(task, res.Base)
+	}
+	diff, err := reviewDiff(workdir, res.Base, task)
 	if err != nil {
 		return ReviewAgentResult{}, err
 	}
@@ -679,10 +727,6 @@ func ReviewAgent(dir, task string, o ReviewAgentOptions) (ReviewAgentResult, err
 		return ReviewAgentResult{}, fmt.Errorf("write %s: %w", res.Prompt, err)
 	}
 
-	changed, err := unitChangedPaths(workdir, dispatchBase(events, task, ""), task)
-	if err != nil {
-		return ReviewAgentResult{}, err
-	}
 	progress(o.Progress, fmt.Sprintf("%s review round %d: %s %s", task, res.Round, worker.Adapter, worker.Model))
 	answer, spent, err := runReviewerSpend(dir, workdir, task, adap, reviewRunRequest(task, res.Round, res.Prompt, worker.Model, extra), stem, res.Transcript, o)
 	if err != nil {
@@ -941,6 +985,7 @@ func recordReview(dir, task string, events []Event, workdir string, worker Worke
 	// review_finding event, so it is counted once (issue #459).
 	spent := reviewSpend{Tokens: res.Tokens, Cost: res.Cost}
 	evs[len(evs)-1].Tokens, evs[len(evs)-1].Cost = spent.tokens(), spent.Cost
+	evs[len(evs)-1].Base = res.Base
 	if err := AppendEvents(dir, evs); err != nil {
 		return ReviewAgentResult{}, err
 	}

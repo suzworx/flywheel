@@ -571,7 +571,17 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `reviewed`
 - Written by: `flywheel review <task> --verdict pass|correct|reject --session S [--model M]`, from
   an isolated copy of the tree; by the review agent, `flywheel review <task> --agent --session S
-  [--worker NAME] [--round N]` (issue #389); `flywheel log --kind reviewed` remains valid input.
+  [--base REF] [--worker NAME] [--round N]` (issue #389); `flywheel log --kind reviewed` remains
+  valid input. The agent's diff and changed paths start from one base (issue #789): `--base REF`
+  (a ref that does not resolve to a commit is inconclusive, exit 8, nothing recorded), else the
+  unit's dispatch base, else a lead-built unit's planned base (the HEAD its `planned` event
+  recorded), else the working tree's HEAD. `--base` without `--agent` (a hand verdict) is a usage
+  error, exit 2.
+- Enforced: rule `review-empty` (exit 6, issue #789): when that base gives no changed paths, the
+  review agent and the panel (`--panel`, one refusal before any member) refuse before writing a
+  prompt, running a reviewer or appending any event; the fix names the base used and the remedy,
+  `flywheel review <task> --agent --base <the commit before the unit>` or `--workdir <the unit's
+  worktree>`. The `--fix` loop exits 6 on it too.
 - Carries: `task`, `verdict` (`pass`, `correct`, `reject`, or `crashed` — a panel member whose run
   failed twice, only with a `category`, issue #469 — enforced by `Validate`), `session`,
   `model` (the reviewer's identity), `tree`, `note`, `persona` (`reviewer`). The review agent's
@@ -580,8 +590,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   when any finding is a blocker or major and `pass` otherwise, the note
   `<n> finding(s): <b> blocker, <m> major, <k> minor`, and `tokens` and `cost`: what every reviewer
   run of the round spent (the first run and a retry after a refused answer), summed from the
-  stream the way a worker's are (issue #459). Its `review_finding` events carry none, so the spend
-  counts once; a hand verdict carries neither. `flywheel cost`, `limits.unit_cost_usd`,
+  stream the way a worker's are (issue #459), and `base`, the full commit the reviewed diff started
+  from (omitted when it was the working tree's HEAD, issue #789). Its `review_finding` events carry
+  none, so the spend counts once; a hand verdict carries neither. `flywheel cost`, `limits.unit_cost_usd`,
   `limits.budget` and the floor count a `reviewed` event with `cost` or `tokens` as spend.
 - Effect: `Derive` maps `pass`→`passed`, `correct`→`needs-correction`, `reject`→`rejected`, except
   that a `reviewed` event written by the review agent (persona `reviewer` with an `adapter`) never
