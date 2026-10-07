@@ -188,7 +188,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
   false turns it off, #648, #812). A full-suite gate that fails on the base tree while CI is green
   on that commit is a lint problem (rule `host-dependent-gate`, config `lint.probe_ci`, #809): make
-  it hermetic or run it against a fresh stack before dispatch. A gate over a
+  it hermetic or run it against a fresh stack before dispatch. Set config `gates.env_allow`
+  (names or `PREFIX*` the gates may see, #809) so a test that depends on stray host env fails in
+  the worker's own validate, not in review; the brief's `needs-env:` names pass through too. A gate over a
   generated artifact asserts a minimum count of entries, so it fails on empty output; never gate
   only on equality with another input that could be empty too (#746).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a

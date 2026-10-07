@@ -106,8 +106,14 @@ func AuditTask(dir, task string, o AuditOptions) (AuditResult, error) {
 	}
 	defer os.RemoveAll(tmp)
 
+	// Gates re-run under gates.env_allow plus the brief's needs-env names, as
+	// validate ran them (issue #809).
+	allow, err := gateEnvAllowFor(o.Dir, header.NeedsEnv)
+	if err != nil {
+		return AuditResult{}, err
+	}
 	for i, gate := range header.Gates {
-		rc, _, _, gerr := runGate(tmp, gate)
+		rc, _, _, gerr := runGateBaseEnv(tmp, gate, "", allow)
 		if gerr != nil {
 			return AuditResult{}, gerr
 		}

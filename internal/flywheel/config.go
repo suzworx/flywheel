@@ -77,6 +77,25 @@ type Config struct {
 	LeadBuilt *LeadBuiltConfig `json:"lead_built,omitempty"`
 	// Skills enforces the brief's skills: list (issue #695).
 	Skills *SkillsConfig `json:"skills,omitempty"`
+	// Gates tunes the environment every gate runs in (issue #809).
+	Gates *GatesConfig `json:"gates,omitempty"`
+}
+
+// GatesConfig tunes how gates run (issue #809).
+type GatesConfig struct {
+	// EnvAllow, when set, runs every gate with a clean environment: only the
+	// variables it names (an exact name, or a prefix ending in a single "*")
+	// and the OS essentials (gateEnvEssentials) are inherited, so a gate that
+	// depends on stray host env fails in validate. Unset inherits everything.
+	EnvAllow []string `json:"env_allow,omitempty"`
+}
+
+// GateEnvAllow is gates.env_allow, nil when unset (issue #809).
+func (c Config) GateEnvAllow() []string {
+	if c.Gates == nil {
+		return nil
+	}
+	return c.Gates.EnvAllow
 }
 
 // WorkerPolicy holds project-level worker command rules (issue #692).
@@ -1236,6 +1255,16 @@ func (c Config) validateLoad() error {
 			if r.MinAttempts < 0 {
 				problems = append(problems, fmt.Sprintf("%s: routing.min_attempts %d must be >= 0", where, r.MinAttempts))
 			}
+		}
+	}
+	for j, e := range c.GateEnvAllow() {
+		switch {
+		case strings.TrimSpace(e) == "":
+			problems = append(problems, fmt.Sprintf("gates.env_allow[%d] must not be empty", j))
+		case strings.Contains(e, "="):
+			problems = append(problems, fmt.Sprintf("gates.env_allow[%d] %q must not contain '='", j, e))
+		case strings.Contains(strings.TrimSuffix(e, "*"), "*"):
+			problems = append(problems, fmt.Sprintf("gates.env_allow[%d] %q may only end in a single '*'", j, e))
 		}
 	}
 	if c.Lint != nil {

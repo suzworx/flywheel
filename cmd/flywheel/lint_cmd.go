@@ -96,7 +96,7 @@ func runLint(args []string) {
 			fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
 			os.Exit(1)
 		}
-		probes := flywheel.ProbeGates(o.dir, header.Gates)
+		probes := flywheel.ProbeGatesEnv(o.dir, header.Gates, header.NeedsEnv)
 		probeLint(os.Stderr, brief, probes, &res)
 		cfg, _, err := flywheel.LoadConfig(o.dir)
 		if err != nil {

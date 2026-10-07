@@ -421,7 +421,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		commit := headCommit(wd)
 		holds := holdsResources(header.Resources, header.ResourceGates, i+1)
 		out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, n, gate, false, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseGates, i+1))
+			return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, n, n, gate, false, isQuiet(header.QuietGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseGates, i+1), header.NeedsEnv)
 		})
 		if err != nil {
 			return GaugeResult{}, err
@@ -443,7 +443,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 			commit := headCommit(wd)
 			holds := holdsResources(header.Resources, header.ResourceLiveGates, i+1)
 			out, err := resourceGate(o.Dir, wd, task, attempt, tree, commit, header.Resources, &lockDir, "live"+n, gate, true, holds, quietWait, o.resourceTimings, func(resNote string) (GateOut, error) {
-				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseLiveGates, i+1))
+				return hostGate(o.Dir, wd, task, attempt, tree, commit, base, owns, "live"+n, "live-"+n, gate, true, isQuiet(header.QuietLiveGates, i+1), quietWait, owner, resNote, vsSpec(header.VsBaseLiveGates, i+1), header.NeedsEnv)
 			})
 			if err != nil {
 				return GaugeResult{}, err
@@ -471,7 +471,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 // (UnitBase), exported to the gate as FLYWHEEL_BASE (issue #470). resNote
 // (from resourceGate; may be empty) is joined to the reading's note. vs is
 // the vs-base spec (issue #788), nil for an ordinary gate.
-func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string, resNote string, vs *vsBaseSpec) (GateOut, error) {
+func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live, quiet bool, wait time.Duration, owner func(string) string, resNote string, vs *vsBaseSpec, needsEnv []string) (GateOut, error) {
 	if quiet {
 		release, busy, err := waitQuietGate(dir, task, gateID, wait, now, quietSleep)
 		if err != nil {
@@ -490,14 +490,14 @@ func hostGate(dir, wd, task, attempt, tree, commit, base string, owns []string, 
 			}
 			return GateOut{Gate: gateID, Command: gate, RC: -1, Inconclusive: true, Note: note, Live: live}, nil
 		}
-		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "", resNote, vs)
+		return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, "", resNote, vs, needsEnv)
 	}
 	release, note, err := gateTurn(dir, task, gateID, wait, now, quietSleep)
 	if err != nil {
 		return GateOut{}, err
 	}
 	defer release()
-	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note, resNote, vs)
+	return runAndRecordGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, note, resNote, vs, needsEnv)
 }
 
 // resourceGate runs one gate through run under the brief's resource locks
@@ -564,8 +564,8 @@ func resourceGate(dir, wd, task, attempt, tree, commit string, resources []strin
 // hostNote (from hostGate; may be empty) is recorded as the note when the
 // reading carries no other (issue #411). resNote (a resource lock wait,
 // issue #697; may be empty) is joined with "; " to whatever note results.
-func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec) (GateOut, error) {
-	res, ev, err := measureGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, hostNote, resNote, vs)
+func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec, needsEnv []string) (GateOut, error) {
+	res, ev, err := measureGate(dir, wd, task, attempt, tree, commit, base, owns, gateID, logSuffix, gate, live, owner, hostNote, resNote, vs, needsEnv)
 	if err != nil {
 		return GateOut{}, err
 	}
@@ -580,16 +580,20 @@ func runAndRecordGate(dir, wd, task, attempt, tree, commit, base string, owns []
 // --group (issue #775) can tag it with its group before recording it. vs
 // (nil for an ordinary gate) makes it a vs-base gate (issue #788): a plain
 // failure is compared against base (compareVsBase).
-func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec) (GateOut, Event, error) {
+func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []string, gateID, logSuffix, gate string, live bool, owner func(string) string, hostNote, resNote string, vs *vsBaseSpec, needsEnv []string) (GateOut, Event, error) {
 	logRel := ".flywheel/evidence/" + task + "/" + attempt + "/gate-" + logSuffix + ".log"
 	logPath := filepath.Join(dir, logRel)
-	rc, dur, out, stages, err := runGateStages(wd, gate, base)
+	allow, err := gateEnvAllowFor(dir, needsEnv)
+	if err != nil {
+		return GateOut{}, Event{}, err
+	}
+	rc, dur, out, stages, err := runGateStagesEnv(wd, gate, base, allow)
 	if err != nil {
 		return GateOut{}, Event{}, err
 	}
 	blocked := strings.Contains(string(out), hostBlocked)
 	if blocked {
-		rc2, dur2, out2, stages2, err2 := runGateStages(wd, gate, base)
+		rc2, dur2, out2, stages2, err2 := runGateStagesEnv(wd, gate, base, allow)
 		if err2 != nil {
 			return GateOut{}, Event{}, err2
 		}
@@ -636,7 +640,7 @@ func measureGate(dir, wd, task, attempt, tree, commit, base string, owns []strin
 	// code stays in vs_base.rc.
 	var vsReading *VsBaseReading
 	if vs != nil && !blocked && !masked && !inconclusive && rc != 0 {
-		pass, reading, vnote, err := compareVsBase(dir, task, attempt, logSuffix, gate, rc, out, vs)
+		pass, reading, vnote, err := compareVsBase(dir, task, attempt, logSuffix, gate, rc, out, vs, allow)
 		if err != nil {
 			return GateOut{}, Event{}, err
 		}
@@ -1244,7 +1248,13 @@ func runGate(wd, command string) (rc int, durMS int64, out []byte, err error) {
 // filter passed while an earlier stage failed) reads as that stage's status,
 // pipefail semantics, so every caller treats it as failed.
 func runGateBase(wd, command, base string) (rc int, durMS int64, out []byte, err error) {
-	rc, durMS, out, stages, err := runGateStages(wd, command, base)
+	return runGateBaseEnv(wd, command, base, nil)
+}
+
+// runGateBaseEnv is runGateBase with the inherited environment filtered by
+// gates.env_allow (gateEnv, issue #809); nil allow inherits it all.
+func runGateBaseEnv(wd, command, base string, allow []string) (rc int, durMS int64, out []byte, err error) {
+	rc, durMS, out, stages, err := runGateStagesEnv(wd, command, base, allow)
 	if err != nil {
 		return rc, durMS, out, err
 	}
@@ -1264,9 +1274,23 @@ const pipestatusTrailer = `__fw_rc=$? __fw_ps="${PIPESTATUS[*]}"; printf '%s\n' 
 // returns the exit status of each stage of its last pipeline when the shell is
 // bash (nil under sh or cmd, or when the gate exited before its end).
 func runGateStages(wd, command, base string) (rc int, durMS int64, out []byte, stages []int, err error) {
+	return runGateStagesEnv(wd, command, base, nil)
+}
+
+// runGateStagesEnv is runGateStages with the inherited environment filtered
+// by gates.env_allow (gateEnv, issue #809) before flywheel's own additions
+// (FLYWHEEL_BASE, FLYWHEEL_SLOT, FLYWHEEL_PIPESTATUS_FILE), which a gate
+// always sees. nil allow inherits the environment unchanged.
+func runGateStagesEnv(wd, command, base string, allow []string) (rc int, durMS int64, out []byte, stages []int, err error) {
 	var env []string
+	if allow != nil {
+		env = gateEnv(os.Environ(), allow)
+	}
 	if base != "" {
-		env = append(os.Environ(), "FLYWHEEL_BASE="+base)
+		if env == nil {
+			env = os.Environ()
+		}
+		env = append(env, "FLYWHEEL_BASE="+base)
 	}
 	// Every gate sees its tree's unit slot as FLYWHEEL_SLOT (issue #697).
 	slot, serr := LeaseSlot(wd)

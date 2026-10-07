@@ -1272,6 +1272,17 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   The probe itself (recorded or not) also feeds lint's rule `host-dependent-gate` (issue #809): a
   full-suite gate that fails on the base tree while CI's check runs are green on that commit is a
   lint problem (`lint.probe_ci` false turns it off); recording is unchanged.
+  Config `gates.env_allow` (issue #809, unset by default) runs every gate with a clean
+  environment: a gate inherits only the variables whose name is an entry or starts with an
+  entry's prefix (an entry ending in a single `*`), plus the OS essentials (PATH, PATHEXT, HOME,
+  USERPROFILE, HOMEDRIVE, HOMEPATH, TEMP, TMP, TMPDIR, SystemRoot, SystemDrive, windir, ComSpec,
+  LOCALAPPDATA, APPDATA, ProgramData, ProgramFiles, ProgramFiles(x86), USER, USERNAME, LOGNAME,
+  SHELL, LANG, LC_ALL, TERM) and Windows' `=C:` entries; `FLYWHEEL_BASE`, `FLYWHEEL_SLOT` and
+  `FLYWHEEL_PIPESTATUS_FILE` are added after the filter. Names match case-insensitively on
+  Windows only. A brief's `needs-env:` names (exact) pass through too, wherever its gates run.
+  It applies to validate (and its vs-base run, whose cache is keyed on the list),
+  this probe, `review --group` gates and the review and audit re-runs. An empty entry, one with
+  `=`, or a `*` anywhere but last is a config error naming `gates.env_allow[i]`.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a

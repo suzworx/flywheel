@@ -162,9 +162,15 @@ type GroupGate struct {
 // combined output), in order; a gate that cannot start reads rc -1 with the
 // error as its output.
 func runGroupGates(wt string, gates []string) []GroupGate {
+	return runGroupGatesEnv(wt, gates, nil)
+}
+
+// runGroupGatesEnv is runGroupGates under gates.env_allow (issue #809); nil
+// allow inherits the environment unchanged.
+func runGroupGatesEnv(wt string, gates, allow []string) []GroupGate {
 	var out []GroupGate
 	for i, g := range gates {
-		rc, dur, text, err := runGate(wt, g)
+		rc, dur, text, err := runGateBaseEnv(wt, g, "", allow)
 		if err != nil {
 			rc, text = -1, []byte(err.Error())
 		}
@@ -353,7 +359,7 @@ func ReviewGroup(dir, group string, o ReviewGroupOptions) (GroupResult, error) {
 		return GroupResult{}, err
 	}
 	commit := headCommit(wt)
-	r.Gates = runGroupGates(wt, cfg.ReviewGroupGates())
+	r.Gates = runGroupGatesEnv(wt, cfg.ReviewGroupGates(), cfg.GateEnvAllow())
 	diff, err := gitRead(wt, []string{"diff", "--no-color", baseSHA, "HEAD"})
 	if err != nil {
 		return GroupResult{}, err
