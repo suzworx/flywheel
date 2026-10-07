@@ -207,7 +207,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `dispatched` event) with `lint.red_first` on when no `gate_probed` event recorded before it
   failed on a gate still in the brief: run refuses with rule `red-first` (exit 6) before preflight
   and the dispatch lock (only a `dispatch_refused` event is recorded), so a missed probe costs no
-  paid attempt ([#812](https://github.com/suzworx/flywheel/issues/812)). Red-first (issue #648) is
+  paid attempt ([#812](https://github.com/suzworx/flywheel/issues/812)). A correction (`--delta` or
+  `--resume`) of a dispatched `kind: fix` task whose merged gates drop every red-probed gate the
+  replaced attempt kept is refused the same way, its fix naming the gate to keep verbatim
+  ([#825](https://github.com/suzworx/flywheel/issues/825)). Red-first (issue #648) is
   also a `flywheel lint --probe` problem for a `kind: fix` brief whose gates all pass on the base
   tree (config `lint.red_first` false turns it off), and `flywheel inspect --verdict pass` enforces
   it with rule `red-first` from the `gate_probed` events recorded before this event. Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
@@ -1276,7 +1279,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   keeps the newest pre-dispatch probe per `command` and refuses (rule `red-first`, exit 6) unless
   one has an `rc` other than 0, 126 and 127 on a command still among the effective brief's gates.
   `flywheel run` refuses the task's first dispatch the same way (rule `red-first`, exit 6, issue
-  #812), so the missing probe is caught before a paid attempt. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
+  #812), so the missing probe is caught before a paid attempt, and refuses a correction
+  (`--delta`/`--resume`) whose merged gates drop every red-probed gate the replaced attempt kept
+  (issue #825): no probe after dispatch counts. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
   The probe itself (recorded or not) also feeds lint's rule `host-dependent-gate` (issue #809): a
   full-suite gate that fails on the base tree while CI's check runs are green on that commit is a
   lint problem (`lint.probe_ci` false turns it off); recording is unchanged.
