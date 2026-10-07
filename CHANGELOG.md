@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.0](https://github.com/suzworx/flywheel/compare/v0.70.5...v0.71.0) (2026-10-07)
+
+
+### Features
+
+* gates.env_allow runs every gate with a clean, allow-listed environment ([#817](https://github.com/suzworx/flywheel/issues/817)) ([49c3060](https://github.com/suzworx/flywheel/commit/49c3060dc228dc6f751335b81ff83ebfe6c6394c)), closes [#809](https://github.com/suzworx/flywheel/issues/809)
+
 ## [0.70.5](https://github.com/suzworx/flywheel/compare/v0.70.4...v0.70.5) (2026-10-07)
 
 
