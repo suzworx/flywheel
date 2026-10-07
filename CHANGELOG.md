@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.1](https://github.com/suzworx/flywheel/compare/v0.71.0...v0.71.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* run --worktree checks the worktree's own node_modules for links into the main checkout ([#820](https://github.com/suzworx/flywheel/issues/820)) ([f3b376e](https://github.com/suzworx/flywheel/commit/f3b376e8a74aee3160bc4f963bdee8e6c2efcfa3)), closes [#819](https://github.com/suzworx/flywheel/issues/819)
+
 ## [0.71.0](https://github.com/suzworx/flywheel/compare/v0.70.5...v0.71.0) (2026-10-07)
 
 
