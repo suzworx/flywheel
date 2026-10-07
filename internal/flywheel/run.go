@@ -2068,7 +2068,10 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // (ownsCompanionsRefusal, issue #785) refuse with rule owns-companions. A
 // kind: fix first dispatch (no --resume, no --delta, no dispatched event) with
 // no red pre-dispatch gate probe (redFirstRefusal, issue #812) refuses with
-// rule red-first. Owns under .claude/ (issue #696,
+// rule red-first. A correction (--delta or --resume) of a dispatched task
+// whose merged header drops every red-probed gate the replaced attempt's
+// header kept (redFirstDeltaRefusal, issue #825) refuses with rule red-first
+// too. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A skills: entry (issue #695, merged the same way) not installed where
@@ -2100,10 +2103,14 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		return src, b, nil
 	}
 	needs, pre, gates, owns, skills, agent := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.Owns, ph.Skills, ph.Agent
+	// replaced and merged are the headers of the attempt a correction
+	// replaces and of the correction itself (issue #825).
+	var replaced, merged *BriefHeader
 	if o.Resume || o.DeltaPath != "" {
 		var baseHeader BriefHeader
 		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
 			baseHeader = h
+			replaced = &h
 		}
 		needs = unionStrings(baseHeader.NeedsEnv, ph.NeedsEnv)
 		pre = unionStrings(baseHeader.Preflight, ph.Preflight)
@@ -2121,6 +2128,10 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
 		if h, _, aerr := AttemptBrief(dir, probe, o.Task); aerr == nil {
 			gates, owns = h.Gates, h.Owns
+			if h.Kind == "" {
+				h.Kind = baseHeader.Kind
+			}
+			merged = &h
 		}
 	}
 	if fix := claudeDirProblem(w, owns); fix != "" {
@@ -2162,6 +2173,13 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	dispatched := slices.ContainsFunc(events, func(e Event) bool { return e.Task == o.Task && e.Kind == "dispatched" })
 	if !o.Resume && o.DeltaPath == "" && !dispatched {
 		if r := redFirstRefusal(events, o.Task, ph, cfg.LintRedFirst()); r != nil {
+			return "", nil, r
+		}
+	}
+	// A correction (issue #825) whose merged gates drop the red-probed gate
+	// could never pass inspect either: no probe after dispatch counts.
+	if dispatched && replaced != nil && merged != nil {
+		if r := redFirstDeltaRefusal(events, o.Task, *replaced, *merged, cfg.LintRedFirst()); r != nil {
 			return "", nil, r
 		}
 	}

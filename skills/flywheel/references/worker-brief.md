@@ -187,7 +187,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
   `--task` before dispatch, or lint reports a problem, `flywheel run` refuses the first dispatch
   and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
-  false turns it off, #648, #812). A full-suite gate that fails on the base tree while CI is green
+  false turns it off, #648, #812); a correction delta must keep the red-probed `gate:` line
+  verbatim (add new gates as more lines) or `flywheel run` refuses it too (#825). A full-suite gate that fails on the base tree while CI is green
   on that commit is a lint problem (rule `host-dependent-gate`, config `lint.probe_ci`, #809): make
   it hermetic or run it against a fresh stack before dispatch. Set config `gates.env_allow`
   (names or `PREFIX*` the gates may see, #809) so a test that depends on stray host env fails in
