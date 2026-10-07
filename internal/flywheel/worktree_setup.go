@@ -339,11 +339,13 @@ func installedDirs(wt string, paths []string) bool {
 // After the copies it runs one package-manager install for the installs paths
 // (needs-state "(install)", issue #460), recorded as Installed and Install; an
 // install path that is also linked, a missing lockfile or a failed install is
-// a RuleRefusal, and setup does not run.
+// a RuleRefusal, and setup does not run. Last, on every successful path and
+// even when nothing is configured, finishWorktreeSetup checks for a
+// node_modules inherited from the main checkout (issue #802).
 func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies, installs []string) ([]string, error) {
 	command := cfg.SetupCommand()
 	if len(links) == 0 && len(copies) == 0 && len(installs) == 0 && command == "" {
-		return nil, nil
+		return finishWorktreeSetup(dir, wt, cfg, Event{Task: task, Kind: "worktree_setup", Attempt: attempt}, nil, false)
 	}
 	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Linked: links, Installed: installs, Command: command}
 	for _, in := range installs {
@@ -395,7 +397,7 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies, i
 	}
 	ev.Copied = copies
 	if len(installs) == 0 && command == "" {
-		return warnings, AppendEvent(dir, ev)
+		return finishWorktreeSetup(dir, wt, cfg, ev, warnings, true)
 	}
 	timeout, err := cfg.SetupTimeoutDuration()
 	if err != nil {
@@ -418,19 +420,97 @@ func prepareWorktree(dir, wt, task, attempt string, cfg Config, links, copies, i
 		if serr != nil {
 			ev.Note = clipSetupNote(serr.Error() + "\n" + tail)
 		}
-		if err := AppendEvent(dir, ev); err != nil {
-			return warnings, err
-		}
 		if serr != nil || rc != 0 {
+			if err := AppendEvent(dir, ev); err != nil {
+				return warnings, err
+			}
 			why := fmt.Sprintf("exited %d", rc)
 			if serr != nil {
 				why = serr.Error()
 			}
 			return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("worktree.setup %q %s in %s; fix it (flywheel config set worktree.setup ...) and dispatch again; output tail:\n%s", command, why, wt, tail)}
 		}
-		return warnings, nil
 	}
-	return warnings, AppendEvent(dir, ev)
+	return finishWorktreeSetup(dir, wt, cfg, ev, warnings, true)
+}
+
+// inheritedModules is the ancestor node_modules a worktree would resolve
+// packages from (issue #802): Node's resolver walks up parent directories, so
+// a nested worktree with a package.json but no node_modules (and no Yarn PnP
+// .pnp.cjs) of its own imports the main checkout's packages. It returns the
+// absolute path of the first node_modules directory between the worktree and
+// the main checkout root (root included, nothing above it), or "" when wt is
+// not strictly inside root, has no package.json, has its own node_modules or
+// .pnp.cjs, or no such ancestor holds one.
+func inheritedModules(root, wt string) (string, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(wt)
+	if err != nil {
+		return "", err
+	}
+	if !within(abs, absRoot) || within(absRoot, abs) {
+		return "", nil
+	}
+	fi, err := os.Stat(filepath.Join(abs, "package.json"))
+	if errors.Is(err, os.ErrNotExist) || (err == nil && !fi.Mode().IsRegular()) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, own := range []string{"node_modules", ".pnp.cjs"} {
+		_, err := os.Stat(filepath.Join(abs, own))
+		if err == nil {
+			return "", nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	for dir := filepath.Dir(abs); ; {
+		p := filepath.Join(dir, "node_modules")
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p, nil
+		}
+		parent := filepath.Dir(dir)
+		if within(absRoot, dir) || parent == dir {
+			return "", nil
+		}
+		dir = parent
+	}
+}
+
+// finishWorktreeSetup checks wt for a node_modules inherited from between the
+// worktree and the main checkout root dir (issue #802) and appends ev, the
+// last step of a prepareWorktree that got this far. An inherited node_modules
+// is recorded as Inherited and returned as a warning line; with
+// worktree.strict_links it is a setup RuleRefusal too. When nothing was
+// configured (record false) and nothing is inherited it records nothing. A
+// failed check is a warning line, never a refusal.
+func finishWorktreeSetup(dir, wt string, cfg Config, ev Event, warnings []string, record bool) ([]string, error) {
+	inherited, err := inheritedModules(dir, wt)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("warning: could not check worktree for inherited node_modules: %v", err))
+	}
+	if inherited == "" {
+		if !record {
+			return warnings, nil
+		}
+		return warnings, AppendEvent(dir, ev)
+	}
+	ev.Inherited = inherited
+	warnings = append(warnings, fmt.Sprintf("warning: worktree %s has a package.json but no node_modules of its own, so Node resolves packages from %s (the main checkout's); the unit's gates would import the main checkout's copies; add needs-state: node_modules/ (install) to the brief (see issue #802)", wt, inherited))
+	if !cfg.StrictLinks() {
+		return warnings, AppendEvent(dir, ev)
+	}
+	ev.Note = clipSetupNote("refused: worktree.strict_links and the worktree has no node_modules of its own, so Node resolves packages from " + inherited)
+	if err := AppendEvent(dir, ev); err != nil {
+		return warnings, err
+	}
+	return warnings, &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("worktree %s has a package.json but no node_modules of its own, so its gates would import the main checkout's packages from %s, and worktree.strict_links is true; add needs-state: node_modules/ (install) (or a worktree.setup that installs), then dispatch again (issue #802)", wt, inherited)}
 }
 
 // clipSetupNote keeps the last 2000 bytes of a setup note.
