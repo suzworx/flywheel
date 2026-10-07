@@ -195,6 +195,11 @@ type LintConfig struct {
 	// reports a problem and inspect refuses a pass with rule red-first. nil
 	// means on; false turns it off.
 	RedFirst *bool `json:"red_first,omitempty"`
+	// ProbeCI makes lint --probe ask CI about a full-suite gate that fails on
+	// the base tree (issue #809): CI green on that commit means the gate
+	// depends on the host, a problem with rule host-dependent-gate. nil means
+	// on; false turns it off.
+	ProbeCI *bool `json:"probe_ci,omitempty"`
 }
 
 // LintRedFirst is lint.red_first, true when unset (issue #648).
@@ -203,6 +208,14 @@ func (c Config) LintRedFirst() bool {
 		return true
 	}
 	return *c.Lint.RedFirst
+}
+
+// LintProbeCI is lint.probe_ci, true when unset (issue #809).
+func (c Config) LintProbeCI() bool {
+	if c.Lint == nil || c.Lint.ProbeCI == nil {
+		return true
+	}
+	return *c.Lint.ProbeCI
 }
 
 // LeadBuiltConfig caps a lead-built unit (issue #722): a unit with no

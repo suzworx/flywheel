@@ -186,7 +186,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
   `--task` before dispatch, or lint reports a problem, `flywheel run` refuses the first dispatch
   and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
-  false turns it off, #648, #812). A gate over a
+  false turns it off, #648, #812). A full-suite gate that fails on the base tree while CI is green
+  on that commit is a lint problem (rule `host-dependent-gate`, config `lint.probe_ci`, #809): make
+  it hermetic or run it against a fresh stack before dispatch. A gate over a
   generated artifact asserts a minimum count of entries, so it fails on empty output; never gate
   only on equality with another input that could be empty too (#746).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a

@@ -984,6 +984,23 @@ func (w fullSuiteWant) String() string {
 // sorted order. No gates at all misses every want; lintBrief only warns on
 // that when there are gates.
 func fullSuiteMissing(dir string, lc *LintConfig, gates, owns []string) ([]fullSuiteWant, error) {
+	wants, err := fullSuiteWants(dir, lc, owns)
+	if err != nil {
+		return nil, err
+	}
+	var missing []fullSuiteWant
+	for _, w := range wants {
+		if !slices.ContainsFunc(gates, regexp.MustCompile(w.Pattern).MatchString) {
+			missing = append(missing, w)
+		}
+	}
+	return missing, nil
+}
+
+// fullSuiteWants returns the full-suite patterns lint wants for owns (issue
+// #652), sorted by prefix, selected as fullSuiteMissing describes; nil means
+// no check. An invalid pattern returns an error naming its config key.
+func fullSuiteWants(dir string, lc *LintConfig, owns []string) ([]fullSuiteWant, error) {
 	if lc == nil {
 		lc = &LintConfig{}
 	}
@@ -1020,13 +1037,7 @@ func fullSuiteMissing(dir string, lc *LintConfig, gates, owns []string) ([]fullS
 		wants = []fullSuiteWant{{Pattern: pattern}}
 	}
 	slices.SortFunc(wants, func(a, b fullSuiteWant) int { return strings.Compare(a.Prefix, b.Prefix) })
-	var missing []fullSuiteWant
-	for _, w := range wants {
-		if !slices.ContainsFunc(gates, regexp.MustCompile(w.Pattern).MatchString) {
-			missing = append(missing, w)
-		}
-	}
-	return missing, nil
+	return wants, nil
 }
 
 // requiredGateWant is one lint.required_gates pattern no gate matched (issue

@@ -1269,6 +1269,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   one has an `rc` other than 0, 126 and 127 on a command still among the effective brief's gates.
   `flywheel run` refuses the task's first dispatch the same way (rule `red-first`, exit 6, issue
   #812), so the missing probe is caught before a paid attempt. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
+  The probe itself (recorded or not) also feeds lint's rule `host-dependent-gate` (issue #809): a
+  full-suite gate that fails on the base tree while CI's check runs are green on that commit is a
+  lint problem (`lint.probe_ci` false turns it off); recording is unchanged.
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a
