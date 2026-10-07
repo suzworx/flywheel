@@ -324,7 +324,13 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   stderr, since the unit's gates would import the main checkout's copies (use `needs-state: <path>
   (install)` instead); with `worktree.strict_links` true (default `false`) it also refuses
   the dispatch (rule `setup`, the event still recorded with `escaped` and a `note` saying it was
-  refused, and setup does not run).
+  refused, and setup does not run). After the install and a successful setup (and even when nothing
+  is configured), a worktree with a `package.json` but no `node_modules` or `.pnp.cjs` of its own is
+  checked for an ancestor `node_modules` up to the main checkout root (never above it) that Node's
+  parent lookup would resolve packages from, the main checkout's (issue #802): it is recorded as `inherited` (an absolute path) and prints
+  `warning: worktree <wt> has a package.json but no node_modules of its own, so Node resolves
+  packages from <path> ...`; with `worktree.strict_links` true it also refuses the dispatch (rule
+  `setup`, the event still recorded with `inherited` and a `note` saying it was refused).
 
 ### `staged`
 - Written by: the CLI only, via `flywheel validate <task>` (issue #781), before the gates and before

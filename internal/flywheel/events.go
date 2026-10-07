@@ -106,6 +106,10 @@ type Event struct {
 	// Escaped is a worktree_setup event's entries inside the linked paths
 	// that are links resolving into the main checkout (issue #460).
 	Escaped []string `json:"escaped,omitempty"`
+	// Inherited is a worktree_setup event's ancestor node_modules the
+	// worktree would resolve packages from, having a package.json but no
+	// node_modules of its own (issue #802).
+	Inherited string `json:"inherited,omitempty"`
 	// Copied is a worktree_setup event's needs-state "(copy)" and
 	// worktree.carry paths copied from the repo into the task's worktree:
 	// the paths only, never their contents (issue #471).
@@ -337,8 +341,8 @@ var kinds = map[string]bool{
 	"group_reviewed": true,
 	// worktree_setup records `flywheel run --worktree` preparing the task's
 	// worktree before dispatch (issue #430): Linked, Escaped (issue #460),
-	// Copied (issue #471), Installed and Install (issue #460), RC, DurationMS
-	// and Note (the setup output tail).
+	// Copied (issue #471), Installed and Install (issue #460), Inherited
+	// (issue #802), RC, DurationMS and Note (the setup output tail).
 	"worktree_setup": true,
 	// staged records `flywheel validate` applying the brief's stage: lines
 	// before the gates (issue #781): Staged the files, Attempt and Workdir.

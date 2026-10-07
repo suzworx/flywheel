@@ -263,7 +263,9 @@ type WorktreeConfig struct {
 	// SetupTimeout bounds Setup, a Go duration; "" means 10m.
 	SetupTimeout string `json:"setup_timeout,omitempty"`
 	// StrictLinks refuses a dispatch whose needs-state "(link)" paths hold
-	// links into the main checkout (issue #460); false only warns.
+	// links into the main checkout (issue #460), or whose worktree has a
+	// package.json but no node_modules and so inherits the main checkout's
+	// through Node's parent lookup (issue #802); false only warns.
 	StrictLinks bool `json:"strict_links,omitempty"`
 	// Carry lists repo-relative paths copied from the main checkout into the
 	// task's worktree on every --worktree dispatch, a git-ignored .env say
