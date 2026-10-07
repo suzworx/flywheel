@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,12 @@ type RunRequest struct {
 	// passes --agents AgentJSON --agent Agent when Agent is set.
 	Agent     string
 	AgentJSON string
+	// Workdir is the worker's absolute tree when it differs from the flywheel
+	// root Root (a --worktree or --workdir unit, or a correction continuing in
+	// the recorded workdir; issue #805); both are empty otherwise. The lead
+	// message names the tree (withWorkdir).
+	Workdir string
+	Root    string
 }
 
 // emptyMCPConfig is the explicit empty MCP server set a claude dispatch
@@ -83,6 +90,37 @@ func freshPrompt(r RunRequest) string {
 		p = fmt.Sprintf("%s Load these skills before any other work: %s.", p, strings.Join(r.Skills, ", "))
 	}
 	return p
+}
+
+// withWorkdir appends to the lead message msg the sentence naming the
+// worker's tree when r.Workdir is set (issue #805): every path in the brief or
+// correction is relative to it, and the flywheel root r.Root (named only when
+// set) is not it. An empty r.Workdir returns msg unchanged.
+func withWorkdir(msg string, r RunRequest) string {
+	if r.Workdir == "" {
+		return msg
+	}
+	msg += " Your working directory is " + r.Workdir + ": every path in the brief or correction is relative to it"
+	if r.Root == "" {
+		return msg + "."
+	}
+	return msg + "; " + r.Root + " is the flywheel root, not your tree, so never read or edit files there."
+}
+
+// withWorkdirArg is withWorkdir for an adapter that passes the message as a
+// command-line argument: on Windows its npm .cmd shim runs it through cmd.exe,
+// so a Workdir or Root that is not cmdSafe leaves the sentence out.
+func withWorkdirArg(msg string, r RunRequest) string {
+	if runtime.GOOS == "windows" && (!cmdSafe(r.Workdir) || !cmdSafe(r.Root)) {
+		return msg
+	}
+	return withWorkdir(msg, r)
+}
+
+// cmdSafe reports whether s holds none of cmd.exe's metacharacters
+// (& | < > ^ % ! ") and no newline.
+func cmdSafe(s string) bool {
+	return !strings.ContainsAny(s, "&|<>^%!\"\r\n")
 }
 
 // Observation is one decoded event from a run stream.
@@ -214,6 +252,7 @@ func (a opencodeAdapter) Command(r RunRequest) (string, []string) {
 	if r.Resume {
 		msg = resumeMessage
 	}
+	msg = withWorkdirArg(msg, r)
 	args := []string{"run", "--pure", "-m", r.Model}
 	if r.Variant != "" {
 		args = append(args, "--variant", r.Variant)
@@ -534,6 +573,7 @@ func (a claudeAdapter) Stdin(r RunRequest) io.Reader {
 	if r.Resume && r.Session != "" {
 		msg = resumeMessage
 	}
+	msg = withWorkdir(msg, r)
 	return io.MultiReader(strings.NewReader(msg+"\n"), bytes.NewReader(prompt))
 }
 
@@ -833,7 +873,7 @@ func (a codexAdapter) Command(r RunRequest) (string, []string) {
 	if resuming {
 		msg = resumeMessage
 	}
-	prompt := msg
+	prompt := withWorkdirArg(msg, r)
 	if r.PromptFile != "" {
 		prompt += " The brief is the file " + r.PromptFile + "; read all of it before doing anything else."
 	}

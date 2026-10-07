@@ -655,6 +655,10 @@ gate: go test ./internal/...
 Correction: <the defect, the evidence, the fix>
 ```
 
+On a `--worktree` or `--workdir` unit, flywheel's lead message (fresh and correction alike) names
+the worker's absolute tree and says the flywheel root is not it (#805); a delta still names paths
+relative to the tree.
+
 `flywheel run` warns when a delta has no header, naming what it inherits. A delta repeats the
 brief's `gate:` lines or declares none to inherit them; placeholder text such as
 `gate: (as the brief)` is not a command, and `flywheel lint` and `flywheel run` refuse it.
