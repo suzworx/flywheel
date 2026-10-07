@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem)\n    --task ID with --probe records each probe in the ledger, so validate and explain can tell a broken gate from broken work\n    exit 1 on any problem; warnings alone exit 0", runLint)
+	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem;\n      a full-suite gate failing while CI is green on that commit is a problem, rule host-dependent-gate, lint.probe_ci)\n    --task ID with --probe records each probe in the ledger, so validate and explain can tell a broken gate from broken work\n    exit 1 on any problem; warnings alone exit 0", runLint)
 	registerHelp("lint", "flywheel lint <brief> [--probe [--task ID]] [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
 }
 
@@ -106,6 +106,10 @@ func runLint(args []string) {
 		if p := flywheel.RedFirstLintProblem(header.Kind, cfg.LintRedFirst(), probes); p != "" {
 			res.Problems = append(res.Problems, p)
 		}
+		probs, warns := flywheel.HostDependentGateFindings(o.dir, cfg.Lint, header.Owns, header.Gates, probes,
+			flywheel.HeadCommit(o.dir), cfg.LintProbeCI(), flywheel.GhIn(o.dir))
+		res.Problems = append(res.Problems, probs...)
+		res.Warnings = append(res.Warnings, warns...)
 		if o.task != "" {
 			if err := flywheel.RecordGateProbes(o.dir, o.task, header.Gates, probes); err != nil {
 				fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
