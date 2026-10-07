@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -26,10 +27,18 @@ func lintFlags() (*flag.FlagSet, *lintOptions) {
 	fs := flag.NewFlagSet("lint", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	o := &lintOptions{}
-	fs.StringVar(&o.dir, "dir", ".", "target directory")
+	fs.StringVar(&o.dir, "dir", ".", "target directory (default: the nearest ancestor holding .flywheel/, else the git top level, else .)")
 	fs.BoolVar(&o.probe, "probe", false, "run each gate: once in the target directory after a clean lint")
 	fs.StringVar(&o.task, "task", "", "with --probe, record each probe as a gate_probed event for this task")
 	return fs, o
+}
+
+// sameAbs reports whether a and b are the same path once made absolute and
+// cleaned.
+func sameAbs(a, b string) bool {
+	aa, errA := filepath.Abs(a)
+	ab, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && aa == ab
 }
 
 // lintUsage prints the flywheel lint usage line.
@@ -64,6 +73,16 @@ func runLint(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel lint: task %q does not match ^[A-Za-z0-9._-]+$\n", o.task)
 		lintUsage(os.Stderr)
 		os.Exit(2)
+	}
+	// Without --dir, owns and probes resolve from the flywheel root, so lint
+	// works from any subdirectory (issue #808).
+	dirSet := false
+	fs.Visit(func(f *flag.Flag) { dirSet = dirSet || f.Name == "dir" })
+	if !dirSet {
+		o.dir = flywheel.LintDir(".")
+		if !sameAbs(o.dir, ".") {
+			fmt.Fprintf(os.Stderr, "lint: resolving paths against %s (the flywheel root); pass --dir to override\n", o.dir)
+		}
 	}
 	brief := pos[0]
 	res, err := flywheel.LintBrief(o.dir, brief)

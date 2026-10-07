@@ -92,14 +92,18 @@ func TestLintBriefNoChecksAlone(t *testing.T) {
 	t.Parallel()
 	res := lintCheck(t, t.TempDir(), []string{"a.go"},
 		"owns: a.go\nneeds: none\ngate: true\n\n# TASK: x\nAt most one write per response\nreport\n")
-	want(t, res, []string{"no ## Checks section"}, nil)
+	want(t, res, []string{noChecksProblem}, nil)
 }
+
+// noChecksProblem is the problem text for a brief with no ## Checks section.
+const noChecksProblem = "no ## Checks section; add one listing, for each gate, what the report must show (the gate's command and its real exit code)"
 
 func TestLintBriefOwnsMissingFileAlone(t *testing.T) {
 	t.Parallel()
-	res := lintCheck(t, t.TempDir(), nil,
+	dir := t.TempDir()
+	res := lintCheck(t, dir, nil,
 		"owns: missing.go\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns path missing.go does not exist; if the unit creates it, annotate it: missing.go (new)"}, nil)
+	want(t, res, []string{"owns path missing.go does not exist under " + dir + "; if the unit creates it, annotate it: missing.go (new)"}, nil)
 }
 
 func TestLintBriefOwnsMissingFileNamesNewAnnotation(t *testing.T) {
@@ -122,7 +126,7 @@ func TestLintBriefSeveralErrorsTogether(t *testing.T) {
 		"missing owns: line",
 		"no # TASK heading",
 		"no gate: line",
-		"no ## Checks section",
+		noChecksProblem,
 	}, []string{`write rule "At most one write per response" is absent`})
 }
 
@@ -156,9 +160,10 @@ func TestLintBriefOwnsPatternMatchPasses(t *testing.T) {
 
 func TestLintBriefOwnsPatternNoMatchAlone(t *testing.T) {
 	t.Parallel()
-	res := lintCheck(t, t.TempDir(), nil,
+	dir := t.TempDir()
+	res := lintCheck(t, dir, nil,
 		"owns: src/*.none.ts\nneeds: none\ngate: true\n\n# TASK: x\n## Checks\nAt most one write per response\nreport\n")
-	want(t, res, []string{"owns pattern src/*.none.ts matches no file; if the unit creates it, annotate it: src/*.none.ts (new)"}, nil)
+	want(t, res, []string{"owns pattern src/*.none.ts matches no file under " + dir + "; if the unit creates it, annotate it: src/*.none.ts (new)"}, nil)
 }
 
 func TestLintBriefOwnsPatternNoMatchNamesNewAnnotation(t *testing.T) {
