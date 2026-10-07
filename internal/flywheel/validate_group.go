@@ -188,7 +188,7 @@ func groupGates(dir, wd string, events []Event, headers []BriefHeader, owns []st
 				if err != nil {
 					return err
 				}
-				r.out, r.ev, err = measureGate(dir, wd, mr.Task, mr.Attempt, res.Tree, res.Commit, UnitBase(events, mr.Task), owns, n, n, gate, false, nil, note, "", nil)
+				r.out, r.ev, err = measureGate(dir, wd, mr.Task, mr.Attempt, res.Tree, res.Commit, UnitBase(events, mr.Task), owns, n, n, gate, false, nil, note, "", nil, headers[i].NeedsEnv)
 				release()
 				if err != nil {
 					return err

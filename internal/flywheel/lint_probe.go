@@ -26,11 +26,25 @@ const probeFirstLineMax = 160
 // ProbeGates runs every gate once, in order, in dir, with the runner validate
 // uses, and FLYWHEEL_BASE set to dir's HEAD commit (unset when dir is not a
 // git repo), so a `git diff --check "$FLYWHEEL_BASE"` gate probes cleanly.
+// Gates run under dir's gates.env_allow (issue #809), as validate runs them;
+// a config that cannot load makes every probe a cannot-start with its error.
 func ProbeGates(dir string, gates []string) []GateProbe {
+	return ProbeGatesEnv(dir, gates, nil)
+}
+
+// ProbeGatesEnv is ProbeGates for a brief whose `needs-env:` line names
+// needsEnv: those names pass through gates.env_allow too (gateAllowFor), as
+// they do in validate.
+func ProbeGatesEnv(dir string, gates, needsEnv []string) []GateProbe {
 	base := headCommit(dir)
 	probes := make([]GateProbe, 0, len(gates))
+	allow, aerr := gateEnvAllowFor(dir, needsEnv)
 	for i, g := range gates {
-		rc, dur, out, err := runGateBase(dir, g, base)
+		if aerr != nil {
+			probes = append(probes, GateProbe{N: i + 1, Err: aerr, CannotStart: true})
+			continue
+		}
+		rc, dur, out, err := runGateBaseEnv(dir, g, base, allow)
 		p := GateProbe{N: i + 1, RC: rc, DurMS: dur, Err: err, FirstLine: firstLine(out)}
 		p.CannotStart = err != nil || rc == 127 || rc == 126
 		probes = append(probes, p)

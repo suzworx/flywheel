@@ -82,9 +82,15 @@ func ReviewTask(dir, task string, o ReviewOptions) (ReviewResult, error) {
 		return ReviewResult{}, err
 	}
 	defer os.RemoveAll(tmp)
+	// Gates re-run under gates.env_allow plus the brief's needs-env names, as
+	// validate ran them (issue #809).
+	allow, err := gateEnvAllowFor(o.Dir, header.NeedsEnv)
+	if err != nil {
+		return ReviewResult{}, err
+	}
 	for i, gate := range header.Gates {
 		n := strconv.Itoa(i + 1)
-		rc, _, _, gerr := runGate(tmp, gate)
+		rc, _, _, gerr := runGateBaseEnv(tmp, gate, "", allow)
 		if gerr != nil {
 			return ReviewResult{}, gerr
 		}

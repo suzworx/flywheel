@@ -80,6 +80,7 @@ func runValidateGroup(o *validateOptions, pos []string) {
 		os.Exit(1)
 	}
 	id := flywheel.GroupID(o.group)
+	printGateEnv(o.dir)
 	for _, g := range res.Gates {
 		switch {
 		case g.HostBlocked:
@@ -109,6 +110,17 @@ func runValidateGroup(o *validateOptions, pos []string) {
 		os.Exit(0)
 	}
 	os.Exit(5)
+}
+
+// printGateEnv prints, before the gate lines, that the gates ran with a clean
+// environment when dir's gates.env_allow is set (issue #809). The gates have
+// already loaded the config, so an error here is not reported twice.
+func printGateEnv(dir string) {
+	cfg, _, err := flywheel.LoadConfig(dir)
+	if err != nil || cfg.GateEnvAllow() == nil {
+		return
+	}
+	fmt.Printf("gates run with a clean env: gates.env_allow (%d entries) plus the OS essentials\n", len(cfg.GateEnvAllow()))
 }
 
 // runValidate implements `flywheel validate <task>`: run the task's declared
@@ -153,6 +165,7 @@ func runValidate(args []string) {
 	} else if len(res.BriefPaths) == 1 {
 		fmt.Printf("validate: brief %s\n", res.BriefPaths[0])
 	}
+	printGateEnv(o.dir)
 	// A gate that already failed on the base tree before dispatch (issue
 	// #544) is noted under its failure: a broken gate, not broken work.
 	probeFails, err := flywheel.BaseProbeFailures(o.dir, task)

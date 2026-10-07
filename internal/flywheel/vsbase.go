@@ -83,9 +83,16 @@ func failingLines(out []byte, re *regexp.Regexp) []string {
 // in a temporary detached worktree at base with the spec's needs-state
 // carried in. why is set, and nothing cached, when the base cannot be
 // measured (a setup error or a host-blocked run).
-func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseSpec, re *regexp.Regexp) (c vsBaseCache, cached bool, baseLog, why string, err error) {
+func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseSpec, re *regexp.Regexp, allow []string) (c vsBaseCache, cached bool, baseLog, why string, err error) {
+	// The base runs under allow, the unit's gates.env_allow plus its brief's
+	// needs-env names, as validate ran it; a reading under one allow-list is
+	// never reused under another.
+	key := spec.FailMatch
+	if allow != nil {
+		key += "\x00env_allow=" + strings.Join(allow, "\x00")
+	}
 	cacheDir := filepath.Join(dir, ".flywheel", "cache", "vs-base")
-	name := vsBaseCacheName(base, gate, spec.FailMatch)
+	name := vsBaseCacheName(base, gate, key)
 	if b, rerr := os.ReadFile(filepath.Join(cacheDir, name)); rerr == nil && json.Unmarshal(b, &c) == nil && c.Base == base && c.Command == gate && c.FailMatch == spec.FailMatch {
 		return c, true, "", "", nil
 	}
@@ -113,12 +120,12 @@ func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseS
 			return c, false, "", "needs-state install: " + ierr.Error(), nil
 		}
 	}
-	rc, _, out, stages, rerr := runGateStages(wt, gate, base)
+	rc, _, out, stages, rerr := runGateStagesEnv(wt, gate, base, allow)
 	if rerr != nil {
 		return c, false, "", "run on base: " + rerr.Error(), nil
 	}
 	if strings.Contains(string(out), hostBlocked) {
-		if rc, _, out, stages, rerr = runGateStages(wt, gate, base); rerr != nil {
+		if rc, _, out, stages, rerr = runGateStagesEnv(wt, gate, base, allow); rerr != nil {
 			return c, false, "", "run on base: " + rerr.Error(), nil
 		}
 	}
@@ -146,7 +153,8 @@ func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseS
 // passes) and every unit line fails on base; without it, when the base fails.
 // note is the reading's note either way; reading is nil when the base could
 // not be measured. The base is spec.Base, not the gate's FLYWHEEL_BASE.
-func compareVsBase(dir, task, attempt, logSuffix, gate string, rc int, out []byte, spec *vsBaseSpec) (pass bool, reading *VsBaseReading, note string, err error) {
+// allow is the allow-list the unit's own reading ran under (gateAllowFor).
+func compareVsBase(dir, task, attempt, logSuffix, gate string, rc int, out []byte, spec *vsBaseSpec, allow []string) (pass bool, reading *VsBaseReading, note string, err error) {
 	base := spec.Base
 	if base == "" {
 		return false, nil, "vs-base: no unit base recorded", nil
@@ -157,7 +165,7 @@ func compareVsBase(dir, task, attempt, logSuffix, gate string, rc int, out []byt
 			return false, nil, "vs-base: fail-match does not compile: " + err.Error(), nil
 		}
 	}
-	c, cached, baseLog, why, err := measureBase(dir, task, attempt, logSuffix, base, gate, spec, re)
+	c, cached, baseLog, why, err := measureBase(dir, task, attempt, logSuffix, base, gate, spec, re, allow)
 	if err != nil {
 		return false, nil, "", err
 	}
