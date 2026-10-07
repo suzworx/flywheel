@@ -291,7 +291,7 @@ func lintStructure(dir, path string) (LintResult, error) {
 		res.Problems = append(res.Problems, "no gate: line")
 	}
 	if !strings.Contains(content, "## Checks") {
-		res.Problems = append(res.Problems, "no ## Checks section")
+		res.Problems = append(res.Problems, "no ## Checks section; add one listing, for each gate, what the report must show (the gate's command and its real exit code)")
 	}
 	// `owns: none` (or `-`) is a present owns line that owns no paths (issue
 	// #693); mixed with real paths it is a contradiction.
@@ -338,7 +338,7 @@ func lintStructure(dir, path string) (LintResult, error) {
 			if err != nil {
 				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s is invalid: %v; correct the pattern", e.path, err))
 			} else if e.annotation != "new" && len(matches) == 0 {
-				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file; if the unit creates it, annotate it: %s (new)", e.path, e.path))
+				res.Problems = append(res.Problems, fmt.Sprintf("owns pattern %s matches no file under %s; if the unit creates it, annotate it: %s (new)", e.path, dir, e.path))
 			}
 			continue
 		}
@@ -347,7 +347,7 @@ func lintStructure(dir, path string) (LintResult, error) {
 		}
 		st, err := os.Stat(filepath.Join(dir, e.path))
 		if err != nil {
-			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s does not exist; if the unit creates it, annotate it: %s (new)", e.path, e.path))
+			res.Problems = append(res.Problems, fmt.Sprintf("owns path %s does not exist under %s; if the unit creates it, annotate it: %s (new)", e.path, dir, e.path))
 			continue
 		}
 		if strings.HasSuffix(e.path, "/") && !st.IsDir() {

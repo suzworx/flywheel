@@ -103,7 +103,7 @@ func TestLintOwnsRefNoRemoteKeepsCheckout(t *testing.T) {
 	writeCommit(t, dir, "here.txt")
 	git(t, dir, []string{"branch", "-M", "trunk"})
 	res := lintOwns(t, dir, "here.txt, h*.txt, gone.txt")
-	want := []string{"owns path gone.txt does not exist; if the unit creates it, annotate it: gone.txt (new)"}
+	want := []string{"owns path gone.txt does not exist under " + dir + "; if the unit creates it, annotate it: gone.txt (new)"}
 	if !slices.Equal(res.Problems, want) {
 		t.Errorf("problems = %v, want %v", res.Problems, want)
 	}

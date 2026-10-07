@@ -19,7 +19,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   for a file whose exact name is not known yet. `flywheel validate` matches all three forms the
   same way at owns-check time, and `flywheel lint` checks a pattern by matching it against the
   tree instead of looking up a literal path, so a pattern that currently matches nothing is
-  reported the same as a missing path. Owns resolve against the integration ref units are based
+  reported the same as a missing path. Without `--dir`, lint resolves owns and runs probes from
+  the nearest ancestor holding `.flywheel/` (else the git top level), so it works from any
+  subdirectory (#808). Owns resolve against the integration ref units are based
   on (`origin/<integration.branch>`, else `origin/main`) when the checkout is behind it;
   otherwise against the checkout. A checkout behind the ref gets a warning, and a path only in
   it is reported missing on the ref: write owns from the ref's tree. A checkout at the ref or
