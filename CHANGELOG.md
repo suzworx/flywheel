@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.2](https://github.com/suzworx/flywheel/compare/v0.70.1...v0.70.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* name the worker's tree in the lead message of every worktree or workdir dispatch ([#806](https://github.com/suzworx/flywheel/issues/806)) ([3dfb1a1](https://github.com/suzworx/flywheel/commit/3dfb1a1346a27cbc4e6602c4ea425900d4283185)), closes [#805](https://github.com/suzworx/flywheel/issues/805)
+
 ## [0.70.1](https://github.com/suzworx/flywheel/compare/v0.70.0...v0.70.1) (2026-10-07)
 
 
