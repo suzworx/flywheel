@@ -184,8 +184,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   records each probe as a `gate_probed` event so `validate` and `explain` can tell a broken gate
   (it already failed on the base tree) from broken work (#544). A `kind: fix` brief needs a gate
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
-  `--task` before dispatch, or lint reports a problem and `flywheel inspect --verdict pass` refuses
-  with rule `red-first` (config `lint.red_first` false turns it off, #648). A gate over a
+  `--task` before dispatch, or lint reports a problem, `flywheel run` refuses the first dispatch
+  and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
+  false turns it off, #648, #812). A gate over a
   generated artifact asserts a minimum count of entries, so it fails on empty output; never gate
   only on equality with another input that could be empty too (#746).
 - **live-gate:** lines — optional, alongside `gate:`, for a unit whose deliverable is a
