@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.3](https://github.com/suzworx/flywheel/compare/v0.70.2...v0.70.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* lint resolves the flywheel root when --dir is not given, so linting from a subdirectory works ([#810](https://github.com/suzworx/flywheel/issues/810)) ([4ed1fa2](https://github.com/suzworx/flywheel/commit/4ed1fa201e82f1e170eefed254ac6f29bf579cf2)), closes [#808](https://github.com/suzworx/flywheel/issues/808)
+
 ## [0.70.2](https://github.com/suzworx/flywheel/compare/v0.70.1...v0.70.2) (2026-10-07)
 
 
