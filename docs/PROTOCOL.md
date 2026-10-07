@@ -293,6 +293,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   A relative script path (the first word, or the second after `node`/`python`/`bash`/`sh`/`pwsh`)
   missing from the worktree but present in the root resolves against the root; prefer
   `"$FLYWHEEL_ROOT/<script>"`. On Windows gates and setup run in Git for Windows' bash, never the WSL launcher.
+  flywheel removes a worktree it made (land's cleanup, the vs-base and group-review temp trees,
+  calibrate) only after removing every link or junction inside it as a link, because
+  `git worktree remove` follows junctions on Windows and would delete the linked main-checkout
+  files (issue #822).
 - Carries: `task`, `attempt` (the attempt being dispatched), `linked` (the linked paths), `command`,
   `rc`, `duration_ms`, `note` (the last 20 lines of output, or the link error), `escaped` (issue
   #460: the entries of a linked path, one level deep plus one level inside each `@` scope, that are

@@ -102,7 +102,7 @@ func measureBase(dir, task, attempt, logSuffix, base, gate string, spec *vsBaseS
 	}
 	wt := filepath.Join(tmp, "tree")
 	defer func() {
-		_, _ = gitRead(dir, []string{"worktree", "remove", "--force", wt})
+		_, _ = removeWorktree(dir, wt, true, gitRead)
 		_ = os.RemoveAll(tmp)
 		_, _ = gitRead(dir, []string{"worktree", "prune"})
 	}()

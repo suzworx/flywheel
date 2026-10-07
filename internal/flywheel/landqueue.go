@@ -183,7 +183,8 @@ func LandMerge(task string, o LandMergeOptions) (LandMergeResult, error) {
 	result.Commit = headCommit(o.Dir)
 
 	var errs []string
-	if out, err := landGit(o.Dir, "worktree", "remove", workdir); err != nil {
+	landGitArgs := func(wd string, args []string) (string, error) { return landGit(wd, args...) }
+	if out, err := removeWorktree(o.Dir, workdir, false, landGitArgs); err != nil {
 		errs = append(errs, fmt.Sprintf("git worktree remove %s: %v: %s", workdir, err, strings.TrimSpace(out)))
 	}
 	if out, err := landGit(o.Dir, "branch", "-d", branch); err != nil {
