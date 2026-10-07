@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.5](https://github.com/suzworx/flywheel/compare/v0.70.4...v0.70.5) (2026-10-07)
+
+
+### Bug Fixes
+
+* lint --probe refuses a full-suite gate that fails on a CI-green base (rule host-dependent-gate) ([#815](https://github.com/suzworx/flywheel/issues/815)) ([5e0e508](https://github.com/suzworx/flywheel/commit/5e0e50872001548e50dd62e356b0bc4b6933c47c))
+
 ## [0.70.4](https://github.com/suzworx/flywheel/compare/v0.70.3...v0.70.4) (2026-10-07)
 
 
