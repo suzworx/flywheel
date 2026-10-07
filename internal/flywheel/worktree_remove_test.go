@@ -69,6 +69,7 @@ func TestRemoveWorktreeKeepsLinkTargets(t *testing.T) {
 func TestRemoveWorktreeUnlinksOnly(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	initGitRepoAt(t, dir)
 	outside := t.TempDir()
 	writeTestFile(t, outside, "ext/o", "outside\n")
 	writeTestFile(t, dir, "a.txt", "a\n")
@@ -89,4 +90,48 @@ func TestRemoveWorktreeUnlinksOnly(t *testing.T) {
 	assertTestFile(t, outside, "ext/o", "outside\n")
 	assertTestFile(t, dir, "a.txt", "a\n")
 	assertTestFile(t, dir, "sub/b.txt", "b\n")
+}
+
+// TestUnlinkLinksKeepsTrackedLinks: a symlink git tracks is left for git,
+// which removes it as a link; only the untracked link is unlinked, and a
+// non-force worktree remove of a tree holding both succeeds (#822, PR #823).
+func TestUnlinkLinksKeepsTrackedLinks(t *testing.T) {
+	t.Parallel()
+	r := t.TempDir()
+	initGitRepoAt(t, r)
+	git(t, r, []string{"config", "core.symlinks", "true"})
+	writeTestFile(t, r, "a.txt", "a\n")
+	if err := os.Symlink("a.txt", filepath.Join(r, "tracked-link")); err != nil {
+		t.Skipf("os.Symlink unavailable (no symlink privilege?): %v", err)
+	}
+	git(t, r, []string{"add", "-A"})
+	git(t, r, []string{"commit", "-q", "-m", "initial"})
+	outside := t.TempDir()
+	writeTestFile(t, outside, "ext/o", "outside\n")
+	if err := linkNeedsState(outside, r, []string{"ext"}); err != nil {
+		t.Fatalf("linkNeedsState: %v", err)
+	}
+	removed, err := unlinkLinks(r)
+	if err != nil {
+		t.Fatalf("unlinkLinks: %v", err)
+	}
+	if want := []string{"ext"}; !reflect.DeepEqual(removed, want) {
+		t.Fatalf("removed = %v, want %v", removed, want)
+	}
+	if _, err := os.Lstat(filepath.Join(r, "tracked-link")); err != nil {
+		t.Fatalf("tracked symlink removed: %v", err)
+	}
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	git(t, r, []string{"worktree", "add", "-q", "--detach", wt})
+	if err := linkNeedsState(outside, wt, []string{"ext"}); err != nil {
+		t.Fatalf("linkNeedsState in worktree: %v", err)
+	}
+	if out, err := removeWorktree(r, wt, false, gitRead); err != nil {
+		t.Fatalf("removeWorktree(force=false): %v: %s", err, out)
+	}
+	if _, err := os.Lstat(wt); !os.IsNotExist(err) {
+		t.Fatalf("worktree still present: %v", err)
+	}
+	assertTestFile(t, outside, "ext/o", "outside\n")
 }

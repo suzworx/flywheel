@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // unlinkLinks removes every symlink or directory junction inside wt as a link,
@@ -14,13 +15,26 @@ import (
 // as ModeIrregular rather than ModeSymlink, so both bits count as a link.
 // Issue #822: git worktree remove follows junctions on Windows and deletes
 // the linked main-checkout files; os.Remove on the link itself does not.
+// A link git tracks (git ls-files) is left in place: git removes it as a link
+// itself, and deleting it would leave the worktree modified, so a non-force
+// remove would refuse. A missing wt has nothing to unlink and runs no git.
 func unlinkLinks(wt string) ([]string, error) {
+	if _, err := os.Lstat(wt); os.IsNotExist(err) {
+		return nil, nil // git reports the missing tree
+	}
+	out, err := gitRead(wt, []string{"ls-files", "-z"})
+	if err != nil {
+		return nil, fmt.Errorf("list tracked files in %s: %w", wt, err)
+	}
+	tracked := map[string]bool{}
+	for _, f := range strings.Split(out, "\x00") {
+		if f != "" {
+			tracked[f] = true
+		}
+	}
 	var removed []string
-	err := filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(wt, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == wt && os.IsNotExist(err) {
-				return filepath.SkipAll // nothing to unlink; git reports the missing tree
-			}
 			return fmt.Errorf("walk %s: %w", p, err)
 		}
 		if p == wt {
@@ -36,12 +50,13 @@ func unlinkLinks(wt string) ([]string, error) {
 		if lerr != nil {
 			return fmt.Errorf("lstat %s: %w", p, lerr)
 		}
-		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+		rel, _ := filepath.Rel(wt, p)
+		rel = filepath.ToSlash(rel)
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 && !tracked[rel] {
 			if rerr := os.Remove(p); rerr != nil {
 				return fmt.Errorf("unlink %s: %w", p, rerr)
 			}
-			rel, _ := filepath.Rel(wt, p)
-			removed = append(removed, filepath.ToSlash(rel))
+			removed = append(removed, rel)
 		}
 		if d.IsDir() {
 			return filepath.SkipDir
