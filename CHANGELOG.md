@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.3](https://github.com/suzworx/flywheel/compare/v0.71.2...v0.71.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* run refuses a correction delta that drops the red-probed gate of a kind: fix unit ([#826](https://github.com/suzworx/flywheel/issues/826)) ([a3414e7](https://github.com/suzworx/flywheel/commit/a3414e795e0e2aa3ad746d282b7299e17de6cd80)), closes [#825](https://github.com/suzworx/flywheel/issues/825)
+
 ## [0.71.2](https://github.com/suzworx/flywheel/compare/v0.71.1...v0.71.2) (2026-10-07)
 
 
