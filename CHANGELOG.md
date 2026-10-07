@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.4](https://github.com/suzworx/flywheel/compare/v0.70.3...v0.70.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* run refuses a kind: fix first dispatch with no red base probe (rule red-first) ([#813](https://github.com/suzworx/flywheel/issues/813)) ([122cee2](https://github.com/suzworx/flywheel/commit/122cee2e2a326fbe8da3e3126eabdf600a94aba2)), closes [#812](https://github.com/suzworx/flywheel/issues/812)
+
 ## [0.70.3](https://github.com/suzworx/flywheel/compare/v0.70.2...v0.70.3) (2026-10-07)
 
 
