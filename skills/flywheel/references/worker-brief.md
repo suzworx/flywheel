@@ -137,7 +137,8 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   before any gate runs. A JavaScript worktree with no `node_modules` annotation inherits the main
   checkout's `node_modules` through Node's parent-directory lookup, since the worktree is nested in
   the main checkout: annotate it `(install)`; dispatch warns (and refuses with
-  `worktree.strict_links`) (issue #802).
+  `worktree.strict_links`) (issue #802). Never `(copy)` or `(link)` `node_modules`: a copied one
+  holding links into the main checkout warns (and refuses with `worktree.strict_links`) (issue #819).
   A tree the lead prepared by hand — a merge with conflicts in progress, say — is dispatched with
   `flywheel run <task> --workdir <tree>` instead of `--worktree` (issue #545): no copies, links,
   installs or setup; its dirty and conflicted files are baselined at dispatch, events still go to

@@ -104,7 +104,8 @@ type Event struct {
 	// from the repo into the task's worktree (issue #430).
 	Linked []string `json:"linked,omitempty"`
 	// Escaped is a worktree_setup event's entries inside the linked paths
-	// that are links resolving into the main checkout (issue #460).
+	// that are links resolving into the main checkout (issue #460), and the
+	// worktree's own node_modules entries that do the same (issue #819).
 	Escaped []string `json:"escaped,omitempty"`
 	// Inherited is a worktree_setup event's ancestor node_modules the
 	// worktree would resolve packages from, having a package.json but no
