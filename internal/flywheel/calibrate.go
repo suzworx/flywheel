@@ -319,7 +319,7 @@ func calibrateGroup(repo string, g CalibrationGroup, o CalibrateOptions) Calibra
 		gr.Skipped = fmt.Sprintf("worktree: %v", err)
 		return gr
 	}
-	defer func() { _, _ = gitRead(repo, []string{"worktree", "remove", "--force", wt}) }()
+	defer func() { _, _ = removeWorktree(repo, wt, true, gitRead) }()
 	ledger := filepath.Join(tmp, "ledger")
 	task := fmt.Sprintf("cal-pr%d", g.PR)
 	if err := calibrationLedger(repo, ledger, task, base, wt, owns); err != nil {

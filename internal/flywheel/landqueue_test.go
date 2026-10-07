@@ -117,6 +117,76 @@ func TestLandMergeFastForwards(t *testing.T) {
 	}
 }
 
+// TestLandMergeKeepsLinkTargets: land removes a task worktree whose
+// node_modules is a needs-state link (a junction on Windows) into the main
+// checkout without deleting the main checkout's node_modules (issue #822).
+func TestLandMergeKeepsLinkTargets(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	landRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".flywheel/\nflywheel.md\nnode_modules\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if _, err := Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	brief := "owns: feature.go\nneeds: none\ngate: exit 0\n\n# TASK: test\n"
+	if err := os.WriteFile(filepath.Join(dir, "brief.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:00:00Z", Task: "T1", Kind: "planned", Brief: "brief.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write feature.go: %v", err)
+	}
+	git(t, dir, []string{"add", "-A"})
+	git(t, dir, []string{"commit", "-m", "initial"})
+	if err := WriteConfig(dir, simConfig(fixturePath("clean.jsonl", t))); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	dep := filepath.Join(dir, "node_modules", "pkg", "f")
+	if err := os.MkdirAll(filepath.Dir(dep), 0o755); err != nil {
+		t.Fatalf("mkdir node_modules: %v", err)
+	}
+	if err := os.WriteFile(dep, []byte("dep\n"), 0o644); err != nil {
+		t.Fatalf("write node_modules file: %v", err)
+	}
+
+	wt, err := TaskWorktree(dir, "T1")
+	if err != nil {
+		t.Fatalf("TaskWorktree() error = %v", err)
+	}
+	if err := linkNeedsState(dir, wt, []string{"node_modules/"}); err != nil {
+		t.Fatalf("linkNeedsState: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:01:00Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Workdir: wt}); err != nil {
+		t.Fatalf("append dispatched: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "feature.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write feature.go in worktree: %v", err)
+	}
+	git(t, wt, []string{"add", "-A"})
+	git(t, wt, []string{"commit", "-m", "feature"})
+	if err := AppendEvent(dir, Event{TS: "2026-09-19T00:02:00Z", Task: "T1", Kind: "inspected", Verdict: "pass", Session: "lead-1"}); err != nil {
+		t.Fatalf("append inspected: %v", err)
+	}
+
+	if _, err := LandMerge("T1", LandMergeOptions{Dir: dir}); err != nil {
+		t.Fatalf("LandMerge() error = %v", err)
+	}
+	if _, err := os.Stat(wt); err == nil {
+		t.Errorf("worktree still exists")
+	}
+	b, err := os.ReadFile(dep)
+	if err != nil {
+		t.Fatalf("main checkout's node_modules file gone after land: %v", err)
+	}
+	if string(b) != "dep\n" {
+		t.Fatalf("node_modules file = %q, want %q", b, "dep\n")
+	}
+}
+
 // TestLandMergeConflictWritesDelta tests that a rebase conflict writes a
 // correction brief and returns the correct status.
 func TestLandMergeConflictWritesDelta(t *testing.T) {

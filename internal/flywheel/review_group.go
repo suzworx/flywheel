@@ -107,7 +107,7 @@ func IntegrationTree(dir string, events []Event, members []string, base string) 
 	}
 	wt = filepath.Join(tmp, "tree")
 	cleanup = func() {
-		_, _ = gitRead(dir, []string{"worktree", "remove", "--force", wt})
+		_, _ = removeWorktree(dir, wt, true, gitRead)
 		_ = os.RemoveAll(tmp)
 		_, _ = gitRead(dir, []string{"worktree", "prune"})
 	}
