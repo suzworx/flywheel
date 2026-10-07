@@ -334,7 +334,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   parent lookup would resolve packages from, the main checkout's (issue #802): it is recorded as `inherited` (an absolute path) and prints
   `warning: worktree <wt> has a package.json but no node_modules of its own, so Node resolves
   packages from <path> ...`; with `worktree.strict_links` true it also refuses the dispatch (rule
-  `setup`, the event still recorded with `inherited` and a `note` saying it was refused).
+  `setup`, the event still recorded with `inherited` and a `note` saying it was refused). Then a
+  worktree whose own real `node_modules` (a copied one, say) holds links into the main checkout has
+  those entries recorded in `escaped` (the event is recorded even when nothing is configured) and
+  prints `warning: worktree node_modules holds links into the main checkout ...`; with
+  `worktree.strict_links` true it also refuses the dispatch (rule `setup`) (issue #819).
 
 ### `staged`
 - Written by: the CLI only, via `flywheel validate <task>` (issue #781), before the gates and before
