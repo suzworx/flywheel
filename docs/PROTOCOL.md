@@ -203,10 +203,14 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   body. run refuses with rule `agent` (exit 6) before the dispatch lock (only a `dispatch_refused`
   event is recorded). The claude dispatch passes the file inline as
   `--agents '{"<name>":{"description":...,"prompt":...,"tools":[...]}}' --agent <name>`.
-- Red-first (issue #648) is not a dispatch refusal: a `kind: fix` brief whose gates all pass on the
-  base tree is a `flywheel lint --probe` problem (config `lint.red_first` false turns it off), and
-  `flywheel inspect --verdict pass` enforces it with rule `red-first` from the `gate_probed` events
-  recorded before this event. Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
+- Not written on a `kind: fix` task's first dispatch (no `--resume`, no `--delta`, no earlier
+  `dispatched` event) with `lint.red_first` on when no `gate_probed` event recorded before it
+  failed on a gate still in the brief: run refuses with rule `red-first` (exit 6) before preflight
+  and the dispatch lock (only a `dispatch_refused` event is recorded), so a missed probe costs no
+  paid attempt ([#812](https://github.com/suzworx/flywheel/issues/812)). Red-first (issue #648) is
+  also a `flywheel lint --probe` problem for a `kind: fix` brief whose gates all pass on the base
+  tree (config `lint.red_first` false turns it off), and `flywheel inspect --verdict pass` enforces
+  it with rule `red-first` from the `gate_probed` events recorded before this event. Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
   a correction after a `ci_failed` event needs a brief with a gate that event's `gates` lack.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
@@ -1263,7 +1267,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   for a `kind: fix` task with `lint.red_first` on (the default), `flywheel inspect --verdict pass`
   keeps the newest pre-dispatch probe per `command` and refuses (rule `red-first`, exit 6) unless
   one has an `rc` other than 0, 126 and 127 on a command still among the effective brief's gates.
-  Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
+  `flywheel run` refuses the task's first dispatch the same way (rule `red-first`, exit 6, issue
+  #812), so the missing probe is caught before a paid attempt. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
 
 ### `amended`
 - Written by: the planner or lead, via `flywheel log --task <id> --kind amended --brief <path> [--session S --model M] --note <why>`; a

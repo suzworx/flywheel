@@ -2065,8 +2065,10 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // (fullSuiteRefusal) refuse with rule full-suite. Those gates and owns missing
 // a lint.required_gates pattern (requiredGatesRefusal, issue #751) refuse with
 // rule required-gates. Owns lacking a lint.owns_companions path
-// (ownsCompanionsRefusal, issue #785) refuse with rule owns-companions. Owns
-// under .claude/ (issue #696,
+// (ownsCompanionsRefusal, issue #785) refuse with rule owns-companions. A
+// kind: fix first dispatch (no --resume, no --delta, no dispatched event) with
+// no red pre-dispatch gate probe (redFirstRefusal, issue #812) refuses with
+// rule red-first. Owns under .claude/ (issue #696,
 // the attempt's owns merged the same way) refuse with rule claude-dir when w,
 // the resolved worker, is a claude worker: Claude Code denies every write
 // there. A skills: entry (issue #695, merged the same way) not installed where
@@ -2154,6 +2156,14 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	}
 	if r := ownsCompanionsRefusal(cfg.Lint, owns); r != nil {
 		return "", nil, r
+	}
+	// Red-first (issue #812): a kind: fix first dispatch with no red base
+	// probe could never pass inspect, so refuse it before preflight runs.
+	dispatched := slices.ContainsFunc(events, func(e Event) bool { return e.Task == o.Task && e.Kind == "dispatched" })
+	if !o.Resume && o.DeltaPath == "" && !dispatched {
+		if r := redFirstRefusal(events, o.Task, ph, cfg.LintRedFirst()); r != nil {
+			return "", nil, r
+		}
 	}
 	for _, c := range pre {
 		if r := preflightRefusal(dir, []string{c}); r != nil {
