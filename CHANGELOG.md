@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.70.1](https://github.com/suzworx/flywheel/compare/v0.70.0...v0.70.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* run --worktree warns when a nested worktree inherits the main checkout's node_modules ([#803](https://github.com/suzworx/flywheel/issues/803)) ([135c83d](https://github.com/suzworx/flywheel/commit/135c83d16358ea050269aae834b2baa361367156)), closes [#802](https://github.com/suzworx/flywheel/issues/802)
+
 ## [0.70.0](https://github.com/suzworx/flywheel/compare/v0.69.0...v0.70.0) (2026-10-06)
 
 
