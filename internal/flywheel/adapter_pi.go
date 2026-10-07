@@ -25,6 +25,7 @@ func (a piAdapter) Command(r RunRequest) (string, []string) {
 	if resuming {
 		msg = resumeMessage
 	}
+	msg = withWorkdirArg(msg, r)
 	msg = strings.Join(strings.Fields(strings.NewReplacer("\r", " ", "\n", " ").Replace(msg)), " ")
 	args := []string{"-p", "--mode", "json", "--no-extensions", "--model", r.Model}
 	if r.Variant != "" {

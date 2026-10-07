@@ -80,6 +80,9 @@ git still works.*
   local branch) when `integration.branch` is set, and is refused when neither resolves; otherwise
   from the main checkout's HEAD, with a warning when HEAD carries commits `origin/main` lacks
   (#550). The `dispatched` event's `base` records the commit the unit branched from.
+  On a `--worktree` or `--workdir` unit the lead message of every dispatch, fresh or correction,
+  names the worker's absolute tree and says the flywheel root is not it, so a worker never reads
+  the main checkout's paths ([#805](https://github.com/suzworx/flywheel/issues/805)).
   `flywheel run --session ID` (default `$FLYWHEEL_SESSION`) records the dispatching lead session as
   the dispatched event's `lead`, so leads sharing one ledger can tell their units apart.
 - **Take a plan back** — `flywheel log --task <id> --kind withdrawn --note "<why>"` withdraws a

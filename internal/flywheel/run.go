@@ -1087,6 +1087,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if unitCap > 0 {
 		req.MaxBudgetUSD = unitCap - unitSpent
 	}
+	if !samePath(wt, dir) {
+		// The lead message names the worker's tree (issue #805).
+		req.Workdir, req.Root = wt, absPath(dir)
+	}
 	if commandHook != nil {
 		commandHook(req)
 	}
