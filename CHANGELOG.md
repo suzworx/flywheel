@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.71.2](https://github.com/suzworx/flywheel/compare/v0.71.1...v0.71.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* worktree removal unlinks junctions and symlinks before git worktree remove ([#823](https://github.com/suzworx/flywheel/issues/823)) ([057d1df](https://github.com/suzworx/flywheel/commit/057d1df49787c1b4086b42d336c8f9fa9a1bb303)), closes [#822](https://github.com/suzworx/flywheel/issues/822)
+
 ## [0.71.1](https://github.com/suzworx/flywheel/compare/v0.71.0...v0.71.1) (2026-10-07)
 
 
