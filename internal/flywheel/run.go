@@ -869,10 +869,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		agentJSON, agentSHA = def.inlineJSON(attemptAgent), contentSHA(ab)
 	}
 
+	// The worker's tree before it starts (issue #833): red-first counts a
+	// probe recorded after dispatch only when it ran on this tree. An error
+	// leaves it empty.
+	tree, _ := treeHash(wt)
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
-		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates),
+		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates), Tree: tree,
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir), Slot: slot,
 		Skills: attemptSkills, Agent: attemptAgent, AgentSHA256: agentSHA, Line: usedLine, Lead: o.Lead, Route: route,
 	}); err != nil {
@@ -2177,7 +2181,8 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		}
 	}
 	// A correction (issue #825) whose merged gates drop the red-probed gate
-	// could never pass inspect either: no probe after dispatch counts.
+	// could never pass inspect either: no probe after an attempt finished
+	// counts (issue #833).
 	if dispatched && replaced != nil && merged != nil {
 		if r := redFirstDeltaRefusal(events, o.Task, *replaced, *merged, cfg.LintRedFirst()); r != nil {
 			return "", nil, r
