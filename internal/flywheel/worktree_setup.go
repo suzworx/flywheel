@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -193,19 +194,12 @@ func scanEscapes(base, prefix string, escapes func(target string) bool) ([]strin
 // Only a real <wt>/node_modules directory is read (a linked one is
 // escapingLinks' job), the way escapingLinks reads it; a link escapes when it
 // resolves inside root but not inside wt. A missing or non-directory
-// node_modules is nil. The result is node_modules/<entry> slash paths, sorted.
+// node_modules is nil. A workspace package's own real node_modules is read
+// the same way (issue #829): <wt>/<a>/node_modules and <wt>/<a>/<b>/node_modules,
+// walking real directories only (never a link or junction) and skipping .git,
+// .flywheel and node_modules. The result is <rel>/node_modules/<entry> slash
+// paths, sorted.
 func ownEscapingLinks(root, wt string) ([]string, error) {
-	nm := filepath.Join(wt, "node_modules")
-	fi, err := os.Lstat(nm)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !fi.IsDir() || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return nil, nil
-	}
 	realRoot, err := resolvedAbs(root)
 	if err != nil {
 		return nil, err
@@ -214,9 +208,51 @@ func ownEscapingLinks(root, wt string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return scanEscapes(nm, "node_modules", func(target string) bool {
+	escapes := func(target string) bool {
 		return within(target, realRoot) && !within(target, realWT)
-	})
+	}
+	var out []string
+	var walk func(dir, rel string, depth int) error
+	walk = func(dir, rel string, depth int) error {
+		nm := filepath.Join(dir, "node_modules")
+		fi, err := os.Lstat(nm)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return err
+		case fi.IsDir() && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) == 0:
+			found, err := scanEscapes(nm, path.Join(rel, "node_modules"), escapes)
+			if err != nil {
+				return err
+			}
+			out = append(out, found...)
+		}
+		if depth == 2 {
+			return nil
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", dir, err)
+		}
+		for _, e := range entries {
+			switch e.Name() {
+			case ".git", ".flywheel", "node_modules":
+				continue
+			}
+			if !e.IsDir() || e.Type()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+				continue
+			}
+			if err := walk(filepath.Join(dir, e.Name()), path.Join(rel, e.Name()), depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(wt, "", 0); err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // linkTarget resolves the link or junction at p; false when it is broken.
@@ -549,7 +585,7 @@ func finishWorktreeSetup(dir, wt string, cfg Config, ev Event, warnings []string
 	}
 	if inherited != "" {
 		ev.Inherited = inherited
-		warnings = append(warnings, fmt.Sprintf("warning: worktree %s has a package.json but no node_modules of its own, so Node resolves packages from %s (the main checkout's); the unit's gates would import the main checkout's copies; add needs-state: node_modules/ (install) to the brief (see issue #802)", wt, inherited))
+		warnings = append(warnings, inheritedWarning(wt, inherited))
 		if cfg.StrictLinks() {
 			ev.Note = clipSetupNote("refused: worktree.strict_links and the worktree has no node_modules of its own, so Node resolves packages from " + inherited)
 			if err := AppendEvent(dir, ev); err != nil {
@@ -572,12 +608,8 @@ func finishWorktreeSetup(dir, wt string, cfg Config, ev Event, warnings []string
 			}
 			ev.Escaped = append(ev.Escaped, e)
 		}
-		names, more := own, ""
-		if len(names) > 5 {
-			names, more = names[:5], ", ..."
-		}
 		joined := strings.Join(own, ", ")
-		warnings = append(warnings, fmt.Sprintf("warning: worktree node_modules holds links into the main checkout (%d: %s%s) — the unit's gates would import the main checkout's copies; use needs-state: node_modules/ (install) instead (see issue #819)", len(own), strings.Join(names, ", "), more))
+		warnings = append(warnings, ownEscapeWarning(own))
 		if cfg.StrictLinks() {
 			ev.Note = clipSetupNote("refused: worktree.strict_links and the worktree's node_modules holds links into the main checkout: " + joined)
 			if err := AppendEvent(dir, ev); err != nil {
@@ -590,6 +622,68 @@ func finishWorktreeSetup(dir, wt string, cfg Config, ev Event, warnings []string
 		return warnings, nil
 	}
 	return warnings, AppendEvent(dir, ev)
+}
+
+// inheritedWarning is the warning line for a worktree wt that resolves
+// packages from the ancestor node_modules inherited (issue #802).
+func inheritedWarning(wt, inherited string) string {
+	return fmt.Sprintf("warning: worktree %s has a package.json but no node_modules of its own, so Node resolves packages from %s (the main checkout's); the unit's gates would import the main checkout's copies; add needs-state: node_modules/ (install) to the brief (see issue #802)", wt, inherited)
+}
+
+// ownEscapeWarning is the warning line for a worktree whose own node_modules
+// holds the links own into the main checkout (issue #819), naming five.
+func ownEscapeWarning(own []string) string {
+	names, more := own, ""
+	if len(names) > 5 {
+		names, more = names[:5], ", ..."
+	}
+	return fmt.Sprintf("warning: worktree node_modules holds links into the main checkout (%d: %s%s) — the unit's gates would import the main checkout's copies; use needs-state: node_modules/ (install) instead (see issue #819)", len(own), strings.Join(names, ", "), more)
+}
+
+// validateModules re-checks the tree wt validate is about to gate (issue
+// #829): a worker or setup step may have changed node_modules after dispatch,
+// or the unit was dispatched with warnings. It runs inheritedModules and
+// ownEscapingLinks against the main checkout dir; nothing found records and
+// prints nothing. A finding prints finishWorktreeSetup's warning lines and
+// appends a worktree_setup event for task's attempt (Inherited, Escaped, Note
+// "validate: ..."); with worktree.strict_links the Note starts
+// "validate: refused: " and it returns a setup RuleRefusal, so no gate runs.
+// A failed check is a warning line, never a refusal.
+func validateModules(dir, wt, task, attempt string, cfg Config) error {
+	var warnings, found []string
+	inherited, err := inheritedModules(absPath(dir), wt) // wt is absPath-resolved; resolve dir too (macOS /var -> /private/var)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("warning: could not check worktree for inherited node_modules: %v", err))
+	}
+	own, err := ownEscapingLinks(dir, wt)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("warning: could not check worktree node_modules for links into the main checkout: %v", err))
+	}
+	if inherited != "" {
+		warnings = append(warnings, inheritedWarning(wt, inherited))
+		found = append(found, "no node_modules of its own, so Node resolves packages from "+inherited)
+	}
+	if len(own) > 0 {
+		warnings = append(warnings, ownEscapeWarning(own))
+		found = append(found, "node_modules links into the main checkout: "+strings.Join(own, ", "))
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "flywheel validate: %s\n", w)
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	what := strings.Join(found, "; ")
+	ev := Event{Task: task, Kind: "worktree_setup", Attempt: attempt, Inherited: inherited, Escaped: own}
+	if !cfg.StrictLinks() {
+		ev.Note = "validate: " + clipSetupNote("the worktree has "+what)
+		return AppendEvent(dir, ev)
+	}
+	ev.Note = "validate: refused: " + clipSetupNote("worktree.strict_links and the worktree has "+what)
+	if err := AppendEvent(dir, ev); err != nil {
+		return err
+	}
+	return &RuleRefusal{Rule: "setup", Fix: fmt.Sprintf("worktree %s has %s, and worktree.strict_links is true, so its gates would import the main checkout's packages; use needs-state: node_modules/ (install) (never (copy) or carry node_modules), then validate again (issue #829)", wt, what)}
 }
 
 // clipSetupNote keeps the last 2000 bytes of a setup note.

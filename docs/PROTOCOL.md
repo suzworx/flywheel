@@ -350,7 +350,16 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   worktree whose own real `node_modules` (a copied one, say) holds links into the main checkout has
   those entries recorded in `escaped` (the event is recorded even when nothing is configured) and
   prints `warning: worktree node_modules holds links into the main checkout ...`; with
-  `worktree.strict_links` true it also refuses the dispatch (rule `setup`) (issue #819).
+  `worktree.strict_links` true it also refuses the dispatch (rule `setup`) (issue #819). Besides the
+  worktree's own `node_modules`, every real (never linked) `node_modules` one or two levels down
+  (`<wt>/<a>/node_modules`, `<wt>/<a>/<b>/node_modules`, a workspace package's own, where npm and
+  pnpm also put workspace links) is scanned the same way and reported as `<rel>/node_modules/<entry>`;
+  the walk never follows a link and skips `.git`, `.flywheel` and `node_modules` (issue #829).
+  `flywheel validate` with a workdir (a `run --worktree` unit's recorded worktree included) re-checks
+  inherited and escaping modules after the `(install)` re-run and before any gate: a finding prints
+  the same warnings and records a `worktree_setup` event (`inherited`, `escaped`, a `note` starting
+  `validate: `); with `worktree.strict_links` true the note starts `validate: refused: ` and validate
+  refuses with rule `setup` (exit 6) before any gate runs. Nothing found records nothing (issue #829).
 
 ### `staged`
 - Written by: the CLI only, via `flywheel validate <task>` (issue #781), before the gates and before
