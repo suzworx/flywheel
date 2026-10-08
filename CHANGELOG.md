@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.73.0](https://github.com/suzworx/flywheel/compare/v0.72.0...v0.73.0) (2026-10-08)
+
+
+### Features
+
+* land --pr lands every unit of a merged, CI-green PR on its merge commit ([#840](https://github.com/suzworx/flywheel/issues/840)) ([8b9d83c](https://github.com/suzworx/flywheel/commit/8b9d83c0a5fa7cfdf6effa02a86a1845b0bc93eb)), closes [#831](https://github.com/suzworx/flywheel/issues/831)
+
 ## [0.72.0](https://github.com/suzworx/flywheel/compare/v0.71.4...v0.72.0) (2026-10-08)
 
 
