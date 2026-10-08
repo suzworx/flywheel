@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.72.0](https://github.com/suzworx/flywheel/compare/v0.71.4...v0.72.0) (2026-10-08)
+
+
+### Features
+
+* retry a provider-error finish once, wait --notify, and name the resume path for rate-limited units ([#838](https://github.com/suzworx/flywheel/issues/838)) ([174e7cf](https://github.com/suzworx/flywheel/commit/174e7cf8de8b81ccaeb7f350c0bfe0b71415591d)), closes [#830](https://github.com/suzworx/flywheel/issues/830)
+
 ## [0.71.4](https://github.com/suzworx/flywheel/compare/v0.71.3...v0.71.4) (2026-10-08)
 
 
