@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.71.4](https://github.com/suzworx/flywheel/compare/v0.71.3...v0.71.4) (2026-10-08)
+
+
+### Bug Fixes
+
+* claude adapter allows the Skill tool when the brief names skills; worker rules name the stash alternative ([#834](https://github.com/suzworx/flywheel/issues/834)) ([b43737c](https://github.com/suzworx/flywheel/commit/b43737c7ec873431f4f1102466095efe11ba0d2f)), closes [#832](https://github.com/suzworx/flywheel/issues/832)
+* red-first counts a base-tree probe recorded after dispatch but before the first finished attempt ([#837](https://github.com/suzworx/flywheel/issues/837)) ([1173ccb](https://github.com/suzworx/flywheel/commit/1173ccb7bd05c323b6efa7556ca5d6ab8996e197)), closes [#833](https://github.com/suzworx/flywheel/issues/833)
+* validate re-checks worktree module resolution before any gate, and scans nested node_modules ([#835](https://github.com/suzworx/flywheel/issues/835)) ([bfa0dc0](https://github.com/suzworx/flywheel/commit/bfa0dc0a0edb61a81cb9546e7a825e57bc0211c9)), closes [#829](https://github.com/suzworx/flywheel/issues/829)
+
 ## [0.71.3](https://github.com/suzworx/flywheel/compare/v0.71.2...v0.71.3) (2026-10-07)
 
 
