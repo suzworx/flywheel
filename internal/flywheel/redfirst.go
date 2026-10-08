@@ -36,21 +36,22 @@ func RedFirstLintProblem(kind string, on bool, probes []GateProbe) string {
 
 // redFirstRefusal refuses a pass (rule red-first) of a kind: fix task with the
 // rule on unless one of its gates failed on the base tree before dispatch
-// (issue #648). Only the task's gate_probed events before its first
-// dispatched event count, the newest per command, and a red probe counts only
-// when its command is still one of header's gates.
+// (issue #648). Only the task's base probes count (baseProbes), the newest
+// per command, and a red probe counts only when its command is still one of
+// header's gates.
 func redFirstRefusal(events []Event, task string, header BriefHeader, on bool) *RuleRefusal {
 	if header.Kind != "fix" || !on {
 		return nil
 	}
-	newest := preDispatchProbes(events, task)
+	newest := baseProbes(events, task)
 	for cmd, e := range newest {
 		if e.RC != nil && probeRed(*e.RC, nil) && slices.Contains(header.Gates, cmd) {
 			return nil
 		}
 	}
 	record := fmt.Sprintf("add a gate that runs the regression test, and record the base probe with "+
-		"`flywheel lint <brief> --probe --task %s` before `flywheel run`; or set lint.red_first false", task)
+		"`flywheel lint <brief> --probe --task %s` before `flywheel run`; or set lint.red_first false; "+
+		"a probe recorded after dispatch counts only when it ran on the dispatched base tree before any attempt finished (issue #833)", task)
 	if len(newest) == 0 {
 		return &RuleRefusal{Rule: "red-first", Fix: fmt.Sprintf("kind: fix task %s has no gate probe recorded before dispatch, "+
 			"so no gate failed on the base tree before dispatch; %s", task, record)}
@@ -59,19 +60,27 @@ func redFirstRefusal(events []Event, task string, header BriefHeader, on bool) *
 		"(every pre-dispatch probe on a gate still in the brief passed); %s", task, record)}
 }
 
-// preDispatchProbes returns task's gate_probed events before its first
-// dispatched event, the newest per command (issue #648).
-func preDispatchProbes(events []Event, task string) map[string]Event {
+// baseProbes returns task's gate_probed events that ran on the base tree, the
+// newest per command: every one before its first dispatched event (issue
+// #648), and every one after it and before its first finished event whose
+// Tree is set and equals that dispatched event's Tree (issue #833). HEAD
+// proves nothing (workers never commit); the content tree hash does.
+func baseProbes(events []Event, task string) map[string]Event {
 	newest := map[string]Event{}
+	var dispatched *Event
 	for _, e := range derivationOrder(events) {
 		if e.Task != task {
 			continue
 		}
-		if e.Kind == "dispatched" {
-			break
-		}
-		if e.Kind == "gate_probed" && e.Command != "" {
-			newest[e.Command] = e
+		switch {
+		case e.Kind == "finished" && dispatched != nil:
+			return newest
+		case e.Kind == "dispatched" && dispatched == nil:
+			dispatched = &e
+		case e.Kind == "gate_probed" && e.Command != "":
+			if dispatched == nil || (e.Tree != "" && e.Tree == dispatched.Tree) {
+				newest[e.Command] = e
+			}
 		}
 	}
 	return newest
@@ -79,16 +88,16 @@ func preDispatchProbes(events []Event, task string) map[string]Event {
 
 // redFirstDeltaRefusal refuses a correction (rule red-first, issue #825) of a
 // kind: fix task with the rule on whose merged header after drops every gate
-// that failed on the base tree before the first dispatch while the header
-// before (the attempt being replaced) still keeps one: inspect would refuse
-// the pass and no later probe counts. A before that already fails red-first
+// that failed on the base tree (baseProbes) while the header before (the
+// attempt being replaced) still keeps one: inspect would refuse the pass, and
+// no probe after an attempt finished counts (issue #833). A before that already fails red-first
 // is never refused: the correction cannot make it worse.
 func redFirstDeltaRefusal(events []Event, task string, before, after BriefHeader, on bool) *RuleRefusal {
 	if redFirstRefusal(events, task, before, on) != nil || redFirstRefusal(events, task, after, on) == nil {
 		return nil
 	}
 	var red []string
-	for cmd, e := range preDispatchProbes(events, task) {
+	for cmd, e := range baseProbes(events, task) {
 		if e.RC != nil && probeRed(*e.RC, nil) && slices.Contains(before.Gates, cmd) {
 			red = append(red, cmd)
 		}

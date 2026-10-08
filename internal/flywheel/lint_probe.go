@@ -58,12 +58,16 @@ func TaskIDOK(s string) bool { return taskOK(s) }
 
 // RecordGateProbes appends one gate_probed event per probe for task to dir's
 // ledger in a single write (issue #544). gates are the probed commands in
-// probe order; Commit is dir's HEAD when dir is a git repo.
+// probe order; Commit is dir's HEAD when dir is a git repo. Tree is dir's
+// content tree hash (treeHash), empty when it cannot be computed, so red-first
+// can tell a base-tree probe recorded after dispatch from one taken in the
+// worker's tree (issue #833).
 func RecordGateProbes(dir, task string, gates []string, probes []GateProbe) error {
 	if !taskOK(task) {
 		return fmt.Errorf("task %q does not match ^[A-Za-z0-9._-]+$", task)
 	}
 	commit := headCommit(dir)
+	tree, _ := treeHash(dir)
 	events := make([]Event, 0, len(probes))
 	for _, p := range probes {
 		rc := p.RC
@@ -73,7 +77,7 @@ func RecordGateProbes(dir, task string, gates []string, probes []GateProbe) erro
 		}
 		events = append(events, Event{
 			Task: task, Kind: "gate_probed", Gate: strconv.Itoa(p.N), Command: gates[p.N-1],
-			RC: &rc, DurationMS: p.DurMS, Reason: reason, Commit: commit,
+			RC: &rc, DurationMS: p.DurMS, Reason: reason, Commit: commit, Tree: tree,
 		})
 	}
 	return AppendEvents(dir, events)

@@ -133,7 +133,10 @@ type Event struct {
 	// GatesUnrun are the gate ids of the attempt's effective header that no
 	// recorded command contains (issue #365).
 	GatesUnrun []string `json:"gates_unrun,omitempty"`
-	Tree       string   `json:"tree,omitempty"`
+	// Tree is a content tree hash (treeHash): the measured tree on validated,
+	// the probed tree on gate_probed and the worker's tree at dispatch on
+	// dispatched (issue #833).
+	Tree string `json:"tree,omitempty"`
 	// Panel is the panel a panel_scoped event scopes its tree to (issue #459).
 	Panel []string `json:"panel,omitempty"`
 	// ResetAt is a rate-limited finished event's parsed reset time, RFC 3339

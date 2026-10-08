@@ -213,7 +213,8 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   ([#825](https://github.com/suzworx/flywheel/issues/825)). Red-first (issue #648) is
   also a `flywheel lint --probe` problem for a `kind: fix` brief whose gates all pass on the base
   tree (config `lint.red_first` false turns it off), and `flywheel inspect --verdict pass` enforces
-  it with rule `red-first` from the `gate_probed` events recorded before this event. Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
+  it with rule `red-first` from the `gate_probed` events recorded before this event, plus those
+  recorded after it on this event's `tree` before any attempt finished (issue #833). Rule `ci-escape` (issue #776) is the same kind of inspect refusal:
   a correction after a `ci_failed` event needs a brief with a gate that event's `gates` lack.
 - Carries: `task`, `attempt` (`r1`, `r2`, ... for a fresh run; `c1`, `c2`, ... for a correction),
   `adapter` (one of the four the code accepts: `opencode`, `claude`, `codex` or the offline `sim`;
@@ -241,7 +242,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   snapshot fails the dispatch), `header` (the parsed brief header of the exact
   prompt dispatched — the planned brief on a fresh attempt, the delta on a correction —
   authoritative over the file it names), `baseline` (paths already dirty at dispatch, so a
-  later owns check can excuse pre-existing dirt it didn't cause), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before dispatch (only a `dispatch_refused` event is recorded), issue #456; without `--base` a new `fw/<task>` starts from `origin/<integration.branch>`, else the local `integration.branch`, when that is configured (neither resolving refuses the dispatch), else from HEAD with a progress warning when HEAD carries commits `origin/main` (else `origin/master`, else the local main or master) lacks, issue #550), `workdir` (the worker's tree, canonical absolute form, recorded only when it is not the flywheel root: the task worktree for `run --worktree`, or PATH for `flywheel run <task> --workdir PATH`, an existing tree the lead prepared, a merge in progress say, used as it is with no setup, checkpoints or attempt commit; `--workdir` with `--worktree`, a PATH that is not a directory, or one that is not a git working tree of the same repository (a different `git rev-parse --git-common-dir`) is refused (exit 6, rule `workdir`; with `--base`, rule `base`) before dispatch (only a `dispatch_refused` event is recorded); `validate` and `inspect` default to it, and a `--resume` or `--delta` with neither flag runs there again, issue #545), `increment` (N when
+  later owns check can excuse pre-existing dirt it didn't cause), `tree` (the worker's tree's
+  content tree hash just before the worker starts, as `validated` records it; omitted when it
+  cannot be computed, never failing the dispatch; red-first counts a `gate_probed` event recorded
+  after the first dispatch only when its `tree` equals this one, issue
+  [#833](https://github.com/suzworx/flywheel/issues/833)), `base` (the commit HEAD pointed at in the worker's tree when the attempt was dispatched, so the owns check can count changes the unit's own commits since then, issue #332; `flywheel run <task> --worktree --base REF` branches a new `fw/<task>` from REF's commit instead of the main checkout's HEAD, without checking REF out, so `base` records REF's commit — an existing `fw/<task>` that does not contain REF is refused with a `flywheel rebase <task> --onto REF` hint, and `--base` without `--worktree` is refused (exit 6, rule `base`) before dispatch (only a `dispatch_refused` event is recorded), issue #456; without `--base` a new `fw/<task>` starts from `origin/<integration.branch>`, else the local `integration.branch`, when that is configured (neither resolving refuses the dispatch), else from HEAD with a progress warning when HEAD carries commits `origin/main` (else `origin/master`, else the local main or master) lacks, issue #550), `workdir` (the worker's tree, canonical absolute form, recorded only when it is not the flywheel root: the task worktree for `run --worktree`, or PATH for `flywheel run <task> --workdir PATH`, an existing tree the lead prepared, a merge in progress say, used as it is with no setup, checkpoints or attempt commit; `--workdir` with `--worktree`, a PATH that is not a directory, or one that is not a git working tree of the same repository (a different `git rev-parse --git-common-dir`) is refused (exit 6, rule `workdir`; with `--base`, rule `base`) before dispatch (only a `dispatch_refused` event is recorded); `validate` and `inspect` default to it, and a `--resume` or `--delta` with neither flag runs there again, issue #545), `increment` (N when
   `flywheel run --increment N` sent only increment N of the brief as a fresh session; the
   attempt is an ordinary `r<n>`; 0 or omitted means the whole brief; `Validate` accepts it only on a `dispatched` event and only >= 1, and `flywheel run` refuses (exit 6, rule `increment`) a brief that defines no increment N — an "Increments" section with item N, or an "Increment N" heading), `slot` (the
   unit slot leased for the worker's tree and given to the worker, `worktree.setup` and every validate gate as
@@ -1266,7 +1271,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `--probe` is a usage error (exit 2).
 - Carries: `task`, `gate` (the gate's 1-based index as a string), `command` (the gate command
   text), `rc`, `duration_ms`, `reason` (the probe's first output line, or the spawn error text) and
-  `commit` (the probed HEAD when the dir is a git repo). `Validate` requires `task`, `gate`,
+  `commit` (the probed HEAD when the dir is a git repo) and `tree` (the probed dir's content tree
+  hash, as `validated` records it; omitted when it cannot be computed, e.g. not a git repo, issue
+  [#833](https://github.com/suzworx/flywheel/issues/833)). `Validate` requires `task`, `gate`,
   `command` and `rc`.
 - Effect: informational; no status change. It may precede the task's `planned` event: `Derive`
   skips it, so it never creates a task. When a gate fails, `flywheel validate` looks up the
@@ -1281,7 +1288,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `flywheel run` refuses the task's first dispatch the same way (rule `red-first`, exit 6, issue
   #812), so the missing probe is caught before a paid attempt, and refuses a correction
   (`--delta`/`--resume`) whose merged gates drop every red-probed gate the replaced attempt kept
-  (issue #825): no probe after dispatch counts. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
+  (issue #825). A probe recorded after the first `dispatched` event counts too, but only before the
+  task's first `finished` event and only when its `tree` is set and equals that `dispatched`
+  event's `tree`: it ran on the dispatched base tree, not the worker's (HEAD proves nothing, as
+  workers never commit; issue #833). Any other probe after dispatch never counts; probing before
+  dispatch stays the normal path. Right after it, inspect applies rule `ci-escape` (issue #776, see `ci_failed`).
   The probe itself (recorded or not) also feeds lint's rule `host-dependent-gate` (issue #809): a
   full-suite gate that fails on the base tree while CI's check runs are green on that commit is a
   lint problem (`lint.probe_ci` false turns it off); recording is unchanged.
