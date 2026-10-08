@@ -338,6 +338,13 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		if refusal := missingNeedsState(wd, header.NeedsState); refusal != "" {
 			return GaugeResult{Refused: refusal}, nil
 		}
+		// Module resolution (issue #829): before any gate, re-check that the
+		// tree (a run --worktree unit's recorded workdir included) resolves its
+		// own node_modules, not the main checkout's; a refusal under
+		// worktree.strict_links runs no gate.
+		if err := validateModules(o.Dir, wd, task, attempt, cfg); err != nil {
+			return GaugeResult{}, err
+		}
 	}
 	// Stage (issue #781): copy each staged file to its destination before the
 	// tree is hashed, so the reading's tree holds the applied destinations,
