@@ -53,7 +53,7 @@ func TestWaitFor(t *testing.T) {
 		dir := waitDir(t, disp("T1", "r1"), fin("T1", "r1", "stop"), disp("T2", "r1"), fin("T2", "r1", "stop"))
 		c := &fakeClock{t: time.Unix(0, 0)}
 		var out bytes.Buffer
-		clean, err := WaitFor(dir, []string{"T1", "T2"}, time.Minute, time.Second, c.now, c.sleep, &out)
+		clean, err := WaitFor(dir, []string{"T1", "T2"}, time.Minute, time.Second, c.now, c.sleep, &out, nil)
 		if err != nil || !clean || c.sleeps != 0 {
 			t.Fatalf("WaitFor = %v, %v after %d sleeps; want clean at once", clean, err, c.sleeps)
 		}
@@ -74,7 +74,7 @@ func TestWaitFor(t *testing.T) {
 			}
 		}
 		var out bytes.Buffer
-		clean, err := WaitFor(dir, []string{"T1"}, 0, time.Second, c.now, c.sleep, &out)
+		clean, err := WaitFor(dir, []string{"T1"}, 0, time.Second, c.now, c.sleep, &out, nil)
 		if err != nil || !clean || c.sleeps != 2 {
 			t.Fatalf("WaitFor = %v, %v after %d sleeps; want clean after 2", clean, err, c.sleeps)
 		}
@@ -93,7 +93,7 @@ func TestWaitFor(t *testing.T) {
 				}
 			}
 		}
-		clean, err := WaitFor(dir, []string{"T1"}, 0, time.Second, c.now, c.sleep, &bytes.Buffer{})
+		clean, err := WaitFor(dir, []string{"T1"}, 0, time.Second, c.now, c.sleep, &bytes.Buffer{}, nil)
 		if err != nil || !clean {
 			t.Fatalf("WaitFor = %v, %v; want clean", clean, err)
 		}
@@ -102,7 +102,7 @@ func TestWaitFor(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		dir := waitDir(t, disp("T1", "r1"))
 		c := &fakeClock{t: time.Unix(0, 0)}
-		_, err := WaitFor(dir, []string{"T1"}, 5*time.Second, time.Second, c.now, c.sleep, &bytes.Buffer{})
+		_, err := WaitFor(dir, []string{"T1"}, 5*time.Second, time.Second, c.now, c.sleep, &bytes.Buffer{}, nil)
 		var wt *WaitTimeout
 		if !errors.As(err, &wt) {
 			t.Fatalf("err = %v, want *WaitTimeout", err)
@@ -115,9 +115,15 @@ func TestWaitFor(t *testing.T) {
 	t.Run("unclean reason", func(t *testing.T) {
 		dir := waitDir(t, disp("T1", "r1"), fin("T1", "r1", "stop"), disp("T2", "r1"), fin("T2", "r1", "stalled"))
 		c := &fakeClock{t: time.Unix(0, 0)}
-		clean, err := WaitFor(dir, []string{"T1", "T2"}, 0, time.Second, c.now, c.sleep, &bytes.Buffer{})
+		var calls []string
+		clean, err := WaitFor(dir, []string{"T1", "T2"}, 0, time.Second, c.now, c.sleep, &bytes.Buffer{},
+			func(task, attempt, reason string) { calls = append(calls, task+" "+attempt+" "+reason) })
 		if err != nil || clean {
 			t.Fatalf("WaitFor = %v, %v; want clean=false, nil", clean, err)
+		}
+		// The notify hook runs once for the unclean finish, never for the clean one (issue #830).
+		if len(calls) != 1 || calls[0] != "T2 r1 stalled" {
+			t.Errorf("notify calls = %q, want one for T2 r1 stalled", calls)
 		}
 	})
 }

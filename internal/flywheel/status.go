@@ -28,11 +28,25 @@ type StatusReport struct {
 
 // AttentionLine is one task whose current attempt ended for a reason other
 // than a clean stop: the task id, its current attempt and that attempt's
-// finished reason (length, start-failed, silent, error, ...).
+// finished reason (length, start-failed, silent, error, ...). Next is the
+// resume command for a rate-limited or error finish, else empty (issue #830).
 type AttentionLine struct {
 	Task    string `json:"task"`
 	Attempt string `json:"attempt"`
 	Reason  string `json:"reason"`
+	Next    string `json:"next,omitempty"`
+}
+
+// attentionNext is an AttentionLine's Next for task finished reason (issue
+// #830).
+func attentionNext(task, reason string) string {
+	switch reason {
+	case "rate-limited":
+		return "flywheel run " + task + " --resume (or flywheel supervise --resume-limited)"
+	case "error":
+		return "flywheel run " + task + " --resume"
+	}
+	return ""
 }
 
 // StatusGoals counts the goals in each status plus one entry per goal, sorted
@@ -149,7 +163,7 @@ func Status(dir string, now time.Time) (StatusReport, error) {
 			rep.Tasks.Landed++
 		}
 		if ts.Status == "finished" && ts.Reason != "" && ts.Reason != "stop" {
-			rep.Attention = append(rep.Attention, AttentionLine{Task: ts.ID, Attempt: ts.Attempt, Reason: ts.Reason})
+			rep.Attention = append(rep.Attention, AttentionLine{Task: ts.ID, Attempt: ts.Attempt, Reason: ts.Reason, Next: attentionNext(ts.ID, ts.Reason)})
 		}
 		if ts.Attempt == "" {
 			continue

@@ -159,6 +159,44 @@ func TestStatusAttentionListsCappedNotClean(t *testing.T) {
 	if a.Task != "t-capped" || a.Attempt != "r1" || a.Reason != "length" {
 		t.Errorf("attention[0] = %+v, want t-capped r1 length", a)
 	}
+	if a.Next != "" {
+		t.Errorf("attention[0].Next = %q, want none for length", a.Next)
+	}
+}
+
+// TestStatusAttentionNext checks that an error and a rate-limited Attention
+// line carry the resume command in Next (issue #830).
+func TestStatusAttentionNext(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, task := range []string{"t-error", "t-limited"} {
+		reason := map[string]string{"t-error": "error", "t-limited": "rate-limited"}[task]
+		for _, e := range []Event{
+			{TS: "2026-09-14T00:00:00Z", Task: task, Kind: "planned", Brief: "b.txt"},
+			{TS: "2026-09-14T00:00:00Z", Task: task, Kind: "dispatched", Attempt: "r1"},
+			{TS: "2026-09-14T00:00:01Z", Task: task, Kind: "finished", Attempt: "r1", Reason: reason},
+		} {
+			if err := AppendEvent(dir, e); err != nil {
+				t.Fatalf("append event: %v", err)
+			}
+		}
+	}
+	rep, err := Status(dir, statusNow(t))
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	want := map[string]string{
+		"t-error":   "flywheel run t-error --resume",
+		"t-limited": "flywheel run t-limited --resume (or flywheel supervise --resume-limited)",
+	}
+	if len(rep.Attention) != 2 {
+		t.Fatalf("attention = %+v, want 2 entries", rep.Attention)
+	}
+	for _, a := range rep.Attention {
+		if a.Next != want[a.Task] {
+			t.Errorf("%s Next = %q, want %q", a.Task, a.Next, want[a.Task])
+		}
+	}
 }
 
 // TestStatusCountsLost: a lost event derives status lost and flywheel status

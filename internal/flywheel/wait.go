@@ -26,8 +26,10 @@ func (e *WaitTimeout) Error() string {
 // ("<task> <attempt> finished reason=<r>"); clean is true when every reason is
 // stop. The log is re-read each tick (complete lines only, via ReadEvents)
 // and sleep is called between ticks. A zero timeout waits forever; otherwise
-// passing it returns a *WaitTimeout.
-func WaitFor(dir string, tasks []string, timeout time.Duration, poll time.Duration, now func() time.Time, sleep func(time.Duration), out io.Writer) (clean bool, err error) {
+// passing it returns a *WaitTimeout. notify (nil: none) is called once per
+// finish whose reason is not stop, right after its line is printed, with the
+// printed attempt ("-" for none) and reason (issue #830).
+func WaitFor(dir string, tasks []string, timeout time.Duration, poll time.Duration, now func() time.Time, sleep func(time.Duration), out io.Writer, notify func(task, attempt, reason string)) (clean bool, err error) {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return false, err
@@ -70,6 +72,9 @@ func WaitFor(dir string, tasks []string, timeout time.Duration, poll time.Durati
 					attempt = "-"
 				}
 				fmt.Fprintf(out, "%s %s finished reason=%s\n", task, attempt, e.Reason)
+				if notify != nil && e.Reason != "stop" {
+					notify(task, attempt, e.Reason)
+				}
 				break
 			}
 		}

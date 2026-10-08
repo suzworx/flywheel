@@ -601,6 +601,40 @@ func TestConfigRateLimitKeys(t *testing.T) {
 	}
 }
 
+// TestConfigProviderErrorRetries checks limits.provider_error_retries: its
+// default 1, Set and Get, 0 disabling it, and Validate refusing -1 (issue
+// #830).
+func TestConfigProviderErrorRetries(t *testing.T) {
+	t.Parallel()
+	const key = "limits.provider_error_retries"
+	cfg := DefaultConfig()
+	if v, err := cfg.Get(key); err != nil || v != "1" || cfg.Limits.ProviderErrorRetryCount() != 1 {
+		t.Errorf("default Get(%q) = %q, %v; want 1", key, v, err)
+	}
+	if err := cfg.Set(key, "0"); err != nil {
+		t.Fatalf("Set(%s, 0) error = %v", key, err)
+	}
+	if v, _ := cfg.Get(key); v != "0" || cfg.Limits.ProviderErrorRetryCount() != 0 {
+		t.Errorf("Get(%s) = %q after setting 0, want 0 (disabled)", key, v)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := cfg.Set(key, "x"); err == nil || !strings.Contains(err.Error(), "integer") {
+		t.Errorf("Set(%s, x) error = %v, want an integer error", key, err)
+	}
+	bad := DefaultConfig()
+	if err := bad.Set(key, "-1"); err != nil {
+		t.Fatalf("Set(%s, -1) error = %v", key, err)
+	}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "limits.provider_error_retries -1 must be >= 0") {
+		t.Errorf("Validate() with -1 = %v, want the provider_error_retries problem", err)
+	}
+	if !slices.Contains(cfg.validKeys(), key) || !slices.Contains(cfg.settableKeys(), key) {
+		t.Errorf("%s missing from validKeys or settableKeys", key)
+	}
+}
+
 func TestConfigSetInvalidValueLeavesFileUnchanged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

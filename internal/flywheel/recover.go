@@ -237,7 +237,9 @@ func nextAction(f recoverFacts) Next {
 	}
 	switch {
 	case f.Status == "finished" && (f.FinishReason == "rate-limited" || f.FinishReason == "abandoned-job"):
-		return Next{Action: "resume-session", Reason: f.FinishReason + "; the model is not paused", Command: "flywheel run " + t + " --resume"}
+		// Out of process (issue #830): a supervisor or the controller resumes
+		// it after the reset too.
+		return Next{Action: "resume-session", Reason: f.FinishReason + "; the model is not paused; after the reset it can also be resumed out of process by flywheel supervise --resume-limited (or flywheel controller with controller.auto_resume)", Command: "flywheel run " + t + " --resume"}
 	case f.Status == "lost":
 		return Next{Action: "none", Reason: "attempt " + f.Attempt + " lost; dispatch again (flywheel run " + t + ")"}
 	case f.Status == "finished" && f.FinishReason != "stop":

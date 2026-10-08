@@ -72,7 +72,7 @@ func TestRunNotify(t *testing.T) {
 		cmd = `echo %FLYWHEEL_FINISHED%> "` + filepath.FromSlash(out) + `"`
 	}
 	var errb bytes.Buffer
-	runNotify(cmd, line, &errb)
+	runNotify("flywheel run", cmd, line, &errb)
 	b, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatalf("notify wrote nothing: %v (stderr %q)", err, errb.String())
@@ -85,8 +85,47 @@ func TestRunNotify(t *testing.T) {
 	}
 
 	errb.Reset()
-	runNotify("exit 3", line, &errb)
-	if !strings.Contains(errb.String(), "warning: --notify command failed") {
+	runNotify("flywheel run", "exit 3", line, &errb)
+	if !strings.Contains(errb.String(), "flywheel run: warning: --notify command failed") {
 		t.Errorf("failing notify: stderr = %q, want a warning", errb.String())
+	}
+}
+
+// TestWaitNotify checks wait's --notify hook (issue #830): the flag parses,
+// and the command runs once per unclean finish with FLYWHEEL_FINISHED naming
+// the task, attempt, reason and run's exit code, never for a clean stop.
+func TestWaitNotify(t *testing.T) {
+	t.Parallel()
+	fs, o := waitFlags()
+	if err := fs.Parse([]string{"--notify", "echo hi"}); err != nil || o.notify != "echo hi" {
+		t.Fatalf("--notify parse: %v, notify=%q", err, o.notify)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := flywheel.AppendEvents(dir, []flywheel.Event{
+		{Task: "T1", Kind: "dispatched", Attempt: "r1"},
+		{Task: "T1", Kind: "finished", Attempt: "r1", Reason: "stop"},
+		{Task: "T2", Kind: "dispatched", Attempt: "r1"},
+		{Task: "T2", Kind: "finished", Attempt: "r1", Reason: "rate-limited"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.ToSlash(filepath.Join(t.TempDir(), "finished.txt"))
+	cmd := `echo "$FLYWHEEL_FINISHED" >> "` + out + `"`
+	if _, err := exec.LookPath("bash"); err != nil && runtime.GOOS == "windows" {
+		cmd = `echo %FLYWHEEL_FINISHED%>> "` + filepath.FromSlash(out) + `"`
+	}
+	var stdout, errb bytes.Buffer
+	if got := waitMain([]string{"T1", "T2", "--dir", dir, "--notify", cmd}, &stdout, &errb); got != 4 {
+		t.Fatalf("waitMain = %d, want 4 (stderr %q)", got, errb.String())
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("notify wrote nothing: %v (stderr %q)", err, errb.String())
+	}
+	if got := strings.TrimSpace(string(b)); got != "T2 r1 reason=rate-limited exit=4" {
+		t.Errorf("FLYWHEEL_FINISHED lines = %q, want only T2's", got)
 	}
 }

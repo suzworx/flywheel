@@ -94,11 +94,14 @@ git still works.*
   a TREE column with that worktree and its base commit (`CP-A@abcdef1`), and the `--json` view
   carries `workdir` and `base`.
 - **Know when a unit finishes** — never background a dispatch with a bare `&` and hope to notice:
-  `flywheel wait <task>... [--timeout D]` blocks until each named task finishes its current (or
+  `flywheel wait <task>... [--timeout D] [--notify CMD]` blocks until each named task finishes its current (or
   first) attempt, printing `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
   4 any unclean, 8 timeout), and `flywheel run <task> --notify CMD` runs `CMD` through the shell
   when the run returns on any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"`
-  in its environment; a failing notify only warns.
+  in its environment; a failing notify only warns. `flywheel wait --notify CMD` runs `CMD` the same
+  way once per named task whose finish is not a clean `stop` (a `rate-limited` or `error` unit),
+  as soon as that finish prints, `<code>` being the exit `flywheel run` returns for that reason
+  ([#830](https://github.com/suzworx/flywheel/issues/830)).
 
 ## Sharded log
 
@@ -277,6 +280,7 @@ A worker cut off by a provider rate limit finishes `rate-limited` (exit 4, no si
 `limits.rate_limit_retries` is how many times it resumes (default 3; 0 disables).
 When `flywheel run` has exited, the controller resumes the unit itself once the reset passes (`controller.auto_resume`, default on; `controller.notify` is a shell command run per resumed unit), within the same retry cap; `flywheel supervise --resume-limited` is the one-shot form.
 `limits.rate_limit_max_wait` is the longest it waits for a reset, a Go duration (default `5h`).
+A worker whose attempt ends with a provider error (reason `error`, signal `provider-error`) is retried in process too: `flywheel run` waits a fixed 2 minutes and resumes the same session with a `.flywheel/briefs/<task>.error-<n>.txt` continue delta, `limits.provider_error_retries` times (default 1; 0 disables); a task with no recorded worker session is not retried. `flywheel status` lists a `rate-limited` or `error` unit with its resume command (`-> flywheel run <task> --resume`), and `flywheel wait --notify CMD` hooks those finishes ([#830](https://github.com/suzworx/flywheel/issues/830)).
 `limits.rate_limit_pause_at` pauses a claude model before the limit hits, once its stream reports that share of the window used (default `0.95`; negative disables), until the exact reset the stream gave. An account-wide window (`five_hour`, `seven_day`) pauses every model on the same adapter; a model-scoped one (`seven_day_opus`) only its model (issue #658).
 Until the reset the whole model is paused: `flywheel run` refuses new units on it (exit 6, rule `rate-limit`), `flywheel next` HOLDs, and the floor shows `rate-limited until HH:MM` with a `model/<model>` andon entry.
 
