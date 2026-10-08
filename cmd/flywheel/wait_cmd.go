@@ -13,14 +13,18 @@ import (
 
 func init() {
 	register("wait", "block until the named tasks finish, printing each finish as it lands", runWait)
-	registerHelp("wait", "flywheel wait <task>... [--timeout D] [--interval D] [--dir DIR]", func() *flag.FlagSet { fs, _ := waitFlags(); return fs })
+	registerHelp("wait", waitSynopsis, func() *flag.FlagSet { fs, _ := waitFlags(); return fs })
 }
+
+// waitSynopsis is wait's usage line, shared by help and the usage error.
+const waitSynopsis = "flywheel wait <task>... [--timeout D] [--interval D] [--notify CMD] [--dir DIR]"
 
 // waitOptions holds the parsed wait flags.
 type waitOptions struct {
 	dir      string
 	timeout  time.Duration
 	interval time.Duration
+	notify   string
 }
 
 // waitFlags defines wait's flags once, so help and run share them.
@@ -31,12 +35,13 @@ func waitFlags() (*flag.FlagSet, *waitOptions) {
 	fs.StringVar(&o.dir, "dir", ".", "target directory")
 	fs.DurationVar(&o.timeout, "timeout", 0, "give up after this long (0 = wait forever)")
 	fs.DurationVar(&o.interval, "interval", 2*time.Second, "how often to re-read the event log")
+	fs.StringVar(&o.notify, "notify", "", "run this shell command once per finish that is not a clean stop, with FLYWHEEL_FINISHED=\"<task> <attempt> reason=<r> exit=<code>\"")
 	return fs, o
 }
 
 // waitUsage prints the flywheel wait usage line.
 func waitUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel wait <task>... [--timeout D] [--interval D] [--dir DIR]")
+	fmt.Fprintln(w, "usage: "+waitSynopsis)
 }
 
 // runWait implements `flywheel wait <task>...` (issue #393).
@@ -65,7 +70,14 @@ func waitMain(args []string, stdout, stderr io.Writer) int {
 		waitUsage(stderr)
 		return 2
 	}
-	clean, err := flywheel.WaitFor(o.dir, pos, o.timeout, o.interval, time.Now, time.Sleep, stdout)
+	var notify func(task, attempt, reason string)
+	if o.notify != "" {
+		// <code> is the exit flywheel run returns for the reason (issue #830).
+		notify = func(task, attempt, reason string) {
+			runNotify("flywheel wait", o.notify, finishedLine(task, attempt, reason, flywheel.ExitCode(flywheel.Result{Reason: reason})), stderr)
+		}
+	}
+	clean, err := flywheel.WaitFor(o.dir, pos, o.timeout, o.interval, time.Now, time.Sleep, stdout, notify)
 	if err != nil {
 		fmt.Fprintf(stderr, "flywheel wait: %v\n", err)
 		var wt *flywheel.WaitTimeout

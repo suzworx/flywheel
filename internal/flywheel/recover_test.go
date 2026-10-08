@@ -63,6 +63,29 @@ func TestRecoverSuspendedUnit(t *testing.T) {
 	}
 }
 
+// TestRecoverNextActionResumeLimited checks that a rate-limited unit whose
+// reset passed names the out-of-process resume path, keeping the in-process
+// command (issue #830).
+func TestRecoverNextActionResumeLimited(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	recoverLedger(t, dir,
+		Event{Task: "T", Kind: "planned", Brief: "brief.txt"},
+		Event{Task: "T", Kind: "dispatched", Attempt: "r1", Model: "m"},
+		Event{Task: "T", Kind: "finished", Attempt: "r1", Model: "m", Reason: "rate-limited", ResetAt: recoverNow.Add(-time.Hour).Format(time.RFC3339)})
+	rep, err := Recover(dir, recoverNow, RecoverOptions{})
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if len(rep.Tasks) != 1 {
+		t.Fatalf("tasks = %+v, want one", rep.Tasks)
+	}
+	n := rep.Tasks[0].Next
+	if n.Action != "resume-session" || n.Command != "flywheel run T --resume" || !strings.Contains(n.Reason, "flywheel supervise --resume-limited") || !strings.Contains(n.Reason, "controller.auto_resume") {
+		t.Errorf("next = %+v, want resume-session naming supervise --resume-limited and controller.auto_resume", n)
+	}
+}
+
 // TestRecoverNextActions checks nextAction per status on one synthetic
 // ledger each (issue #422).
 func TestRecoverNextActions(t *testing.T) {

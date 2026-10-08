@@ -192,7 +192,9 @@ own CLI the same way; see
 block on `flywheel wait <task>... [--timeout D]`: it returns when each named task finishes its current
 (or first) attempt and prints `<task> <attempt> finished reason=<r>` as each lands (exit 0 all clean,
 4 any unclean, 8 timeout). `flywheel run <task> --notify CMD` also runs `CMD` when the run returns on
-any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"` in its environment.
+any path, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"` in its environment;
+`flywheel wait --notify CMD` runs `CMD` once per named task whose finish is not a clean `stop`
+(issue #830).
 Never run `flywheel run <task>` again while its attempt is dispatched or running: it refuses (exit 6,
 rule `in-flight`) in every mode until that attempt finishes or is marked lost after `limits.lost_after`.
 The opencode-adapter fallback (e.g. one increment of a brief):

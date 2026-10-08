@@ -748,6 +748,10 @@ type Limits struct {
 	// RateLimitRetries is how many times flywheel run resumes a worker cut
 	// off by a provider rate limit; nil means 3, 0 disables (issue #380).
 	RateLimitRetries *int `json:"rate_limit_retries,omitempty"`
+	// ProviderErrorRetries is how many times flywheel run resumes a worker
+	// whose attempt ended with a provider error; nil means 1, 0 disables
+	// (issue #830).
+	ProviderErrorRetries *int `json:"provider_error_retries,omitempty"`
 	// RateLimitMaxWait is the longest flywheel run waits for a rate limit to
 	// reset, a Go duration; "" means 5h (issue #380).
 	RateLimitMaxWait string `json:"rate_limit_max_wait,omitempty"`
@@ -817,6 +821,14 @@ func (l Limits) RateLimitRetryCount() int {
 		return 3
 	}
 	return *l.RateLimitRetries
+}
+
+// ProviderErrorRetryCount is ProviderErrorRetries, 1 when unset.
+func (l Limits) ProviderErrorRetryCount() int {
+	if l.ProviderErrorRetries == nil {
+		return 1
+	}
+	return *l.ProviderErrorRetries
 }
 
 // RateLimitPauseThreshold is RateLimitPauseAt, 0.95 when unset and 0 (never
@@ -1351,6 +1363,9 @@ func (c Config) validateLoad() error {
 	if n := c.Limits.RateLimitRetryCount(); n < 0 {
 		problems = append(problems, fmt.Sprintf("limits.rate_limit_retries %d must be >= 0", n))
 	}
+	if n := c.Limits.ProviderErrorRetryCount(); n < 0 {
+		problems = append(problems, fmt.Sprintf("limits.provider_error_retries %d must be >= 0", n))
+	}
 	if d, err := c.Limits.RateLimitMaxWaitDuration(); err != nil {
 		problems = append(problems, fmt.Sprintf("limits.rate_limit_max_wait %q: %v", c.Limits.RateLimitMaxWait, err))
 	} else if d <= 0 {
@@ -1662,6 +1677,8 @@ func (c Config) Get(key string) (string, error) {
 		return strconv.Itoa(c.Limits.PerHost), nil
 	case "limits.rate_limit_retries":
 		return strconv.Itoa(c.Limits.RateLimitRetryCount()), nil
+	case "limits.provider_error_retries":
+		return strconv.Itoa(c.Limits.ProviderErrorRetryCount()), nil
 	case "limits.rate_limit_pause_at":
 		if c.Limits.RateLimitPauseAt == 0 {
 			return "0.95", nil
@@ -1777,7 +1794,7 @@ func joinFallbacks(fbs []Fallback, approvedOnly bool) string {
 func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
-		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
+		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.provider_error_retries", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
 		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
@@ -1804,7 +1821,8 @@ func (c Config) validKeys() []string {
 // an empty permission_mode clears it, max_turns takes a non-negative integer
 // and 0 clears it, unit_cost_usd a non-negative number and 0 clears it),
 // feedback.upstream, feedback.submit, limits.max_turns and
-// limits.unit_cost_usd (the same), limits.per_host, limits.rate_limit_retries, limits.rate_limit_max_wait,
+// limits.unit_cost_usd (the same), limits.per_host, limits.rate_limit_retries,
+// limits.provider_error_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
 // (a comma-separated persona list), review.panel_min_lines (a non-negative
 // integer; 0 turns it off), review.required (true or false) and
@@ -1904,6 +1922,13 @@ func (c *Config) Set(key, value string) error {
 			return fmt.Errorf("limits.rate_limit_retries: value %q must be an integer", value)
 		}
 		c.Limits.RateLimitRetries = &n
+		return nil
+	case "limits.provider_error_retries":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("limits.provider_error_retries: value %q must be an integer", value)
+		}
+		c.Limits.ProviderErrorRetries = &n
 		return nil
 	case "limits.rate_limit_pause_at":
 		p, err := strconv.ParseFloat(value, 64)
@@ -2156,7 +2181,7 @@ func (c Config) settableErr(key string) error {
 func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host",
-		"limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
+		"limits.provider_error_retries", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
 		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",

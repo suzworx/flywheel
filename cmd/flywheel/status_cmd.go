@@ -186,6 +186,11 @@ func printStatus(rep flywheel.StatusReport) {
 	fmt.Printf("Andon: %d\n", rep.Andon)
 	fmt.Printf("Attention: %d\n", len(rep.Attention))
 	for _, a := range rep.Attention {
+		if a.Next != "" {
+			// The resume path for a rate-limited or error finish (issue #830).
+			fmt.Printf("  %s %s %s -> %s\n", a.Task, a.Attempt, a.Reason, a.Next)
+			continue
+		}
 		fmt.Printf("  %s %s %s\n", a.Task, a.Attempt, a.Reason)
 	}
 }

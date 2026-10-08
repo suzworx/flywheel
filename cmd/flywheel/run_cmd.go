@@ -89,7 +89,7 @@ func runRun(args []string) {
 	task := pos[0]
 	code, attempt, reason := runDispatch(fs, o, task)
 	if o.notify != "" {
-		runNotify(o.notify, finishedLine(task, attempt, reason, code), os.Stderr)
+		runNotify("flywheel run", o.notify, finishedLine(task, attempt, reason, code), os.Stderr)
 	}
 	os.Exit(code)
 }
@@ -154,13 +154,13 @@ func finishedLine(task, attempt, reason string, code int) string {
 // runNotify runs cmd through the gates' shell (flywheel.ShellArgv: Git for
 // Windows' bash on Windows, never the WSL launcher), with
 // FLYWHEEL_FINISHED=finished in its environment. Its output goes to stderr;
-// its failure only warns.
-func runNotify(cmd, finished string, stderr io.Writer) {
+// its failure only warns, under prefix ("flywheel run", "flywheel wait").
+func runNotify(prefix, cmd, finished string, stderr io.Writer) {
 	argv := flywheel.ShellArgv(cmd)
 	c := exec.Command(argv[0], argv[1:]...)
 	c.Env = append(os.Environ(), "FLYWHEEL_FINISHED="+finished)
 	c.Stdout, c.Stderr = stderr, stderr
 	if err := c.Run(); err != nil {
-		fmt.Fprintf(stderr, "flywheel run: warning: --notify command failed: %v\n", err)
+		fmt.Fprintf(stderr, "%s: warning: --notify command failed: %v\n", prefix, err)
 	}
 }

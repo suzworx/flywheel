@@ -289,6 +289,10 @@ const limitContinue = "# TASK: continue\n\nYour run was cut off by a rate limit.
 // configured limits.shell_timeout (issue #678).
 const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed when your session ended. Run it in the foreground (your shell allows a foreground command up to %s, set by limits.shell_timeout) and wait for it, then finish the task and report its result and every gate's exit code.\n"
 
+// errorContinue is the task text of the delta a provider-error retry attaches
+// (issue #830).
+const errorContinue = "# TASK: continue\n\nYour run ended with a provider error. Continue the same task from where you stopped; do not redo finished work. Re-run the gates at the end and report their exit codes.\n"
+
 // RunResumingLimits calls Run and, while the attempt ends rate-limited and
 // limits.rate_limit_retries allows, waits for the limit to reset and resumes
 // the same worker session with a continue delta (issue #380). The wait is the
@@ -296,7 +300,11 @@ const jobContinue = "# TASK: continue\n\nYour background job `%s` was killed whe
 // 30m; a wait beyond limits.rate_limit_max_wait stops and returns the
 // rate-limited result. An attempt that ends abandoned-job is resumed once,
 // immediately, on the same session with a delta naming the killed job; a
-// second abandoned-job is returned as is (issue #390). A --resume on a model
+// second abandoned-job is returned as is (issue #390). An attempt that then
+// ends error (a provider error) is resumed after a fixed 2m wait with an
+// <task>.error-<n>.txt delta, at most limits.provider_error_retries times
+// (default 1), unless the task has no worker session to resume (issue #830).
+// A --resume on a model
 // still paused by a rate limit first waits for the reset (resumeWait, issue
 // #472). sleep and now are injected so tests never sleep.
 func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now func() time.Time) (Result, error) {
@@ -312,25 +320,82 @@ func RunResumingLimits(dir string, o RunOptions, sleep func(time.Duration), now 
 		sleep(wait)
 	}
 	res, err := resumeLimits(dir, o, sleep, now)
-	if err != nil || res.Reason != "abandoned-job" {
+	if err != nil {
 		return res, err
+	}
+	if res.Reason == "abandoned-job" {
+		cfg, _, err := LoadConfig(dir)
+		if err != nil {
+			return res, err
+		}
+		limit, err := cfg.Limits.ShellTimeoutDuration()
+		if err != nil {
+			return res, fmt.Errorf("limits.shell_timeout %q: %w", cfg.Limits.ShellTimeout, err)
+		}
+		delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.job-1.txt", o.Task), fmt.Sprintf(jobContinue, strings.Join(res.Jobs, "`, `"), limit))
+		if err != nil {
+			return res, err
+		}
+		progress(o.Progress, fmt.Sprintf("%s abandoned-job (%s); resuming once in the same session", o.Task, strings.Join(res.Jobs, ", ")))
+		next := o
+		next.Resume, next.DeltaPath, next.Increment = true, delta, 0
+		if res, err = resumeLimits(dir, next, sleep, now); err != nil {
+			return res, err
+		}
+	}
+	return retryProviderError(dir, o, res, sleep, now)
+}
+
+// providerErrorBackoff is the fixed wait before a provider-error retry (issue
+// #830).
+const providerErrorBackoff = 2 * time.Minute
+
+// retryProviderError is RunResumingLimits' provider-error retry (issue #830):
+// while res ended error and fewer than limits.provider_error_retries retries
+// were made, it waits providerErrorBackoff and resumes the same session with
+// a <task>.error-<n>.txt delta through resumeLimits. A task with no recorded
+// worker session is not retried: Run refuses that resume (NoWorkerSession).
+func retryProviderError(dir string, o RunOptions, res Result, sleep func(time.Duration), now func() time.Time) (Result, error) {
+	if res.Reason != "error" {
+		return res, nil
 	}
 	cfg, _, err := LoadConfig(dir)
 	if err != nil {
-		return res, err
+		return res, nil
 	}
-	limit, err := cfg.Limits.ShellTimeoutDuration()
-	if err != nil {
-		return res, fmt.Errorf("limits.shell_timeout %q: %w", cfg.Limits.ShellTimeout, err)
+	for n := 1; res.Reason == "error" && n <= cfg.Limits.ProviderErrorRetryCount(); n++ {
+		events, err := ReadEvents(dir)
+		if err != nil {
+			return res, err
+		}
+		if !hasWorkerSession(events, o.Task) {
+			progress(o.Progress, fmt.Sprintf("%s provider-error; no worker session recorded, so a resume would be refused; not retrying (limits.provider_error_retries)", o.Task))
+			return res, nil
+		}
+		progress(o.Progress, fmt.Sprintf("%s provider-error; retrying once in %s (limits.provider_error_retries)", o.Task, providerErrorBackoff))
+		sleep(providerErrorBackoff)
+		delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.error-%d.txt", o.Task, n), errorContinue)
+		if err != nil {
+			return res, err
+		}
+		next := o
+		next.Resume, next.DeltaPath, next.Increment = true, delta, 0
+		if res, err = resumeLimits(dir, next, sleep, now); err != nil {
+			return res, err
+		}
 	}
-	delta, err := writeResumeDelta(dir, o.Task, fmt.Sprintf("%s.job-1.txt", o.Task), fmt.Sprintf(jobContinue, strings.Join(res.Jobs, "`, `"), limit))
-	if err != nil {
-		return res, err
+	return res, nil
+}
+
+// hasWorkerSession reports whether task has a session on a started or
+// finished event, the session Run resumes.
+func hasWorkerSession(events []Event, task string) bool {
+	for _, e := range events {
+		if e.Task == task && e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
+			return true
+		}
 	}
-	progress(o.Progress, fmt.Sprintf("%s abandoned-job (%s); resuming once in the same session", o.Task, strings.Join(res.Jobs, ", ")))
-	next := o
-	next.Resume, next.DeltaPath, next.Increment = true, delta, 0
-	return resumeLimits(dir, next, sleep, now)
+	return false
 }
 
 // resumeDelta gives a bare --resume after a rate-limited or abandoned-job

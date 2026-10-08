@@ -441,7 +441,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - Written by: the CLI, exactly once per attempt, on every code path out of a run (clean stop,
   silent, stalled, provider error, output cap, start failure).
 - Carries: `task`, `session`, `attempt`, `model` (every `finished` event carries the model, issue
-  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error`; `rate-limited` — the
+  #134), `rc`, `reason` (`stop` clean; `length` output-capped; `error` — a provider error, signal
+  `provider-error`; `flywheel run` waits a fixed 2 minutes and resumes the same session with the
+  continue delta `.flywheel/briefs/<task>.error-<n>.txt`, at most `limits.provider_error_retries`
+  times (default 1; 0 disables), never when the task recorded no worker session (the resume would
+  be refused); the retry's `dispatched` event is its record (its `brief` the per-attempt snapshot of
+  that delta), no other event kind, issue #830; `rate-limited` — the
   provider's rate or usage limit cut the run off (a claude 429 or limit message); the note names
   `limit resets <time>`, no signal is recorded, the breaker does not count it, and `flywheel run`
   resumes the same session after the reset (`limits.rate_limit_retries`,
@@ -982,6 +987,16 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   The cap is `limits.rate_limit_retries` auto-resumes since the task's latest `planned` event:
   past it the pass reports `not resumed: auto-resume cap N reached` and starts nothing. A failed
   start keeps its event (it counts toward the cap). Exit codes are unchanged.
+- Out-of-process resume path (issue #830): the recover `resume-session` reason for a
+  `rate-limited` or `abandoned-job` unit names `flywheel supervise --resume-limited` (or
+  `flywheel controller` with `controller.auto_resume`) after the reset, its command still
+  `flywheel run <task> --resume`; `flywheel status` attention lines carry `next`
+  (`flywheel run <t> --resume (or flywheel supervise --resume-limited)` for `rate-limited`,
+  `flywheel run <t> --resume` for `error`), printed as `-> <next>`. `flywheel wait --notify CMD` runs
+  `CMD` through the gates' shell once per named task whose finish is not a clean `stop`, as soon as
+  wait prints that finish, with `FLYWHEEL_FINISHED="<task> <attempt> reason=<r> exit=<code>"`
+  (`<code>` the exit `flywheel run` returns for that reason); a failing command only warns
+  (`flywheel wait: warning: ...`) and appends no event.
 - `flywheel controller` runs the same pass (issue #528) after each tick's reconcile actions while
   `controller.auto_resume` is on (the default; `false` turns it off): same selection, cap and
   event-before-start ordering, under `supervise.lock` (a tick waits at most 1s for it; a busy lock
