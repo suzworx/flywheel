@@ -97,6 +97,42 @@ func TestAttestRefusesPathsOutsideOwns(t *testing.T) {
 	assertNoExternal(t, dir)
 }
 
+// TestAttestScoped is issue #831: a path another listed unit owns is allowed,
+// an unowned one is still refused (T3), and a nil scope refuses both.
+func TestAttestScoped(t *testing.T) {
+	t.Parallel()
+	dir, commit := attestSetup(t, []string{"true"}, "a.go", "b.go")
+	if err := os.WriteFile(filepath.Join(dir, "brief2.txt"), []byte("owns: b.go\nneeds: none\ngate: true\n\n# TASK: two\n"), 0o644); err != nil {
+		t.Fatalf("write brief2: %v", err)
+	}
+	if err := AppendEvent(dir, Event{TS: "2026-09-12T00:02:00Z", Task: "T2", Kind: "planned", Brief: "brief2.txt"}); err != nil {
+		t.Fatalf("append planned: %v", err)
+	}
+	var r *RuleRefusal
+	if _, err := Attest(dir, "T1", commit, "https://ci.example/run/7", "lead-1"); !errors.As(err, &r) || r.Rule != "T3" || !strings.Contains(r.Fix, "b.go") {
+		t.Fatalf("Attest() error = %v, want a T3 refusal naming b.go", err)
+	}
+	if _, err := AttestScoped(dir, "T1", commit, "https://ci.example/run/7", "lead-1", []string{"T3"}); !errors.As(err, &r) || r.Rule != "T3" || !strings.Contains(r.Fix, "b.go") {
+		t.Fatalf("AttestScoped(T3) error = %v, want a T3 refusal naming b.go", err)
+	}
+	assertNoExternal(t, dir)
+	if _, err := AttestScoped(dir, "T1", commit, "https://ci.example/run/7", "lead-1", []string{"T1", "T2"}); err != nil {
+		t.Fatalf("AttestScoped(T1, T2) error = %v", err)
+	}
+}
+
+// TestAttestScopedRefusesUnownedPath: a path no listed unit owns is refused.
+func TestAttestScopedRefusesUnownedPath(t *testing.T) {
+	t.Parallel()
+	dir, commit := attestSetup(t, []string{"true"}, "a.go", "c.go")
+	_, err := AttestScoped(dir, "T1", commit, "https://ci.example/run/7", "lead-1", []string{"T1"})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T3" || !strings.Contains(r.Fix, "c.go") {
+		t.Fatalf("AttestScoped() error = %v, want a T3 refusal naming c.go", err)
+	}
+	assertNoExternal(t, dir)
+}
+
 func TestAttestRefusesUnknownCommit(t *testing.T) {
 	t.Parallel()
 	dir, _ := attestSetup(t, []string{"true"}, "a.go")

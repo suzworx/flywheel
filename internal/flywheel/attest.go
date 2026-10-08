@@ -19,6 +19,15 @@ import (
 // is refused), the task must have a dispatched attempt (T5), and the commit
 // must be in this repository. It returns the attested tree.
 func Attest(dir, task, commit, evidence, session string) (string, error) {
+	return AttestScoped(dir, task, commit, evidence, session, nil)
+}
+
+// AttestScoped is Attest for a commit that holds several units' changes (a
+// squash merge of a multi-unit PR, issue #831): when scope is non-nil, a
+// changed path outside the unit's owns is allowed if it is inside the owns of
+// another task named in scope, and still refused (T3) when no listed unit owns
+// it. With a nil scope it is exactly Attest.
+func AttestScoped(dir, task, commit, evidence, session string, scope []string) (string, error) {
 	if dir == "" {
 		dir = "."
 	}
@@ -59,13 +68,34 @@ func Attest(dir, task, commit, evidence, session string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("attest %s: list the paths commit %s changed: %w", task, commit, err)
 	}
+	// The owns of the other units in scope: a path one of them owns is that
+	// unit's change, vouched for by its own attestation.
+	var others [][]string
+	for _, other := range scope {
+		if other == task {
+			continue
+		}
+		if h, _, err := AttemptBrief(dir, events, other); err == nil {
+			others = append(others, h.Owns)
+		}
+	}
 	var outside []string
 	for _, line := range strings.Split(out, "\n") {
 		p := strings.TrimSpace(line)
 		if p == "" || p == "flywheel.md" || strings.HasPrefix(p, ".flywheel/") {
 			continue
 		}
-		if !ownsContains(header.Owns, p) {
+		if ownsContains(header.Owns, p) {
+			continue
+		}
+		owned := false
+		for _, owns := range others {
+			if ownsContains(owns, p) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
 			outside = append(outside, p)
 		}
 	}

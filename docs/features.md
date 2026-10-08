@@ -136,6 +136,26 @@ merge `flywheel land --group <group> --commit SHA` lands every passed member on 
 on it). Both events carry `group`, and `flywheel stats` counts such landings as `group landed`,
 never as first pass.
 
+When CI measured a merged commit, `flywheel attest <task> --commit SHA --evidence URL --session S`
+records its gates as passing readings marked `source: external`, then `inspect --commit` and
+`land --commit` finish the unit (issue [#367](https://github.com/suzworx/flywheel/issues/367)).
+
+**Land from a PR.** `flywheel land --pr N --session S` (issue
+[#831](https://github.com/suzworx/flywheel/issues/831)) does those three steps for every unit a
+merged PR names. It reads `gh pr view N` (state, merge commit, commits, check rollup) and refuses
+with rule `pr-evidence` (exit 6) unless the PR is merged, has a merge commit and at least one
+check, and every check succeeded (a check run completed as success, skipped or neutral; a commit
+status success), naming each check that did not. The units are the `Flywheel-Task: <id>` trailers
+of the PR's commits, in order; none refuses too. A merge commit that does not resolve locally exits
+8 (fetch the integration branch). Each unit is then attested on the merge commit with the PR url
+as evidence, inspected as a pass on that commit and landed, and prints `landed`, `skipped`
+(already landed on the merge commit, so a rerun is a no-op), or `refused`/`error` with the reason
+(an unknown task, a refusal of any step); one unit's failure never stops the next. It exits 0 when
+every unit landed or was skipped, 6 when any was refused, 1 on another error. A squash of a
+multi-unit PR holds every unit's paths, so each unit's attestation allows a changed path that
+another unit of the PR owns, and still refuses (T3) a path no unit of the PR owns. These are the
+same events as the manual steps, so `flywheel verify` checks them as before.
+
 A gate that runs under bash is also measured for a masked pipeline (issue
 [#704](https://github.com/suzworx/flywheel/issues/704)): bash runs gates without pipefail, so in
 `runner | grep PASS` a crashed runner takes grep's exit status. `validate` records the exit status

@@ -30,6 +30,7 @@ type landOptions struct {
 	onto           string
 	correct        string
 	group          string
+	pr             int
 }
 
 // landFlags defines land's flags once, so help and run share them.
@@ -49,11 +50,12 @@ func landFlags() (*flag.FlagSet, *landOptions) {
 	fs.StringVar(&o.onto, "onto", "", "integration branch (default: the branch checked out in --dir)")
 	fs.StringVar(&o.correct, "correct", "", "correct a wrong landing to this commit, recording a land_corrected event (requires --reason and --session; the old landing stays in the log)")
 	fs.StringVar(&o.group, "group", "", "land every passed member of a group (a goal id or tasks:<a>,<b>) on one --commit; a member already landed on it is skipped")
+	fs.IntVar(&o.pr, "pr", 0, "land every unit named in a merged PR's Flywheel-Task trailers, on the merge commit, with its CI checks as evidence (requires --session)")
 	return fs, o
 }
 
 // landUsageLine is the flywheel land usage, shared by help and errors.
-const landUsageLine = "flywheel land <task>|--group <goal|tasks:a,b> [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--correct <sha> --reason TEXT --session S] [--note TEXT] [--dir DIR]"
+const landUsageLine = "flywheel land <task>|--group <goal|tasks:a,b>|--pr N --session S [--merge [--onto BRANCH]] [--commit <sha> [--by-lead --reason TEXT] [--exception TEXT --session S] [--allow-untriaged REASON]] [--correct <sha> --reason TEXT --session S] [--note TEXT] [--dir DIR]"
 
 // landUsage prints the flywheel land usage line.
 func landUsage(w io.Writer) {
@@ -71,6 +73,10 @@ func runLand(args []string) {
 		fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
 		landUsage(os.Stderr)
 		os.Exit(2)
+	}
+	if o.pr != 0 {
+		runLandPR(pos, o)
+		return
 	}
 	if o.group != "" {
 		runLandGroup(pos, o)
@@ -238,6 +244,75 @@ func runLandCorrect(task string, o *landOptions) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s landing corrected to %s\n", task, o.correct)
+}
+
+// runLandPR implements `flywheel land --pr N --session S` (issue #831): a task
+// id, --group, --merge, --commit, --correct, --by-lead, --exception, --onto or
+// a missing --session is a usage error (exit 2). It prints one line per unit;
+// it exits 0 when every unit landed or was skipped, 6 when any unit was
+// refused (or the PR itself was), 8 when the merge commit does not resolve
+// and 1 otherwise.
+func runLandPR(pos []string, o *landOptions) {
+	usage := func(msg string) {
+		fmt.Fprintf(os.Stderr, "flywheel land: %s\n", msg)
+		landUsage(os.Stderr)
+		os.Exit(2)
+	}
+	switch {
+	case o.pr < 0:
+		usage(fmt.Sprintf("--pr %d is not a pull request number", o.pr))
+	case len(pos) != 0:
+		usage("--pr takes no task id")
+	case o.group != "":
+		usage("--pr and --group are mutually exclusive")
+	case o.merge:
+		usage("--pr and --merge are mutually exclusive")
+	case o.commit != "":
+		usage("--pr and --commit are mutually exclusive (the PR's merge commit is landed)")
+	case o.correct != "":
+		usage("--pr and --correct are mutually exclusive")
+	case o.byLead:
+		usage("--pr and --by-lead are mutually exclusive")
+	case o.exception != "":
+		usage("--pr and --exception are mutually exclusive")
+	case o.onto != "":
+		usage("--pr and --onto are mutually exclusive")
+	case o.session == "":
+		usage("--pr requires --session")
+	}
+	res, err := flywheel.LandPR(o.dir, o.pr, o.session, o.note)
+	if err != nil {
+		var inc *flywheel.InconclusiveError
+		if errors.As(err, &inc) {
+			fmt.Fprintf(os.Stderr, "flywheel land: inconclusive: %s\n", inc.Fix)
+			os.Exit(8)
+		}
+		fmt.Fprintf(os.Stderr, "flywheel land: %v\n", err)
+		if flywheel.IsRuleRefusal(err) {
+			os.Exit(6)
+		}
+		os.Exit(1)
+	}
+	counts := map[string]int{}
+	for _, u := range res.Units {
+		counts[u.Outcome]++
+		if u.Detail != "" {
+			fmt.Printf("%s: %s: %s\n", u.Task, u.Outcome, u.Detail)
+		} else {
+			fmt.Printf("%s: %s\n", u.Task, u.Outcome)
+		}
+	}
+	sha := res.MergeSHA
+	if len(sha) > 7 {
+		sha = sha[:7]
+	}
+	fmt.Printf("PR #%d (%s): %d landed, %d skipped, %d refused\n", res.Number, sha, counts["landed"], counts["skipped"], counts["refused"]+counts["error"])
+	switch {
+	case counts["refused"] > 0:
+		os.Exit(6)
+	case counts["error"] > 0:
+		os.Exit(1)
+	}
 }
 
 // runLandGroup implements `flywheel land --group <group> --commit SHA`
