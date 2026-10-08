@@ -170,7 +170,9 @@ defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-
 gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
 policy is enforced by the permission layer, not by asking nicely. The default also denies
 `git fetch` and `git pull`, because they write refs and reach the network. An explicitly configured list
-replaces its default; it is not merged with it, so an operator can widen or narrow deliberately,
+replaces its default; it is not merged with it, so an operator can widen or narrow deliberately
+(one exception: a brief naming `skills:` adds `Skill` to the claude worker's allowed tools, so the
+worker can load them; issue #832),
 and `flywheel config validate` fails when such a list drops `Bash(git commit:*)`, `Bash(git push:*)`
 or `Bash(git reset:*)`. To deny a project command without touching the git-write list, use the
 top-level `worker_policy.deny` (issue #692): command prefixes such as `pio run -t upload` or
