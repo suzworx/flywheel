@@ -651,7 +651,7 @@ func ownEscapeWarning(own []string) string {
 // A failed check is a warning line, never a refusal.
 func validateModules(dir, wt, task, attempt string, cfg Config) error {
 	var warnings, found []string
-	inherited, err := inheritedModules(dir, wt)
+	inherited, err := inheritedModules(absPath(dir), wt) // wt is absPath-resolved; resolve dir too (macOS /var -> /private/var)
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("warning: could not check worktree for inherited node_modules: %v", err))
 	}
