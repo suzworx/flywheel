@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -496,7 +497,9 @@ func (a claudeAdapter) Name() string {
 // --disallowedTools (r.DisallowedTools, by default the git-write family) so
 // the worker permission policy ("workers never commit, stash, reset,
 // checkout or push") is enforced by the permission layer. An empty list
-// appends no flag. --setting-sources user loads only the user's settings:
+// appends no flag. A brief naming skills (r.Skills, issue #695) adds Skill to
+// the allowed patterns when they lack it, on fresh and resumed runs alike, so
+// the worker can load them (issue #832). --setting-sources user loads only the user's settings:
 // the worker's permissions come from the flags above, and a checkout's
 // project or local settings (for example permissions.additionalDirectories
 // naming the repository root) must not widen where the worker may write
@@ -541,9 +544,13 @@ func (a claudeAdapter) Command(r RunRequest) (string, []string) {
 	if !r.NoWorkerRules {
 		args = append(args, "--append-system-prompt", workerRules)
 	}
-	if len(r.AllowedTools) > 0 {
+	allowed := r.AllowedTools
+	if len(r.Skills) > 0 && !slices.Contains(allowed, "Skill") {
+		allowed = append(slices.Clone(allowed), "Skill")
+	}
+	if len(allowed) > 0 {
 		args = append(args, "--allowedTools")
-		args = append(args, r.AllowedTools...)
+		args = append(args, allowed...)
 	}
 	if len(r.DisallowedTools) > 0 {
 		args = append(args, "--disallowedTools")
