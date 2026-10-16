@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.0](https://github.com/suzworx/flywheel/compare/v0.77.0...v0.78.0) (2026-10-16)
+
+
+### Features
+
+* flywheel retro records a retrospective on a landed unit; lint.retro_required_since requires one before the next dispatch ([#855](https://github.com/suzworx/flywheel/issues/855)) ([0c611f8](https://github.com/suzworx/flywheel/commit/0c611f880f63199757e91aa3cb715f2e60de54c1)), closes [#854](https://github.com/suzworx/flywheel/issues/854)
+
 ## [0.77.0](https://github.com/suzworx/flywheel/compare/v0.76.0...v0.77.0) (2026-10-16)
 
 
