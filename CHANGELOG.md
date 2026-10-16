@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.77.0](https://github.com/suzworx/flywheel/compare/v0.76.0...v0.77.0) (2026-10-16)
+
+
+### Features
+
+* flywheel worktree remove refuses to discard a dirty worktree unless --discard records it ([#852](https://github.com/suzworx/flywheel/issues/852)) ([cbfb474](https://github.com/suzworx/flywheel/commit/cbfb47436ea443ae8290c55dabf5658487e80720)), closes [#851](https://github.com/suzworx/flywheel/issues/851)
+
 ## [0.76.0](https://github.com/suzworx/flywheel/compare/v0.75.0...v0.76.0) (2026-10-16)
 
 
