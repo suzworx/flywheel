@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.76.0](https://github.com/suzworx/flywheel/compare/v0.75.0...v0.76.0) (2026-10-16)
+
+
+### Features
+
+* lint.required_observes requires a person's observe: check per owns path ([#849](https://github.com/suzworx/flywheel/issues/849)) ([ed23ee7](https://github.com/suzworx/flywheel/commit/ed23ee7410cd3c6f0129f00643beb75b8743efe5)), closes [#848](https://github.com/suzworx/flywheel/issues/848)
+
 ## [0.75.0](https://github.com/suzworx/flywheel/compare/v0.74.0...v0.75.0) (2026-10-16)
 
 
