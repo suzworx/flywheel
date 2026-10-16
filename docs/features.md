@@ -426,6 +426,12 @@ With no model at all, the `sim` adapter replays a recorded run file (the worker'
 {"lint":{"required_live_gates":{"firmware/":["hil-run"]}}}
 ```
 
+**Required observes.** `lint.required_observes` is the same map for `observe:` lines: each pattern under a prefix that applies must be matched by an observe line, a check only a person can make, which `flywheel inspect --verdict pass` demands a recorded `flywheel observe` reading for. A `gate:` or `live-gate:` line never satisfies one. A miss is a `flywheel lint` problem, and `flywheel run` and `flywheel validate` refuse it with rule `required-observes` (exit 6); config load rejects an invalid pattern ([#848](https://github.com/suzworx/flywheel/issues/848)):
+
+```json
+{"lint":{"required_observes":{"firmware/audio/":["listen|voice"]}}}
+```
+
 **Owns companions.** `lint.owns_companions` maps an owns-path prefix (`""` for every brief) to paths the brief must also own, for files that change together: a CI workflow and the example env file a test checks its secrets against. Every prefix over an owned path applies; a companion counts when an owns entry covers it (exact, `dir/` prefix or glob), not when a `!` entry excludes it. A miss is a `flywheel lint` problem, and `flywheel run` and `flywheel validate` refuse it with rule `owns-companions` (exit 6); config load rejects an absolute companion or one with a `..` element ([#785](https://github.com/suzworx/flywheel/issues/785)). Pair it with a `lint.required_gates` entry for the same prefix so the test checking the pairing runs at validate:
 
 ```json
