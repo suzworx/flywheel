@@ -24,6 +24,9 @@ type StatusReport struct {
 	// Suspended is the factory's freeze at now (issue #572); nil when it is
 	// not suspended.
 	Suspended *SuspendState `json:"suspended,omitempty"`
+	// RetroDue is the units landed under lint.retro_required_since that have
+	// no retro event yet, sorted (issue #854); empty when the setting is off.
+	RetroDue []string `json:"retro_due,omitempty"`
 }
 
 // AttentionLine is one task whose current attempt ended for a reason other
@@ -133,6 +136,9 @@ func Status(dir string, now time.Time) (StatusReport, error) {
 	rep.Factory = filepath.Base(dir)
 	if s := FactorySuspended(w.events, now); s.Suspended {
 		rep.Suspended = &s
+	}
+	if cfg, _, err := LoadConfig(dir); err == nil {
+		rep.RetroDue = retroDue(cfg, w.events)
 	}
 	cur := map[string]TaskState{}
 	for _, ts := range st.Tasks {

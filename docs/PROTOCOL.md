@@ -63,6 +63,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`validated`](#validated)
   - [`resource_wait`](#resource_wait)
   - [`worktree_discarded`](#worktree_discarded)
+  - [`retro`](#retro)
   - [`owns_checked`](#owns_checked)
   - [`inspected`](#inspected)
   - [`staffed`](#staffed)
@@ -281,7 +282,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `required-gates`, `required-live-gates`, `required-observes`, `owns-companions`, `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `required-gates`, `required-live-gates`, `required-observes`, `owns-companions`, `retro-missing` (issue #854), `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
@@ -1569,6 +1570,28 @@ working exactly as before.
   `paths` (every discarded path, as git status names it), `session` and `note` (`branch <name>`, or
   `branch (detached)`, then `; <--note>` when given).
 - Effect: no status change. `Validate` requires `workdir`, `paths` and `session`.
+
+### `retro`
+- Written by: the CLI only, via `flywheel retro <task> --session S (--changed P1,P2 | --none)
+  --note TEXT [--dir DIR]` ([#854](https://github.com/suzworx/flywheel/issues/854)), the lead's
+  retrospective after a landed unit: the agents, briefs and skills it used, refined, validated and
+  evaluated. The task id may come before or after the flags. A task with no `landed` event is
+  refused with exit 6 (rule `retro-not-landed`) and nothing is recorded. Exactly one of
+  `--changed` and `--none`, `--session` and `--note` are required, else usage (exit 2). Each
+  `--changed` path must be a relative path inside `--dir` that exists, else exit 1 naming it. A
+  second retro on the same task is appended like the first. Exit 0 recorded.
+- Carries: `task`, `session`, `note` and `paths` (the `--changed` paths, slash form). `--none` is
+  recorded as empty `paths`; there is no other marker for it.
+- Effect: no status change. `Validate` requires a task, a `session` and a `note`.
+- Enforcement: config `lint.retro_required_since` (RFC 3339; `""`, the default, is off; any other
+  value that does not parse fails config load naming the key). When set, a unit is due when its
+  latest `landed` event (a `land_corrected` changes the commit, not the landing, so it does not
+  count) has a `ts` at or after it and no `retro` event follows that landing in log order; a
+  re-landing after a retro is due again. While any unit is due, `flywheel run` refuses before the
+  brief's checks and preflight with rule `retro-missing` (exit 6, a `dispatch_refused` event), its
+  fix naming every due unit and `flywheel retro <task> --session S (--changed P,... | --none)
+  --note TEXT`. A correction (`--delta`/`--resume`) of a unit that is itself due is not refused for
+  that unit. `flywheel status` prints `retro due: <t1>, <t2>`, and `retro_due` in `--json`.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass, or `flywheel attest`

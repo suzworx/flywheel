@@ -415,6 +415,10 @@ var kinds = map[string]bool{
 	// discarded path, Session (all three required) and Note "branch <b>" plus
 	// the lead's note.
 	"worktree_discarded": true,
+	// retro records the lead's retrospective after a landed unit (issue #854):
+	// Task, Session and Note required, Paths the agents, briefs or skills the
+	// retro changed (repo-relative), empty when it changed none (--none).
+	"retro": true,
 }
 
 // kindList names every kind, sorted, for Validate's unknown-kind error (issue
@@ -584,6 +588,9 @@ func Validate(e Event) error {
 	}
 	if e.Kind == "worktree_discarded" && (e.Workdir == "" || len(e.Paths) == 0 || e.Session == "") {
 		return fmt.Errorf("worktree_discarded event must carry a workdir, paths and a session")
+	}
+	if e.Kind == "retro" && (e.Session == "" || e.Note == "") {
+		return fmt.Errorf("retro event must carry a session and a note")
 	}
 	if (e.Kind == "session_start" || e.Kind == "session_end") && e.Session == "" {
 		return fmt.Errorf("%s event must carry a session", e.Kind)

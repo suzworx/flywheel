@@ -2094,6 +2094,13 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	if err != nil {
 		return "", nil, err
 	}
+	// Retrospectives (issue #854): with lint.retro_required_since set, a unit
+	// landed since then without a retro event blocks every dispatch except a
+	// correction of that same unit.
+	cfg, _, _ := LoadConfig(dir)
+	if r := retroRefusal(cfg, events, o.Task, o.Resume || o.DeltaPath != ""); r != nil {
+		return "", nil, r
+	}
 	brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
 	if brief == "" {
 		return "", nil, nil
@@ -2156,7 +2163,6 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	}
 	// Gate command words (issue #662): a gate that is placeholder text can
 	// never pass, and gates are fixed per attempt.
-	cfg, _, _ := LoadConfig(dir)
 	var allowed []string
 	if cfg.Lint != nil {
 		allowed = cfg.Lint.GateCommands

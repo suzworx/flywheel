@@ -233,6 +233,11 @@ type LintConfig struct {
 	// depends on the host, a problem with rule host-dependent-gate. nil means
 	// on; false turns it off.
 	ProbeCI *bool `json:"probe_ci,omitempty"`
+	// RetroRequiredSince turns on the retrospective rule (issue #854): an
+	// RFC 3339 time; every unit landed at or after it needs a retro event
+	// (flywheel retro) before flywheel run dispatches again (rule
+	// retro-missing). "" (the default) is off.
+	RetroRequiredSince string `json:"retro_required_since,omitempty"`
 }
 
 // LintRedFirst is lint.red_first, true when unset (issue #648).
@@ -1351,6 +1356,11 @@ func (c Config) validateLoad() error {
 				if strings.TrimSpace(p) == "" || filepath.IsAbs(p) || strings.HasPrefix(s, "/") || slices.Contains(strings.Split(s, "/"), "..") {
 					problems = append(problems, fmt.Sprintf("lint.owns_companions[%q][%d]: %q must be a relative path inside the repository", k, j, p))
 				}
+			}
+		}
+		if s := c.Lint.RetroRequiredSince; s != "" {
+			if _, err := time.Parse(time.RFC3339, s); err != nil {
+				problems = append(problems, fmt.Sprintf("lint.retro_required_since: %q is not an RFC 3339 time (issue #854)", s))
 			}
 		}
 	}
