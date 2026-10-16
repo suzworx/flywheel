@@ -72,7 +72,8 @@ type Event struct {
 	// fw/<task> left out because they sit outside the attempt's owns (issue
 	// #477); validate fails the owns check while any of them is still changed.
 	Uncommitted []string `json:"uncommitted,omitempty"`
-	// Paths is a recovered event's tasks the applied actions touched (issue #422).
+	// Paths is a recovered event's tasks the applied actions touched (issue
+	// #422), and a worktree_discarded event's discarded paths (issue #851).
 	Paths []string `json:"paths,omitempty"`
 	// LeadImplemented marks a landed event whose unit the lead implemented
 	// directly instead of a worker (issue #198). Omitted on ordinary landings.
@@ -408,6 +409,12 @@ var kinds = map[string]bool{
 	// It never changes a task's status; the gate's later validated event ends
 	// the wait, and the factory shows it live until then.
 	"resource_wait": true,
+	// worktree_discarded records `flywheel worktree remove --discard` dropping
+	// a dirty worktree's edits (issue #851), appended before the removal: no
+	// task, Workdir the absolute worktree, Commit its HEAD, Paths every
+	// discarded path, Session (all three required) and Note "branch <b>" plus
+	// the lead's note.
+	"worktree_discarded": true,
 }
 
 // kindList names every kind, sorted, for Validate's unknown-kind error (issue
@@ -536,7 +543,7 @@ func attemptOK(s string) bool {
 // is a journal line that may or may not name a task (issue #409).
 func floorLevel(kind string) bool {
 	switch kind {
-	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited", "health", "suspended", "unsuspended":
+	case "staffed", "lead_edit", "goal", "session_start", "session_command", "session_end", "probed", "sharded", "note", "recovered", "reanchored", "release_audited", "health", "suspended", "unsuspended", "worktree_discarded":
 		return true
 	default:
 		return false
@@ -574,6 +581,9 @@ func Validate(e Event) error {
 	}
 	if e.Kind == "lead_edit" && e.Session == "" {
 		return fmt.Errorf("lead_edit event must carry a session")
+	}
+	if e.Kind == "worktree_discarded" && (e.Workdir == "" || len(e.Paths) == 0 || e.Session == "") {
+		return fmt.Errorf("worktree_discarded event must carry a workdir, paths and a session")
 	}
 	if (e.Kind == "session_start" || e.Kind == "session_end") && e.Session == "" {
 		return fmt.Errorf("%s event must carry a session", e.Kind)

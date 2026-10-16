@@ -62,6 +62,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`amended`](#amended)
   - [`validated`](#validated)
   - [`resource_wait`](#resource_wait)
+  - [`worktree_discarded`](#worktree_discarded)
   - [`owns_checked`](#owns_checked)
   - [`inspected`](#inspected)
   - [`staffed`](#staffed)
@@ -1550,6 +1551,24 @@ working exactly as before.
   `validated` event of the same task, attempt and gate, and is younger than `limits.quiet_wait`
   (default `30m`) plus one minute, so a validate that died before its reading never shows a wait
   forever.
+
+### `worktree_discarded`
+- Written by: the CLI only, via `flywheel worktree remove <path> --discard --session S [--note
+  TEXT] [--dir DIR]` ([#851](https://github.com/suzworx/flywheel/issues/851)), the lead's safe
+  removal of its own linked worktrees (never raw `git worktree remove --force`). The command
+  resolves `<path>` against the cwd and finds it in `git worktree list --porcelain` of `--dir`
+  (default `.`; cleaned absolute paths, case-insensitive on Windows). It exits 1 naming the path
+  for the main checkout or a path that is not a linked worktree, and removes nothing. A clean tree
+  (`git status --porcelain=v1 -z --untracked-files=all` in the worktree is empty; ignored files do
+  not count) is removed with its links unlinked first (#822), prints `removed <path>`, exits 0 and
+  records nothing. A dirty tree without `--discard` exits 6 (rule `worktree-dirty`), listing every
+  dirty path with its status code, and removes nothing. `--discard` without `--session` is usage
+  (exit 2). With `--discard`, this event is appended first; an append failure exits 1 and removes
+  nothing; only then is the tree force-removed, printing `discarded N path(s); removed <path>`.
+- Carries: no task (floor level), `workdir` (the absolute worktree path), `commit` (its HEAD),
+  `paths` (every discarded path, as git status names it), `session` and `note` (`branch <name>`, or
+  `branch (detached)`, then `; <--note>` when given).
+- Effect: no status change. `Validate` requires `workdir`, `paths` and `session`.
 
 ### `owns_checked`
 - Written by: the CLI only, via `flywheel validate <task>`, once per pass, or `flywheel attest`

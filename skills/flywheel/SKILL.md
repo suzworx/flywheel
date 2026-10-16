@@ -135,6 +135,10 @@ the unit's owns: assign them to another unit, amend owns, or dismiss them. An in
 them back (issue #422). A chain break a git merge explains (`reordered`) is acknowledged, never edited
 away: `flywheel log --reanchor --note "<why>"` (a `removed` break also needs `--force`, your decision
 that it is explained); recover and `verify --log` then pass and name it (issue #436).
+Remove a temp worktree you made with `flywheel worktree remove <path>`, never raw `git worktree
+remove --force`: a dirty tree exits 6 (`worktree-dirty`) listing every dirty path; commit, hand off
+or save the edits (`git -C <wt> diff`) and delete copied secrets, or pass `--discard --session S`
+to drop them on the record, a `worktree_discarded` event (issue #851).
 
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,
