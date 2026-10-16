@@ -62,6 +62,7 @@ var allFlagsFuncs = map[string]flagsAny{
 	"rebase":     func() (*flag.FlagSet, any) { fs, o := rebaseFlags(); return fs, o },
 	"recover":    func() (*flag.FlagSet, any) { fs, o := recoverFlags(); return fs, o },
 	"checkpoint": func() (*flag.FlagSet, any) { fs, o := checkpointFlags(); return fs, o },
+	"worktree":   func() (*flag.FlagSet, any) { fs, o := worktreeFlags(); return fs, o },
 	"brief":      func() (*flag.FlagSet, any) { fs, o := briefFlags(); return fs, o },
 	"ship":       func() (*flag.FlagSet, any) { fs, o := shipFlags(); return fs, o },
 	"schedule":   func() (*flag.FlagSet, any) { fs, o := scheduleFlags(true); return fs, o },
