@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.0](https://github.com/suzworx/flywheel/compare/v0.74.0...v0.75.0) (2026-10-16)
+
+
+### Features
+
+* lint.required_live_gates requires device-measured live-gates per owns path ([#846](https://github.com/suzworx/flywheel/issues/846)) ([ae301cb](https://github.com/suzworx/flywheel/commit/ae301cb04ae104cb1c02ef6a81149aa672f431e0)), closes [#845](https://github.com/suzworx/flywheel/issues/845)
+
 ## [0.74.0](https://github.com/suzworx/flywheel/compare/v0.73.0...v0.74.0) (2026-10-16)
 
 
