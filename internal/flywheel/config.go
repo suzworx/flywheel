@@ -188,6 +188,13 @@ type LintConfig struct {
 	// be matched by at least one gate line, or lint reports a problem and
 	// flywheel run and validate refuse with rule required-gates.
 	RequiredGates map[string][]string `json:"required_gates,omitempty"`
+	// RequiredLiveGates maps an owns-path prefix (slash form, "" = every
+	// brief) to regular expressions (issue #845). Every key that prefixes at
+	// least one owns path, and the "" key always, applies: each of its
+	// patterns must be matched by at least one live-gate line (a gate: line
+	// never counts), or lint reports a problem and flywheel run and validate
+	// refuse with rule required-live-gates.
+	RequiredLiveGates map[string][]string `json:"required_live_gates,omitempty"`
 	// OwnsCompanions maps an owns-path prefix (slash form, "" = every brief)
 	// to paths that must also appear in the brief's owns: (issue #785). Every
 	// key that prefixes at least one owns path, and the "" key always, applies:
@@ -1299,6 +1306,18 @@ func (c Config) validateLoad() error {
 			for j, p := range c.Lint.RequiredGates[k] {
 				if _, err := regexp.Compile(p); err != nil {
 					problems = append(problems, fmt.Sprintf("lint.required_gates[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
+				}
+			}
+		}
+		rlgKeys := make([]string, 0, len(c.Lint.RequiredLiveGates))
+		for k := range c.Lint.RequiredLiveGates {
+			rlgKeys = append(rlgKeys, k)
+		}
+		sort.Strings(rlgKeys)
+		for _, k := range rlgKeys {
+			for j, p := range c.Lint.RequiredLiveGates[k] {
+				if _, err := regexp.Compile(p); err != nil {
+					problems = append(problems, fmt.Sprintf("lint.required_live_gates[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
 				}
 			}
 		}

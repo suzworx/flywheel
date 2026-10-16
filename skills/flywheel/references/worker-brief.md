@@ -162,6 +162,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   sets a pattern per owns-path prefix, so a monorepo unit needs its own app's full suite.
   `lint.required_gates` lists patterns per owns-path prefix (`""` for every brief) that each need a
   matching gate, every matching prefix applying; a miss is refused with rule `required-gates` (#751).
+  `lint.required_live_gates` does the same for `live-gate:` lines only (a `gate:` line never
+  matches one); a miss is refused with rule `required-live-gates`, by validate with or without
+  `--live` (#845).
   `lint.owns_companions` lists paths per owns-path prefix that the brief must also own (a workflow
   and its secrets manifest); a miss is refused with rule `owns-companions` (#785). A whitespace/diff gate is `git diff --check "$FLYWHEEL_BASE"`,
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a

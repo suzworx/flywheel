@@ -420,6 +420,12 @@ With no model at all, the `sim` adapter replays a recorded run file (the worker'
 {"lint":{"required_gates":{"scripts/":["check:quality"]}}}
 ```
 
+**Required live gates.** `lint.required_live_gates` is the same map for `live-gate:` lines: each pattern under a prefix that applies must be matched by a live gate, the check measured on real hardware or an external system that `flywheel validate --live` runs and `flywheel inspect --verdict pass` demands a reading for. A plain `gate:` line never satisfies one, and a live gate never satisfies a `lint.required_gates` pattern. A miss is a `flywheel lint` problem, and `flywheel run` and `flywheel validate` (with or without `--live`) refuse it with rule `required-live-gates` (exit 6); config load rejects an invalid pattern ([#845](https://github.com/suzworx/flywheel/issues/845)):
+
+```json
+{"lint":{"required_live_gates":{"firmware/":["hil-run"]}}}
+```
+
 **Owns companions.** `lint.owns_companions` maps an owns-path prefix (`""` for every brief) to paths the brief must also own, for files that change together: a CI workflow and the example env file a test checks its secrets against. Every prefix over an owned path applies; a companion counts when an owns entry covers it (exact, `dir/` prefix or glob), not when a `!` entry excludes it. A miss is a `flywheel lint` problem, and `flywheel run` and `flywheel validate` refuse it with rule `owns-companions` (exit 6); config load rejects an absolute companion or one with a `..` element ([#785](https://github.com/suzworx/flywheel/issues/785)). Pair it with a `lint.required_gates` entry for the same prefix so the test checking the pairing runs at validate:
 
 ```json
