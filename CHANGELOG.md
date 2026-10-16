@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.0](https://github.com/suzworx/flywheel/compare/v0.73.0...v0.74.0) (2026-10-16)
+
+
+### Features
+
+* observe: checks only a person can make, required before pass (flywheel observe) ([#843](https://github.com/suzworx/flywheel/issues/843)) ([30c852d](https://github.com/suzworx/flywheel/commit/30c852d5908fdb6bda2999e86296bf9f018f84b0)), closes [#842](https://github.com/suzworx/flywheel/issues/842)
+
 ## [0.73.0](https://github.com/suzworx/flywheel/compare/v0.72.0...v0.73.0) (2026-10-08)
 
 
