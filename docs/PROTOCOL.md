@@ -181,6 +181,12 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `required-gates` (exit 6) naming each missed pattern, before the dispatch lock (only a
   `dispatch_refused` event is recorded, issue #751). `flywheel validate` refuses the effective brief
   with the same rule (exit 6) before any gate runs, recording nothing.
+- Not written when config `lint.required_live_gates` has a key that applies (the same way) with a
+  pattern none of the merged `live-gate:` lines matches (a `gate:` line never counts): run refuses
+  with rule `required-live-gates` (exit 6) naming each missed pattern, before the dispatch lock
+  (only a `dispatch_refused` event is recorded, issue #845). `flywheel validate` refuses the
+  effective brief with the same rule (exit 6), with or without `--live`, before any gate runs,
+  recording nothing.
 - Not written when config `lint.owns_companions` has a key that applies (`""` always; any other key
   when it prefixes an owned path) with a companion path the merged owns do not contain (an exact
   entry, a `dir/` prefix or a glob counts; a `!` entry excluding it does not): run refuses with rule
@@ -269,7 +275,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
-  `preflight`, `gate-command`, `full-suite`, `required-gates`, `owns-companions`, `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
+  `preflight`, `gate-command`, `full-suite`, `required-gates`, `required-live-gates`, `owns-companions`, `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
   because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
@@ -2053,7 +2059,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 
 | Command | Success (0) | Refusal | Other |
 | --- | --- | --- | --- |
-| `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `stage` (an invalid `stage:` line, issue #781), `full-suite`, `required-gates`, `owns-companions` (issue #785), or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
+| `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `stage` (an invalid `stage:` line, issue #781), `full-suite`, `required-gates`, `required-live-gates` (issue #845), `owns-companions` (issue #785), or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `ci-escape` (CI failed after every gate in the brief passed and the brief has gained no gate since the newest `ci_failed` event, issue #776), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
 | `flywheel observe <task> --check N --result pass\|fail --evidence REF --session S` | observed reading recorded (#842) | **6** — `RuleRefusal` naming T4 or T5 | 2 usage, 1 other error (e.g., a check outside the brief's observe lines) |

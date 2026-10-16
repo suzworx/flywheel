@@ -56,7 +56,9 @@ type LintResult struct {
 // prefix's pattern instead, one finding per miss (fullSuiteMissing);
 // an invalid lint.full_suite or lint.full_suite_paths pattern is a problem.
 // Each lint.required_gates pattern no gate matches, under every key that
-// applies, is a problem (requiredGatesMissing, issue #751), and so is each
+// applies, is a problem (requiredGatesMissing, issue #751), as is each
+// lint.required_live_gates pattern no live-gate matches
+// (requiredLiveGatesMissing, issue #845), and so is each
 // lint.owns_companions path owns lacks (ownsCompanionsMissing, issue #785). When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
@@ -80,9 +82,10 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	}
 	cfg, _, err := LoadConfig(dir)
 	switch {
-	case err != nil && strings.Contains(err.Error(), "lint.required_gates"):
-		// An invalid lint.required_gates pattern fails the load (issue #751):
-		// the defaults would drop the required gates, so it is a problem.
+	case err != nil && (strings.Contains(err.Error(), "lint.required_gates") || strings.Contains(err.Error(), "lint.required_live_gates")):
+		// An invalid lint.required_gates or lint.required_live_gates pattern
+		// fails the load (issues #751, #845): the defaults would drop the
+		// required gates, so it is a problem.
 		res.Problems = append(res.Problems, fmt.Sprintf("config not read: %v", err))
 	case err != nil:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("config not read, lint defaults apply: %v", err))
@@ -113,6 +116,14 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	} else {
 		for _, w := range missing {
 			res.Problems = append(res.Problems, w.String()+" (lint.required_gates)")
+		}
+	}
+	// Required live gates (issue #845): matched only against live-gate lines.
+	if missing, err := requiredLiveGatesMissing(lc, header.LiveGates, header.Owns); err != nil {
+		res.Problems = append(res.Problems, err.Error())
+	} else {
+		for _, w := range missing {
+			res.Problems = append(res.Problems, w.String()+" (lint.required_live_gates)")
 		}
 	}
 	// Owns companions (issue #785): a file that changes with an owned path
@@ -1058,6 +1069,15 @@ func (w requiredGateWant) String() string {
 	return "no gate matches required pattern " + w.Pattern + " for " + w.Prefix
 }
 
+// requiredLiveGateWant is one lint.required_live_gates pattern no live-gate
+// matched (issue #845): Prefix is its key, "" for every brief.
+type requiredLiveGateWant requiredGateWant
+
+// String is the miss as lint and run report it.
+func (w requiredLiveGateWant) String() string {
+	return "no live-gate" + strings.TrimPrefix(requiredGateWant(w).String(), "no gate")
+}
+
 // requiredGatesMissing returns the lint.required_gates patterns no gate in
 // gates matches (issue #751), sorted by prefix then pattern, de-duplicated.
 // The "" key applies to every brief; any other key applies when it prefixes
@@ -1065,18 +1085,46 @@ func (w requiredGateWant) String() string {
 // applicable key applies, not only the longest. An invalid pattern returns an
 // error naming its key.
 func requiredGatesMissing(lc *LintConfig, gates, owns []string) ([]requiredGateWant, error) {
-	if lc == nil || len(lc.RequiredGates) == 0 {
+	if lc == nil {
+		return nil, nil
+	}
+	return requiredPatternsMissing(lc.RequiredGates, "lint.required_gates", gates, owns)
+}
+
+// requiredLiveGatesMissing is requiredGatesMissing for the
+// lint.required_live_gates patterns (issue #845), matched only against
+// liveGates: a gate: line never satisfies one.
+func requiredLiveGatesMissing(lc *LintConfig, liveGates, owns []string) ([]requiredLiveGateWant, error) {
+	if lc == nil {
+		return nil, nil
+	}
+	missing, err := requiredPatternsMissing(lc.RequiredLiveGates, "lint.required_live_gates", liveGates, owns)
+	if err != nil || missing == nil {
+		return nil, err
+	}
+	live := make([]requiredLiveGateWant, len(missing))
+	for i, w := range missing {
+		live[i] = requiredLiveGateWant(w)
+	}
+	return live, nil
+}
+
+// requiredPatternsMissing is the shared matcher of requiredGatesMissing and
+// requiredLiveGatesMissing: required maps prefixes to patterns, key names the
+// config field in errors, lines are the commands that may match them.
+func requiredPatternsMissing(required map[string][]string, key string, lines, owns []string) ([]requiredGateWant, error) {
+	if len(required) == 0 {
 		return nil, nil
 	}
 	var missing []requiredGateWant
-	for _, k := range slices.Sorted(maps.Keys(lc.RequiredGates)) {
+	for _, k := range slices.Sorted(maps.Keys(required)) {
 		applies := k == "" || slices.ContainsFunc(owns, func(o string) bool { return strings.HasPrefix(filepath.ToSlash(o), k) })
-		for _, p := range lc.RequiredGates[k] {
+		for _, p := range required[k] {
 			re, err := regexp.Compile(p)
 			if err != nil {
-				return nil, fmt.Errorf("config lint.required_gates[%q] %q is not a valid regular expression: %v", k, p, err)
+				return nil, fmt.Errorf("config %s[%q] %q is not a valid regular expression: %v", key, k, p, err)
 			}
-			if applies && !slices.ContainsFunc(gates, re.MatchString) {
+			if applies && !slices.ContainsFunc(lines, re.MatchString) {
 				missing = append(missing, requiredGateWant{Prefix: k, Pattern: p})
 			}
 		}
