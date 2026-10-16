@@ -141,6 +141,9 @@ func printStatus(rep flywheel.StatusReport) {
 		fmt.Printf("SUSPENDED since %s by %s: %s%s\n", s.Since, s.By, s.Reason, until)
 	}
 	fmt.Printf("Factory: %s\n", rep.Factory)
+	if len(rep.RetroDue) > 0 {
+		fmt.Printf("retro due: %s\n", strings.Join(rep.RetroDue, ", "))
+	}
 	if len(rep.Goals.List) == 0 {
 		fmt.Println("Goals: none")
 	} else {

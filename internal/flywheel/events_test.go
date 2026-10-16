@@ -631,6 +631,28 @@ func TestSessionKindsValidate(t *testing.T) {
 	}
 }
 
+// TestRetroKindValidate: a retro event requires a session and a note, and
+// empty Paths (--none) is valid (issue #854).
+func TestRetroKindValidate(t *testing.T) {
+	t.Parallel()
+	for _, e := range []Event{
+		{Task: "T1", Kind: "retro", Note: "n"},
+		{Task: "T1", Kind: "retro", Session: "lead"},
+	} {
+		if err := Validate(e); err == nil || !strings.Contains(err.Error(), "retro event must carry a session and a note") {
+			t.Errorf("Validate(%+v) error = %v, want the retro session and note error", e, err)
+		}
+	}
+	if err := Validate(Event{Kind: "retro", Session: "lead", Note: "n"}); err == nil {
+		t.Error("Validate() accepted a retro without a task")
+	}
+	for _, p := range [][]string{nil, {"skills/a/SKILL.md"}} {
+		if err := Validate(Event{Task: "T1", Kind: "retro", Session: "lead", Note: "n", Paths: p}); err != nil {
+			t.Errorf("Validate() rejected a retro with paths %v: %v", p, err)
+		}
+	}
+}
+
 func TestValidateGoalEvent(t *testing.T) {
 	t.Parallel()
 	ok := Event{Kind: "goal", Goal: &GoalSpec{ID: "g1", Title: "Ship", Status: "active"}}

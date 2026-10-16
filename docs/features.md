@@ -432,6 +432,12 @@ With no model at all, the `sim` adapter replays a recorded run file (the worker'
 {"lint":{"required_observes":{"firmware/audio/":["listen|voice"]}}}
 ```
 
+**Retrospectives.** After a unit lands, the lead can look back at the agents, briefs and skills it used and refine them, then record that with `flywheel retro <task> --session S (--changed P1,P2 | --none) --note TEXT`, which appends a `retro` event naming the paths it changed (or none). Retro refuses a task that never landed (exit 6, rule `retro-not-landed`). Setting `lint.retro_required_since` to an RFC 3339 time turns the habit into a rule: every unit landed since then needs a retro, `flywheel status` prints `retro due: ...` and `flywheel run` refuses any other dispatch with rule `retro-missing` (exit 6) until each due unit has one; a correction of the due unit itself still goes out ([#854](https://github.com/suzworx/flywheel/issues/854)):
+
+```json
+{"lint":{"retro_required_since":"2026-10-16T00:00:00Z"}}
+```
+
 **Owns companions.** `lint.owns_companions` maps an owns-path prefix (`""` for every brief) to paths the brief must also own, for files that change together: a CI workflow and the example env file a test checks its secrets against. Every prefix over an owned path applies; a companion counts when an owns entry covers it (exact, `dir/` prefix or glob), not when a `!` entry excludes it. A miss is a `flywheel lint` problem, and `flywheel run` and `flywheel validate` refuse it with rule `owns-companions` (exit 6); config load rejects an absolute companion or one with a `..` element ([#785](https://github.com/suzworx/flywheel/issues/785)). Pair it with a `lint.required_gates` entry for the same prefix so the test checking the pairing runs at validate:
 
 ```json
