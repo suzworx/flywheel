@@ -2070,7 +2070,9 @@ func acquireDispatchLock(dir string) (release func(), err error) {
 // a lint.required_gates pattern (requiredGatesRefusal, issue #751) refuse with
 // rule required-gates, and live gates and owns missing a
 // lint.required_live_gates pattern (requiredLiveGatesRefusal, issue #845)
-// with rule required-live-gates. Owns lacking a lint.owns_companions path
+// with rule required-live-gates, and observes and owns missing a
+// lint.required_observes pattern (requiredObservesRefusal, issue #848) with
+// rule required-observes. Owns lacking a lint.owns_companions path
 // (ownsCompanionsRefusal, issue #785) refuse with rule owns-companions. A
 // kind: fix first dispatch (no --resume, no --delta, no dispatched event) with
 // no red pre-dispatch gate probe (redFirstRefusal, issue #812) refuses with
@@ -2108,7 +2110,7 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 	if perr != nil {
 		return src, b, nil
 	}
-	needs, pre, gates, liveGates, owns, skills, agent := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.LiveGates, ph.Owns, ph.Skills, ph.Agent
+	needs, pre, gates, liveGates, observes, owns, skills, agent := ph.NeedsEnv, ph.Preflight, ph.Gates, ph.LiveGates, ph.Observes, ph.Owns, ph.Skills, ph.Agent
 	// replaced and merged are the headers of the attempt a correction
 	// replaces and of the correction itself (issue #825).
 	var replaced, merged *BriefHeader
@@ -2133,7 +2135,7 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		// merge as if this prompt were already dispatched (issue #662).
 		probe := append(slices.Clone(events), Event{Task: o.Task, Kind: "dispatched", Attempt: "c0", Brief: promptBrief(dir, src), Header: &ph})
 		if h, _, aerr := AttemptBrief(dir, probe, o.Task); aerr == nil {
-			gates, liveGates, owns = h.Gates, h.LiveGates, h.Owns
+			gates, liveGates, observes, owns = h.Gates, h.LiveGates, h.Observes, h.Owns
 			if h.Kind == "" {
 				h.Kind = baseHeader.Kind
 			}
@@ -2172,6 +2174,9 @@ func preDispatchChecks(dir string, o RunOptions, w Worker) (src string, prompt [
 		return "", nil, r
 	}
 	if r := requiredLiveGatesRefusal(cfg.Lint, liveGates, owns); r != nil {
+		return "", nil, r
+	}
+	if r := requiredObservesRefusal(cfg.Lint, observes, owns); r != nil {
 		return "", nil, r
 	}
 	if r := ownsCompanionsRefusal(cfg.Lint, owns); r != nil {
@@ -2252,6 +2257,22 @@ func requiredLiveGatesRefusal(lc *LintConfig, liveGates, owns []string) *RuleRef
 		msgs[i] = w.String()
 	}
 	return &RuleRefusal{Rule: "required-live-gates", Fix: strings.Join(msgs, "; ") + "; add a matching live-gate: line to the brief or change lint.required_live_gates"}
+}
+
+// requiredObservesRefusal is the rule required-observes refusal (issue #848)
+// when observes and owns miss a lint.required_observes pattern
+// (requiredObservesMissing), its Fix listing every miss; else nil. An invalid
+// pattern is nil: lint reports it. Run and validate both refuse with it.
+func requiredObservesRefusal(lc *LintConfig, observes, owns []string) *RuleRefusal {
+	missing, err := requiredObservesMissing(lc, observes, owns)
+	if err != nil || len(missing) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(missing))
+	for i, w := range missing {
+		msgs[i] = w.String()
+	}
+	return &RuleRefusal{Rule: "required-observes", Fix: strings.Join(msgs, "; ") + "; add a matching observe: line to the brief or change lint.required_observes"}
 }
 
 // ownsCompanionsRefusal is the rule owns-companions refusal (issue #785) when

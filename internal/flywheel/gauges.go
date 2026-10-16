@@ -292,6 +292,10 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 		if r := requiredLiveGatesRefusal(cfg.Lint, header.LiveGates, header.Owns); r != nil {
 			return GaugeResult{}, r
 		}
+		// Required observes (issue #848): refuse as run does.
+		if r := requiredObservesRefusal(cfg.Lint, header.Observes, header.Owns); r != nil {
+			return GaugeResult{}, r
+		}
 		// Owns companions (issue #785): refuse as run does.
 		if r := ownsCompanionsRefusal(cfg.Lint, header.Owns); r != nil {
 			return GaugeResult{}, r

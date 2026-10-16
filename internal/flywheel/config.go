@@ -195,6 +195,13 @@ type LintConfig struct {
 	// never counts), or lint reports a problem and flywheel run and validate
 	// refuse with rule required-live-gates.
 	RequiredLiveGates map[string][]string `json:"required_live_gates,omitempty"`
+	// RequiredObserves maps an owns-path prefix (slash form, "" = every
+	// brief) to regular expressions (issue #848). Every key that prefixes at
+	// least one owns path, and the "" key always, applies: each of its
+	// patterns must be matched by at least one observe line (a gate: or
+	// live-gate: line never counts), or lint reports a problem and flywheel
+	// run and validate refuse with rule required-observes.
+	RequiredObserves map[string][]string `json:"required_observes,omitempty"`
 	// OwnsCompanions maps an owns-path prefix (slash form, "" = every brief)
 	// to paths that must also appear in the brief's owns: (issue #785). Every
 	// key that prefixes at least one owns path, and the "" key always, applies:
@@ -1318,6 +1325,18 @@ func (c Config) validateLoad() error {
 			for j, p := range c.Lint.RequiredLiveGates[k] {
 				if _, err := regexp.Compile(p); err != nil {
 					problems = append(problems, fmt.Sprintf("lint.required_live_gates[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
+				}
+			}
+		}
+		roKeys := make([]string, 0, len(c.Lint.RequiredObserves))
+		for k := range c.Lint.RequiredObserves {
+			roKeys = append(roKeys, k)
+		}
+		sort.Strings(roKeys)
+		for _, k := range roKeys {
+			for j, p := range c.Lint.RequiredObserves[k] {
+				if _, err := regexp.Compile(p); err != nil {
+					problems = append(problems, fmt.Sprintf("lint.required_observes[%q][%d]: %q is not a valid regular expression: %v", k, j, p, err))
 				}
 			}
 		}

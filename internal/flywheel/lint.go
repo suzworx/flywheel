@@ -58,7 +58,9 @@ type LintResult struct {
 // Each lint.required_gates pattern no gate matches, under every key that
 // applies, is a problem (requiredGatesMissing, issue #751), as is each
 // lint.required_live_gates pattern no live-gate matches
-// (requiredLiveGatesMissing, issue #845), and so is each
+// (requiredLiveGatesMissing, issue #845), as is each lint.required_observes
+// pattern no observe line matches (requiredObservesMissing, issue #848), and
+// so is each
 // lint.owns_companions path owns lacks (ownsCompanionsMissing, issue #785). When dir has go.mod and
 // lint.importers is not false, go list finds each owned Go package's direct
 // importers, and one whose tests owns does not cover is a warning. A gate
@@ -82,10 +84,11 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	}
 	cfg, _, err := LoadConfig(dir)
 	switch {
-	case err != nil && (strings.Contains(err.Error(), "lint.required_gates") || strings.Contains(err.Error(), "lint.required_live_gates")):
-		// An invalid lint.required_gates or lint.required_live_gates pattern
-		// fails the load (issues #751, #845): the defaults would drop the
-		// required gates, so it is a problem.
+	case err != nil && (strings.Contains(err.Error(), "lint.required_gates") || strings.Contains(err.Error(), "lint.required_live_gates") || strings.Contains(err.Error(), "lint.required_observes")):
+		// An invalid lint.required_gates, lint.required_live_gates or
+		// lint.required_observes pattern fails the load (issues #751, #845,
+		// #848): the defaults would drop the required checks, so it is a
+		// problem.
 		res.Problems = append(res.Problems, fmt.Sprintf("config not read: %v", err))
 	case err != nil:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("config not read, lint defaults apply: %v", err))
@@ -124,6 +127,14 @@ func lintBrief(dir, path string, list func(string) (string, error)) (LintResult,
 	} else {
 		for _, w := range missing {
 			res.Problems = append(res.Problems, w.String()+" (lint.required_live_gates)")
+		}
+	}
+	// Required observes (issue #848): matched only against observe lines.
+	if missing, err := requiredObservesMissing(lc, header.Observes, header.Owns); err != nil {
+		res.Problems = append(res.Problems, err.Error())
+	} else {
+		for _, w := range missing {
+			res.Problems = append(res.Problems, w.String()+" (lint.required_observes)")
 		}
 	}
 	// Owns companions (issue #785): a file that changes with an owned path
@@ -1109,8 +1120,35 @@ func requiredLiveGatesMissing(lc *LintConfig, liveGates, owns []string) ([]requi
 	return live, nil
 }
 
-// requiredPatternsMissing is the shared matcher of requiredGatesMissing and
-// requiredLiveGatesMissing: required maps prefixes to patterns, key names the
+// requiredObserveWant is one lint.required_observes pattern no observe line
+// matched (issue #848): Prefix is its key, "" for every brief.
+type requiredObserveWant requiredGateWant
+
+// String is the miss as lint and run report it.
+func (w requiredObserveWant) String() string {
+	return "no observe" + strings.TrimPrefix(requiredGateWant(w).String(), "no gate")
+}
+
+// requiredObservesMissing is requiredGatesMissing for the
+// lint.required_observes patterns (issue #848), matched only against
+// observes: a gate: or live-gate: line never satisfies one.
+func requiredObservesMissing(lc *LintConfig, observes, owns []string) ([]requiredObserveWant, error) {
+	if lc == nil {
+		return nil, nil
+	}
+	missing, err := requiredPatternsMissing(lc.RequiredObserves, "lint.required_observes", observes, owns)
+	if err != nil || missing == nil {
+		return nil, err
+	}
+	obs := make([]requiredObserveWant, len(missing))
+	for i, w := range missing {
+		obs[i] = requiredObserveWant(w)
+	}
+	return obs, nil
+}
+
+// requiredPatternsMissing is the shared matcher of requiredGatesMissing,
+// requiredLiveGatesMissing and requiredObservesMissing: required maps prefixes to patterns, key names the
 // config field in errors, lines are the commands that may match them.
 func requiredPatternsMissing(required map[string][]string, key string, lines, owns []string) ([]requiredGateWant, error) {
 	if len(required) == 0 {
