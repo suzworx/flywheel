@@ -271,8 +271,12 @@ func inertAmendRefusal(dir, task, resolved string, events []Event, header BriefH
 	// Check if this would be an inert gate change: the amendment would not
 	// move the effective gate set (the set after the amendment is what it was
 	// before, and the amendment's gates differ from that set).
+	// observe: lines (issue #842) count with the live gates: both are
+	// inherited from the base and never run by the worker.
 	gateInert := gatesEqual(before.Gates, after.Gates) && gatesEqual(before.LiveGates, after.LiveGates) &&
-		(!gatesEqual(before.Gates, header.Gates) || !gatesEqual(before.LiveGates, header.LiveGates))
+		gatesEqual(before.Observes, after.Observes) &&
+		(!gatesEqual(before.Gates, header.Gates) || !gatesEqual(before.LiveGates, header.LiveGates) ||
+			!gatesEqual(before.Observes, header.Observes))
 
 	// Check if this would be an inert narrowing on a fresh attempt whose
 	// dispatched event recorded its header: owns and exclusive are unioned
@@ -335,7 +339,7 @@ func PlanDriftWarning(dir, task, brief string) string {
 	if err != nil {
 		return ""
 	}
-	if gatesEqual(eff.Gates, header.Gates) && gatesEqual(eff.LiveGates, header.LiveGates) {
+	if gatesEqual(eff.Gates, header.Gates) && gatesEqual(eff.LiveGates, header.LiveGates) && gatesEqual(eff.Observes, header.Observes) {
 		return ""
 	}
 	return fmt.Sprintf(

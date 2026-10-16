@@ -490,7 +490,7 @@ func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 	for _, e := range events {
 		if e.Task == task && e.Source != "" && (e.Kind == "validated" || e.Kind == "owns_checked") && !externalReadingOK(e) {
 			items = append(items, VerifyItem{Task: task, Rule: "T3", Pass: false,
-				Reason: fmt.Sprintf("external %s reading on tree %s lacks evidence, a session or the commit it measured", e.Kind, short(e.Tree))})
+				Reason: fmt.Sprintf("%s %s reading on tree %s lacks evidence, a session or the commit it measured", e.Source, e.Kind, short(e.Tree))})
 		}
 	}
 	var attested []string
@@ -537,6 +537,11 @@ func ruleT3(dir, task, workdir string, events []Event) ([]VerifyItem, error) {
 				if !hasPassingValidated(events, task, idx, insp.Tree, latest) {
 					missing = fmt.Sprintf("gate %s", idx)
 					break
+				}
+			}
+			for i := range header.Observes {
+				if missing == "" && !hasPassingObservation(events, task, i+1, insp.Tree, latest) {
+					missing = fmt.Sprintf("a passing observation for observe %d", i+1)
 				}
 			}
 			if missing == "" && !hasCleanOwnsChecked(events, task, insp.Tree, latest) {
@@ -698,6 +703,12 @@ func ruleT4(task string, events []Event) []VerifyItem {
 		if e.Source == "external" && workers[e.Session] {
 			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
 				Reason: fmt.Sprintf("external %s reading attested by worker session %q", e.Kind, e.Session)})
+		}
+		// An observation (issue #842) is a person's check the lead records;
+		// a worker's claim is not one.
+		if e.Source == "observed" && workers[e.Session] {
+			items = append(items, VerifyItem{Task: task, Rule: "T4", Pass: false,
+				Reason: fmt.Sprintf("observed %s reading %s recorded by worker session %q", e.Kind, e.Gate, e.Session)})
 		}
 	}
 	if len(items) == 0 {

@@ -215,7 +215,11 @@ type Event struct {
 	// Source "external" marks a validated or owns_checked reading flywheel did
 	// not measure (issue #367): flywheel attest records a run elsewhere (CI on
 	// the PR, say) that measured a named commit. Such a reading must carry
-	// Evidence, Commit and Session. Empty on every reading flywheel measured.
+	// Evidence, Commit and Session. Source "observed" marks a validated
+	// reading of an observe: line (issue #842), gate obs<n>: a check only a
+	// person can make, recorded by the lead with flywheel observe on the
+	// unit's current tree. It must carry Evidence (a photo or reference) and
+	// Session. Empty on every reading flywheel measured.
 	Source string `json:"source,omitempty"`
 	// Learning fields (issue #38): a learning event carries severity, title,
 	// observed, evidence, ask and signals; a dismissed event carries id
@@ -542,8 +546,15 @@ func floorLevel(kind string) bool {
 // externalReadingOK reports whether a reading is sound as to its source: a
 // reading flywheel measured always is; an external one (issue #367) must name
 // the evidence, the session that attested it and the commit it measured.
+// An observed one (issue #842) must name the evidence and the session.
 func externalReadingOK(e Event) bool {
-	return e.Source != "external" || e.Evidence != "" && e.Session != "" && CommitOK(e.Commit)
+	switch e.Source {
+	case "external":
+		return e.Evidence != "" && e.Session != "" && CommitOK(e.Commit)
+	case "observed":
+		return e.Evidence != "" && e.Session != ""
+	}
+	return true
 }
 
 // Validate enforces the task pattern, the attempt pattern, the kind set and
@@ -793,10 +804,17 @@ func Validate(e Event) error {
 		if e.Kind != "validated" && e.Kind != "owns_checked" {
 			return fmt.Errorf("event kind %q cannot carry a source", e.Kind)
 		}
-		if e.Source != "external" {
-			return fmt.Errorf("reading source %q is not external", e.Source)
+		if e.Source != "external" && e.Source != "observed" {
+			return fmt.Errorf("reading source %q is not external or observed", e.Source)
 		}
-		if !externalReadingOK(e) {
+		if e.Source == "observed" {
+			if e.Kind != "validated" {
+				return fmt.Errorf("event kind %q cannot carry source observed", e.Kind)
+			}
+			if !externalReadingOK(e) {
+				return fmt.Errorf("observed validated event must carry evidence and a session")
+			}
+		} else if !externalReadingOK(e) {
 			return fmt.Errorf("external %s event must carry evidence, a session and the commit it measured", e.Kind)
 		}
 	}

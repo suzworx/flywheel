@@ -205,6 +205,12 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   lead's verification pass, via `flywheel validate <task> --live`, never in the worker's own
   dispatch or an ordinary `flywheel validate <task>`. A `pass` verdict is refused (T3) until a
   passing live reading exists on the same tree.
+- **observe:** lines — optional, one per check only a person can make (look at a screen, listen
+  to audio): `observe: <what a person must see and how to decide it>` (#842). Nothing runs it.
+  A worker never reports an observe check as passing; its report says what to look at and
+  where. Ship a test card (a fixed screen or tone) that settles the check in one photo. A `pass`
+  verdict is refused (T3) until the lead looks and records `flywheel observe <task> --check N
+  --result pass --evidence <photo> --session <lead>` on the same tree.
 - **gate[quiet]:** / **live-gate[quiet]:** — the same one-command line for a gate that host
   contention distorts (device timing, hardware in the loop). It waits, up to
   `limits.quiet_wait` (default `30m`), until no other task's worker runs on this host, and
