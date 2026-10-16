@@ -398,6 +398,10 @@ func lintStructure(dir, path string) (LintResult, error) {
 	if !header.resourcesDeclared && len(header.ResourceGates)+len(header.ResourceLiveGates) > 0 {
 		res.Problems = append(res.Problems, "a gate is marked [resources] but the brief has no resources: line; name the shared resources or drop the marker")
 	}
+	// observe: (issue #842) is a person's check; an empty one names nothing to see.
+	if header.observeEmpty {
+		res.Problems = append(res.Problems, "observe: line is empty; say what a person must see and how to decide it, or remove the line")
+	}
 	// preflight: (issue #635) is checked for shape only; lint never runs it.
 	if header.preflightEmpty {
 		res.Problems = append(res.Problems, "preflight: line is empty; name a command or remove the line")

@@ -140,6 +140,13 @@ When CI measured a merged commit, `flywheel attest <task> --commit SHA --evidenc
 records its gates as passing readings marked `source: external`, then `inspect --commit` and
 `land --commit` finish the unit (issue [#367](https://github.com/suzworx/flywheel/issues/367)).
 
+**Checks only a person can make.** A brief's `observe: <what to see and how to decide it>` line
+(issue [#842](https://github.com/suzworx/flywheel/issues/842)) names a check no shell command can
+make: a display, a sound. Nothing runs it, and a worker's claim never settles it: a pass is
+refused (T3) until the lead looks and records `flywheel observe <task> --check N --result pass
+--evidence <photo> --session S` on the unit's current tree. A failing observation, or one older
+than a newer worker finish, does not count.
+
 **Land from a PR.** `flywheel land --pr N --session S` (issue
 [#831](https://github.com/suzworx/flywheel/issues/831)) does those three steps for every unit a
 merged PR names. It reads `gh pr view N` (state, merge commit, commits, check rollup) and refuses

@@ -73,6 +73,10 @@ provider — where a mocked gate proves the mock and not the contract. The worke
 can with the mocked path; the lead proves the contract against the real thing, and a `pass`
 verdict is refused until that live reading exists.
 
+An `observe:` line is a check only a person can make (look at a screen, listen to audio): nothing
+runs it, and a `pass` is refused until the lead looks and records it with `flywheel observe`
+([#842](https://github.com/suzworx/flywheel/issues/842)).
+
 ## The event log
 
 Everything that happens to a unit is appended, one JSON line at a time, to

@@ -384,6 +384,11 @@ func allReadings(events []Event, header BriefHeader, task, tree string, after ti
 			return false
 		}
 	}
+	for i := range header.Observes {
+		if !hasPassingObservation(events, task, i+1, tree, after) {
+			return false
+		}
+	}
 	return hasCleanOwnsChecked(events, task, tree, after)
 }
 
@@ -406,6 +411,12 @@ func readingsRefusal(events []Event, header BriefHeader, task, tree string, afte
 		idx := fmt.Sprintf("live%d", n)
 		if !hasPassingValidated(events, task, idx, tree, after) {
 			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing supervisor validated reading for live-gate %d on tree %s after the latest finished event; run: flywheel validate %s --live", n, tree, task)}
+		}
+	}
+	for i, obs := range header.Observes {
+		n := i + 1
+		if !hasPassingObservation(events, task, n, tree, after) {
+			return RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("no passing observation for observe %d (%q) on tree %s after the latest finished event; look, then run: flywheel observe %s --check %d --result pass --evidence <photo or reference> --session <lead>", n, obs, tree, task, n)}
 		}
 	}
 	if r, found := outsideRefusal(events, task, tree, after); found {

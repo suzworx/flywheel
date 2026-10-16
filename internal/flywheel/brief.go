@@ -14,8 +14,8 @@ var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // BriefHeader is the parsed key: value block at the top of a brief file, plus
 // the SHA-256 of the whole file. Keys: owns, needs, needs-state, gate,
-// live-gate, exclusive, review, line, kind, stage (`stage: <from> -> <to>`,
-// repeatable, issue #781).
+// live-gate, observe (a check only a person can make, issue #842), exclusive,
+// review, line, kind, stage (`stage: <from> -> <to>`, repeatable, issue #781).
 type BriefHeader struct {
 	Owns []string // comma-separated, annotations stripped, "none" and "-" dropped
 	// OwnsNone is true when the header has an owns line and every entry on
@@ -47,6 +47,14 @@ type BriefHeader struct {
 	// (`flywheel validate <task> --live`), never on a worker's own mocked
 	// run (issue #152).
 	LiveGates []string
+	// Observes are `observe:` lines, order kept (issue #842): a check only a
+	// person can make (look at a screen, listen to audio), what to see and how
+	// to decide it. Validate never runs them; a pass needs a passing `obs<n>`
+	// reading the lead records with `flywheel observe`. A correction delta
+	// inherits them as it inherits live gates.
+	Observes []string `json:",omitempty"`
+	// observeEmpty records an empty observe: line; flywheel lint reports it.
+	observeEmpty bool
 	// QuietGates and QuietLiveGates are the 1-based indices into Gates and
 	// LiveGates of the lines marked `[quiet]` (issue #411): gates that wait
 	// for an idle host before they run.
@@ -238,6 +246,13 @@ func ParseBriefHeaderBytes(b []byte) (BriefHeader, error) {
 			h.Gates = append(h.Gates, val)
 		case "live-gate":
 			h.LiveGates = append(h.LiveGates, val)
+		case "observe":
+			// A check only a person can make (issue #842); never run.
+			if val == "" {
+				h.observeEmpty = true
+			} else {
+				h.Observes = append(h.Observes, val)
+			}
 		case "needs-env":
 			// Environment variables the gates or live round read (issue #534):
 			// run and validate refuse while one is unset. A name that is not a

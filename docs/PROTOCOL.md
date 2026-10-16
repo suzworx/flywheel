@@ -1507,6 +1507,19 @@ working exactly as before.
   unit's `owns:` against its first parent (T3). An external reading counts for T3 exactly like a
   measured one; verify fails one missing its evidence, session or commit, and names the evidence
   of a pass it relied on (`attested: <evidence>` on the T3 line).
+- An **observed** reading (`source` `"observed"`, issue
+  [#842](https://github.com/suzworx/flywheel/issues/842)) is a check only a person can make: the
+  brief's `observe: <what a person must see and how to decide it>` header line, one per check,
+  kept in order and inherited by a correction delta as `live-gate:` lines are. Nothing runs it:
+  validate skips it and the worker's report says what to look at. After looking, the lead runs
+  `flywheel observe <task> --check <n> --result pass|fail --evidence <photo or reference>
+  --session <lead>`, which writes one `validated` with `gate` `obs<n>`, `command` the observe
+  line, the unit's current tree (the tree validate hashes), `rc` 0 for pass and 1 for fail,
+  `source`, `evidence`, `session` and persona `supervisor`. `Validate` refuses an observed reading
+  without evidence or a session; `observe` refuses a missing session or a worker session of the
+  task (T4), a task with no dispatched attempt (T5), and a check outside the brief's observe
+  lines; verify's T4 fails an observed reading from a worker session. `flywheel lint` reports an
+  empty `observe:` line.
 
 ### `resource_wait`
 - Written by: the CLI only, via `flywheel validate <task>`
@@ -1780,7 +1793,9 @@ gates (exit 5) without touching the log's legality.
   pass` inspection) needs, for the *same git tree hash* the unit actually built: a passing
   `validated` event from the supervisor for **every** gate the current attempt's prompt declares,
   and a clean (`outside`-, `markers`- and `dropped`-empty) `owns_checked` — both recorded after the latest `finished` event
-  that precedes the check. On a shared working tree the hash can move between `validate` and
+  that precedes the check. Every `observe:` line needs a passing `obs<n>` observation on that
+  tree after the same `finished` event too (issue #842): a failing one, or a later failure, is not
+  a pass, and the refusal names `flywheel observe <task> --check <n>`. On a shared working tree the hash can move between `validate` and
   `inspect` because other units keep writing, so the rule is relaxed (issue #218): when no reading
   exists on the current tree, the reading may be taken on another tree `T` whose difference from
   the current tree lies entirely **outside the unit**'s `owns:` — every one of the task's readings
@@ -2041,6 +2056,7 @@ failed, 6 rule refusal, 8 inconclusive. The enforcing commands:
 | `flywheel validate <task>` (or `--group`) | every gate passed, nothing outside `owns:` | **5** — a gate failed, stayed host-blocked after one rerun, a changed path is outside `owns:`, or a claude worker never loaded a skill its brief named (`skills-not-loaded`, issue #695; `skills.require_loaded` false turns it off); **6** — `RuleRefusal` naming `needs-env`, `stage` (an invalid `stage:` line, issue #781), `full-suite`, `required-gates`, `owns-companions` (issue #785), or `group-owns` (`validate --group`: two members own one `owns:` entry or one changed path, issue #775) | 2 usage, 1 other error |
 | `flywheel inspect <task> --verdict ... --session ...` | inspection recorded | **6** — `RuleRefusal` naming T3, T4, T8, `review` (an open blocking review finding), `red-first` (a `kind: fix` pass with no gate red on the base tree before dispatch, issue #648; `lint.red_first` false turns it off), `ci-escape` (CI failed after every gate in the brief passed and the brief has gained no gate since the newest `ci_failed` event, issue #776), `skills-not-loaded` (a claude worker never loaded a skill its brief named, issue #695; `skills.require_loaded` false turns it off), `denied-write` (a path whose write the harness denied changed anyway with no lead claim, issue #757), `panel` or `lead-built` (a pass on a unit with no dispatched attempt over `lead_built.max_changed_lines`, issue #722; `--exception` records why) and its fix | 2 usage, 1 other error |
 | `flywheel attest <task> --commit <sha> --evidence URL --session S` | external readings recorded | **6** — `RuleRefusal` naming T3, T4 or T5 | 2 usage, 1 other error (e.g., the commit is not in the repository) |
+| `flywheel observe <task> --check N --result pass\|fail --evidence REF --session S` | observed reading recorded (#842) | **6** — `RuleRefusal` naming T4 or T5 | 2 usage, 1 other error (e.g., a check outside the brief's observe lines) |
 | `flywheel verify [...] [--json]` | every requested check passes | **6** — any check fails (`FAIL <task> <rule>: <reason>`) | **8** — every failing check is `INCONCLUSIVE` (no violation established, the tree could not be resolved); 2 usage, 1 other error |
 | `flywheel land <task> --commit <sha> [--exception TEXT --session S]` | landing recorded, or repeats an already-landed commit | **6** — `RuleRefusal` naming T5 or T4 (T5 includes a commit off the integration branch or touching none of the unit's files) | 8 inconclusive (the commit or every integration ref does not resolve: run `git fetch`), 2 usage (e.g., --exception without --session), 1 other error |
 | `flywheel inspect --group <group> --verdict ... --session ...` | every member's inspection recorded | **6** — the first member's `RuleRefusal` (any rule `inspect <task>` refuses), naming the member; nothing recorded | 2 usage (a task id with `--group`), 1 other error |

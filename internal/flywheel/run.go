@@ -2308,7 +2308,7 @@ func briefDriftAdvice(dir string, events []Event, task, brief, dispatchedAt stri
 		return fmt.Sprintf("brief on disk differs from the hash dispatched at %s; re-record it with: flywheel log --task %s --kind planned --brief %s", dispatchedAt, task, brief)
 	}
 	msg := fmt.Sprintf("brief on disk differs from the hash dispatched at %s; the dispatched attempt keeps its header until you record the change: flywheel log --task %s --kind amended --brief %s --note \"<why>\" (widens owns/exclusive on the dispatched attempt)", dispatchedAt, task, brief)
-	if !slices.Equal(drifted.Gates, effective.Gates) || !slices.Equal(drifted.LiveGates, effective.LiveGates) {
+	if !slices.Equal(drifted.Gates, effective.Gates) || !slices.Equal(drifted.LiveGates, effective.LiveGates) || !slices.Equal(drifted.Observes, effective.Observes) {
 		msg += fmt.Sprintf("; its gates changed, which an amendment cannot do — dispatch a correction instead: flywheel run %s --delta <file> (a header carrying every gate)", task)
 	}
 	return msg
