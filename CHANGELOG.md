@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.1](https://github.com/suzworx/flywheel/compare/v0.78.0...v0.78.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* validate ends with a verdict line, and lint warns on a gate whose ';' discards an earlier command's exit status ([#858](https://github.com/suzworx/flywheel/issues/858)) ([f6c7f06](https://github.com/suzworx/flywheel/commit/f6c7f06936a4c4a720b013c3372289c66ab402f5)), closes [#857](https://github.com/suzworx/flywheel/issues/857)
+
 ## [0.78.0](https://github.com/suzworx/flywheel/compare/v0.77.0...v0.78.0) (2026-10-16)
 
 
