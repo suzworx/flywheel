@@ -300,10 +300,70 @@ func runValidate(args []string) {
 	if len(res.SkillsNotLoaded) > 0 {
 		fmt.Printf("%s skills-not-loaded: %s: the worker never loaded these skills; dispatch a correction with flywheel run %s --delta <file> asking it to load them\n", task, strings.Join(res.SkillsNotLoaded, ", "), task)
 	}
+	// The verdict is the last stdout line (issue #857), so a reader of only
+	// the tail never misses an earlier failure.
+	fmt.Println(verdictLine(task, res))
 	if res.OK() && len(res.SkillsNotLoaded) == 0 {
 		os.Exit(0)
 	}
 	os.Exit(5)
+}
+
+// verdictLine is validate's last stdout line (issue #857): "<task> validate:
+// pass", or "<task> validate: fail: " and every reason joined by "; ": the
+// failed gates in order (rc, or host-blocked, masked or inconclusive), the
+// first 5 paths outside owns, conflict markers, dropped upstream lines and the
+// skills the worker never loaded.
+func verdictLine(task string, res flywheel.GaugeResult) string {
+	if res.OK() && len(res.SkillsNotLoaded) == 0 {
+		return task + " validate: pass"
+	}
+	var gates, reasons []string
+	for _, live := range []bool{false, true} {
+		for _, g := range res.Gates {
+			if g.Live != live {
+				continue
+			}
+			name := "gate " + g.Gate
+			if live {
+				name = "live-gate " + strings.TrimPrefix(g.Gate, "live")
+			}
+			switch {
+			case g.HostBlocked:
+				gates = append(gates, name+" (host-blocked)")
+			case g.Inconclusive:
+				gates = append(gates, name+" (inconclusive)")
+			case g.RC == 0:
+			case g.Masked:
+				gates = append(gates, name+" (masked)")
+			default:
+				gates = append(gates, fmt.Sprintf("%s (rc=%d)", name, g.RC))
+			}
+		}
+	}
+	if len(gates) > 0 {
+		reasons = append(reasons, strings.Join(gates, ", "))
+	}
+	if n := len(res.Outside); n > 0 {
+		shown := strings.Join(res.Outside[:min(n, 5)], ", ")
+		if n > 5 {
+			shown += fmt.Sprintf(" (+%d more)", n-5)
+		}
+		reasons = append(reasons, "owns outside "+shown)
+	}
+	if len(res.Markers) > 0 {
+		reasons = append(reasons, "conflict markers")
+	}
+	if len(res.Dropped) > 0 {
+		reasons = append(reasons, "dropped upstream lines")
+	}
+	if len(res.SkillsNotLoaded) > 0 {
+		reasons = append(reasons, "skills not loaded "+strings.Join(res.SkillsNotLoaded, ", "))
+	}
+	if len(reasons) == 0 {
+		return task + " validate: fail"
+	}
+	return task + " validate: fail: " + strings.Join(reasons, "; ")
 }
 
 // outsideHints returns one "owns: hint:" line, or none, for the outside paths

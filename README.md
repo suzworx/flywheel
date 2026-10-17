@@ -95,12 +95,14 @@ $ flywheel validate hello                                  # exit 5
 hello gate 1: failed (rc=2)
 hello note: the worker never ran gate(s) 1 itself; its report's claims about them are unmeasured
 hello owns: ok
+hello validate: fail: gate 1 (rc=2)
 $ flywheel inspect hello --verdict pass --session lead-1   # exit 6
 flywheel inspect: T3: no passing supervisor validated reading for gate 1 on tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 after the latest finished event; run: flywheel validate hello
 $ echo "Hello from flywheel" > hello.txt
 $ flywheel validate hello                                  # exit 0
 hello gate 1: pass (399ms)
 hello owns: ok
+hello validate: pass
 $ flywheel inspect hello --verdict pass --session lead-1   # exit 0
 hello inspected pass
 $ flywheel factory --once

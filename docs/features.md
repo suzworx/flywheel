@@ -171,6 +171,17 @@ non-zero (other than 141, SIGPIPE, which `cmd | head` causes), the reading is th
 with reason `masked`, so the gate fails. To ignore a stage's failure on purpose, write
 `{ cmd || true; } | grep ...`.
 
+A failure early in a long log is never lost at its tail (issue
+[#857](https://github.com/suzworx/flywheel/issues/857)): `flywheel validate <task>` ends with a
+verdict line, `<task> validate: pass` or `<task> validate: fail: ` and every reason joined by `; `
+(`gate 1 (rc=2)`, `live-gate 1 (rc=1)`, `owns outside a.go`, `conflict markers`, `dropped upstream
+lines`, `skills not loaded <names>`). `flywheel lint` warns on a gate whose `;` discards an earlier
+command's exit status, as in `npm run test:unit; npm run test:ui`, where a failed unit suite passes
+the gate when the UI suite passes: chain the commands with `&&`, start the gate with `set -e;`, or
+give each suite its own `gate:` line. A command after `||`, output and shell-state commands such as
+`echo`, `export` and `set`, and shell keywords never count (a failed `cd` does); a gate that
+mentions `set -e` or `errexit` is never warned.
+
 ## Worker adapters
 
 `flywheel run` dispatches through one of five adapters: `claude`, `codex`, `opencode`, `pi`, or the
