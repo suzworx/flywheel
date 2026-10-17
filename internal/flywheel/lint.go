@@ -438,6 +438,11 @@ func lintStructure(dir, path string) (LintResult, error) {
 		if f := gateMaskingFilter(g); f != "" {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d pipes into %s: the gate's exit status is %s's, not the command's; start it with "set -o pipefail;" or drop the filter`, i+1, f, f))
 		}
+		// A command whose ; discards its exit status passes the gate on a
+		// failure (issue #857).
+		if w := gateDiscardedStatus(g); w != "" {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(`gate %d runs %s then continues after ';': %s's exit status is discarded, so its failure passes the gate; chain with && or start the gate with "set -e;"`, i+1, w, w))
+		}
 	}
 	// An end-to-end or integration gate with no gate that resets state
 	// measures the worker's seeded data, not CI's fresh stack (issue #636).
@@ -795,11 +800,69 @@ func gateMaskingFilter(gate string) string {
 	if strings.Contains(gate, "pipefail") || strings.Contains(gate, "PIPESTATUS") {
 		return ""
 	}
-	var cmds [][]string
+	for _, cmd := range splitGateCommands(gate) {
+		p := cmd.stages
+		if len(p) < 2 {
+			continue
+		}
+		if first := stageCommandWord(p[0]); first == "echo" || first == "printf" {
+			continue
+		}
+		if last := stageCommandWord(p[len(p)-1]); slices.Contains(gateFilters, last) {
+			return last
+		}
+	}
+	return ""
+}
+
+// sequenceSkipWords are the command words whose exit status a gate never
+// needs (issue #857): output, shell state, and shell keywords and braces.
+var sequenceSkipWords = []string{"echo", "printf", "export", "set", "true", "false", ":", "exit", "return", "unset", "local",
+	"for", "while", "until", "if", "then", "else", "elif", "fi", "do", "done", "case", "esac", "in", "{", "}"}
+
+// gateDiscardedStatus is the command word of the first top-level command in
+// gate whose exit status is discarded, or "" (issue #857): a command ended by
+// ; or a newline with a further non-empty command after it. A gate that
+// mentions set -e or errexit never counts, nor does a command whose word is in
+// sequenceSkipWords or one on the right side of ||, whose failure is handled
+// on purpose. cd counts: a failed cd runs the next command in the wrong dir.
+func gateDiscardedStatus(gate string) string {
+	if strings.Contains(gate, "set -e") || strings.Contains(gate, "errexit") {
+		return ""
+	}
+	cmds := splitGateCommands(gate)
+	for i, cmd := range cmds {
+		if cmd.sep != ";" || i > 0 && cmds[i-1].sep == "||" {
+			continue
+		}
+		word := stageCommandWord(cmd.stages[0])
+		if word == "" || slices.Contains(sequenceSkipWords, word) {
+			continue
+		}
+		if slices.ContainsFunc(cmds[i+1:], func(c gateCommand) bool { return strings.TrimSpace(strings.Join(c.stages, "")) != "" }) {
+			return word
+		}
+	}
+	return ""
+}
+
+// gateCommand is one top-level command of a gate: its pipeline stages and the
+// separator that ended it (";" for ; or a newline, "&&", "||", "&", or "" at
+// the end of the gate).
+type gateCommand struct {
+	stages []string
+	sep    string
+}
+
+// splitGateCommands splits gate into commands at ;, &&, ||, & and newlines,
+// and each command into stages at | and |&, only outside quotes and $( ) or
+// backtick substitutions, whose text is replaced by $S and never inspected.
+func splitGateCommands(gate string) []gateCommand {
+	var cmds []gateCommand
 	var stages []string
 	var cur strings.Builder
 	endStage := func() { stages = append(stages, cur.String()); cur.Reset() }
-	endCmd := func() { endStage(); cmds = append(cmds, stages); stages = nil }
+	endCmd := func(sep string) { endStage(); cmds = append(cmds, gateCommand{stages, sep}); stages = nil }
 	inSingle, inDouble, inBacktick, depth := false, false, false, 0
 	for i := 0; i < len(gate); i++ {
 		c := gate[i]
@@ -839,9 +902,9 @@ func gateMaskingFilter(gate string) string {
 				depth--
 			}
 		case c == ';' || c == '\n':
-			endCmd()
+			endCmd(";")
 		case c == '|' && i+1 < len(gate) && gate[i+1] == '|':
-			endCmd()
+			endCmd("||")
 			i++
 		case c == '|':
 			endStage()
@@ -849,10 +912,10 @@ func gateMaskingFilter(gate string) string {
 				i++
 			}
 		case c == '&' && i+1 < len(gate) && gate[i+1] == '&':
-			endCmd()
+			endCmd("&&")
 			i++
 		case c == '&' && (i == 0 || !strings.ContainsRune("<>", rune(gate[i-1]))) && (i+1 >= len(gate) || gate[i+1] != '>'):
-			endCmd()
+			endCmd("&")
 		default:
 			cur.WriteByte(c)
 		}
@@ -861,19 +924,8 @@ func gateMaskingFilter(gate string) string {
 			cur.WriteByte(c)
 		}
 	}
-	endCmd()
-	for _, p := range cmds {
-		if len(p) < 2 {
-			continue
-		}
-		if first := stageCommandWord(p[0]); first == "echo" || first == "printf" {
-			continue
-		}
-		if last := stageCommandWord(p[len(p)-1]); slices.Contains(gateFilters, last) {
-			return last
-		}
-	}
-	return ""
+	endCmd("")
+	return cmds
 }
 
 // stageCommandWord is the base name of a pipeline stage's command word, with

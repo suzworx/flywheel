@@ -315,7 +315,7 @@ func TestLintGateDiffCheck(t *testing.T) {
 		{"revision", "git diff --check HEAD~1", false},
 		{"no index", "git diff --no-index --check /dev/null x", false},
 		{"exit code regenerated", "node gen.mjs && git diff --exit-code -- a.json", false},
-		{"rev in next command only", "git diff --check; git log HEAD~1", true},
+		{"rev in next command only", "git diff --check && git log HEAD~1", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

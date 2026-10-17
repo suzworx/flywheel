@@ -199,3 +199,33 @@ func TestOutsideHint(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateVerdictLine checks the issue #857 verdict, validate's last
+// stdout line: pass, or fail with every reason joined by "; ".
+func TestValidateVerdictLine(t *testing.T) {
+	t.Parallel()
+	pass := flywheel.GateOut{Gate: "1"}
+	cases := []struct {
+		name string
+		res  flywheel.GaugeResult
+		want string
+	}{
+		{"pass", flywheel.GaugeResult{Gates: []flywheel.GateOut{pass}, GatesOK: true, OwnsOK: true},
+			"T1 validate: pass"},
+		{"one failed gate", flywheel.GaugeResult{Gates: []flywheel.GateOut{{Gate: "1", RC: 2}, {Gate: "2"}}, OwnsOK: true},
+			"T1 validate: fail: gate 1 (rc=2)"},
+		{"two failed gates and owns outside", flywheel.GaugeResult{
+			Gates:   []flywheel.GateOut{{Gate: "live1", RC: 1, Live: true}, {Gate: "1", RC: 1}, pass, {Gate: "3", RC: 7}, {Gate: "4", HostBlocked: true}, {Gate: "5", RC: 1, Masked: true}},
+			Outside: []string{"a", "b", "c", "d", "e", "f", "g"}},
+			"T1 validate: fail: gate 1 (rc=1), gate 3 (rc=7), gate 4 (host-blocked), gate 5 (masked), live-gate 1 (rc=1); owns outside a, b, c, d, e (+2 more)"},
+		{"markers only", flywheel.GaugeResult{Gates: []flywheel.GateOut{pass}, GatesOK: true, OwnsOK: true, Markers: []string{"a.go:3"}},
+			"T1 validate: fail: conflict markers"},
+		{"dropped and skills", flywheel.GaugeResult{GatesOK: true, OwnsOK: true, Dropped: []string{"x"}, SkillsNotLoaded: []string{"tdd", "go"}},
+			"T1 validate: fail: dropped upstream lines; skills not loaded tdd, go"},
+	}
+	for _, c := range cases {
+		if got := verdictLine("T1", c.res); got != c.want {
+			t.Errorf("%s: verdictLine() =\n%s\nwant\n%s", c.name, got, c.want)
+		}
+	}
+}

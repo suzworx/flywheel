@@ -40,7 +40,7 @@
   },
   {
    "cmd": "flywheel validate greet",
-   "out": "validate: brief .flywheel/briefs/greet.txt\ngreet gate 1: pass (12ms)\ngreet file greet.sh: 1 lines\ngreet owns: ok\n",
+   "out": "validate: brief .flywheel/briefs/greet.txt\ngreet gate 1: pass (12ms)\ngreet file greet.sh: 1 lines\ngreet owns: ok\ngreet validate: pass\n",
    "rc": 0,
    "note": "The factory runs the gates itself; a worker's claim is not evidence."
   },
@@ -69,7 +69,7 @@
   },
   {
    "cmd": "flywheel validate usage",
-   "out": "validate: brief .flywheel/briefs/usage.txt\nusage gate 1: failed (rc=1)\nusage file README.md: 5 lines, 2 headings\nusage owns: ok\n",
+   "out": "validate: brief .flywheel/briefs/usage.txt\nusage gate 1: failed (rc=1)\nusage file README.md: 5 lines, 2 headings\nusage owns: ok\nusage validate: fail: gate 1 (rc=1)\n",
    "rc": 5,
    "note": "The gate fails, so the unit cannot pass inspection or land."
   },
@@ -81,7 +81,7 @@
   },
   {
    "cmd": "sed -i 's/^## usage/## Usage/' README.md && flywheel validate usage",
-   "out": "validate: brief .flywheel/briefs/usage.txt + delta .flywheel/briefs/usage.c1.delta.txt\nusage gate 1: pass (12ms)\nusage file README.md: 5 lines, 2 headings\nusage owns: ok\n",
+   "out": "validate: brief .flywheel/briefs/usage.txt + delta .flywheel/briefs/usage.c1.delta.txt\nusage gate 1: pass (12ms)\nusage file README.md: 5 lines, 2 headings\nusage owns: ok\nusage validate: pass\n",
    "rc": 0
   },
   {
