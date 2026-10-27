@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.78.2](https://github.com/suzworx/flywheel/compare/v0.78.1...v0.78.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* the factory andon drops run-state entries of units the lead already ruled on or that left the line ([#862](https://github.com/suzworx/flywheel/issues/862)) ([450fa7a](https://github.com/suzworx/flywheel/commit/450fa7ac06a8c51b716639e6a52b08b21acd33d1)), closes [#860](https://github.com/suzworx/flywheel/issues/860)
+* verify --shipped refuses a unit that was never judged, and the pre-push hook runs it ([#864](https://github.com/suzworx/flywheel/issues/864)) ([a8ffb87](https://github.com/suzworx/flywheel/commit/a8ffb87447196d633d2e21d999330ea745f7bae0)), closes [#861](https://github.com/suzworx/flywheel/issues/861)
+
 ## [0.78.1](https://github.com/suzworx/flywheel/compare/v0.78.0...v0.78.1) (2026-10-17)
 
 
