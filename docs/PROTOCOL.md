@@ -1740,8 +1740,12 @@ working exactly as before.
 
 `flywheel init --git-hooks` adds the git layer (issue #56): a `commit-msg` hook refuses a commit
 without a `Flywheel-Task: <id>` trailer (merges, reverts and fixup/squash commits are exempt), and a
-`pre-push` hook refuses a push while a unit named in the pushed commits fails `flywheel verify`, or
-`flywheel verify --log` finds the event log's hash chain broken.
+`pre-push` hook refuses a push while a unit named in the pushed commits fails
+`flywheel verify --shipped` (every verify rule plus S1, which also refuses a unit with no inspected
+pass: one that was only planned was built outside flywheel, issue #861), or `flywheel verify --log`
+finds the event log's hash chain broken. An existing hook is never overwritten: to get the
+`--shipped` check on a repository whose `pre-push` hook predates it, delete `pre-push` from the
+hooks directory and rerun `flywheel init --git-hooks`.
 
 `flywheel init --ci` adds the CI layer: a `flywheel-audit` job running
 `flywheel verify --all --log` on every pull request. Made a required status check in the branch
@@ -1940,6 +1944,15 @@ gates (exit 5) without touching the log's legality.
   `vs_base` with a non-empty `base`, a non-zero `rc` and `base_rc` and an empty `new`. A
   `validated` event with `rc` 0 that carries `vs_base` under another reason fails too. Otherwise
   one passing item: `no vs-base pass` or `<k> vs-base passes, <n> failing on base too`.
+- **S1 — the unit was judged** (issue #861; only with `flywheel verify --shipped`, which the
+  `pre-push` hook runs). One item per task, after the ten rules above: it passes when the task's
+  latest `inspected` event has verdict `pass`, or the task has a `landed` event (T5 already requires
+  an inspected pass or an exception before one). Otherwise it fails: `task "<id>" was never judged
+  (no inspected pass); build it with flywheel run <id>, then flywheel validate <id> and flywheel
+  inspect <id> --verdict pass, or record a lead edit with flywheel claim-edit`, or `task "<id>"'s
+  latest inspected verdict is <verdict>, not pass`. A unit that was only planned passes the ten
+  rules, so without S1 edits made by hand or by an outside agent could be pushed under its trailer.
+  Without `--shipped` there is no S1 item and the output is unchanged.
 
 ## 3. Designed, not enforced
 
@@ -2053,8 +2066,9 @@ Transient locks under `.flywheel/locks/` guard concurrent writes (one per shard,
 
 ## 5. `flywheel verify` and exit codes
 
-`flywheel verify [<task>...|--all] [--json] [--log] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1/L1/V1 for the requested
-tasks (`--all` derives the task list from every `task` seen in the log) and prints one
+`flywheel verify [<task>...|--all] [--json] [--log] [--shipped] [--workdir PATH]` runs T1/T3/T4/T5/T8/R1/W1/P1/L1/V1 for the requested
+tasks (`--all` derives the task list from every `task` seen in the log), plus S1 with
+`--shipped` (every task needs an inspected pass or a landing, issue #861; §2), and prints one
 `PASS`/`FAIL`/`INCONCLUSIVE` line per rule per task, or the same result as JSON (`{"passed": bool,
 "items": [{"task","rule","pass","inconclusive","reason"}]}`; `inconclusive` is omitted when
 false, so `--json` consumers of the existing fields keep working). `--workdir` names the

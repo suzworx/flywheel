@@ -113,7 +113,7 @@ Every event records who wrote it: `by: {persona, agent, model, session}`.
 | --- | --- | --- | --- |
 | CLI | commands refuse illegal transitions | a persona recording a result it has not earned | editing the log by hand, which T10 detects |
 | Supervisor | `flywheel supervise` measures every finished unit itself | "tests pass" claims; skipped measurement | not running it, which T3 then fails at inspection |
-| Git hooks | `commit-msg` requires `Flywheel-Task:`; `pre-push` runs `flywheel verify` | untracked or unverified commits leaving the machine | `--no-verify`, which CI catches |
+| Git hooks | `commit-msg` requires `Flywheel-Task:`; `pre-push` runs `flywheel verify --shipped` (rule S1 also refuses a unit with no inspected pass, #861) | untracked, unverified or never-judged commits leaving the machine | `--no-verify`, which CI catches |
 | Agent hooks | a Claude Code `Stop` hook and an OpenCode plugin run `flywheel gate` before a session ends | a lead or foreman ending with uninspected units, missing readings or untriaged signals | agents without hooks, which CI catches |
 | External audit | the auditor persona plus the CI `flywheel-audit` check (required status) | internal QC passing defects; a broken chain reaching `main` | a repository admin override, visible on the PR |
 

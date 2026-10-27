@@ -71,3 +71,24 @@ func TestVerifyLogReorderedText(t *testing.T) {
 		t.Errorf("verify --log after reanchor = %d %q, want a pass naming the acknowledgement", code, out)
 	}
 }
+
+// TestVerifyShippedPlannedOnlyExits6 checks issue #861: a unit that was only
+// planned passes plain verify, but verify --shipped refuses it with exit 6 and
+// a failing S1 line.
+func TestVerifyShippedPlannedOnlyExits6(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("owns: a.go\nneeds: none\ngate: true\n\n# TASK: t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{TS: "2026-09-20T00:00:00Z", Task: "T", Kind: "planned", Brief: "b.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runVerifyProcess(t, "--dir", dir, "T"); code != 0 || strings.Contains(out, " S1:") {
+		t.Fatalf("verify T = %d %q, want exit 0 and no S1 line", code, out)
+	}
+	out, code := runVerifyProcess(t, "--shipped", "--dir", dir, "T")
+	if code != 6 || !strings.Contains(out, "FAIL T S1: task \"T\" was never judged") {
+		t.Errorf("verify --shipped T = %d %q, want exit 6 with a failing S1", code, out)
+	}
+}
