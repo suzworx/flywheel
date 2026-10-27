@@ -12,7 +12,7 @@ import (
 
 func init() {
 	register("verify", "verify tasks against the poka-yoke rules", runVerify)
-	registerHelp("verify", "flywheel verify [<task>...] [--all] [--json] [--log] [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := verifyFlags(); return fs })
+	registerHelp("verify", "flywheel verify [<task>...] [--all] [--json] [--log] [--shipped] [--dir DIR] [--workdir PATH]", func() *flag.FlagSet { fs, _ := verifyFlags(); return fs })
 }
 
 // verifyOptions holds the parsed verify flags.
@@ -22,6 +22,7 @@ type verifyOptions struct {
 	jsonOut bool
 	workdir string
 	log     bool
+	shipped bool
 }
 
 // verifyFlags defines verify's flags once, so help and run share them.
@@ -34,12 +35,13 @@ func verifyFlags() (*flag.FlagSet, *verifyOptions) {
 	fs.BoolVar(&o.all, "all", false, "verify every task in the event log")
 	fs.BoolVar(&o.jsonOut, "json", false, "print machine-readable JSON")
 	fs.BoolVar(&o.log, "log", false, "also check the event log's hash chain (a record edited or removed breaks it)")
+	fs.BoolVar(&o.shipped, "shipped", false, "also require every named task to have an inspected pass (the pre-push hook's check: a unit that was only planned was built outside flywheel)")
 	return fs, o
 }
 
 // verifyUsage prints the flywheel verify usage line.
 func verifyUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: flywheel verify [<task>...] [--all] [--json] [--log] [--dir DIR] [--workdir PATH]")
+	fmt.Fprintln(w, "usage: flywheel verify [<task>...] [--all] [--json] [--log] [--shipped] [--dir DIR] [--workdir PATH]")
 }
 
 // verifyExit maps a verify result to the CLI exit code: 0 when every check
@@ -83,7 +85,7 @@ func runVerify(args []string) {
 	res := flywheel.VerifyResult{Passed: true}
 	if len(tasks) > 0 || o.all || !o.log {
 		var err error
-		res, err = flywheel.VerifyTasks(o.dir, flywheel.VerifyOptions{Dir: o.dir, Tasks: tasks, All: o.all, Workdir: o.workdir})
+		res, err = flywheel.VerifyTasks(o.dir, flywheel.VerifyOptions{Dir: o.dir, Tasks: tasks, All: o.all, Workdir: o.workdir, Shipped: o.shipped})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
 			os.Exit(1)

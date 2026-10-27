@@ -178,6 +178,25 @@ func TestGitHooksPrePushVerifiesSubdirLedger(t *testing.T) {
 	}
 }
 
+// TestInitGitHooksPrePushRunsVerifyShipped checks issue #861: the pre-push hook
+// verifies each named unit with --shipped, so a unit that was only planned
+// (built outside flywheel) is refused.
+func TestInitGitHooksPrePushRunsVerifyShipped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	initGitRepoAt(t, dir)
+	if _, _, err := InitGitHooks(dir); err != nil {
+		t.Fatalf("InitGitHooks: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".git", "hooks", "pre-push"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte(`flywheel verify --shipped --dir "$d" "$t"`)) || !bytes.Contains(b, []byte("fails flywheel verify --shipped")) {
+		t.Errorf("pre-push does not run verify --shipped:\n%s", b)
+	}
+}
+
 func TestGitHooksNotARepo(t *testing.T) {
 	// not parallel: t.Setenv GIT_CEILING_DIRECTORIES
 	dir := t.TempDir()

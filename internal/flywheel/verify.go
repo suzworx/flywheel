@@ -20,6 +20,11 @@ type VerifyOptions struct {
 	// empty, a workdir recorded on the task's reading events is used when it
 	// still exists; otherwise the flywheel root, exactly as before.
 	Workdir string
+	// Shipped adds rule S1 (issue #861): every named task must have been
+	// judged, its latest inspected verdict a pass or a landed event recorded.
+	// A unit that was only planned was built outside flywheel. The pre-push
+	// hook sets it; without it the output is unchanged.
+	Shipped bool
 }
 
 // VerifyItem is one rule check result for one task.
@@ -45,7 +50,8 @@ type VerifyResult struct {
 }
 
 // VerifyTasks checks every requested task against the poka-yoke rules T1, T3,
-// T4, T5 and T8 and reports one item per check.
+// T4, T5, T8, R1, W1, P1, L1 and V1 and reports one item per check. With
+// o.Shipped it also checks rule S1 (issue #861) for each task.
 func VerifyTasks(dir string, o VerifyOptions) (VerifyResult, error) {
 	if o.Dir == "" {
 		o.Dir = "."
@@ -71,6 +77,9 @@ func VerifyTasks(dir string, o VerifyOptions) (VerifyResult, error) {
 		items, err := verifyTask(o.Dir, task, o.Workdir, events)
 		if err != nil {
 			return VerifyResult{}, err
+		}
+		if o.Shipped {
+			items = append(items, ruleS1(task, events))
 		}
 		for _, item := range items {
 			if !item.Pass {
@@ -121,6 +130,36 @@ func verifyTask(dir, task, workdir string, events []Event) ([]VerifyItem, error)
 	items = append(items, ruleL1(task, events, cfg.LeadBuiltMaxChangedLines())...)
 	items = append(items, ruleV1(task, events)...)
 	return items, nil
+}
+
+// ruleS1 checks that task was judged (issue #861): its latest inspected event
+// is a pass, or it has a landed event (T5 already requires an inspected pass or
+// an exception before a landing). A unit that was only planned fails, so edits
+// committed under its trailer cannot be pushed as if a worker built them.
+func ruleS1(task string, events []Event) VerifyItem {
+	latest, landed := "", false
+	for _, e := range events {
+		if e.Task != task {
+			continue
+		}
+		switch e.Kind {
+		case "inspected":
+			latest = e.Verdict
+		case "landed":
+			landed = true
+		}
+	}
+	switch {
+	case landed:
+		return VerifyItem{Task: task, Rule: "S1", Pass: true, Reason: "landed"}
+	case latest == "pass":
+		return VerifyItem{Task: task, Rule: "S1", Pass: true, Reason: "latest inspected verdict is pass"}
+	case latest == "":
+		return VerifyItem{Task: task, Rule: "S1", Pass: false,
+			Reason: fmt.Sprintf("task %q was never judged (no inspected pass); build it with flywheel run %s, then flywheel validate %s and flywheel inspect %s --verdict pass, or record a lead edit with flywheel claim-edit", task, task, task, task)}
+	}
+	return VerifyItem{Task: task, Rule: "S1", Pass: false,
+		Reason: fmt.Sprintf("task %q's latest inspected verdict is %s, not pass", task, latest)}
 }
 
 // ruleV1 checks that every vs-base gate pass of the task is consistent (issue

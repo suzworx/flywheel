@@ -24,7 +24,9 @@ exit 1
 // so a factory scaffolded below the root verifies its own ledger (#308 review).
 const gitPrePushHook = `#!/bin/sh
 # flywheel pre-push: a push is refused while a unit named in the pushed commits fails
-# flywheel verify, or the event log's hash chain is broken (issue #56).
+# flywheel verify --shipped (every rule, and an inspected pass: a unit that was only
+# planned was built outside flywheel, issue #861), or the event log's hash chain is
+# broken (issue #56).
 # Written by "flywheel init --git-hooks"; a rerun never overwrites this file.
 d=@FLYWHEEL_DIR@
 fail=0
@@ -32,7 +34,7 @@ while read -r lref lsha rref rsha; do
   case "$lsha" in *[!0]*) ;; *) continue ;; esac
   case "$rsha" in *[!0]*) range="$rsha..$lsha" ;; *) range="$lsha --not --remotes" ;; esac
   for t in $(git log --format='%(trailers:key=Flywheel-Task,valueonly)' $range | sort -u); do
-    flywheel verify --dir "$d" "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify; fix its record before pushing" >&2; fail=1; }
+    flywheel verify --shipped --dir "$d" "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify --shipped; fix its record before pushing" >&2; fail=1; }
   done
 done
 if [ -f "$d/.flywheel/events.jsonl" ] || [ -d "$d/.flywheel/events" ]; then
