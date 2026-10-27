@@ -388,6 +388,10 @@ newest first):
   --resume-limited`, stale health's `flywheel controller`, a suspended factory's
   `flywheel resume --session <s>`.
 
+A unit's run state (`failed-dirty`, `stalled`, …) reaches the andon only until the lead rules on
+it: a unit that is passed, needs-correction, rejected, landed or withdrawn leaves it (its open
+review findings stay, as `needs-owner` and `review-open`).
+
 UNIT leads the row: Enter and `l` open that unit, and it keys the changed-row marks.
 
 ## The log tab
