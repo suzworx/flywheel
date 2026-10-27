@@ -92,6 +92,10 @@ type Unit struct {
 	// brief's owns (issue #458): the worker cannot fix them; they need an owner.
 	NeedsOwner int
 
+	// status is the task's ledger status (TaskState.Status); buildAndon reads
+	// it to drop the run state of a unit the lead already ruled on (issue #860).
+	status string
+
 	// LeadBuilt is leadBuiltMark's mark for a unit with no dispatched attempt
 	// (issue #722); "" for a unit a worker built.
 	LeadBuilt string
@@ -718,6 +722,7 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 			Task: t.ID, Stage: stageOf(t.Status, t.Reason), Attempt: t.Attempt,
 			Session: shortSession(t.Session), Model: t.Model,
 			Steps: 0, LastAge: ageOf(t.UpdatedAt, now), RunState: "waiting",
+			status: t.Status,
 		}
 		// A finished attempt never occupies a busy slot, even when its clean
 		// stop shows no-writes, which is also a live state (issue #364).
@@ -895,14 +900,17 @@ func ageOfTime(t, now time.Time) int {
 
 // buildAndon lists the units in silent, stalled, no-writes, blocked, capped,
 // provider-error, rate-limited, abandoned-job, failed, failed-dirty or stacked,
-// newest first, and adds
+// newest first, skipping a unit the lead already ruled on (ruledStatus; its
+// needs-owner and review-open entries stay), and adds
 // andon entries for mismatching roles and the paused entries (pausedAndon).
 func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 	var out []Andon
 	for _, u := range units {
 		switch u.RunState {
 		case "silent", "stalled", "no-writes", "blocked", "capped", "provider-error", "rate-limited", "abandoned-job", "failed", "failed-dirty", "stacked":
-			out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
+			if !ruledStatus(u.status) {
+				out = append(out, Andon{Task: u.Task, State: u.RunState, Age: u.LastAge})
+			}
 		}
 		// Findings outside owns need an owner (issue #458); review-open counts
 		// only those the unit's worker can fix.
@@ -914,6 +922,17 @@ func buildAndon(units []Unit, roles []FloorRole, paused []Andon) []Andon {
 		}
 	}
 	return sortAndon(out, roles, paused)
+}
+
+// ruledStatus reports whether a ledger status means the lead already ruled on
+// the unit or it left the line, so its last attempt's run state is history,
+// not an andon (issue #860). An empty status is not ruled.
+func ruledStatus(status string) bool {
+	switch status {
+	case "passed", "needs-correction", "rejected", "landed", "withdrawn":
+		return true
+	}
+	return false
 }
 
 // needsOwnerFindings lists the ids of the task's open blocking review findings
