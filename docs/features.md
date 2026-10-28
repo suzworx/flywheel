@@ -221,7 +221,8 @@ top-level `worker_policy.deny` (issue #692): command prefixes such as `pio run -
 `"<prefix>*": "deny"` in `.flywheel/opencode-worker.json` for opencode workers, and refused at
 dispatch on codex and pi workers, which cannot enforce a command deny list.
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean
-"allowed_tools"?`, issue #463).
+"allowed_tools"?`, issue #463). A valid key at the wrong level is named with where it belongs
+(`key "adapter" is not valid here; it belongs in workers[]`, issue #873).
 A claude worker's `permission_mode` sets its `--permission-mode`: `acceptEdits` (the default),
 `bypassPermissions`, `default`, `plan` or `dontAsk`
 (`flywheel config set workers.<name>.permission_mode bypassPermissions`); `disallowed_tools` is still enforced under
