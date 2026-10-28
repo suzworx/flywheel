@@ -1341,7 +1341,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   USERPROFILE, HOMEDRIVE, HOMEPATH, TEMP, TMP, TMPDIR, SystemRoot, SystemDrive, windir, ComSpec,
   LOCALAPPDATA, APPDATA, ProgramData, ProgramFiles, ProgramFiles(x86), USER, USERNAME, LOGNAME,
   SHELL, LANG, LC_ALL, TERM) and Windows' `=C:` entries; `FLYWHEEL_BASE`, `FLYWHEEL_SLOT` and
-  `FLYWHEEL_PIPESTATUS_FILE` are added after the filter. Names match case-insensitively on
+  `FLYWHEEL_PIPESTATUS_FILE` are added after the filter. A worker (not a gate) also gets
+  `FLYWHEEL_TMP`, with `TMPDIR`, `TEMP` and `TMP` set to the same path: its scratch directory
+  `.flywheel/runs/<task>.<attempt>.tmp` in the worker's tree, removed when the attempt ends (issue #872). Names match case-insensitively on
   Windows only. A brief's `needs-env:` names (exact) pass through too, wherever its gates run.
   It applies to validate (and its vs-base run, whose cache is keyed on the list),
   this probe, `review --group` gates and the review and audit re-runs. An empty entry, one with

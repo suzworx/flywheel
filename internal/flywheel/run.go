@@ -129,7 +129,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
-- Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To keep or compare work, copy files inside the worktree; flywheel checkpoints your written files itself, so never stash or commit. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets. FLYWHEEL_BASE is always set in your shell to the unit's base commit: diff against it, never against HEAD.
+- Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To keep or compare work, copy files inside the worktree; flywheel checkpoints your written files itself, so never stash or commit. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets. FLYWHEEL_BASE is always set in your shell to the unit's base commit: diff against it, never against HEAD. FLYWHEEL_TMP (also TMPDIR, TEMP and TMP) is your scratch directory inside your worktree (.flywheel/runs/, git-ignored): write logs and temporary files there, never to the system temp directory; flywheel removes it when the attempt ends.
 - Your working directory is already the worktree: never prefix a command with cd.
 - A refused write ends that write: never create or change that file another way (Bash, an interpreter, a copy); put the content in your report and stop.
 - Never end your turn while a background job you started is running: run long commands in the foreground and wait for them; a foreground command may run up to limits.shell_timeout (60m by default) on the claude adapter.
@@ -1129,6 +1129,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		if unitBase != "" {
 			cmd.Env = append(cmd.Env, "FLYWHEEL_BASE="+unitBase)
 		}
+		// The worker's scratch directory lives in its own tree, not the system
+		// temp directory (issue #872); later entries win over the inherited
+		// TEMP/TMP/TMPDIR. Fail closed like the git guard.
+		scratch, scratchDir, err := scratchEnv(wt, o.Task, attempt)
+		if err != nil {
+			return Result{}, fmt.Errorf("worker scratch dir not created (%w)", err)
+		}
+		defer os.RemoveAll(scratchDir)
+		cmd.Env = append(cmd.Env, scratch...)
 		cmd.Env = slotEnv(cmd.Env, slot)
 		if len(guardEnv) > 0 {
 			cmd.Env = append(cmd.Env, guardEnv...)
@@ -3050,6 +3059,23 @@ func workerEnv(dir string) []string {
 		pol = abs
 	}
 	return append(os.Environ(), "OPENCODE_CONFIG="+pol)
+}
+
+// scratchEnv creates the attempt's scratch directory inside the worker's tree,
+// <tree>/.flywheel/runs/<task>.<attempt>.tmp, and returns FLYWHEEL_TMP, TMPDIR,
+// TEMP and TMP all naming it, so a worker's temporary files and logs stay out
+// of the system temp directory (issue #872). .flywheel/ is git-ignored, so the
+// owns check never sees it. The path is absolute so it holds wherever the child
+// runs.
+func scratchEnv(tree, task, attempt string) (env []string, path string, err error) {
+	path, err = filepath.Abs(filepath.Join(tree, ".flywheel", "runs", task+"."+attempt+".tmp"))
+	if err != nil {
+		return nil, "", fmt.Errorf("scratch dir %s: %w", path, err)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return nil, "", fmt.Errorf("create scratch dir %s: %w", path, err)
+	}
+	return []string{"FLYWHEEL_TMP=" + path, "TMPDIR=" + path, "TEMP=" + path, "TMP=" + path}, path, nil
 }
 
 // attemptNum parses the digits of an attempt id: r12 -> 12.
