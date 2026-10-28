@@ -171,7 +171,7 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   and its secrets manifest); a miss is refused with rule `owns-companions` (#785). A whitespace/diff gate is `git diff --check "$FLYWHEEL_BASE"`,
   never a bare `git diff --check`: `flywheel run` commits each attempt before validate, so a
   diff against HEAD sees nothing. `FLYWHEEL_BASE` is the unit's base commit; validate sets it
-  for every gate and `flywheel run` sets it for the worker, so both measure the same diff, and
+  for every gate and `flywheel run` sets it for every worker, in-place runs included (#865), so both measure the same diff, and
   `flywheel lint` warns on a `git diff --check` gate with no revision. Gates, `worktree.setup`
   and the worker also get `FLYWHEEL_SLOT`, the tree's unit slot (1, 2, ...), for per-unit ports
   and databases (`PORT=$((3000 + FLYWHEEL_SLOT))`, issue #697). A gate's exit status must

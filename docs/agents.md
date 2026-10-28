@@ -210,7 +210,7 @@ Gates that actually measure:
 - A whitespace or diff gate is `git diff --check "$FLYWHEEL_BASE"`, never a bare `git diff --check`:
   each attempt is committed before validate, so a diff against HEAD sees nothing.
 - `FLYWHEEL_BASE` is the unit's base commit; validate sets it for every gate and run sets it for
-  the worker, so both measure the same diff.
+  every worker, in-place runs (no `--worktree`) included (#865), so both measure the same diff.
 - Gates, `worktree.setup` and the worker get `FLYWHEEL_SLOT`, the unit's tree's slot (1, 2, ...),
   for per-unit ports and databases (`PORT=$((3000 + FLYWHEEL_SLOT))`, issue #697).
 - Use the repository's own test runner (`npm test -- <file>`, or the runner its test script calls);

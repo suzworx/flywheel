@@ -509,7 +509,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   the worker ran, in order, at most 100, each clipped to 300 characters; omitted when it ran none,
   issue #365), `gates_unrun` (on a `stop` finish only: the ids `1`, `2`, .. of the attempt's
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
-  gate's first 40 characters; live gates are not checked; omitted when empty, issue #365),
+  gate's first 40 characters; matched against each command's full text, not the clipped
+  `commands` entry, so a gate chained after character 300 still ran, issue #865; live gates are
+  not checked; omitted when empty, issue #365),
   `skills_loaded` (on every finish of a claude attempt: the skills its stream loaded through the
   `Skill` tool, the call's `input.skill`, in order, each once; omitted when none; `Validate`
   accepts it only on a `finished` event, issue #695),
