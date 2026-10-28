@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.4](https://github.com/suzworx/flywheel/compare/v0.78.3...v0.78.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* config validate knows the claude model claude-haiku-5-5 ([#869](https://github.com/suzworx/flywheel/issues/869)) ([e97745e](https://github.com/suzworx/flywheel/commit/e97745efef6c9a9a395dcaa1e3f2c4a305f153ed)), closes [#868](https://github.com/suzworx/flywheel/issues/868)
+
 ## [0.78.3](https://github.com/suzworx/flywheel/compare/v0.78.2...v0.78.3) (2026-10-28)
 
 
