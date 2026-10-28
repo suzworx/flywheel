@@ -129,7 +129,7 @@ const workerRules = `- Stay inside owns: and the worktree. At most one write per
 - Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
 - Build or typecheck after each file; run the full checks at the end.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
-- Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To keep or compare work, copy files inside the worktree; flywheel checkpoints your written files itself, so never stash or commit. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets.
+- Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To keep or compare work, copy files inside the worktree; flywheel checkpoints your written files itself, so never stash or commit. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets. FLYWHEEL_BASE is always set in your shell to the unit's base commit: diff against it, never against HEAD.
 - Your working directory is already the worktree: never prefix a command with cd.
 - A refused write ends that write: never create or change that file another way (Bash, an interpreter, a copy); put the content in your report and stop.
 - Never end your turn while a background job you started is running: run long commands in the foreground and wait for them; a foreground command may run up to limits.shell_timeout (60m by default) on the claude adapter.
@@ -1248,6 +1248,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	wroteSeen := map[string]bool{}
 	var wroteOrder []string
 	var commands []string // shell commands in order, at most 100 (issue #365)
+	// gateCommands are the same commands unclipped: gate matching reads the
+	// full text, a gate chained after rune 300 still ran (issue #865).
+	var gateCommands []string
 	// skillsLoaded are the skills a claude stream loaded with its Skill tool,
 	// in order, each once (issue #695); nil for other adapters.
 	var skillsLoaded []string
@@ -1449,6 +1452,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					c = string(r[:300])
 				}
 				commands = append(commands, c)
+				gateCommands = append(gateCommands, obs.Command)
 			}
 			if obs.Skill != "" && worker.Adapter == "claude" && !slices.Contains(skillsLoaded, obs.Skill) {
 				skillsLoaded = append(skillsLoaded, obs.Skill)
@@ -1813,7 +1817,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// a note and a progress line, no signal (the lead re-measures every gate).
 	var gatesUnrun []string
 	if reason == "stop" {
-		gatesUnrun = unrunGates(dir, o.Task, commands)
+		gatesUnrun = unrunGates(dir, o.Task, gateCommands)
 		if len(gatesUnrun) > 0 {
 			note = joinNote(note, "gates never run by the worker: "+strings.Join(gatesUnrun, ", "))
 		}

@@ -5505,6 +5505,7 @@ func TestGatesUnrun(t *testing.T) {
 		{"echo suffix", "go vet ./...", []string{`go vet ./... ; echo "exit=$?"`}, true},
 		{"whitespace", "go  test\t-count=1 ./...", []string{"cd x &&  go test -count=1   ./..."}, true},
 		{"long prefix", long, []string{long[:45] + " | head"}, true},
+		{"after rune 300", "go test ./...", []string{strings.Repeat("echo pad; ", 35) + "go test ./...; echo rc=$?"}, true},
 		{"not run", "go test ./...", []string{"go build ./...", "go vet ./..."}, false},
 		{"no commands", "go build ./...", nil, false},
 	}
@@ -5512,6 +5513,81 @@ func TestGatesUnrun(t *testing.T) {
 		if got := gateRan(c.gate, c.cmds); got != c.want {
 			t.Errorf("%s: gateRan(%q, %q) = %v, want %v", c.name, c.gate, c.cmds, got, c.want)
 		}
+	}
+}
+
+// TestGatesUnrunLongChain: a gate run after rune 300 of one chained shell
+// command counts as run; the finished event still records the command
+// clipped to 300 runes (issue #865).
+func TestGatesUnrunLongChain(t *testing.T) {
+	// not parallel: t.Setenv PATH
+	dir := setupTask(t)
+	brief := "gate: go build ./...\ngate: go test -count=1 ./...\n\n# TASK\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	if err := linkOrCopy(exe, fake); err != nil {
+		t.Fatalf("install fake claude: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	chain := "go build ./...; " + strings.Repeat("echo pad; ", 35) + "go test -count=1 ./...; echo rc=$?"
+	const session = "ses_longchain_001"
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+	fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":%q}}]}}`+"\n", session, chain)
+	fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+	stream := filepath.Join(t.TempDir(), "stream.jsonl")
+	if err := os.WriteFile(stream, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write stream: %v", err)
+	}
+	t.Setenv(fakeClaudeEnv, stream)
+
+	var buf bytes.Buffer
+	res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Reason != "stop" {
+		t.Fatalf("Run() reason = %q, want stop; progress:\n%s", res.Reason, buf.String())
+	}
+	evs, err := ReadEvents(dir)
+	if err != nil {
+		t.Fatalf("ReadEvents() error = %v", err)
+	}
+	var fin *Event
+	for i := range evs {
+		if evs[i].Kind == "finished" {
+			fin = &evs[i]
+		}
+	}
+	if fin == nil {
+		t.Fatalf("no finished event; events = %v", evs)
+	}
+	if len(fin.GatesUnrun) != 0 {
+		t.Errorf("finished GatesUnrun = %q, want none", fin.GatesUnrun)
+	}
+	if strings.Contains(fin.Note, "gates never run") {
+		t.Errorf("finished Note = %q, want no gates-never-run note", fin.Note)
+	}
+	if strings.Contains(buf.String(), "never ran gate(s)") {
+		t.Errorf("progress has a never-ran line:\n%s", buf.String())
+	}
+	if want := string([]rune(chain)[:300]); len(fin.Commands) != 1 || fin.Commands[0] != want {
+		t.Errorf("finished Commands = %q, want [%q] (clipped to 300 runes)", fin.Commands, want)
 	}
 }
 
