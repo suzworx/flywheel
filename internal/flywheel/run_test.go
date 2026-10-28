@@ -2472,6 +2472,47 @@ func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool)
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// hangGuard bounds a wait that should end on a signal: the time left until
+// the test's deadline less a margin (30s, or a tenth of the time left when
+// that is smaller), never under 10s; 10 minutes with no deadline. It is a
+// hang guard only, so it may be long (issue #619).
+func hangGuard(t *testing.T) time.Duration {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		return 10 * time.Minute
+	}
+	left := time.Until(deadline)
+	margin := 30 * time.Second
+	if left/10 < margin {
+		margin = left / 10
+	}
+	if g := left - margin; g > 10*time.Second {
+		return g
+	}
+	return 10 * time.Second
+}
+
+// TestHangGuard checks the guard is never under its 10s floor and, when the
+// test has a deadline well beyond that floor, ends before the deadline.
+func TestHangGuard(t *testing.T) {
+	t.Parallel()
+	g := hangGuard(t)
+	if g < 10*time.Second {
+		t.Errorf("hangGuard() = %v, want >= 10s", g)
+	}
+	deadline, ok := t.Deadline()
+	if !ok {
+		if g != 10*time.Minute {
+			t.Errorf("hangGuard() with no deadline = %v, want 10m", g)
+		}
+		return
+	}
+	if left := time.Until(deadline); left > 20*time.Second && g >= left {
+		t.Errorf("hangGuard() = %v, want less than the %v left until the deadline", g, left)
+	}
+}
+
 // TestRunWritesAndRenewsLease checks a run writes its lease before the
 // worker's first line, renews it at least once when the renew interval is
 // small, and removes it after finished.
@@ -2488,17 +2529,28 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 		err error
 	}
 	done := make(chan outcome, 1)
+	finished := make(chan struct{})
+	t.Cleanup(func() { <-finished }) // a failed test still waits for Run before its temp dirs go
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	// Registered after the wait on finished, so it runs first (last in, first
+	// out): a test that failed mid-way still lets Run finish.
+	t.Cleanup(release)
 	var buf bytes.Buffer
-	// The lease is written before the sim sleeps and removed after finished,
-	// so SimDelay is how long the lease is visible. 2s spans a wall-clock
-	// second boundary and ~100 renewals, so a loaded host still sees both the
-	// lease and a renewal; the waits below are hang guards only (issue #537).
+	// The lease is written before the sim waits and removed after finished.
+	// The sim is held until the test releases it, after it has seen the lease
+	// and a renewal, so a loaded host cannot miss either; the waits below are
+	// hang guards only (issues #537, #619).
 	go func() {
-		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: 2 * time.Second, Progress: &buf})
+		defer close(finished)
+		res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf, simRelease: gate,
+			// The held sim prints nothing until release, so the start timeout must exceed any hold.
+			StartTimeout: 10 * time.Minute})
 		done <- outcome{res, err}
 	}()
 
-	waitFor(t, 10*time.Second, "the lease to be written before the first line", func() bool {
+	waitFor(t, hangGuard(t), "the lease to be written before the first line", func() bool {
 		_, ok := leaseFor(t, dir, "T1", "r1")
 		return ok
 	})
@@ -2523,7 +2575,7 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expires_at %q is not RFC3339: %v", l.ExpiresAt, err)
 	}
-	waitFor(t, 10*time.Second, "a renewal (renewed_at and expires_at move forward)", func() bool {
+	waitFor(t, hangGuard(t), "a renewal (renewed_at and expires_at move forward)", func() bool {
 		l, ok := leaseFor(t, dir, "T1", "r1")
 		if !ok {
 			t.Fatal("lease removed before a renewal was observed")
@@ -2533,6 +2585,7 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 		return rerr == nil && eerr == nil && renewed.After(firstRenewed) && expires.After(firstExpires)
 	})
 
+	release()
 	select {
 	case o := <-done:
 		if o.err != nil {
@@ -2541,7 +2594,7 @@ func TestRunWritesAndRenewsLease(t *testing.T) {
 		if o.res.Attempt != "r1" {
 			t.Errorf("attempt = %q, want r1", o.res.Attempt)
 		}
-	case <-time.After(20 * time.Second):
+	case <-time.After(hangGuard(t)):
 		t.Fatal("Run() did not finish in time")
 	}
 	if leases, err := ReadLeases(dir); err != nil || len(leases) != 0 {
@@ -2591,14 +2644,26 @@ func TestLeaseRemainsWhenRunKilled(t *testing.T) {
 		err error
 	}
 	done := make(chan outcome, 1)
-	// SimDelay is how long the lease stays visible; 2s keeps it in place on a
-	// loaded host while the checks below run. The wait is a hang guard only.
+	finished := make(chan struct{})
+	t.Cleanup(func() { <-finished }) // a failed test still waits for Run before its temp dirs go
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	// Registered after the wait on finished, so it runs first (last in, first
+	// out): a test that failed mid-way still lets Run finish.
+	t.Cleanup(release)
+	// The sim is held until the test releases it after the checks below, so
+	// the lease stays in place on a loaded host. The waits are hang guards only
+	// (issue #619).
 	go func() {
-		res, err := Run(dir, RunOptions{Task: "T1", SimDelay: 2 * time.Second})
+		defer close(finished)
+		res, err := Run(dir, RunOptions{Task: "T1", simRelease: gate,
+			// The held sim prints nothing until release, so the start timeout must exceed any hold.
+			StartTimeout: 10 * time.Minute})
 		done <- outcome{res, err}
 	}()
 
-	waitFor(t, 10*time.Second, "the lease file", func() bool {
+	waitFor(t, hangGuard(t), "the lease file", func() bool {
 		_, ok := leaseFor(t, dir, "T1", "r1")
 		return ok
 	})
@@ -2610,8 +2675,8 @@ func TestLeaseRemainsWhenRunKilled(t *testing.T) {
 	if l.StartedAt != want || l.ExpiresAt != t0.Add(45*time.Second).Format(time.RFC3339) {
 		t.Errorf("lease timestamps = %s/%s, want %s/%s (default ttl 45s)", l.StartedAt, l.ExpiresAt, want, t0.Add(45*time.Second).Format(time.RFC3339))
 	}
-	// The run is still sleeping in SimDelay; it never recorded finished, so
-	// the lease file must remain in place.
+	// The run is still held before its first line; it never recorded
+	// finished, so the lease file must remain in place.
 	if _, ok := leaseFor(t, dir, "T1", "r1"); !ok {
 		t.Error("lease file removed while the run never recorded finished")
 	}
@@ -2619,9 +2684,10 @@ func TestLeaseRemainsWhenRunKilled(t *testing.T) {
 	if LeaseLive(l, later) {
 		t.Error("LeaseLive() = true after the ttl relative to the injected later now, want false")
 	}
+	release()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(hangGuard(t)):
 		t.Fatal("Run() did not finish in time")
 	}
 }
