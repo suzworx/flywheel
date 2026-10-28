@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.1](https://github.com/suzworx/flywheel/compare/v0.79.0...v0.79.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* a claude worker can read through its needs-state (link) paths ([#887](https://github.com/suzworx/flywheel/issues/887)) ([a0162e6](https://github.com/suzworx/flywheel/commit/a0162e67aaf90464be818a443e49258c58345c4f)), closes [#886](https://github.com/suzworx/flywheel/issues/886)
+
 ## [0.79.0](https://github.com/suzworx/flywheel/compare/v0.78.6...v0.79.0) (2026-10-28)
 
 
