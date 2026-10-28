@@ -8,7 +8,7 @@ description: >-
   the line before reporting. Prefer a different model or vendor than the line.
 license: MIT
 metadata:
-  version: 0.78.4 # x-release-please-version
+  version: 0.78.5 # x-release-please-version
 ---
 
 # Flywheel Auditor

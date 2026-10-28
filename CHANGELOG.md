@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.78.5](https://github.com/suzworx/flywheel/compare/v0.78.4...v0.78.5) (2026-10-28)
+
+
+### Bug Fixes
+
+* a config key at the wrong level says where it belongs ([#874](https://github.com/suzworx/flywheel/issues/874)) ([5c48354](https://github.com/suzworx/flywheel/commit/5c483544e83100f71848a5700c7912f588efe12b)), closes [#873](https://github.com/suzworx/flywheel/issues/873)
+* each worker attempt gets a scratch directory in its own tree ([#877](https://github.com/suzworx/flywheel/issues/877)) ([89fd7d5](https://github.com/suzworx/flywheel/commit/89fd7d56a89a9bc02022e45b7e0e563293001996)), closes [#872](https://github.com/suzworx/flywheel/issues/872)
+* inspect --commit's T3 refusal names flywheel attest ([#875](https://github.com/suzworx/flywheel/issues/875)) ([36263a4](https://github.com/suzworx/flywheel/commit/36263a4323b589ad4d08f513a0b9cbca495be534)), closes [#871](https://github.com/suzworx/flywheel/issues/871)
+
 ## [0.78.4](https://github.com/suzworx/flywheel/compare/v0.78.3...v0.78.4) (2026-10-28)
 
 
