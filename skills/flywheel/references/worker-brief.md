@@ -118,7 +118,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   An entry annotated `(link)` — `needs-state: node_modules/ (link), apps/web/node_modules/ (link)`
   — is also linked from the repo into the task's worktree on every `flywheel run --worktree`
   dispatch (a directory junction on Windows, a symlink elsewhere), before the `worktree.setup`
-  command runs there (issue #430). A linked dependency tree is **shared** with the repo and every
+  command runs there (issue #430). A claude worker can read through the link: it gets read-only
+  `Read`/`Grep`/`Glob` allow rules for each linked path and its target, writes are not widened
+  (issue #886). A linked dependency tree is **shared** with the repo and every
   other worktree: never `npm install` (or `pip install`) in it. A unit that changes dependencies
   runs its own install in `worktree.setup` or a gate, into a tree it does not link. In a workspace
   repository (npm/pnpm/yarn workspaces) do not link `node_modules`: its package links resolve into

@@ -1091,6 +1091,14 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if unitCap > 0 {
 		req.MaxBudgetUSD = unitCap - unitSpent
 	}
+	if o.Worktree {
+		// A claude worker reads through its needs-state links (issue #886):
+		// read-only allow rules for each link and its target. Clone first:
+		// allowedTools() can return the shared defaultAllowedTools.
+		if rules := linkedReadRules(wt, links); len(rules) > 0 {
+			req.AllowedTools = append(slices.Clone(req.AllowedTools), rules...)
+		}
+	}
 	if !samePath(wt, dir) {
 		// The lead message names the worker's tree (issue #805).
 		req.Workdir, req.Root = wt, absPath(dir)
