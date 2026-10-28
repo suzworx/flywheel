@@ -1491,17 +1491,23 @@ func TestRunWritesWorkerRules(t *testing.T) {
 }
 
 // TestWorkerScratchEnv: scratchEnv creates the attempt's scratch directory
-// inside <dir>/.flywheel/runs and points FLYWHEEL_TMP, TMPDIR, TEMP and TMP at
-// it (issue #872).
+// inside <dir>/.flywheel/runs for FLYWHEEL_TMP (issue #872) and a second
+// directory outside the tree for TMPDIR, TEMP and TMP (issue #880).
 func TestWorkerScratchEnv(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	env, path, err := scratchEnv(dir, "T1", "r1")
+	env, path, temp, err := scratchEnv(dir, "T1", "r1")
 	if err != nil {
 		t.Fatalf("scratchEnv() error = %v", err)
 	}
-	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
-		t.Fatalf("scratch dir %s not created: %v", path, err)
+	t.Cleanup(func() { os.RemoveAll(temp) })
+	for _, d := range []string{path, temp} {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			t.Fatalf("dir %s not created: %v", d, err)
+		}
+		if !filepath.IsAbs(d) {
+			t.Errorf("dir %s is not absolute", d)
+		}
 	}
 	runs, err := filepath.Abs(filepath.Join(dir, ".flywheel", "runs"))
 	if err != nil {
@@ -1510,9 +1516,41 @@ func TestWorkerScratchEnv(t *testing.T) {
 	if filepath.Dir(path) != runs {
 		t.Errorf("scratch dir %s is not inside %s", path, runs)
 	}
-	want := []string{"FLYWHEEL_TMP=" + path, "TMPDIR=" + path, "TEMP=" + path, "TMP=" + path}
+	if !isOutsideWorktree(dir, temp) {
+		t.Errorf("temp dir %s is inside the tree %s", temp, dir)
+	}
+	want := []string{"FLYWHEEL_TMP=" + path, "TMPDIR=" + temp, "TEMP=" + temp, "TMP=" + temp}
 	if strings.Join(env, "\n") != strings.Join(want, "\n") {
 		t.Errorf("scratchEnv() env = %q, want %q", env, want)
+	}
+}
+
+// TestScratchEnvTempOutsideRepo: the TMPDIR scratchEnv makes for a tree that
+// is a git repository is not inside any git work tree, so tests that need a
+// directory outside a repository pass inside a worker (issue #880).
+func TestScratchEnvTempOutsideRepo(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-c", "core.autocrlf=false", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	env, path, temp, err := scratchEnv(repo, "T1", "r1")
+	if err != nil {
+		t.Fatalf("scratchEnv() error = %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(path); os.RemoveAll(temp) })
+	tmpdir := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "TMPDIR="); ok {
+			tmpdir = v
+		}
+	}
+	if tmpdir == "" {
+		t.Fatalf("scratchEnv() env = %q, no TMPDIR", env)
+	}
+	out, err := exec.Command("git", "-C", tmpdir, "rev-parse", "--is-inside-work-tree").Output()
+	if err == nil && strings.TrimSpace(string(out)) == "true" {
+		t.Errorf("TMPDIR %s is inside a git work tree", tmpdir)
 	}
 }
 
@@ -1522,10 +1560,11 @@ func TestWorkerScratchEnv(t *testing.T) {
 func TestScratchEnvInsideWorktree(t *testing.T) {
 	t.Parallel()
 	tree := t.TempDir()
-	_, path, err := scratchEnv(tree, "T1", "r1")
+	_, path, temp, err := scratchEnv(tree, "T1", "r1")
 	if err != nil {
 		t.Fatalf("scratchEnv() error = %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(temp) })
 	if isOutsideWorktree(tree, filepath.Join(path, "log.txt")) {
 		t.Errorf("isOutsideWorktree(%s, %s) = true, want false", tree, filepath.Join(path, "log.txt"))
 	}
