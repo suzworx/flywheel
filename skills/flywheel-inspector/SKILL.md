@@ -8,7 +8,7 @@ description: >-
   persona.
 license: MIT
 metadata:
-  version: 0.78.5 # x-release-please-version
+  version: 0.78.6 # x-release-please-version
 ---
 
 # Flywheel Inspector
