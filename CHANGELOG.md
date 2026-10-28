@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.3](https://github.com/suzworx/flywheel/compare/v0.78.2...v0.78.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* a gate run late in a long chained shell command counts as run ([#866](https://github.com/suzworx/flywheel/issues/866)) ([d7d2967](https://github.com/suzworx/flywheel/commit/d7d29676d752a776692a22f699c8c97b280c863e)), closes [#865](https://github.com/suzworx/flywheel/issues/865)
+
 ## [0.78.2](https://github.com/suzworx/flywheel/compare/v0.78.1...v0.78.2) (2026-10-27)
 
 
