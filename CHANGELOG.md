@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.0](https://github.com/suzworx/flywheel/compare/v0.78.6...v0.79.0) (2026-10-28)
+
+
+### Features
+
+* land --exception on a PR merge commit prints a hint naming land --pr ([#884](https://github.com/suzworx/flywheel/issues/884)) ([2e5ffb0](https://github.com/suzworx/flywheel/commit/2e5ffb0dbda2706a430c6fda6d27ed91ff9bb84f)), closes [#883](https://github.com/suzworx/flywheel/issues/883)
+
 ## [0.78.6](https://github.com/suzworx/flywheel/compare/v0.78.5...v0.78.6) (2026-10-28)
 
 
