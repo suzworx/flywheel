@@ -1818,6 +1818,31 @@ func TestConfigUnknownKeyHint(t *testing.T) {
 	}
 }
 
+// TestConfigUnknownKeyWrongLevel checks a valid key at the wrong level names
+// where it belongs instead of hinting the key itself (issue #873).
+func TestConfigUnknownKeyWrongLevel(t *testing.T) {
+	t.Parallel()
+	err := loadConfigText(t, `{"version":1,"adapter":"claude","workers":[{"name":"w","adapter":"sim"}]}`)
+	if err == nil {
+		t.Fatal("LoadConfig(top-level adapter) = nil, want an unknown-key error")
+	}
+	want := `key "adapter" is not valid here; it belongs in workers[]`
+	if msg := err.Error(); !strings.Contains(msg, want) || !strings.HasPrefix(msg, "parse ") || !strings.Contains(msg, "config.json") || strings.Contains(msg, "did you mean") {
+		t.Errorf("LoadConfig(top-level adapter) = %v, want %q with the path and no hint", err, want)
+	}
+	if errors.Unwrap(err) == nil || !strings.Contains(errors.Unwrap(err).Error(), "unknown field") {
+		t.Errorf("LoadConfig(top-level adapter) unwraps to %v, want the decoder's error", errors.Unwrap(err))
+	}
+	err = loadConfigText(t, `{"version":1,"model":"m","workers":[{"name":"w","adapter":"sim"}]}`)
+	if err == nil || !strings.Contains(err.Error(), `key "model" is not valid here; it belongs in `) || !strings.Contains(err.Error(), "workers[]") {
+		t.Errorf("LoadConfig(top-level model) = %v, want workers[] among its parents", err)
+	}
+	err = loadConfigText(t, `{"version":1,"workers":[{"name":"w","adapter":"sim"}],"stafing":{}}`)
+	if err == nil || !strings.Contains(err.Error(), `did you mean "staffing"?`) {
+		t.Errorf("LoadConfig(stafing) = %v, want a staffing hint", err)
+	}
+}
+
 // TestMaxTurnsConfig checks the max_turns resolver (worker, else limits, else
 // 200), that both values survive write and reload, and that a negative value
 // or a max_turns on a non-claude worker is a validation problem (issue #459).

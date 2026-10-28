@@ -1091,6 +1091,15 @@ func LoadConfig(dir string) (Config, bool, error) {
 	if err := dec.Decode(&c); err != nil {
 		if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
 			if name, uerr := strconv.Unquote(name); uerr == nil {
+				if parents := configKeyParents(name); len(parents) > 0 {
+					for i, p := range parents {
+						if p == "" {
+							parents[i] = "the top level"
+						}
+					}
+					where := strings.Join(parents, ", ")
+					return Config{}, false, unknownKeyError{fmt.Sprintf("parse %s: key %q is not valid here; it belongs in %s", path, name, where), err}
+				}
 				if hint := nearestConfigKey(name); hint != "" {
 					return Config{}, false, unknownKeyError{fmt.Sprintf("parse %s: unknown key %q; did you mean %q?", path, name, hint), err}
 				}
@@ -1117,12 +1126,17 @@ func (e unknownKeyError) Unwrap() error { return e.err }
 // nearestConfigKey returns the json key Config accepts anywhere in its tree
 // nearest to name (issue #463): an exact match once both are lowercased with
 // '_' and '-' removed, else the smallest Levenshtein distance <= 2 on the
-// lowercased names, else "".
+// lowercased names, else "". It never returns name itself (issue #873).
 func nearestConfigKey(name string) string {
 	fold := func(s string) string {
 		return strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(s))
 	}
 	keys := configKeys(reflect.TypeOf(Config{}), map[reflect.Type]bool{}, map[string]bool{})
+	for _, k := range keys {
+		if k == name {
+			return ""
+		}
+	}
 	for _, k := range keys {
 		if fold(k) == fold(name) {
 			return k
@@ -1161,6 +1175,78 @@ func configKeys(t reflect.Type, seen map[reflect.Type]bool, keys map[string]bool
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// configKeyParents returns, de-duplicated and sorted shallowest first then by
+// name, the parent path of every struct field in Config's tree whose json tag
+// is exactly name (issue #873): "" is the top level, "staffing.lead" a struct
+// field, "workers[]" a slice or array element and "<field>.*" a map value.
+func configKeyParents(name string) []string {
+	parents := map[string]bool{}
+	var walk func(t reflect.Type, path string, onPath map[reflect.Type]bool)
+	walk = func(t reflect.Type, path string, onPath map[reflect.Type]bool) {
+	unwrap:
+		for {
+			switch t.Kind() {
+			case reflect.Pointer:
+				t = t.Elem()
+			case reflect.Slice, reflect.Array:
+				t, path = t.Elem(), path+"[]"
+			case reflect.Map:
+				t, path = t.Elem(), path+".*"
+			default:
+				break unwrap
+			}
+		}
+		if t.Kind() != reflect.Struct || onPath[t] {
+			return
+		}
+		onPath[t] = true
+		defer delete(onPath, t)
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if tag == "-" {
+				continue
+			}
+			if tag == "" && f.Anonymous {
+				walk(f.Type, path, onPath)
+				continue
+			}
+			if tag == "" {
+				tag = f.Name
+			}
+			if tag == name {
+				parents[path] = true
+			}
+			child := tag
+			if path != "" {
+				child = path + "." + tag
+			}
+			walk(f.Type, child, onPath)
+		}
+	}
+	walk(reflect.TypeOf(Config{}), "", map[reflect.Type]bool{})
+	out := make([]string, 0, len(parents))
+	for p := range parents {
+		out = append(out, p)
+	}
+	depth := func(p string) int {
+		if p == "" {
+			return 0
+		}
+		return strings.Count(p, ".") + 1
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if di, dj := depth(out[i]), depth(out[j]); di != dj {
+			return di < dj
+		}
+		return out[i] < out[j]
+	})
 	return out
 }
 
