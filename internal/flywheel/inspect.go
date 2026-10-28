@@ -111,6 +111,11 @@ func InspectTask(dir, task string, o InspectOptions) error {
 			return res.err
 		}
 		if res.refusal.Rule != "" {
+			// A commit whose gates passed outside flywheel (CI) has the attest
+			// path (issue #367); the --commit refusal names it (issue #871).
+			if o.Commit != "" && res.refusal.Rule == "T3" && strings.HasPrefix(res.refusal.Fix, "no passing supervisor validated reading for gate") {
+				res.refusal.Fix += fmt.Sprintf("; or, when its gates passed outside flywheel, record them: flywheel attest %s --commit %s --evidence <run URL> --session <own session>", task, o.Commit)
+			}
 			return &res.refusal
 		}
 		// Record exactly the tree the T3 check measured, never a second hash

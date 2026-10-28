@@ -800,6 +800,29 @@ func TestInspectCommit(t *testing.T) {
 	}
 }
 
+// TestInspectCommitRefusalNamesAttest names flywheel attest in the --commit T3
+// refusal and leaves the refusal without --commit unchanged (issue #871).
+func TestInspectCommitRefusalNamesAttest(t *testing.T) {
+	t.Parallel()
+	dir, commit := attestSetup(t, []string{"exit 0"}, "a.go")
+	logFinished(t, dir, "T1", "worker-1")
+	err := InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1", Commit: commit})
+	var r *RuleRefusal
+	if !errors.As(err, &r) || r.Rule != "T3" {
+		t.Fatalf("InspectTask(--commit) error = %v, want a T3 refusal", err)
+	}
+	if want := "flywheel attest T1 --commit " + commit; !strings.Contains(r.Fix, want) {
+		t.Errorf("--commit refusal fix = %q, want it to contain %q", r.Fix, want)
+	}
+	err = InspectTask(dir, "T1", InspectOptions{Dir: dir, Verdict: "pass", Session: "lead-1"})
+	if !errors.As(err, &r) || r.Rule != "T3" {
+		t.Fatalf("InspectTask() error = %v, want a T3 refusal", err)
+	}
+	if strings.Contains(r.Fix, "attest") {
+		t.Errorf("refusal fix without --commit = %q, want no attest hint", r.Fix)
+	}
+}
+
 // TestInspectCommitUnknown refuses a commit that is not in the repository.
 func TestInspectCommitUnknown(t *testing.T) {
 	t.Parallel()
