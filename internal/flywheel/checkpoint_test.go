@@ -134,7 +134,7 @@ func timedCheckpointRun(t *testing.T, every string, simDelay time.Duration, hold
 // condition must hold mid-run) or after a hang guard.
 func waitMidRun(t *testing.T, done chan struct{}, what string, cond func() bool) {
 	t.Helper()
-	for guard := time.Now().Add(60 * time.Second); !cond(); time.Sleep(10 * time.Millisecond) {
+	for guard := time.Now().Add(hangGuard(t)); !cond(); time.Sleep(10 * time.Millisecond) {
 		select {
 		case <-done:
 			t.Fatalf("Run finished before %s", what)
