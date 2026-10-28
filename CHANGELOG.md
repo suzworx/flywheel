@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.6](https://github.com/suzworx/flywheel/compare/v0.78.5...v0.78.6) (2026-10-28)
+
+
+### Bug Fixes
+
+* a worker's temp directory is outside any git repository ([#881](https://github.com/suzworx/flywheel/issues/881)) ([5c01f5e](https://github.com/suzworx/flywheel/commit/5c01f5edb2b0f8c6c15983bd33477e3dd44e7e0f)), closes [#880](https://github.com/suzworx/flywheel/issues/880)
+
 ## [0.78.5](https://github.com/suzworx/flywheel/compare/v0.78.4...v0.78.5) (2026-10-28)
 
 
