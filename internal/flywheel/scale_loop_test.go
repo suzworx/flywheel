@@ -78,6 +78,12 @@ func TestScaleFactoryLoop(t *testing.T) {
 		mu           sync.Mutex
 	)
 
+	// The queue on the dispatch lock grows with host load, so the concurrent
+	// dispatchers wait as long as the test's deadline allows instead of a
+	// fixed 60s (issue #619).
+	timings := defaultRepoLockTimings()
+	timings.wait = hangGuard(t)
+
 	// Loop until every task is landed (at most N+10 rounds)
 	for round := 0; round < n+10; round++ {
 		roundCount++
@@ -120,7 +126,7 @@ func TestScaleFactoryLoop(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for task := range taskCh {
-					if _, err := Run(dir, RunOptions{Task: task}); err != nil {
+					if _, err := Run(dir, RunOptions{Task: task, lockTimings: &timings}); err != nil {
 						errsLock.Lock()
 						runErrs = append(runErrs, fmt.Sprintf("%s: %v", task, err))
 						errsLock.Unlock()
