@@ -227,3 +227,41 @@ func landPRUnit(dir string, events []Event, task, sha, url, session, inspectNote
 	}
 	return PRUnitOutcome{Task: task, Outcome: "landed"}
 }
+
+var (
+	prSquashSubject = regexp.MustCompile(`\(#([0-9]+)\)\s*$`)
+	prMergeSubject  = regexp.MustCompile(`^Merge pull request #([0-9]+) from `)
+)
+
+// PRMergeHint returns a one-line hint naming `flywheel land --pr N` when
+// commit is PR #N's squash or merge commit and its Flywheel-Task trailers
+// name task (issue #883), so a lead landing it with --exception learns the
+// PR path that carries the PR's CI as evidence. It returns "" otherwise and
+// on any git error; it never writes.
+func PRMergeHint(dir, task, commit string) string {
+	if dir == "" {
+		dir = "."
+	}
+	subject, err := gitRead(dir, []string{"log", "-1", "--format=%s", commit})
+	if err != nil {
+		return ""
+	}
+	subject = strings.TrimSpace(subject)
+	m := prSquashSubject.FindStringSubmatch(subject)
+	if m == nil {
+		m = prMergeSubject.FindStringSubmatch(subject)
+	}
+	if m == nil {
+		return ""
+	}
+	names, err := gitRead(dir, []string{"log", "-1", "--format=%(trailers:key=Flywheel-Task,valueonly,separator=%x2C)", commit})
+	if err != nil {
+		return ""
+	}
+	for _, n := range strings.Split(strings.TrimSpace(names), ",") {
+		if strings.TrimSpace(n) == task {
+			return fmt.Sprintf("hint: %s is PR #%s's merge commit and names %s; flywheel land --pr %s --session <session> lands every unit it names, with the PR's CI as evidence", short7(commit), m[1], task, m[1])
+		}
+	}
+	return ""
+}

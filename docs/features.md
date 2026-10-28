@@ -161,7 +161,10 @@ as evidence, inspected as a pass on that commit and landed, and prints `landed`,
 every unit landed or was skipped, 6 when any was refused, 1 on another error. A squash of a
 multi-unit PR holds every unit's paths, so each unit's attestation allows a changed path that
 another unit of the PR owns, and still refuses (T3) a path no unit of the PR owns. These are the
-same events as the manual steps, so `flywheel verify` checks them as before.
+same events as the manual steps, so `flywheel verify` checks them as before. A
+`flywheel land <task> --commit <sha> --exception` on a commit whose subject carries a PR number
+and whose trailers name the task prints a hint naming `land --pr N` on stderr (issue
+[#883](https://github.com/suzworx/flywheel/issues/883)); landing proceeds unchanged.
 
 A gate that runs under bash is also measured for a masked pipeline (issue
 [#704](https://github.com/suzworx/flywheel/issues/704)): bash runs gates without pipefail, so in

@@ -166,6 +166,11 @@ func runLand(args []string) {
 		landUsage(os.Stderr)
 		os.Exit(2)
 	}
+	if o.exception != "" && o.commit != "" {
+		if hint := flywheel.PRMergeHint(o.dir, task, o.commit); hint != "" {
+			fmt.Fprintln(os.Stderr, hint)
+		}
+	}
 	err = flywheel.LandTaskWithException(o.dir, task, o.commit, o.note, o.byLead, o.reason, o.exception, o.session, o.allowUntriaged)
 	if err != nil {
 		if errors.Is(err, flywheel.ErrAlreadyLanded) {
