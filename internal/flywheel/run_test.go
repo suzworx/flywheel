@@ -1490,6 +1490,47 @@ func TestRunWritesWorkerRules(t *testing.T) {
 	}
 }
 
+// TestWorkerScratchEnv: scratchEnv creates the attempt's scratch directory
+// inside <dir>/.flywheel/runs and points FLYWHEEL_TMP, TMPDIR, TEMP and TMP at
+// it (issue #872).
+func TestWorkerScratchEnv(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	env, path, err := scratchEnv(dir, "T1", "r1")
+	if err != nil {
+		t.Fatalf("scratchEnv() error = %v", err)
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
+		t.Fatalf("scratch dir %s not created: %v", path, err)
+	}
+	runs, err := filepath.Abs(filepath.Join(dir, ".flywheel", "runs"))
+	if err != nil {
+		t.Fatalf("Abs() error = %v", err)
+	}
+	if filepath.Dir(path) != runs {
+		t.Errorf("scratch dir %s is not inside %s", path, runs)
+	}
+	want := []string{"FLYWHEEL_TMP=" + path, "TMPDIR=" + path, "TEMP=" + path, "TMP=" + path}
+	if strings.Join(env, "\n") != strings.Join(want, "\n") {
+		t.Errorf("scratchEnv() env = %q, want %q", env, want)
+	}
+}
+
+// TestScratchEnvInsideWorktree: a file in the scratch directory scratchEnv
+// makes under the worker's tree is not outside that tree, so writing to
+// $FLYWHEEL_TMP never counts as off-course (issue #872).
+func TestScratchEnvInsideWorktree(t *testing.T) {
+	t.Parallel()
+	tree := t.TempDir()
+	_, path, err := scratchEnv(tree, "T1", "r1")
+	if err != nil {
+		t.Fatalf("scratchEnv() error = %v", err)
+	}
+	if isOutsideWorktree(tree, filepath.Join(path, "log.txt")) {
+		t.Errorf("isOutsideWorktree(%s, %s) = true, want false", tree, filepath.Join(path, "log.txt"))
+	}
+}
+
 // TestRunLeavesPreExistingWorkerFilesUntouched checks a run never overwrites
 // an opencode-worker.json or worker-rules.md that already exists (issue #31).
 func TestRunLeavesPreExistingWorkerFilesUntouched(t *testing.T) {

@@ -211,6 +211,9 @@ Gates that actually measure:
   each attempt is committed before validate, so a diff against HEAD sees nothing.
 - `FLYWHEEL_BASE` is the unit's base commit; validate sets it for every gate and run sets it for
   every worker, in-place runs (no `--worktree`) included (#865), so both measure the same diff.
+- `FLYWHEEL_TMP` (also `TMPDIR`, `TEMP` and `TMP`) is the worker's scratch directory in the worker's own tree,
+  `.flywheel/runs/<task>.<attempt>.tmp`, removed when the attempt ends (#872): logs go there, never
+  to the system temp directory.
 - Gates, `worktree.setup` and the worker get `FLYWHEEL_SLOT`, the unit's tree's slot (1, 2, ...),
   for per-unit ports and databases (`PORT=$((3000 + FLYWHEEL_SLOT))`, issue #697).
 - Use the repository's own test runner (`npm test -- <file>`, or the runner its test script calls);
