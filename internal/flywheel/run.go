@@ -1466,6 +1466,10 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// capped is set when the streamed cost reaches the unit cost cap; the
 	// attempt then finishes with reason capped (issue #459).
 	var capped atomic.Bool
+	// toolStallSecs bounds one open tool call; toolStallNote names the call
+	// that hit it, for the stalled finished event (issue #917).
+	toolStallSecs := int(worker.toolStallTimeoutDuration().Seconds())
+	toolStallNote := ""
 	firstLine := true
 	for sc.Scan() {
 		if silent.Load() || stalled.Load() || capped.Load() || suspendStopped.Load() {
@@ -1505,6 +1509,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		_, _ = hasher.Write(line)
 		_, _ = hasher.Write([]byte("\n"))
+		// One tool call open past tool_stall_timeout stops the attempt like a
+		// file stall: its heartbeats keep the run file growing, so the stall
+		// timer never fires (issue #917).
+		if tool, elapsed, ok := toolProgress(line); ok && elapsed >= toolStallSecs {
+			toolStallNote = fmt.Sprintf("tool call %s open %ds (tool_stall_timeout %ds)", tool, elapsed, toolStallSecs)
+			stalled.Store(true)
+			killChild()
+			break
+		}
 		obs, ok := adap.Parse(line)
 		if !ok {
 			continue
@@ -1801,7 +1814,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 		if err := AppendEvent(dir, Event{
 			TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt,
-			Model: model, Reason: "stalled", Note: joinNote(joinNote(gitNote, outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
+			Model: model, Reason: "stalled", Note: joinNote(joinNote(joinNote(toolStallNote, gitNote), outsideNote), cpNote), Steps: steps, SHA256: runSHA, Wrote: wrote, WroteFromTree: wroteFromTree,
 			Commands: commands, SkillsLoaded: skillsLoaded, Checkpoint: checkpoint, DeniedWrites: deniedWritePaths(wt, denials),
 		}); err != nil {
 			return Result{}, err
