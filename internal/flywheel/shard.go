@@ -27,6 +27,12 @@ func ShardedLayout(dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return shardedLayoutAt(root)
+}
+
+// shardedLayoutAt is ShardedLayout of the log in root, the directory holding
+// events.jsonl or events/, without resolving ledger.dir.
+func shardedLayoutAt(root string) (bool, error) {
 	eventsPath := filepath.Join(root, shardDirName)
 	info, err := os.Stat(eventsPath)
 	if err != nil {
@@ -113,11 +119,16 @@ type logFile struct {
 // .flywheel/events/, sorted by name; anything else there (sub-directories,
 // *.lock, *.tmp, names not ending in .jsonl) is ignored.
 func logFilesOf(dir string) ([]logFile, error) {
-	var files []logFile
 	root, err := ledgerEventsRoot(dir)
 	if err != nil {
 		return nil, err
 	}
+	return logFilesAt(root)
+}
+
+// logFilesAt is logFilesOf of the log in root, without resolving ledger.dir.
+func logFilesAt(root string) ([]logFile, error) {
+	var files []logFile
 
 	// Legacy file first
 	legacyPath := filepath.Join(root, legacyLogName)

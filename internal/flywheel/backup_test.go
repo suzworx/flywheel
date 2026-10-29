@@ -35,6 +35,111 @@ func backupLedger(t *testing.T, extra map[string]string) string {
 	return dir
 }
 
+// ledgerDirBackup is a repo whose config ledger.dir is ext, backed up to a
+// fresh dest after build ran against it.
+func ledgerDirBackup(t *testing.T, ext string, build func(dir string)) (string, string, BackupResult, error) {
+	t.Helper()
+	dir := ledgerDirRepo(t)
+	writeLedgerConfig(t, dir, ledgerConfigBody(ext))
+	build(dir)
+	dest := filepath.Join(t.TempDir(), "bk")
+	res, err := Backup(dir, dest, backupNow)
+	return dir, dest, res, err
+}
+
+// not parallel: clears FLYWHEEL_LEDGER_DIR.
+func TestBackupLedgerDirCopiesExternalLog(t *testing.T) {
+	t.Setenv(ledgerDirEnv, "")
+	ext := t.TempDir()
+	dir, dest, res, err := ledgerDirBackup(t, ext, func(dir string) {
+		appendNotes(t, dir, "a", "b", "c")
+		for rel, body := range map[string]string{"locks/x.lock": "x", "events.jsonl.tmp": "partial", "other.txt": "not the log"} {
+			p := filepath.Join(ext, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	root, _, err := EventLogDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := VerifyLogChain(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LedgerDir != root || !res.ChainOK || res.ChainLines != src.Lines || src.Lines != 3 {
+		t.Fatalf("Backup = %+v, want ledger_dir %s and an ok chain of %d lines", res, root, src.Lines)
+	}
+	live, err := os.ReadFile(filepath.Join(ext, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("the live external log is gone: %v", err)
+	}
+	copied, err := os.ReadFile(filepath.Join(dest, ".flywheel", "events.jsonl"))
+	if err != nil || !bytes.Equal(copied, live) {
+		t.Fatalf("copy of events.jsonl = %q, %v; want the external log %q", copied, err, live)
+	}
+	for _, rel := range []string{"locks", "events.jsonl.tmp", "other.txt"} {
+		if _, err := os.Lstat(filepath.Join(dest, ".flywheel", rel)); err == nil {
+			t.Errorf("backup copied %s from the ledger dir", rel)
+		}
+	}
+	m := readBackupManifest(t, dest)
+	found := false
+	for _, f := range m.Files {
+		found = found || f.Path == ".flywheel/events.jsonl"
+	}
+	if m.LedgerDir != root || !found || !m.Chain.OK || m.Chain.Lines != 3 {
+		t.Fatalf("manifest = %+v, want ledger_dir %s and .flywheel/events.jsonl", m, root)
+	}
+	if b, err := os.ReadFile(filepath.Join(ext, "other.txt")); err != nil || string(b) != "not the log" {
+		t.Errorf("the live ledger dir was changed: %q, %v", b, err)
+	}
+	if _, err := Backup(dir, filepath.Join(ext, "bk"), backupNow); err == nil {
+		t.Error("Backup into the ledger dir succeeded, want a refusal")
+	}
+}
+
+// not parallel: clears FLYWHEEL_LEDGER_DIR.
+func TestBackupLedgerDirSharded(t *testing.T) {
+	t.Setenv(ledgerDirEnv, "")
+	dir, dest, res, err := ledgerDirBackup(t, t.TempDir(), func(dir string) {
+		appendNotes(t, dir, "a", "b")
+		if _, _, err := EnableShards(dir, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		appendNotes(t, dir, "c")
+	})
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	src, err := VerifyLogChain(dir)
+	if err != nil || !src.OK() {
+		t.Fatalf("source chain = %+v, %v", src, err)
+	}
+	if !res.ChainOK || res.ChainLines != src.Lines {
+		t.Fatalf("Backup = %+v, want an ok chain of %d lines", res, src.Lines)
+	}
+	if info, err := os.Stat(filepath.Join(dest, ".flywheel", "events", floorShard)); err != nil || info.IsDir() {
+		t.Fatalf("no copied shard: %v", err)
+	}
+}
+
+// not parallel: clears FLYWHEEL_LEDGER_DIR.
+func TestBackupLedgerDirMissing(t *testing.T) {
+	t.Setenv(ledgerDirEnv, "")
+	_, _, res, err := ledgerDirBackup(t, filepath.Join(t.TempDir(), "absent"), func(string) {})
+	if err != nil || res.LedgerDir == "" || !res.ChainOK || res.ChainLines != 0 {
+		t.Fatalf("Backup = %+v, %v; want ledger_dir set and no events", res, err)
+	}
+}
+
 func readBackupManifest(t *testing.T, dest string) backupManifest {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dest, "flywheel-backup.json"))

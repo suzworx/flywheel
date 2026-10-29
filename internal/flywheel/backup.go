@@ -17,7 +17,10 @@ import (
 
 // BackupResult is what Backup copied and what the copy's chain check found.
 type BackupResult struct {
-	Dest             string   `json:"dest"`
+	Dest string `json:"dest"`
+	// LedgerDir is the ledger.dir directory the event log was copied from,
+	// "" when the log is in .flywheel/ (issue #464).
+	LedgerDir        string   `json:"ledger_dir,omitempty"`
 	Files            int      `json:"files"`
 	Bytes            int64    `json:"bytes"`
 	Skipped          []string `json:"skipped,omitempty"`
@@ -43,6 +46,7 @@ type backupChain struct {
 type backupManifest struct {
 	Created          string       `json:"created"`
 	Source           string       `json:"source"`
+	LedgerDir        string       `json:"ledger_dir,omitempty"`
 	Files            []BackupFile `json:"files"`
 	Skipped          []string     `json:"skipped"`
 	PartialTailBytes int          `json:"partial_tail_bytes"`
@@ -56,6 +60,13 @@ type backupManifest struct {
 // built in a sibling temp directory, given a manifest (flywheel-backup.json)
 // and chain-checked, then renamed onto dest; on error dest is left as it was.
 // A broken chain is recorded, not an error: a copy of it is still worth keeping.
+// When ledger.dir keeps the event log outside the checkout (issue #464), its
+// events.jsonl and events/ are copied into dest/.flywheel/ too (by the same
+// rules) and the directory is recorded as the manifest's ledger_dir; the
+// copy's chain is checked by its own files, never by that live directory.
+// Restore copies dest/.flywheel back, except that with ledger_dir in the
+// manifest the event-log files go back into that directory (or are moved
+// there with flywheel ledger move).
 func Backup(dir, dest string, now time.Time) (BackupResult, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -65,6 +76,17 @@ func Backup(dir, dest string, now time.Time) (BackupResult, error) {
 	realSrc, err := filepath.EvalSymlinks(src)
 	if err != nil {
 		return BackupResult{}, fmt.Errorf("no ledger at %s: %w", src, err)
+	}
+	logRoot, external, err := EventLogDir(absDir)
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("resolve the event log of %s: %w", absDir, err)
+	}
+	ledgerDir, realLedgerDir := "", ""
+	if external {
+		ledgerDir = logRoot
+		if realLedgerDir, err = resolveExistingPrefix(logRoot); err != nil {
+			return BackupResult{}, fmt.Errorf("resolve %s: %w", logRoot, err)
+		}
 	}
 	absDest, err := filepath.Abs(dest)
 	if err != nil {
@@ -76,6 +98,11 @@ func Backup(dir, dest string, now time.Time) (BackupResult, error) {
 	}
 	if rel, err := filepath.Rel(realSrc, realDest); err == nil && (rel == "." || !strings.HasPrefix(rel, "..")) {
 		return BackupResult{}, fmt.Errorf("backup destination %s is inside the ledger %s", absDest, src)
+	}
+	if external {
+		if rel, err := filepath.Rel(realLedgerDir, realDest); err == nil && (rel == "." || !strings.HasPrefix(rel, "..")) {
+			return BackupResult{}, fmt.Errorf("backup destination %s is inside the ledger %s", absDest, logRoot)
+		}
 	}
 	destExists := false
 	if fi, err := os.Lstat(absDest); err == nil {
@@ -101,7 +128,7 @@ func Backup(dir, dest string, now time.Time) (BackupResult, error) {
 	if err != nil {
 		return BackupResult{}, fmt.Errorf("create temp dir in %s: %w", parent, err)
 	}
-	res, err := buildBackup(realSrc, absDir, tmp, now)
+	res, err := buildBackup(realSrc, absDir, ledgerDir, realLedgerDir, tmp, now)
 	if err == nil && destExists {
 		if err = os.Remove(absDest); err != nil {
 			err = fmt.Errorf("replace empty %s: %w", absDest, err)
@@ -144,20 +171,35 @@ func resolveExistingPrefix(p string) (string, error) {
 	}
 }
 
-// buildBackup copies src (a .flywheel directory) into root/.flywheel, writes
-// root/flywheel-backup.json and chain-checks the copy.
-func buildBackup(src, source, root string, now time.Time) (BackupResult, error) {
-	var res BackupResult
-	m := backupManifest{Created: now.UTC().Format(time.RFC3339), Source: source, Files: []BackupFile{}, Skipped: []string{}}
-	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return fmt.Errorf("resolve %s: %w", path, err)
-		}
-		rel = filepath.ToSlash(rel)
+// buildBackup copies src (a .flywheel directory) into root/.flywheel — and,
+// when ledgerDir is set, the event log in realLedgerDir (its resolved path)
+// too — writes root/flywheel-backup.json and chain-checks the copy.
+func buildBackup(src, source, ledgerDir, realLedgerDir, root string, now time.Time) (BackupResult, error) {
+	res := BackupResult{LedgerDir: ledgerDir}
+	m := backupManifest{Created: now.UTC().Format(time.RFC3339), Source: source, LedgerDir: ledgerDir, Files: []BackupFile{}, Skipped: []string{}}
+	// copyFrom copies base into root/.flywheel; logOnly keeps only the event
+	// log (events.jsonl and events/) of a ledger.dir directory.
+	var copyEntry func(path, rel string, d fs.DirEntry) error
+	copyFrom := func(base string, logOnly bool) error {
+		return filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return fmt.Errorf("read %s: %w", path, err)
+			}
+			rel, err := filepath.Rel(base, path)
+			if err != nil {
+				return fmt.Errorf("resolve %s: %w", path, err)
+			}
+			rel = filepath.ToSlash(rel)
+			if logOnly && rel != "." && rel != legacyLogName && rel != shardDirName && !strings.HasPrefix(rel, shardDirName+"/") {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			return copyEntry(path, rel, d)
+		})
+	}
+	copyEntry = func(path, rel string, d fs.DirEntry) error {
 		info, err := d.Info()
 		if err != nil {
 			return fmt.Errorf("stat %s: %w", path, err)
@@ -198,11 +240,23 @@ func buildBackup(src, source, root string, now time.Time) (BackupResult, error) 
 		m.Files = append(m.Files, BackupFile{Path: ".flywheel/" + rel, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
 		res.Bytes += int64(len(data))
 		return nil
-	})
-	if err != nil {
+	}
+	if err := copyFrom(src, false); err != nil {
 		return BackupResult{}, err
 	}
-	chain, err := VerifyLogChain(root)
+	if ledgerDir != "" {
+		// A ledger.dir that does not exist yet holds no events: nothing to copy.
+		if _, err := os.Lstat(realLedgerDir); err == nil {
+			if err := copyFrom(realLedgerDir, true); err != nil {
+				return BackupResult{}, err
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return BackupResult{}, fmt.Errorf("stat %s: %w", realLedgerDir, err)
+		}
+	}
+	// The copy's own log, never the ledger.dir its config.json names.
+	copyLog := filepath.Join(root, ".flywheel")
+	chain, err := verifyLogChainAt(copyLog, reanchorAcksAt(copyLog))
 	if err != nil {
 		return BackupResult{}, fmt.Errorf("verify the copy's chain: %w", err)
 	}

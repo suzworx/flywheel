@@ -81,6 +81,23 @@ func runVerify(args []string) {
 		os.Exit(2)
 	}
 	tasks := pos
+	// ledger.dir outside the checkout with no log on this host (a CI runner):
+	// the audit is inconclusive, never a vacuous pass (issue #464).
+	root, external, present, err := flywheel.EventLogPresent(o.dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flywheel verify: %v\n", err)
+		os.Exit(1)
+	}
+	if external && !present {
+		reason := fmt.Sprintf("inconclusive: ledger.dir places the event log at %s, which holds no log on this host (it is outside the checkout, so this checkout cannot be audited)", root)
+		if o.jsonOut {
+			b, _ := json.Marshal(flywheel.VerifyResult{Items: []flywheel.VerifyItem{{Task: "-", Rule: "LOG", Pass: false, Inconclusive: true, Reason: reason}}})
+			fmt.Println(string(b))
+		} else {
+			fmt.Fprintf(os.Stderr, "flywheel verify: %s\n", reason)
+		}
+		os.Exit(8)
+	}
 	// --log alone checks only the chain: no task list is required.
 	res := flywheel.VerifyResult{Passed: true}
 	if len(tasks) > 0 || o.all || !o.log {

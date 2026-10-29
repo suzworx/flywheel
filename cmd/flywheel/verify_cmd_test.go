@@ -72,6 +72,38 @@ func TestVerifyLogReorderedText(t *testing.T) {
 	}
 }
 
+// TestVerifyLedgerDirInconclusive checks issue #464: with ledger.dir outside
+// the checkout and no log there, verify --all --log is inconclusive (exit 8,
+// naming ledger.dir), never a vacuous pass; once the dir holds a log it passes.
+// not parallel: sets FLYWHEEL_LEDGER_DIR
+func TestVerifyLedgerDirInconclusive(t *testing.T) {
+	t.Setenv("FLYWHEEL_LEDGER_DIR", "")
+	dir, ext := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"version":1,"ledger":{"dir":"` + filepath.ToSlash(ext) + `"}}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "config.json"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runVerifyProcess(t, "--all", "--log", "--dir", dir); code != 8 || out != "" {
+		t.Fatalf("verify --all --log = %d %q, want exit 8 and nothing on stdout", code, out)
+	}
+	out, code := runVerifyProcess(t, "--all", "--log", "--json", "--dir", dir)
+	if code != 8 || !strings.Contains(out, `"rule":"LOG"`) || !strings.Contains(out, "inconclusive: ledger.dir places the event log at") || !strings.Contains(out, `"inconclusive":true`) {
+		t.Fatalf("verify --all --log --json = %d %q, want exit 8 naming ledger.dir", code, out)
+	}
+	if err := flywheel.AppendEvent(dir, flywheel.Event{Kind: "note", Note: "one"}); err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ext, "events.jsonl")); err != nil {
+		t.Fatalf("the log is not in ledger.dir: %v", err)
+	}
+	if out, code := runVerifyProcess(t, "--all", "--log", "--dir", dir); code != 0 || !strings.Contains(out, "PASS - LOG") {
+		t.Errorf("verify --all --log with the log present = %d %q, want exit 0", code, out)
+	}
+}
+
 // TestVerifyShippedPlannedOnlyExits6 checks issue #861: a unit that was only
 // planned passes plain verify, but verify --shipped refuses it with exit 6 and
 // a failing S1 line.

@@ -119,6 +119,22 @@ func resolveLedgerDir(dir string, checkInTree bool) (root string, external bool,
 	return root, true, nil
 }
 
+// EventLogPresent is EventLogDir plus whether root holds a log (events.jsonl
+// or events/). An external directory that holds none is a checkout whose log
+// lives on another host: the CI audit of it is inconclusive (issue #464).
+func EventLogPresent(dir string) (root string, external, present bool, err error) {
+	root, external, err = EventLogDir(dir)
+	if err != nil {
+		return "", false, false, err
+	}
+	for _, name := range []string{legacyLogName, shardDirName} {
+		if _, serr := os.Lstat(filepath.Join(root, name)); serr == nil {
+			return root, external, true, nil
+		}
+	}
+	return root, external, false, nil
+}
+
 // ledgerEventsRoot is EventLogDir's directory alone.
 func ledgerEventsRoot(dir string) (string, error) {
 	root, _, err := EventLogDir(dir)
