@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/suzworx/flywheel/internal/flywheel"
 )
@@ -14,7 +16,7 @@ func init() {
 	registerHelp("attest", attestUsageLine, func() *flag.FlagSet { fs, _ := attestFlags(); return fs })
 }
 
-const attestUsageLine = "flywheel attest <task> --commit SHA --evidence URL --session S [--dir DIR]"
+const attestUsageLine = "flywheel attest <task> --commit SHA --evidence URL --session S [--scope tasks:a,b] [--dir DIR]"
 
 // attestOptions holds the parsed attest flags.
 type attestOptions struct {
@@ -22,6 +24,7 @@ type attestOptions struct {
 	commit   string
 	evidence string
 	session  string
+	scope    string
 }
 
 // attestFlags defines attest's flags once, so help and run share them.
@@ -33,6 +36,7 @@ func attestFlags() (*flag.FlagSet, *attestOptions) {
 	fs.StringVar(&o.commit, "commit", "", "the commit the external run measured (7 to 40 hex characters)")
 	fs.StringVar(&o.evidence, "evidence", "", "URL or reference of the external run whose gates passed")
 	fs.StringVar(&o.session, "session", "", "the lead session recording the attestation (never a worker's)")
+	fs.StringVar(&o.scope, "scope", "", "tasks:a,b: the units a trailer-less multi-unit squash holds; a path another listed unit owns is accepted")
 	return fs, o
 }
 
@@ -63,7 +67,11 @@ func runAttest(args []string) {
 	if o.session == "" {
 		usage("--session is required (the lead session)")
 	}
-	tree, err := flywheel.Attest(o.dir, task, o.commit, o.evidence, o.session)
+	members, err := attestScope(o.dir, task, o.scope)
+	if err != nil {
+		usage(err.Error())
+	}
+	tree, err := flywheel.AttestScoped(o.dir, task, o.commit, o.evidence, o.session, members)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "flywheel attest: %v\n", err)
 		if flywheel.IsRuleRefusal(err) {
@@ -72,6 +80,31 @@ func runAttest(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s attested at %s (tree %s): %d gate reading(s) from %s\n", task, o.commit, tree, attestedReadings(o.dir, task, o.commit, o.evidence), o.evidence)
+}
+
+// attestScope resolves --scope (issue #908) to the units of a multi-unit
+// squash: "" is nil (plain Attest); otherwise it must be tasks:a,b, every
+// listed task must be in the ledger, and task itself is always included.
+func attestScope(dir, task, scope string) ([]string, error) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(scope, "tasks:") {
+		return nil, fmt.Errorf("--scope %q is not tasks:<a>,<b>,...", scope)
+	}
+	events, err := flywheel.ReadEvents(dir)
+	if err != nil {
+		return nil, err
+	}
+	members, err := flywheel.GroupMembers(events, scope)
+	if err != nil {
+		return nil, fmt.Errorf("--scope: %v", err)
+	}
+	if !slices.Contains(members, task) {
+		members = append(members, task)
+	}
+	return members, nil
 }
 
 // attestedReadings counts the validated events of the attestation just

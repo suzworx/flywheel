@@ -1555,7 +1555,11 @@ working exactly as before.
   `session`; `Validate` refuses an external reading missing any of the three. Only the lead writes
   them, never a worker: `attest` refuses a worker session of the task (T4, and verify's T4 fails
   one), a task with no dispatched attempt (T5), and a commit that changed a path outside the
-  unit's `owns:` against its first parent (T3). An external reading counts for T3 exactly like a
+  unit's `owns:` against its first parent (T3). With `--scope tasks:a,b` (issue
+  [#908](https://github.com/suzworx/flywheel/issues/908)) the command reaches the same scoped check
+  `land --pr` uses (`AttestScoped`, #831): for a squash holding several units' files, a path another
+  listed unit owns is accepted, a path no listed unit owns is still T3, and a listed task not in the
+  ledger is a usage error (exit 2). An external reading counts for T3 exactly like a
   measured one; verify fails one missing its evidence, session or commit, and names the evidence
   of a pass it relied on (`attested: <evidence>` on the T3 line).
 - An **observed** reading (`source` `"observed"`, issue
