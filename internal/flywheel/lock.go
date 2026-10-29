@@ -16,7 +16,11 @@ import (
 )
 
 // Repository lock (issue #242): Run holds .flywheel/dispatch.lock across "read
-// the log -> run the collision checks -> append dispatched", and the feedback
+// the log -> run the collision checks", releases it for worktree creation and
+// worktree.setup, and takes it again across "re-read the log -> re-run the
+// checks -> append dispatched" (issue #893); a per-task lock,
+// .flywheel/dispatch-<task>.lock (taskLockName), spans both phases. Lock
+// order: the per-task lock, then dispatch.lock, then events.lock. The feedback
 // mutations hold .flywheel/feedback.lock across read, append, reread and
 // render (issue #260). The lock is created with O_EXCL, which fails atomically
 // when the file exists on every OS, so at most one holder owns it at a time.
@@ -106,6 +110,20 @@ func defaultRepoLockTimings() repoLockTimings {
 		retry:     10 * time.Millisecond,
 		heartbeat: 5 * time.Second,
 	}
+}
+
+// taskLockName is the .flywheel file of task's per-task dispatch lock (issue
+// #893), "dispatch-<task>.lock", every byte outside [A-Za-z0-9._-] replaced
+// by "_" so no task id puts ":", "/" or "\" in a Windows file name. Two ids
+// that map to one name only serialise each other's dispatches.
+func taskLockName(task string) string {
+	b := []byte(task)
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			b[i] = '_'
+		}
+	}
+	return "dispatch-" + string(b) + ".lock"
 }
 
 // feedbackLockTimings are the timings the feedback lock uses (issue #260).

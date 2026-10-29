@@ -78,8 +78,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   order in the repository root. The first that exits non-zero refuses (exit 6, rule `preflight`)
   before any attempt is recorded, naming the command, its exit code and first output line; a
   correction unions the base brief's commands. `flywheel validate` does not run it (issue #635).
-  It runs before the dispatch lock, and a refused dispatch (any rule, or `dispatch-lock` when the
-  lock stayed busy) leaves the unit's status alone but records `dispatch_refused`, shown by
+  It runs before the dispatch lock (which never spans worktree creation or `worktree.setup`
+  either: the checks run again under it just before `dispatched`, issue #893), and a refused
+  dispatch (any rule, or `dispatch-lock` when the lock stayed busy) leaves the unit's status alone but records `dispatch_refused`, shown by
   `flywheel status` as `refused: <rule>` (issue #651).
 - **skills:** — the agent skills the unit's area needs (the ones the project's AGENTS.md maps to
   this kind of task): `skills: tdd, go-style`, repeatable, each kept once in order. `flywheel lint`

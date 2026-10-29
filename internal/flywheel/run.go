@@ -332,313 +332,355 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, err
 	}
 
-	// T1: dispatched needs a planned event carrying the brief path.
-	// Dispatch lock (issue #242): the log is read, the collision checks are
-	// run and the dispatched event is appended under .flywheel/dispatch.lock,
-	// so two dispatches started at the same moment serialise instead of both
-	// reading a log in which neither has dispatched, both passing the checks
-	// and both dispatching — taking the same exclusive resource or writing
-	// the same owned file, the exact case the refusals exist to stop. The
-	// lock is released as soon as dispatched lands, before the worker starts,
-	// and never covers needs-env or preflight (above). The lock file names
-	// this run as its holder, so a waiter that times out can say who holds it.
+	// Dispatch lock (issues #242, #893): two dispatches started at the same
+	// moment must serialise instead of both reading a log in which neither has
+	// dispatched, both passing the checks and both dispatching — taking the
+	// same exclusive resource or writing the same owned file, the exact case
+	// the refusals exist to stop. .flywheel/dispatch.lock is held in two short
+	// phases, never across the slow work between them. Phase A reads the log
+	// and runs every check below (check), then releases the lock before the
+	// worktree is created, the slot leased and worktree.setup run — minutes
+	// for a dependency install, which held every other dispatch past its wait.
+	// Phase B takes the lock again immediately before the dispatched append,
+	// re-reads the log and re-runs the same check, so a unit that collided
+	// meanwhile is refused exactly as in phase A; the prepared worktree is
+	// left in place (setup is idempotent). Neither phase covers needs-env or
+	// preflight (above), and the lock is released as soon as dispatched lands,
+	// before the worker starts. The lock file names this run as its holder, so
+	// a waiter that times out can say who holds it.
 	timings := defaultRepoLockTimings()
 	if o.lockTimings != nil {
 		timings = *o.lockTimings
 	}
 	timings.holder = "run " + o.Task
+	// The per-task lock (issue #893) is held from before phase A until the
+	// dispatched append, so two dispatches of the same task never prepare one
+	// worktree at once; the second waits out the first's setup, then its own
+	// phase A refuses it in flight. Lock order: the per-task lock, then
+	// dispatch.lock, then events.lock (taken by AppendEvent).
+	taskTimings := timings
+	if o.lockTimings == nil {
+		taskTimings.wait = 30 * time.Minute
+	}
+	releaseTaskLock, err := acquireRepoLock(dir, taskLockName(o.Task), taskTimings)
+	if err != nil {
+		return Result{}, err
+	}
+	defer releaseTaskLock()
 	releaseDispatchLock, err := acquireRepoLock(dir, "dispatch.lock", timings)
 	if err != nil {
 		return Result{}, err
 	}
-	dispatchLockHeld := true
-	defer func() {
-		if dispatchLockHeld {
-			releaseDispatchLock()
-		}
-	}()
+	defer releaseDispatchLock()
 
-	events, err := ReadEvents(dir)
-	if err != nil {
-		return Result{}, err
-	}
-	brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
-	lastSession := ""
-	for _, e := range events {
-		if e.Task != o.Task {
-			continue
+	// check reads the log and runs every dispatch check that reads it, from
+	// model, the worker's model before routing and the breaker. Phase A and
+	// phase B both call it, so the two can never drift; w takes its progress
+	// lines (phase B passes nil: phase A already printed them).
+	startModel := model
+	check := func(w io.Writer) (dispatchCheck, error) {
+		model := startModel
+		// T1: dispatched needs a planned event carrying the brief path.
+		events, err := ReadEvents(dir)
+		if err != nil {
+			return dispatchCheck{}, err
 		}
-		if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
-			lastSession = e.Session
-		}
-	}
-	if brief == "" {
-		return Result{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", o.Task, o.Task)
-	}
-	// An increment must exist in the brief (#295 review): a worker told to do
-	// increment N of a brief without one would improvise.
-	if o.Increment > 0 {
-		text, rerr := os.ReadFile(resolveBriefPath(dir, brief))
-		if rerr != nil {
-			return Result{}, fmt.Errorf("read brief %s: %w", brief, rerr)
-		}
-		if !briefHasIncrement(string(text), o.Increment) {
-			return Result{}, &RuleRefusal{
-				Rule: "increment",
-				Fix:  fmt.Sprintf("brief %s has no increment %d: add an \"## Increments\" section whose list has item %d (or an \"Increment %d\" heading)", brief, o.Increment, o.Increment, o.Increment),
-			}
-		}
-	}
-
-	// Owns collision (issue #164): a dispatch whose owns: overlaps an
-	// in-flight task's owns: is refused before any event is recorded, so a
-	// worker never starts knowing another unit is writing the same files.
-	// --allow-overlap skips the refusal and records the crossing on the
-	// dispatched note instead. A task with no readable brief contributes no
-	// owns and never blocks.
-	// Lost first (issue #402): an attempt abandoned with its lease expired or
-	// gone and its run file idle past limits.lost_after is marked lost here,
-	// so a dead attempt never holds its owns or exclusive resources against
-	// this dispatch. A failure only warns; the checks below still run.
-	if n, lerr := MarkLost(dir, now()); lerr != nil {
-		progress(o.Progress, fmt.Sprintf("warning: marking abandoned attempts lost: %v", lerr))
-	} else if n > 0 {
-		if events, err = ReadEvents(dir); err != nil {
-			return Result{}, err
-		}
-	}
-	// In flight (issue #522): a task whose attempt is still dispatched or
-	// running is refused before any event is recorded, in every dispatch mode,
-	// so two workers never write one checkout. It runs after MarkLost, so an
-	// abandoned attempt already marked lost never blocks.
-	for _, ts := range Derive(events).Tasks {
-		if ts.ID == o.Task && (ts.Status == "dispatched" || ts.Status == "running") {
-			_, attempt, _ := latestBaseBriefAndAttempt(events, o.Task)
-			return Result{}, &RuleRefusal{
-				Rule: "in-flight",
-				Fix:  fmt.Sprintf("task %s attempt %s is %s; wait for it to finish (a dead worker is marked lost after limits.lost_after, then dispatch again)", o.Task, attempt, ts.Status),
-			}
-		}
-	}
-	myOwns := []string{}
-	myExclusive := []string{}
-	// baseHeader is the effective brief before this dispatch; a correction
-	// delta inherits its owns, gates and needs-state links (issue #472).
-	var baseHeader BriefHeader
-	if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
-		baseHeader = header
-		myOwns = header.Owns
-		myExclusive = header.Exclusive
-	}
-	overlap := ownsCollisionWith(dir, events, o.Task, myOwns)
-	if !o.AllowOverlap && overlap != nil {
-		return Result{}, &RuleRefusal{
-			Rule: "owns",
-			Fix:  fmt.Sprintf("owns collision with %s (%s): %s; wait for it to land, narrow this brief's owns:, or pass --allow-overlap", overlap.task, overlap.status, strings.Join(overlap.paths, ", ")),
-		}
-	}
-
-	// Exclusive resource (issue #220): a dispatch whose exclusive: names a
-	// resource an in-flight task already holds is refused the same way, so
-	// one unit can never race another for a shared database, build cache or
-	// device. The owns check runs first, so its more specific message wins
-	// when both apply. --allow-overlap skips this refusal too and records
-	// the crossing on the dispatched note.
-	excl := exclusiveCollisionWith(dir, events, o.Task, myExclusive)
-	if !o.AllowOverlap && excl != nil {
-		return Result{}, &RuleRefusal{
-			Rule: "exclusive",
-			Fix:  fmt.Sprintf("exclusive resource %q is held by %s (%s); wait for it to land, or pass --allow-overlap", excl.name, excl.task, excl.status),
-		}
-	}
-
-	// Quiet gate (issue #411): a quiet gate holds the host to itself, so no
-	// new worker starts on it while quiet.lock is held by a live process.
-	if holder, held := quietLockHeld(dir); held {
-		return Result{}, &RuleRefusal{
-			Rule: "quiet",
-			Fix:  fmt.Sprintf("a quiet gate (%s gate %s) is running on this host; dispatch after it ends", holder.Task, holder.Gate),
-		}
-	}
-
-	// Limits (issue #46): refuse before anything is recorded when this host
-	// already runs limits.per_host attempts, or when the ledger's recorded
-	// spend has reached limits.budget.wave_cost_usd (the ledger is the wave).
-	if cfg.Limits.PerHost > 0 {
-		inFlight := 0
-		for _, ts := range Derive(events).Tasks {
-			// Every task in flight counts, this one included: a second fresh
-			// run of a task already running is another attempt on the host
-			// (a correction dispatches from needs-correction, not in flight).
-			if ts.Status == "dispatched" || ts.Status == "running" {
-				inFlight++
-			}
-		}
-		if inFlight >= cfg.Limits.PerHost {
-			return Result{}, &RuleRefusal{
-				Rule: "limits",
-				Fix:  fmt.Sprintf("%d attempt(s) already in flight and limits.per_host is %d; wait for one to finish, or raise it: flywheel config set limits.per_host <n>", inFlight, cfg.Limits.PerHost),
-			}
-		}
-	}
-	if b := cfg.Limits.Budget; b != nil && b.WaveCostUSD > 0 {
-		spent := 0.0
+		brief, _, _ := latestBaseBriefAndAttempt(events, o.Task)
+		lastSession := ""
 		for _, e := range events {
-			if spendEvent(e) {
-				spent += e.Cost
+			if e.Task != o.Task {
+				continue
+			}
+			if e.Session != "" && (e.Kind == "started" || e.Kind == "finished") {
+				lastSession = e.Session
 			}
 		}
-		if spent >= b.WaveCostUSD {
-			return Result{}, &RuleRefusal{
-				Rule: "budget",
-				Fix:  fmt.Sprintf("recorded spend $%.4f has reached limits.budget.wave_cost_usd $%.4f; raise the budget in .flywheel/config.json or start a new wave (a new ledger)", spent, b.WaveCostUSD),
-			}
+		if brief == "" {
+			return dispatchCheck{}, fmt.Errorf("task %q has no planned event; record one with: flywheel log --task %s --kind planned --brief <path>", o.Task, o.Task)
 		}
-	}
-	if b := cfg.Limits.Budget; b != nil && b.WaveTokens > 0 {
-		n := recordedTokens(events)
-		if n >= b.WaveTokens {
-			return Result{}, &RuleRefusal{
-				Rule: "budget",
-				Fix:  fmt.Sprintf("recorded tokens %d have reached limits.budget.wave_tokens %d; raise it in .flywheel/config.json or start a new wave (a new ledger)", n, b.WaveTokens),
+		// An increment must exist in the brief (#295 review): a worker told to do
+		// increment N of a brief without one would improvise.
+		if o.Increment > 0 {
+			text, rerr := os.ReadFile(resolveBriefPath(dir, brief))
+			if rerr != nil {
+				return dispatchCheck{}, fmt.Errorf("read brief %s: %w", brief, rerr)
 			}
-		}
-	}
-	// The unit cost cap (issue #459): a unit whose attempts have already spent
-	// its cap is refused before anything is recorded; below it, what is left
-	// bounds the attempt live (claude --max-budget-usd, or the scan loop).
-	unitCap := cfg.unitCostCap(worker)
-	unitSpent := unitSpend(events, o.Task)
-	if unitCap > 0 && unitSpent >= unitCap {
-		return Result{}, &RuleRefusal{
-			Rule: "unit-cost",
-			Fix:  fmt.Sprintf("unit %s has spent $%.4f, reaching its unit cost cap $%.4f; raise it (flywheel config set limits.unit_cost_usd <usd>, or the worker's unit_cost_usd) or split the unit", o.Task, unitSpent, unitCap),
-		}
-	}
-
-	// Routing (issue #474): a worker with a routing block picks a fresh run's
-	// model from the ledger's per-model scoreboard. --model overrides it; a
-	// resume without --model continues on the model the task's last attempt
-	// was dispatched to and records no route, so an automatic resume never
-	// switches a routed session's model. The breaker, rate pause and rate
-	// limit below then apply to the routed or resumed model as they do to
-	// worker.Model.
-	var route *RouteChoice
-	if worker.Routing != nil && o.Model == "" {
-		if o.Resume {
-			if last, ok := LastDispatched(events, o.Task); ok && last.Model != "" {
-				model = last.Model
-			}
-		} else {
-			choice := routeModel(events, worker, o.Task)
-			model = choice.Model
-			route = &choice
-			progress(o.Progress, fmt.Sprintf("%s routed to %s (%s, %s)", o.Task, choice.Model, choice.Pick, choice.Objective))
-		}
-	}
-
-	if b := cfg.Limits.Breaker; b != nil {
-		if open, until := breakerOpen(events, model, *b, now()); open {
-			oldModel := model
-			fallback := ""
-			if o.Model == "" {
-				fallback = breakerFallback(events, worker, *b, now())
-			}
-			if fallback != "" {
-				model = fallback
-				progress(o.Progress, fmt.Sprintf("%s breaker open for %s until %s; dispatching approved fallback %s", o.Task, oldModel, until.UTC().Format(time.RFC3339), fallback))
-			} else {
-				return Result{}, &RuleRefusal{
-					Rule: "breaker",
-					Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", oldModel, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+			if !briefHasIncrement(string(text), o.Increment) {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "increment",
+					Fix:  fmt.Sprintf("brief %s has no increment %d: add an \"## Increments\" section whose list has item %d (or an \"Increment %d\" heading)", brief, o.Increment, o.Increment, o.Increment),
 				}
 			}
 		}
-	}
 
-	// models_allowed (issue #746): the model is final here — --model, routing,
-	// a resume's last model and the breaker fallback applied — and a model
-	// off the worker's list is refused before any event is appended.
-	if !worker.modelAllowed(model) {
-		return Result{}, &RuleRefusal{
-			Rule: "models-allowed",
-			Fix:  fmt.Sprintf("model %s is not in worker %q's models_allowed [%s]; dispatch with --model <one of them> or edit models_allowed", model, worker.Name, strings.Join(worker.ModelsAllowed, ", ")),
-		}
-	}
-
-	// A rate limit belongs to the subscription: while its reset is pending, no
-	// fresh attempt goes to the model (issue #383). A resume is exempt, since
-	// RunResumingLimits resumes only after the reset. The model dispatches
-	// through worker.Adapter, so another model's account-wide pause on that
-	// adapter holds it too, --model overrides and fallbacks included (issue
-	// #658).
-	if !o.Resume {
-		if p, paused := rateLimitPausedOn(events, model, worker.Adapter, now(), cfg.Limits.RateLimitPauseThreshold(), configAdapter(cfg)); paused {
-			return Result{}, &RuleRefusal{
-				Rule: "rate-limit",
-				Fix:  fmt.Sprintf("%s is paused by a rate limit until %s%s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(p.Until), p.reason()),
+		// Owns collision (issue #164): a dispatch whose owns: overlaps an
+		// in-flight task's owns: is refused before any event is recorded, so a
+		// worker never starts knowing another unit is writing the same files.
+		// --allow-overlap skips the refusal and records the crossing on the
+		// dispatched note instead. A task with no readable brief contributes no
+		// owns and never blocks.
+		// Lost first (issue #402): an attempt abandoned with its lease expired or
+		// gone and its run file idle past limits.lost_after is marked lost here,
+		// so a dead attempt never holds its owns or exclusive resources against
+		// this dispatch. A failure only warns; the checks below still run.
+		if n, lerr := MarkLost(dir, now()); lerr != nil {
+			progress(w, fmt.Sprintf("warning: marking abandoned attempts lost: %v", lerr))
+		} else if n > 0 {
+			if events, err = ReadEvents(dir); err != nil {
+				return dispatchCheck{}, err
 			}
 		}
+		// In flight (issue #522): a task whose attempt is still dispatched or
+		// running is refused before any event is recorded, in every dispatch mode,
+		// so two workers never write one checkout. It runs after MarkLost, so an
+		// abandoned attempt already marked lost never blocks.
+		for _, ts := range Derive(events).Tasks {
+			if ts.ID == o.Task && (ts.Status == "dispatched" || ts.Status == "running") {
+				_, attempt, _ := latestBaseBriefAndAttempt(events, o.Task)
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "in-flight",
+					Fix:  fmt.Sprintf("task %s attempt %s is %s; wait for it to finish (a dead worker is marked lost after limits.lost_after, then dispatch again)", o.Task, attempt, ts.Status),
+				}
+			}
+		}
+		myOwns := []string{}
+		myExclusive := []string{}
+		// baseHeader is the effective brief before this dispatch; a correction
+		// delta inherits its owns, gates and needs-state links (issue #472).
+		var baseHeader BriefHeader
+		if header, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+			baseHeader = header
+			myOwns = header.Owns
+			myExclusive = header.Exclusive
+		}
+		overlap := ownsCollisionWith(dir, events, o.Task, myOwns)
+		if !o.AllowOverlap && overlap != nil {
+			return dispatchCheck{}, &RuleRefusal{
+				Rule: "owns",
+				Fix:  fmt.Sprintf("owns collision with %s (%s): %s; wait for it to land, narrow this brief's owns:, or pass --allow-overlap", overlap.task, overlap.status, strings.Join(overlap.paths, ", ")),
+			}
+		}
+
+		// Exclusive resource (issue #220): a dispatch whose exclusive: names a
+		// resource an in-flight task already holds is refused the same way, so
+		// one unit can never race another for a shared database, build cache or
+		// device. The owns check runs first, so its more specific message wins
+		// when both apply. --allow-overlap skips this refusal too and records
+		// the crossing on the dispatched note.
+		excl := exclusiveCollisionWith(dir, events, o.Task, myExclusive)
+		if !o.AllowOverlap && excl != nil {
+			return dispatchCheck{}, &RuleRefusal{
+				Rule: "exclusive",
+				Fix:  fmt.Sprintf("exclusive resource %q is held by %s (%s); wait for it to land, or pass --allow-overlap", excl.name, excl.task, excl.status),
+			}
+		}
+
+		// Quiet gate (issue #411): a quiet gate holds the host to itself, so no
+		// new worker starts on it while quiet.lock is held by a live process.
+		if holder, held := quietLockHeld(dir); held {
+			return dispatchCheck{}, &RuleRefusal{
+				Rule: "quiet",
+				Fix:  fmt.Sprintf("a quiet gate (%s gate %s) is running on this host; dispatch after it ends", holder.Task, holder.Gate),
+			}
+		}
+
+		// Limits (issue #46): refuse before anything is recorded when this host
+		// already runs limits.per_host attempts, or when the ledger's recorded
+		// spend has reached limits.budget.wave_cost_usd (the ledger is the wave).
+		if cfg.Limits.PerHost > 0 {
+			inFlight := 0
+			for _, ts := range Derive(events).Tasks {
+				// Every task in flight counts, this one included: a second fresh
+				// run of a task already running is another attempt on the host
+				// (a correction dispatches from needs-correction, not in flight).
+				if ts.Status == "dispatched" || ts.Status == "running" {
+					inFlight++
+				}
+			}
+			if inFlight >= cfg.Limits.PerHost {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "limits",
+					Fix:  fmt.Sprintf("%d attempt(s) already in flight and limits.per_host is %d; wait for one to finish, or raise it: flywheel config set limits.per_host <n>", inFlight, cfg.Limits.PerHost),
+				}
+			}
+		}
+		if b := cfg.Limits.Budget; b != nil && b.WaveCostUSD > 0 {
+			spent := 0.0
+			for _, e := range events {
+				if spendEvent(e) {
+					spent += e.Cost
+				}
+			}
+			if spent >= b.WaveCostUSD {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "budget",
+					Fix:  fmt.Sprintf("recorded spend $%.4f has reached limits.budget.wave_cost_usd $%.4f; raise the budget in .flywheel/config.json or start a new wave (a new ledger)", spent, b.WaveCostUSD),
+				}
+			}
+		}
+		if b := cfg.Limits.Budget; b != nil && b.WaveTokens > 0 {
+			n := recordedTokens(events)
+			if n >= b.WaveTokens {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "budget",
+					Fix:  fmt.Sprintf("recorded tokens %d have reached limits.budget.wave_tokens %d; raise it in .flywheel/config.json or start a new wave (a new ledger)", n, b.WaveTokens),
+				}
+			}
+		}
+		// The unit cost cap (issue #459): a unit whose attempts have already spent
+		// its cap is refused before anything is recorded; below it, what is left
+		// bounds the attempt live (claude --max-budget-usd, or the scan loop).
+		unitCap := cfg.unitCostCap(worker)
+		unitSpent := unitSpend(events, o.Task)
+		if unitCap > 0 && unitSpent >= unitCap {
+			return dispatchCheck{}, &RuleRefusal{
+				Rule: "unit-cost",
+				Fix:  fmt.Sprintf("unit %s has spent $%.4f, reaching its unit cost cap $%.4f; raise it (flywheel config set limits.unit_cost_usd <usd>, or the worker's unit_cost_usd) or split the unit", o.Task, unitSpent, unitCap),
+			}
+		}
+
+		// Routing (issue #474): a worker with a routing block picks a fresh run's
+		// model from the ledger's per-model scoreboard. --model overrides it; a
+		// resume without --model continues on the model the task's last attempt
+		// was dispatched to and records no route, so an automatic resume never
+		// switches a routed session's model. The breaker, rate pause and rate
+		// limit below then apply to the routed or resumed model as they do to
+		// worker.Model.
+		var route *RouteChoice
+		if worker.Routing != nil && o.Model == "" {
+			if o.Resume {
+				if last, ok := LastDispatched(events, o.Task); ok && last.Model != "" {
+					model = last.Model
+				}
+			} else {
+				choice := routeModel(events, worker, o.Task)
+				model = choice.Model
+				route = &choice
+				progress(w, fmt.Sprintf("%s routed to %s (%s, %s)", o.Task, choice.Model, choice.Pick, choice.Objective))
+			}
+		}
+
+		if b := cfg.Limits.Breaker; b != nil {
+			if open, until := breakerOpen(events, model, *b, now()); open {
+				oldModel := model
+				fallback := ""
+				if o.Model == "" {
+					fallback = breakerFallback(events, worker, *b, now())
+				}
+				if fallback != "" {
+					model = fallback
+					progress(w, fmt.Sprintf("%s breaker open for %s until %s; dispatching approved fallback %s", o.Task, oldModel, until.UTC().Format(time.RFC3339), fallback))
+				} else {
+					return dispatchCheck{}, &RuleRefusal{
+						Rule: "breaker",
+						Fix:  fmt.Sprintf("model %s: the last %d attempts ended with provider errors; the breaker lets one dispatch through again at %s — dispatch another model with --model <m>%s, or wait", oldModel, b.Errors, until.UTC().Format(time.RFC3339), approvedFallbackHint(worker)),
+					}
+				}
+			}
+		}
+
+		// models_allowed (issue #746): the model is final here — --model, routing,
+		// a resume's last model and the breaker fallback applied — and a model
+		// off the worker's list is refused before any event is appended.
+		if !worker.modelAllowed(model) {
+			return dispatchCheck{}, &RuleRefusal{
+				Rule: "models-allowed",
+				Fix:  fmt.Sprintf("model %s is not in worker %q's models_allowed [%s]; dispatch with --model <one of them> or edit models_allowed", model, worker.Name, strings.Join(worker.ModelsAllowed, ", ")),
+			}
+		}
+
+		// A rate limit belongs to the subscription: while its reset is pending, no
+		// fresh attempt goes to the model (issue #383). A resume is exempt, since
+		// RunResumingLimits resumes only after the reset. The model dispatches
+		// through worker.Adapter, so another model's account-wide pause on that
+		// adapter holds it too, --model overrides and fallbacks included (issue
+		// #658).
+		if !o.Resume {
+			if p, paused := rateLimitPausedOn(events, model, worker.Adapter, now(), cfg.Limits.RateLimitPauseThreshold(), configAdapter(cfg)); paused {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "rate-limit",
+					Fix:  fmt.Sprintf("%s is paused by a rate limit until %s%s; flywheel run resumes rate-limited units after the reset — dispatch new work then", model, pauseClock(p.Until), p.reason()),
+				}
+			}
+		}
+
+		if cfg.Limits.RatePerMinute > 0 {
+			if limited, until := rateLimited(events, model, cfg.Limits.RatePerMinute, now()); limited {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "rate",
+					Fix:  fmt.Sprintf("model %s was dispatched %d times in the last minute (limits.rate_per_minute); dispatch again after %s", model, cfg.Limits.RatePerMinute, until.UTC().Format(time.RFC3339)),
+				}
+			}
+		}
+
+		// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
+		// delta, not the resume flag, makes a dispatch a correction: a given
+		// --delta is always the prompt, with or without --resume.
+		freshN := 0
+		corrN := 0
+		for _, e := range events {
+			if e.Task != o.Task || e.Attempt == "" {
+				continue
+			}
+			if e.Attempt[0] == 'r' {
+				if n := attemptNum(e.Attempt); n > freshN {
+					freshN = n
+				}
+			}
+			if e.Attempt[0] == 'c' {
+				if n := attemptNum(e.Attempt); n > corrN {
+					corrN = n
+				}
+			}
+		}
+		attempt := fmt.Sprintf("r%d", freshN+1)
+		if o.Resume || o.DeltaPath != "" {
+			if o.Resume && lastSession == "" {
+				return dispatchCheck{}, &NoWorkerSession{Task: o.Task}
+			}
+			// A session id belongs to the adapter that produced it (issue #469):
+			// a resume onto a worker of another adapter is refused before any
+			// event is appended, instead of handing a claude session to opencode.
+			if last, ok := LastDispatched(events, o.Task); o.Resume && ok && last.Adapter != "" && last.Adapter != worker.Adapter {
+				return dispatchCheck{}, &RuleRefusal{
+					Rule: "resume",
+					Fix:  fmt.Sprintf("attempt %s ran on adapter %s; worker %s is adapter %s, and a session does not carry across adapters: dispatch the delta without --resume, or pass --worker <a worker on %s>", last.Attempt, last.Adapter, worker.Name, worker.Adapter, last.Adapter),
+				}
+			}
+			attempt = fmt.Sprintf("c%d", corrN+1)
+		}
+
+		// Brief drift (issue #135): a brief edited after its last dispatch is
+		// caught here, at dispatch, instead of only at audit time (rule T1).
+		// Drift warns and the dispatch proceeds — a lead mid-correction is the
+		// common case — unless --strict-brief makes it a T1 RuleRefusal before
+		// any event is appended.
+		if drift := checkBriefDrift(dir, events, o.Task, brief); drift != nil {
+			msg := briefDriftAdvice(dir, events, o.Task, brief, drift.attempt)
+			if o.StrictBrief {
+				return dispatchCheck{}, &RuleRefusal{Rule: "T1", Fix: msg}
+			}
+			progress(w, fmt.Sprintf("%s %s brief-drift (%s)", o.Task, attempt, msg))
+		}
+		return dispatchCheck{
+			events: events, brief: brief, lastSession: lastSession, baseHeader: baseHeader, myOwns: myOwns,
+			overlap: overlap, excl: excl, model: model, route: route, attempt: attempt, unitCap: unitCap, unitSpent: unitSpent,
+		}, nil
 	}
 
-	if cfg.Limits.RatePerMinute > 0 {
-		if limited, until := rateLimited(events, model, cfg.Limits.RatePerMinute, now()); limited {
-			return Result{}, &RuleRefusal{
-				Rule: "rate",
-				Fix:  fmt.Sprintf("model %s was dispatched %d times in the last minute (limits.rate_per_minute); dispatch again after %s", model, cfg.Limits.RatePerMinute, until.UTC().Format(time.RFC3339)),
-			}
-		}
+	// Phase A.
+	dc, err := check(o.Progress)
+	if err != nil {
+		return Result{}, err
 	}
-
-	// Attempt numbering: a fresh run is r<n+1>, a correction c<m+1>. The
-	// delta, not the resume flag, makes a dispatch a correction: a given
-	// --delta is always the prompt, with or without --resume.
-	freshN := 0
-	corrN := 0
-	for _, e := range events {
-		if e.Task != o.Task || e.Attempt == "" {
-			continue
-		}
-		if e.Attempt[0] == 'r' {
-			if n := attemptNum(e.Attempt); n > freshN {
-				freshN = n
-			}
-		}
-		if e.Attempt[0] == 'c' {
-			if n := attemptNum(e.Attempt); n > corrN {
-				corrN = n
-			}
-		}
-	}
-	attempt := fmt.Sprintf("r%d", freshN+1)
-	if o.Resume || o.DeltaPath != "" {
-		if o.Resume && lastSession == "" {
-			return Result{}, &NoWorkerSession{Task: o.Task}
-		}
-		// A session id belongs to the adapter that produced it (issue #469):
-		// a resume onto a worker of another adapter is refused before any
-		// event is appended, instead of handing a claude session to opencode.
-		if last, ok := LastDispatched(events, o.Task); o.Resume && ok && last.Adapter != "" && last.Adapter != worker.Adapter {
-			return Result{}, &RuleRefusal{
-				Rule: "resume",
-				Fix:  fmt.Sprintf("attempt %s ran on adapter %s; worker %s is adapter %s, and a session does not carry across adapters: dispatch the delta without --resume, or pass --worker <a worker on %s>", last.Attempt, last.Adapter, worker.Name, worker.Adapter, last.Adapter),
-			}
-		}
-		attempt = fmt.Sprintf("c%d", corrN+1)
-	}
-
-	// Brief drift (issue #135): a brief edited after its last dispatch is
-	// caught here, at dispatch, instead of only at audit time (rule T1).
-	// Drift warns and the dispatch proceeds — a lead mid-correction is the
-	// common case — unless --strict-brief makes it a T1 RuleRefusal before
-	// any event is appended.
-	if drift := checkBriefDrift(dir, events, o.Task, brief); drift != nil {
-		msg := briefDriftAdvice(dir, events, o.Task, brief, drift.attempt)
-		if o.StrictBrief {
-			return Result{}, &RuleRefusal{Rule: "T1", Fix: msg}
-		}
-		progress(o.Progress, fmt.Sprintf("%s %s brief-drift (%s)", o.Task, attempt, msg))
-	}
+	events, brief, lastSession, baseHeader, myOwns := dc.events, dc.brief, dc.lastSession, dc.baseHeader, dc.myOwns
+	overlap, excl, route, attempt := dc.overlap, dc.excl, dc.route, dc.attempt
+	model = dc.model
+	unitCap, unitSpent := dc.unitCap, dc.unitSpent
+	// Every check has run: release the dispatch lock before the prompt
+	// snapshot, the worktree, its setup and the baseline (issue #893). Phase B
+	// takes it again for the dispatched append.
+	releaseDispatchLock()
 
 	promptSrc, err := promptSource(dir, brief, o.DeltaPath, o.Task, o.Resume)
 	if err != nil {
@@ -753,25 +795,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	copies = unionStrings(copies, cfg.WorktreeCarry())
 
-	// Shared gate (issue #223): a gate line this dispatch will run that an
-	// in-flight task's brief declares byte-identically means those units will
-	// run that command at once — max_parallel caps concurrent workers, not
-	// concurrent gates. A warning, never a refusal: sharing a gate is
-	// legitimate and often unavoidable, and the operator needs to know the
-	// real concurrency limit, not be stopped. The gates compared are the
-	// prompt about to be sent — promptHeader, the exact bytes attached, the
-	// same header recorded on the dispatched event — not AttemptBrief's
-	// resolution of the previous attempt, which has no dispatched event for
-	// this invocation yet and would describe a different prompt: a
-	// correction's delta replaces the base gates when it declares any, and a
-	// fresh dispatch sends the base brief as it is on disk now, edited or
-	// not. Recorded on the dispatched note below and printed as a progress
-	// line.
-	gates := gateContentions(dir, events, o.Task, dispatchGates(dir, events, o.Task, o.DeltaPath != "" || o.Resume, promptHeader))
-	for _, g := range gates {
-		progress(o.Progress, o.Task+" "+attempt+" "+gateContentionLine(g))
-	}
-
 	// The run file the dispatched event points at.
 	runsDir := filepath.Join(dir, ".flywheel", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -855,13 +878,6 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// no baseline.
 	baseline := computeBaseline(wt)
 	base := headCommit(wt)
-	// The worker sees the unit's base as FLYWHEEL_BASE, the same value validate
-	// gives its gates (issue #470); r1 has none recorded yet, so it is this
-	// dispatch's base.
-	unitBase := UnitBase(events, o.Task)
-	if unitBase == "" {
-		unitBase = base
-	}
 
 	// Snapshot the worktree's git history, index and tags before the worker
 	// runs (issue #314, #423).
@@ -891,6 +907,80 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// probe recorded after dispatch only when it ran on this tree. An error
 	// leaves it empty.
 	tree, _ := treeHash(wt)
+
+	// Phase B (issue #893): the dispatch lock again, a fresh read of the log
+	// and the same checks phase A ran, so a unit that dispatched while this one
+	// prepared its worktree refuses it exactly as phase A would have (the
+	// prepared worktree stays for the next dispatch). What the dispatched event
+	// records comes from this read: the collisions, the model and route, the
+	// unit's owns and skills, the shared gates. The attempt id already named
+	// the delta snapshot, the run file and setup's record, so a dispatch whose
+	// attempt would differ now is refused rather than recording a stale one;
+	// the per-task lock keeps that to a hand-written event.
+	releaseDispatchLockB, err := acquireRepoLock(dir, "dispatch.lock", timings)
+	if err != nil {
+		return Result{}, err
+	}
+	defer releaseDispatchLockB()
+	if dc, err = check(nil); err != nil {
+		return Result{}, err
+	}
+	// Setup's own worktree_setup event carries this attempt, so phase B's
+	// numbering would move past it: the attempt is stale only when another
+	// dispatched event of the task landed between the phases.
+	if countDispatched(dc.events, o.Task) != countDispatched(events, o.Task) {
+		return Result{}, fmt.Errorf("task %s was dispatched by another run while attempt %s's worktree was prepared; run it again", o.Task, attempt)
+	}
+	recheckSrc, err := promptSource(dir, dc.brief, o.DeltaPath, o.Task, o.Resume)
+	if err != nil {
+		return Result{}, err
+	}
+	if b, rerr := os.ReadFile(recheckSrc); rerr != nil || recheckSrc != checkedSrc || !bytes.Equal(b, checkedPrompt) {
+		return Result{}, fmt.Errorf("prompt %s for task %s changed while the dispatch prepared its worktree; run it again", recheckSrc, o.Task)
+	}
+	events, lastSession, myOwns = dc.events, dc.lastSession, dc.myOwns
+	overlap, excl, route = dc.overlap, dc.excl, dc.route
+	unitCap, unitSpent = dc.unitCap, dc.unitSpent
+	if dc.model != model {
+		progress(o.Progress, fmt.Sprintf("%s %s model %s instead of %s: the log changed while the worktree was prepared", o.Task, attempt, dc.model, model))
+		model = dc.model
+	}
+	attemptOwns = unionStrings(myOwns, promptHeader.Owns)
+	if o.Resume || o.DeltaPath != "" {
+		if h, _, aerr := AttemptBrief(dir, events, o.Task); aerr == nil {
+			attemptSkills = unionStrings(h.Skills, promptHeader.Skills)
+			if h.Agent != "" && h.Agent != attemptAgent {
+				return Result{}, fmt.Errorf("task %s's agent became %s while the dispatch prepared its worktree; run it again", o.Task, h.Agent)
+			}
+		}
+	}
+	// The worker sees the unit's base as FLYWHEEL_BASE, the same value validate
+	// gives its gates (issue #470); r1 has none recorded yet, so it is this
+	// dispatch's base.
+	unitBase := UnitBase(events, o.Task)
+	if unitBase == "" {
+		unitBase = base
+	}
+
+	// Shared gate (issue #223): a gate line this dispatch will run that an
+	// in-flight task's brief declares byte-identically means those units will
+	// run that command at once — max_parallel caps concurrent workers, not
+	// concurrent gates. A warning, never a refusal: sharing a gate is
+	// legitimate and often unavoidable, and the operator needs to know the
+	// real concurrency limit, not be stopped. The gates compared are the
+	// prompt about to be sent — promptHeader, the exact bytes attached, the
+	// same header recorded on the dispatched event — not AttemptBrief's
+	// resolution of the previous attempt, which has no dispatched event for
+	// this invocation yet and would describe a different prompt: a
+	// correction's delta replaces the base gates when it declares any, and a
+	// fresh dispatch sends the base brief as it is on disk now, edited or
+	// not. Measured on phase B's read (issue #893), recorded on the dispatched
+	// note below and printed as a progress line.
+	gates := gateContentions(dir, events, o.Task, dispatchGates(dir, events, o.Task, o.DeltaPath != "" || o.Resume, promptHeader))
+	for _, g := range gates {
+		progress(o.Progress, o.Task+" "+attempt+" "+gateContentionLine(g))
+	}
+
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "dispatched", Attempt: attempt, Increment: o.Increment,
 		Adapter: worker.Adapter, Worker: worker.Name, Variant: worker.Variant, Model: model, Path: runRel, SHA256: promptSHA,
@@ -902,11 +992,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	dispatched = true
 	// The dispatched event is recorded and every check that read the log is
-	// past: release the dispatch lock NOW, before the worker starts. A lock
-	// held for the run would serialise the entire factory, which is the
-	// opposite of what this repository is for.
-	releaseDispatchLock()
-	dispatchLockHeld = false
+	// past: release the dispatch lock and the per-task lock NOW, before the
+	// worker starts. A lock held for the run would serialise the entire
+	// factory, which is the opposite of what this repository is for.
+	releaseDispatchLockB()
+	releaseTaskLock()
 	progressLine := o.Task + " " + attempt + " dispatched " + worker.Adapter + " " + model
 	if o.Increment > 0 {
 		progressLine += fmt.Sprintf(" increment %d", o.Increment)
@@ -2079,9 +2169,38 @@ type ownsCollision struct {
 	paths  []string
 }
 
+// countDispatched counts task's dispatched events in events.
+func countDispatched(events []Event, task string) int {
+	n := 0
+	for _, e := range events {
+		if e.Task == task && e.Kind == "dispatched" {
+			n++
+		}
+	}
+	return n
+}
+
+// dispatchCheck is what Run's log-reading dispatch checks derived from one
+// read of the log (issue #893): phase A prepares the worktree from it, and
+// phase B's fresh one is what the dispatched event records.
+type dispatchCheck struct {
+	events      []Event
+	brief       string // the task's planned brief
+	lastSession string // the worker session of the task's last attempt
+	baseHeader  BriefHeader
+	myOwns      []string
+	overlap     *ownsCollision
+	excl        *exclusiveCollision
+	model       string // after routing, a resume's last model and the breaker
+	route       *RouteChoice
+	attempt     string
+	unitCap     float64 // the unit cost cap, 0 when none (issue #459)
+	unitSpent   float64 // what the unit's attempts have already spent
+}
+
 // acquireDispatchLock takes the repository-scoped dispatch lock, held across
-// "read the log -> run the collision checks -> append dispatched" (issue
-// #242). The mechanics — the O_EXCL create, the token-checked release, the
+// "read the log -> run the collision checks" and again across "re-check ->
+// append dispatched" (issues #242, #893). The mechanics — the O_EXCL create, the token-checked release, the
 // heartbeat and the stale takeover — are the shared repository lock in
 // lock.go; this wrapper names the dispatch.lock file and keeps its own
 // default timings. Run takes the lock itself, labelled with its task (issue
