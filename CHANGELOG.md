@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.80.1](https://github.com/suzworx/flywheel/compare/v0.80.0...v0.80.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* a claude worker's write to its own session scratchpad is not off-course ([#909](https://github.com/suzworx/flywheel/issues/909)) ([21561b4](https://github.com/suzworx/flywheel/commit/21561b4624c9c03f1faa9969cbc663d8d39d8673)), closes [#906](https://github.com/suzworx/flywheel/issues/906)
+* landedTree returns git's error; attest and inspect say 'not in the repository' only for a commit that does not resolve ([#911](https://github.com/suzworx/flywheel/issues/911)) ([9645577](https://github.com/suzworx/flywheel/commit/96455774916b2ebcfd5885c70d4a0f763c268640)), closes [#907](https://github.com/suzworx/flywheel/issues/907)
+
 ## [0.80.0](https://github.com/suzworx/flywheel/compare/v0.79.3...v0.80.0) (2026-10-29)
 
 
