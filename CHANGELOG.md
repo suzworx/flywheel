@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.83.0](https://github.com/suzworx/flywheel/compare/v0.82.0...v0.83.0) (2026-10-29)
+
+
+### Features
+
+* config ledger.dir moves the event log outside the checkout ([#928](https://github.com/suzworx/flywheel/issues/928)) ([e092854](https://github.com/suzworx/flywheel/commit/e09285490a22fcde35b3c8418afa8e150c19f4fe)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+* flywheel ledger move migrates the in-tree event log into ledger.dir ([#930](https://github.com/suzworx/flywheel/issues/930)) ([6782d7f](https://github.com/suzworx/flywheel/commit/6782d7f5a2f4a7b4b0c6ff9db0a1f7287d65e6c3)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+
 ## [0.82.0](https://github.com/suzworx/flywheel/compare/v0.81.0...v0.82.0) (2026-10-29)
 
 
