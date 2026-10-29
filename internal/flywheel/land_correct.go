@@ -59,7 +59,10 @@ func CorrectLanding(dir, task, commit, reason, session string) error {
 	if err := verifyLandCommit(dir, task, commit, events); err != nil {
 		return err
 	}
-	ev := Event{Task: task, Kind: "land_corrected", Commit: commit, Tree: landedTree(dir, commit), Note: reason, Session: session}
+	// As for a landing, a landedTree error records an empty tree: a correction
+	// must not become refusable for a reporting field.
+	tree, _ := landedTree(dir, commit)
+	ev := Event{Task: task, Kind: "land_corrected", Commit: commit, Tree: tree, Note: reason, Session: session}
 	if err := AppendEvent(dir, ev); err != nil {
 		return fmt.Errorf("append land_corrected for %s: %w", task, err)
 	}

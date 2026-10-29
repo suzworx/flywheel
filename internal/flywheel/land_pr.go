@@ -172,8 +172,10 @@ func LandPR(dir string, n int, session, note string) (PRLandResult, error) {
 	if len(units) == 0 {
 		return res, &RuleRefusal{Rule: "pr-evidence", Fix: fmt.Sprintf("PR #%d has no Flywheel-Task trailer in its commits; land its units one by one with flywheel attest, inspect --commit and land --commit", n)}
 	}
-	if landedTree(dir, res.MergeSHA) == "" {
+	if _, err := landedTree(dir, res.MergeSHA); errors.Is(err, errCommitNotFound) {
 		return res, &InconclusiveError{Fix: fmt.Sprintf("merge commit %s of PR #%d does not resolve in this repository; fetch the integration branch, then land again", short7(res.MergeSHA), n)}
+	} else if err != nil {
+		return res, fmt.Errorf("land --pr %d: tree of merge commit %s: %w", n, short7(res.MergeSHA), err)
 	}
 	events, err := ReadEvents(dir)
 	if err != nil {

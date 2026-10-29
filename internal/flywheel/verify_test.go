@@ -1665,7 +1665,10 @@ func TestVerifyAttested(t *testing.T) {
 		}
 	}
 
-	tree := landedTree(dir, commit)
+	tree, err := landedTree(dir, commit)
+	if err != nil {
+		t.Fatalf("landedTree() error = %v", err)
+	}
 	for _, line := range []string{
 		`{"ts":"2026-09-12T02:00:00Z","task":"T1","kind":"validated","gate":"1","rc":0,"tree":"` + tree + `","session":"lead-1","commit":"` + commit + `","source":"external","persona":"supervisor"}`,
 		`{"ts":"2026-09-12T02:00:01Z","task":"T1","kind":"owns_checked","tree":"` + tree + `","session":"lead-1","evidence":"https://ci.example/run/8","source":"external","persona":"supervisor"}`,

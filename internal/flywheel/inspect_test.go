@@ -786,7 +786,7 @@ func TestInspectCommit(t *testing.T) {
 		t.Fatalf("read events: %v", err)
 	}
 	last := events[len(events)-1]
-	if last.Kind != "inspected" || last.Commit != commit || last.Tree != landedTree(dir, commit) {
+	if want, werr := landedTree(dir, commit); werr != nil || last.Kind != "inspected" || last.Commit != commit || last.Tree != want {
 		t.Errorf("inspected event = %+v, want commit %s and its tree", last, commit)
 	}
 	if got := taskStatus(t, dir, "T1"); got != "passed" {

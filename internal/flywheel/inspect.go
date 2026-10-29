@@ -78,8 +78,12 @@ func InspectTask(dir, task string, o InspectOptions) error {
 		if o.Workdir == "" {
 			work = o.Dir
 		}
-		if commitTree = landedTree(work, o.Commit); commitTree == "" {
+		commitTree, err = landedTree(work, o.Commit)
+		if errors.Is(err, errCommitNotFound) {
 			return fmt.Errorf("inspect %s: commit %s is not in the repository at %s", task, o.Commit, work)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: tree of commit %s: %w", task, o.Commit, err)
 		}
 	}
 	// A unit with no dispatched attempt is lead-built (issue #722): every
