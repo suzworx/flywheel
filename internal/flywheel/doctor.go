@@ -110,20 +110,73 @@ func shellWarning(h shellHost) string {
 	return fmt.Sprintf("bash on PATH is the WSL launcher (%s); gates and worktree.setup use %s", wsl, chosen)
 }
 
-// DoctorLedgerWarning is the committed-ledger check (issue #464; owner
-// decision 2026-09-26: the ledger is committed, so init --ci's audit can
-// verify every pull request). For dir's ledger (.flywheel/events.jsonl and the
-// shard files under .flywheel/events) it returns one line naming at most three
-// of the paths and the fix when a ledger file is untracked (or git-ignored),
-// or when a tracked one lacks merge=union in .gitattributes (#436); "" when
-// every ledger file is tracked with merge=union, when there is no ledger yet,
-// when dir is not a repository, or when git fails. Read-only: ls-files,
-// check-ignore and check-attr never write the index.
+// DoctorLedgerWarning is the ledger check (issue #464), its warnings joined
+// by "; ", or "" when there is none. It warns when EventLogDir fails (a bad
+// ledger.dir, or two live logs), naming the error, and in every mode when
+// .flywheel/ledger-move.old is left by an interrupted flywheel ledger move.
+// With ledger.dir set (the log is meant to be outside git) it warns only when
+// the resolved directory exists and is not a directory or not writable; a
+// missing one is fine, the first append creates it. Otherwise it is the
+// committed-ledger check (owner decision 2026-09-26: the ledger is committed,
+// so init --ci's audit can verify every pull request): for dir's ledger
+// (.flywheel/events.jsonl and the shard files under .flywheel/events) one line
+// naming at most three of the paths and the fix when a ledger file is
+// untracked (or git-ignored), or when a tracked one lacks merge=union in
+// .gitattributes (#436); nothing when every ledger file is tracked with
+// merge=union, when there is no ledger yet, when dir is not a repository, or
+// when git fails. Read-only: ls-files, check-ignore and check-attr never write
+// the index, and the writability probe removes its temp file.
 func DoctorLedgerWarning(dir string) string {
 	root, _, err := LedgerRoot(dir)
 	if err != nil {
 		return ""
 	}
+	var warns []string
+	if isDir(filepath.Join(root, ".flywheel", ledgerMoveAside)) {
+		warns = append(warns, fmt.Sprintf("a flywheel ledger move was interrupted after setting the in-tree log aside (.flywheel/%s): "+
+			"run \"flywheel ledger move\" again before any other flywheel command", ledgerMoveAside))
+	}
+	logDir, external, err := EventLogDir(root)
+	var w string
+	switch {
+	case err != nil:
+		w = err.Error()
+	case external:
+		w = externalLedgerWarning(logDir)
+	default:
+		w = committedLedgerWarning(root)
+	}
+	if w != "" {
+		warns = append(warns, w)
+	}
+	return strings.Join(warns, "; ")
+}
+
+// externalLedgerWarning says why the ledger.dir directory logDir cannot hold
+// the event log: it exists and is not a directory, or is not writable
+// (probed with a temp file that is removed); "" when it is usable or missing.
+func externalLedgerWarning(logDir string) string {
+	fi, err := os.Stat(logDir)
+	switch {
+	case os.IsNotExist(err):
+		return ""
+	case err != nil:
+		return fmt.Sprintf("ledger.dir %s: %v", logDir, err)
+	case !fi.IsDir():
+		return fmt.Sprintf("ledger.dir %s is not a directory: the event log cannot be written there", logDir)
+	}
+	f, err := os.CreateTemp(logDir, ".doctor-probe-*")
+	if err != nil {
+		return fmt.Sprintf("ledger.dir %s is not writable: %v", logDir, err)
+	}
+	f.Close()
+	os.Remove(f.Name())
+	return ""
+}
+
+// committedLedgerWarning is DoctorLedgerWarning's committed-ledger check of
+// the in-tree log under root.
+func committedLedgerWarning(root string) string {
 	const legacy = ".flywheel/events.jsonl"
 	shardDir := ".flywheel/" + shardDirName
 	var present []string

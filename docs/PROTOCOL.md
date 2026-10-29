@@ -2176,8 +2176,22 @@ Readers never create the directory; writers create it. The locks that guard the 
 share one ledger directory serialise their appends. The other `.flywheel/` locks stay in the
 checkout. The pre-push hook verifies the log when `ledger.dir` or `FLYWHEEL_LEDGER_DIR` is set.
 
-Not yet: `flywheel ci`, `flywheel doctor`, `flywheel fleet` and `flywheel backup` do not follow
-`ledger.dir` (issue #464); with it set they see no in-tree log.
+`flywheel doctor` follows `ledger.dir`: a refused value or two live logs is a warning carrying the
+error; with it set the git-tracking and `merge=union` checks are skipped (the log is meant to be
+outside git) and it warns only when the resolved directory exists and is not a directory or not
+writable (probed with a temp file it removes; a missing directory is fine, the first append creates
+it). In both modes a leftover `.flywheel/ledger-move.old/` warns that a `flywheel ledger move` was
+interrupted after setting the in-tree log aside: run `flywheel ledger move` again before any other
+flywheel command. `flywheel fleet` counts a directory whose ledger directory holds `events.jsonl` or
+`events/`, and one whose `ledger.dir` is set but refused (its row carries the error); it de-duplicates
+by the event log's location, so the worktrees of one clone sharing a ledger directory are listed
+once, under the first path reaching it. `flywheel init` with `ledger.dir` set (config or env)
+creates no `.flywheel/events.jsonl` and omits that piece, and fails on a refused value. A new
+`.flywheel/.gitignore` from init lists `runs/`, `worktrees/`, `locks/`, `claims/` and `leases/`
+(per-host runtime state); an existing one is never rewritten.
+
+Not yet: `flywheel verify`'s CI audit and `flywheel ledger backup` do not follow `ledger.dir`
+(issue #464, next unit); with it set they see no in-tree log.
 
 ### Sharded layout
 
