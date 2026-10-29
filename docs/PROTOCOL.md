@@ -278,12 +278,30 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   against the current brief (fresh attempts) or the delta file it names (`c*` attempts); an
   `amended` event between the dispatch and now excuses a fresh attempt's mismatch, but never a
   correction's.
+- Locks (issue [#893](https://github.com/suzworx/flywheel/issues/893)): `.flywheel/dispatch.lock`
+  is held in two short phases, never across worktree creation, the slot lease, the needs-state
+  links, copies and install, `worktree.setup`, the baseline or the worktree snapshot. Phase A
+  reads the log and runs every check that reads it (`in-flight`, `owns`, `exclusive`, `quiet`,
+  `limits`, `budget`, `unit-cost`, routing, `breaker`, `models-allowed`, `rate-limit`, `rate`,
+  brief drift, the attempt number), then releases the lock. Phase B takes it again just before
+  this event is appended, re-reads the log and re-runs the same checks: a unit that dispatched
+  in between is refused exactly as in phase A (same rule, same `dispatch_refused` record), and the
+  prepared worktree is left in place for the next dispatch (setup is idempotent). What this event
+  records — the overlap and exclusive notes, the shared gates, the model and `route`, `skills` —
+  comes from phase B's read; the attempt id, which already named the delta snapshot, the run file
+  and the `worktree_setup` event, is kept, and the run errors instead when another `dispatched`
+  event of the task landed between the phases. A per-task lock,
+  `.flywheel/dispatch-<task>.lock` (bytes outside `[A-Za-z0-9._-]` become `_`), is held from
+  before phase A until this event is appended, so two dispatches of one task never prepare its
+  worktree at once (it waits up to 30m). Lock order: the per-task lock, then `dispatch.lock`, then
+  `events.lock`.
 
 ### `dispatch_refused`
 - Written by: the CLI only, via `flywheel run <task>` (issue #651), when the run returns before
   `dispatched` because of a rule refusal (every "refused (exit 6, rule ...)" above: `needs-env`,
   `preflight`, `gate-command`, `full-suite`, `required-gates`, `required-live-gates`, `required-observes`, `owns-companions`, `retro-missing` (issue #854), `claude-dir`, `skills`, `agent`, `base`, `in-flight`, `owns`, `exclusive`, `limits`, `budget`, `breaker`, `models-allowed`, ...) or
-  because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait).
+  because the dispatch lock could not be taken (`.flywheel/dispatch.lock` held past its wait in
+  either phase, or the task's own `.flywheel/dispatch-<task>.lock`, issue #893).
   Appended through `AppendEvent` (events.lock), never under the dispatch lock. Not written for a
   resume with no worker session, for a refusal because the factory is suspended (rule `suspended`:
   the owner froze the ledger, and a retry loop would write to it while stopped), for a plain error
