@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.80.0](https://github.com/suzworx/flywheel/compare/v0.79.3...v0.80.0) (2026-10-29)
+
+
+### Features
+
+* flywheel worktree commit re-runs the attempt commit against amended owns ([#904](https://github.com/suzworx/flywheel/issues/904)) ([582ce41](https://github.com/suzworx/flywheel/commit/582ce4126d56ccd29012e56bfe11b1be53b6d8d7)), closes [#897](https://github.com/suzworx/flywheel/issues/897)
+
+
+### Bug Fixes
+
+* landedTree forces the ledger out of its temp index, so attest and inspect --commit resolve a commit when the checkout's ledger is dirty ([#902](https://github.com/suzworx/flywheel/issues/902)) ([d23ea71](https://github.com/suzworx/flywheel/commit/d23ea71fa72d3dd5ae7886d267465780f8c1b7f4))
+
 ## [0.79.3](https://github.com/suzworx/flywheel/compare/v0.79.2...v0.79.3) (2026-10-29)
 
 

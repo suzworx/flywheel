@@ -463,7 +463,11 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 ### `off-course`
 - Written by: the CLI, at most once per attempt, the moment a `read`, `grep` or `glob` tool call
   (`offCourseTools`) names the 5th distinct path outside the worktree — library source a worker
-  reached for instead of `go doc` (issue #72, #154).
+  reached for instead of `go doc` (issue #72, #154). The finish-time one also fires when the
+  attempt wrote outside the worktree, and the `finished` note then says "wrote outside the
+  worktree: ..." (issue #359); a write under the worker session's own scratchpad
+  (`claude/<project>/<session>/scratchpad/`) is exempt and counts toward neither
+  ([#906](https://github.com/suzworx/flywheel/issues/906)).
 - Carries: `task`, `attempt`, `note` (the offending paths, in the order first seen, comma-joined
   and capped at 200 characters by `clipNote`).
 - Effect: `Derive` has no case for it, so — like `worker_plan` and `no-plan` — it never touches

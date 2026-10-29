@@ -1683,10 +1683,11 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 
 	// outsideNote names the written paths outside the tree the worker ran in:
 	// a checkout's settings once let a worker edit the main checkout from its
-	// worktree (issue #359).
+	// worktree (issue #359). A write to the worker session's own scratchpad
+	// is not off-course (issue #906).
 	var outsideWrote []string
 	for _, p := range wrote {
-		if isOutsideWorktree(wt, p) {
+		if isOutsideWorktree(wt, p) && !isSessionScratchpad(p, session) {
 			outsideWrote = append(outsideWrote, p)
 		}
 	}
@@ -2901,6 +2902,30 @@ func isOutsideWorktree(dir, p string) bool {
 		q = strings.ToLower(q)
 	}
 	return q != a && !strings.HasPrefix(q, a+"/")
+}
+
+// isSessionScratchpad reports whether p names a file under the scratchpad
+// Claude Code gives the worker session: the segments
+// claude/<project>/<session>/scratchpad/ followed by at least one more
+// segment (compared case-insensitively on Windows). An empty session never
+// matches, so another session's scratchpad stays outside (issue #906).
+func isSessionScratchpad(p, session string) bool {
+	if session == "" {
+		return false
+	}
+	q := filepath.ToSlash(p)
+	if runtime.GOOS == "windows" {
+		q = strings.ToLower(q)
+		session = strings.ToLower(session)
+	}
+	segs := strings.Split(q, "/")
+	for i := 0; i+4 < len(segs); i++ {
+		if segs[i] == "claude" && segs[i+1] != "" && segs[i+2] == session &&
+			segs[i+3] == "scratchpad" && segs[i+4] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // isRootedPath reports whether p is rooted: recognized as absolute by
