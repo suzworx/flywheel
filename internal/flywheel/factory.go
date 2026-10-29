@@ -508,6 +508,7 @@ type Watcher struct {
 	runErr      map[string]bool
 	runReason   map[string]string
 	runOff      map[string]int64
+	runOpen     map[string]int // the open tool call: latest tool_progress elapsed, 0 after a later line (issue #917)
 	EventsBytes int64
 	RunBytes    int64
 }
@@ -523,6 +524,7 @@ func NewWatcher() Watcher {
 		runErr:    map[string]bool{},
 		runReason: map[string]string{},
 		runOff:    map[string]int64{},
+		runOpen:   map[string]int{},
 	}
 }
 
@@ -638,6 +640,7 @@ func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtim
 		w.runEdits[rel] = 0
 		w.runErr[rel] = false
 		w.runReason[rel] = ""
+		w.runOpen[rel] = 0
 		off = 0
 	}
 	if size == off {
@@ -664,6 +667,13 @@ func readRun(dir string, w *Watcher, rel string, adap Adapter) (size int64, mtim
 		sc := bufio.NewScanner(bytes.NewReader(b[:idx+1]))
 		sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 		for sc.Scan() {
+			// A heartbeat keeps the open call's elapsed; any other line
+			// closes it (issue #917).
+			if _, elapsed, ok := toolProgress(sc.Bytes()); ok {
+				w.runOpen[rel] = elapsed
+			} else {
+				w.runOpen[rel] = 0
+			}
 			obs, ok := adap.Parse(sc.Bytes())
 			if !ok {
 				continue
@@ -749,6 +759,10 @@ func buildUnits(w *Watcher, st State, now time.Time, dir string, stallTimeout in
 				stopState = stopStateFor(ev, t.ID, t.Attempt, t.Status)
 			}
 			u.RunState = classifyRun(done, w.runSteps[rel], len(w.runFiles[rel]), w.runEdits[rel], w.runErr[rel], reason, size, age, stallTimeout, noPlan, wrote, stopState)
+			if !done {
+				// An open tool call fills the age-based stall slot (issue #917).
+				u.RunState = toolStallState(u.RunState, w.runOpen[rel], int(cfg.DefaultWorker().toolStallTimeoutDuration().Seconds()))
+			}
 			if u.RunState == "rate-limited" {
 				u.ResetAt = resetAtFor(ev, t.ID, t.Attempt)
 			}

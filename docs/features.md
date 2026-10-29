@@ -301,7 +301,10 @@ the `--mcp-config` shape, e.g. `"mcp": {"mcpServers": {"fs": {"command": "mcp-fs
 
 `flywheel run` exits 0 on a clean finish, exit 3 on a silent start (no output before the start
 timeout), 4 when the worker exited nonzero, capped, or hit a provider error, and exit 7 on a
-mid-stream stall (no run-file line for the stall timeout while the process is still alive).
+mid-stream stall (no run-file line for the stall timeout while the process is still alive, or one
+tool call open for the worker's `tool_stall_timeout`, default 1800 seconds, read from the
+stream's `tool_progress` heartbeats that keep the run file growing; the finished note says
+`tool call <tool> open <elapsed>s (tool_stall_timeout <N>s)`, issue #917).
 
 ## Routing, budgets and rate limits
 
