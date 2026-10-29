@@ -70,7 +70,9 @@ type Event struct {
 	Checkpoint string `json:"checkpoint,omitempty"`
 	// Uncommitted is a finished event's changed paths the attempt commit on
 	// fw/<task> left out because they sit outside the attempt's owns (issue
-	// #477); validate fails the owns check while any of them is still changed.
+	// #477), and a recommitted event's paths still outside the amended owns
+	// (issue #897); validate fails the owns check while any of the latest
+	// list's paths is still changed.
 	Uncommitted []string `json:"uncommitted,omitempty"`
 	// Paths is a recovered event's tasks the applied actions touched (issue
 	// #422), and a worktree_discarded event's discarded paths (issue #851).
@@ -419,6 +421,12 @@ var kinds = map[string]bool{
 	// Task, Session and Note required, Paths the agents, briefs or skills the
 	// retro changed (repo-relative), empty when it changed none (--none).
 	"retro": true,
+	// recommitted records `flywheel worktree commit` re-running the attempt
+	// commit against the task's current owns (issue #897): Task, Session (both
+	// required), Attempt, Commit (omitted when nothing was committed),
+	// Uncommitted (the paths still outside owns) and Note. It changes no
+	// status; validate's owns check reads its Uncommitted as a finished's.
+	"recommitted": true,
 }
 
 // kindList names every kind, sorted, for Validate's unknown-kind error (issue
@@ -691,8 +699,11 @@ func Validate(e Event) error {
 	if e.Checkpoint != "" && e.Kind != "finished" {
 		return fmt.Errorf("event kind %q cannot carry a checkpoint", e.Kind)
 	}
-	if len(e.Uncommitted) > 0 && e.Kind != "finished" {
+	if len(e.Uncommitted) > 0 && e.Kind != "finished" && e.Kind != "recommitted" {
 		return fmt.Errorf("event kind %q cannot carry uncommitted", e.Kind)
+	}
+	if e.Kind == "recommitted" && (!taskOK(e.Task) || e.Session == "") {
+		return fmt.Errorf("recommitted event must carry a task and a session")
 	}
 	if e.Kind == "group_reviewed" && (!groupTaskOK(e.Task) || e.Verdict != "pass" && e.Verdict != "correct") {
 		return fmt.Errorf("group_reviewed event must carry a group:<id> task and verdict pass or correct")

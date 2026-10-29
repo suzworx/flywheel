@@ -140,6 +140,10 @@ Remove a temp worktree you made with `flywheel worktree remove <path>`, never ra
 remove --force`: a dirty tree exits 6 (`worktree-dirty`) listing every dirty path; commit, hand off
 or save the edits (`git -C <wt> diff`) and delete copied secrets, or pass `--discard --session S`
 to drop them on the record, a `worktree_discarded` event (issue #851).
+When validate fails with `left uncommitted by the attempt commit: <paths>` and those paths belong
+to the unit, amend owns (`flywheel log --kind amended`), then run `flywheel worktree commit <task>
+--session S`: it re-runs the attempt commit on `fw/<task>` against the amended owns and records a
+`recommitted` event, never a hand-made git commit the ledger misses (issue #897).
 
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,
