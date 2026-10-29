@@ -83,7 +83,7 @@ func budgetLedger(t *testing.T, units int) (dir string, events int, readWorkdirs
 }
 
 // budgetRecover runs Recover with a counting tree hash under the one hang
-// guard: 60 seconds, however loaded the host.
+// guard: the test deadline, however loaded the host.
 func budgetRecover(t *testing.T, dir string) (RecoverReport, int32, time.Duration) {
 	t.Helper()
 	var n atomic.Int32
@@ -103,8 +103,8 @@ func budgetRecover(t *testing.T, dir string) (RecoverReport, int32, time.Duratio
 			t.Fatalf("Recover: %v", r.err)
 		}
 		return r.rep, n.Load(), time.Since(start)
-	case <-time.After(60 * time.Second):
-		t.Fatalf("budget: Recover did not return within 60s")
+	case <-time.After(hangGuard(t)):
+		t.Fatalf("budget: Recover never returned")
 	}
 	return RecoverReport{}, 0, 0
 }

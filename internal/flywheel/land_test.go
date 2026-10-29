@@ -682,8 +682,8 @@ func TestLandTaskUntriagedWaitsForFeedbackLock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LandTask() error = %v after the feedback lock was released", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("LandTask() still waiting 10s after the feedback lock was released")
+	case <-time.After(hangGuard(t)):
+		t.Fatal("LandTask() never returned after the feedback lock was released")
 	}
 }
 
