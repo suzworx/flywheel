@@ -2152,7 +2152,23 @@ Refusals, each an error naming the path and `ledger.dir`:
 - `flywheel` refuses to load a config whose `ledger.dir` is empty or a relative path;
 - a resolved directory inside the checkout's work tree or its git directory;
 - a set `ledger.dir` while the in-tree log (`.flywheel/events.jsonl` or `.flywheel/events/`) still
-  exists — two live logs. Move those files into the ledger directory first.
+  exists — two live logs; the error says to run `flywheel ledger move`.
+
+`flywheel ledger move [--dir DIR] [--json]` is the one supported migration of the in-tree log into
+the ledger directory. It holds the in-tree `.flywheel/events.lock` for the whole move, copies
+`events.jsonl` and every file under `events/` (the relative layout kept, `@floor.jsonl` included,
+`*.tmp` skipped; a symlink is refused) into a temp directory beside the destination, fsyncs each
+copy and compares it byte for byte with its source, then renames the temp directory onto the
+destination (a missing or empty one; a destination holding only `locks/` keeps it and takes the
+copy's entries). It then sets the in-tree files aside under `.flywheel/ledger-move.old/`, runs the
+chain verification against the destination and only then removes them from the working tree; a
+verification error puts them back and exits 1. A destination already holding byte-identical copies
+(a crash between the rename and the removal) resumes straight to the removal, and a crash after
+the set-aside is put back and resumed on the next run. A destination holding any other log or file
+(except `locks/`) is refused with exit 6, rule `two-live-logs`, and both are left untouched; the
+temp directory never survives a failure. With `ledger.dir` unset, or refused, it exits 2; with no
+in-tree log it prints `nothing to move` and exits 0. Git is never run for writing: when git
+tracked the in-tree log, the command says to commit its removal (`git rm --cached` is not run).
 
 Readers never create the directory; writers create it. The locks that guard the log move with it:
 `<ledger dir>/locks/@events.lock` (in-tree: `.flywheel/events.lock`) and the per-shard

@@ -40,6 +40,12 @@ func ledgerDirProblem(v string) string {
 // It reads only the ledger key of config.json — never LoadConfig, so an
 // unrelated broken key cannot hide the log — and creates nothing.
 func EventLogDir(dir string) (root string, external bool, err error) {
+	return resolveLedgerDir(dir, true)
+}
+
+// resolveLedgerDir is EventLogDir; checkInTree false skips the two-live-logs
+// refusal, so flywheel ledger move can resolve where the in-tree log goes.
+func resolveLedgerDir(dir string, checkInTree bool) (root string, external bool, err error) {
 	value, source := os.Getenv(ledgerDirEnv), ledgerDirEnv
 	if value == "" {
 		path := filepath.Join(dir, ".flywheel", configFileName)
@@ -106,8 +112,8 @@ func EventLogDir(dir string) (root string, external bool, err error) {
 	// Two live logs: the in-tree log must be moved before the ledger dir is used.
 	for _, name := range []string{legacyLogName, shardDirName} {
 		inTree := filepath.Join(dir, ".flywheel", name)
-		if _, serr := os.Lstat(inTree); serr == nil {
-			return "", false, fmt.Errorf("%s: ledger.dir is %s but the in-tree log %s still exists (two live logs): move the in-tree events.jsonl and events/ into %s first", source, root, inTree, root)
+		if _, serr := os.Lstat(inTree); checkInTree && serr == nil {
+			return "", false, fmt.Errorf("%s: ledger.dir is %s but the in-tree log %s still exists (two live logs): run \"flywheel ledger move\" to move it into %s", source, root, inTree, root)
 		}
 	}
 	return root, true, nil

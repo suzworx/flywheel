@@ -120,6 +120,9 @@ Either layout can live outside the checkout: config `ledger.dir` (`"home"`, an a
 switches and merges never rewrite it and every worktree of one clone can share it. It refuses a
 directory inside the checkout and a still-present in-tree log; `flywheel ci`, doctor, fleet and
 backup do not follow it yet ([#464](https://github.com/suzworx/flywheel/issues/464)).
+`flywheel ledger move` migrates an existing in-tree log there: a locked, byte-verified copy renamed
+into place, a chain check, then the in-tree files removed (resumable after a crash; a destination
+holding another log is refused with exit 6).
 
 ## Measure, don't trust
 
