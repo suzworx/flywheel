@@ -157,6 +157,66 @@ func stageFile(wd, from, to string) (StagedFile, error) {
 	return f, nil
 }
 
+// seedStage copies, for each owned staging file whose staging copy is missing,
+// its existing destination into staging (issue #898): a unit that edits a
+// protected file owns its staging path, and flywheel run seeds it at dispatch
+// so the worker starts from the current content. Only plain file owns entries
+// seed (no directory, negated or glob entry); an existing staging file or a
+// missing destination seeds nothing. Each record's From is the destination
+// and To the staging path, sorted by To.
+func seedStage(wd string, owns []string, maps []StageMap) ([]StagedFile, error) {
+	var out []StagedFile
+	for _, o := range owns {
+		o = filepath.ToSlash(o)
+		if o == "" || strings.HasSuffix(o, "/") || strings.HasPrefix(o, "!") || strings.ContainsAny(o, "*?[") {
+			continue
+		}
+		for _, m := range maps {
+			if !strings.HasPrefix(o, m.From) {
+				continue
+			}
+			rel := strings.TrimPrefix(o, m.From)
+			staging, dest := m.From+rel, m.To+rel
+			if slices.ContainsFunc(out, func(f StagedFile) bool { return f.To == staging }) {
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(wd, filepath.FromSlash(staging))); err == nil {
+				continue
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("seed stat %s: %w", staging, err)
+			}
+			info, err := os.Lstat(filepath.Join(wd, filepath.FromSlash(dest)))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("seed stat %s: %w", dest, err)
+			}
+			if !info.Mode().IsRegular() {
+				continue
+			}
+			f, err := stageFile(wd, dest, staging)
+			if err != nil {
+				return nil, fmt.Errorf("seed %s from %s: %w", staging, dest, err)
+			}
+			f.Copied = true
+			out = append(out, f)
+		}
+	}
+	slices.SortFunc(out, func(a, b StagedFile) int { return strings.Compare(a.To, b.To) })
+	return out, nil
+}
+
+// unionStageMaps is a then every map of b not already in a.
+func unionStageMaps(a, b []StageMap) []StageMap {
+	out := slices.Clone(a)
+	for _, m := range b {
+		if !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // ownsUnder reports whether owns covers dir (a "/"-terminated path) or has a
 // positive entry under it, the lint check for a stage: line's From.
 func ownsUnder(owns []string, dir string) bool {
