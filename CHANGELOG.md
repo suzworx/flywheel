@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.79.3](https://github.com/suzworx/flywheel/compare/v0.79.2...v0.79.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* a --resume/--delta that continues in the task worktree runs as --worktree, so its attempt is committed ([#899](https://github.com/suzworx/flywheel/issues/899)) ([9498fda](https://github.com/suzworx/flywheel/commit/9498fdade3a40b372af1465556e7c68048f42b4a)), closes [#894](https://github.com/suzworx/flywheel/issues/894)
+* the dispatch lock never covers worktree creation or worktree.setup ([#901](https://github.com/suzworx/flywheel/issues/901)) ([5cd2c88](https://github.com/suzworx/flywheel/commit/5cd2c888bd58171397a48e55b5c3573066a5d258)), closes [#893](https://github.com/suzworx/flywheel/issues/893)
+
 ## [0.79.2](https://github.com/suzworx/flywheel/compare/v0.79.1...v0.79.2) (2026-10-29)
 
 
