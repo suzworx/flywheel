@@ -571,7 +571,8 @@ unless this unit changed them, and `flywheel validate` attributes a changed path
 gate can still fail on a sibling's half-written file: give scoped gates, or validate after the
 siblings finish. `--workdir` runs get no setup, timed checkpoints or attempt commit (#545), so the
 lead inspects each unit and commits only its owned paths (`git commit -- <paths>`, never
-`git add -A`), one unit at a time. No tree-rewriting command (see "Shared tree means no
+`git add -A`), one unit at a time. A `--delta` or `--resume` with no flag whose unit ran in its task
+worktree is run as `--worktree`, so its attempt is committed on `fw/<task>` (#894). No tree-rewriting command (see "Shared tree means no
 tree-rewriting commands" below). Best for doc and config units: a unit that compiles against a
 sibling's in-progress file belongs in its own worktree.
 
