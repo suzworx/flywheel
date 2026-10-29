@@ -50,7 +50,11 @@ func redFirstRefusal(events []Event, task string, header BriefHeader, on bool) *
 		}
 	}
 	record := fmt.Sprintf("add a gate that runs the regression test, and record the base probe with "+
-		"`flywheel lint <brief> --probe --task %s` before `flywheel run`; or set lint.red_first false; "+
+		"`flywheel lint <brief> --probe --task %s` before `flywheel run`; "+
+		"when the worker writes the regression test, add a gate that reproduces the defect on the base tree now "+
+		"(a short script or one-line assertion on the broken behaviour that exits non-zero today), "+
+		"or one that fails while the new test file is missing (`test -f <new test file> && <run it>`): "+
+		"a name-filtered run matching no test passes and is never the red gate alone; or set lint.red_first false; "+
 		"a probe recorded after dispatch counts only when it ran on the dispatched base tree before any attempt finished (issue #833)", task)
 	if len(newest) == 0 {
 		return &RuleRefusal{Rule: "red-first", Fix: fmt.Sprintf("kind: fix task %s has no gate probe recorded before dispatch, "+
