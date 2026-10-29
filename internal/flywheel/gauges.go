@@ -1115,7 +1115,9 @@ func unlandedOwners(events []Event) []string {
 // else "" (issue #386). A task worktree's ledger lives in the main checkout;
 // the copy inside the worktree is a stale snapshot from its branch point, so
 // worktreeOwner cannot see T in flight there. Any path in T's worktree is T's
-// work.
+// work. A task worktree <L>/.flywheel/worktrees/<T> of ANOTHER ledger L is
+// read against L's own ledger the same way, returning "T (another ledger
+// <L>)" (issue #918); an unreadable L attributes nothing.
 func taskWorktreeOwner(dir string, events []Event, wtPath string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -1124,11 +1126,32 @@ func taskWorktreeOwner(dir string, events []Event, wtPath string) string {
 	root := filepath.Clean(filepath.Join(abs, ".flywheel", "worktrees"))
 	wt := filepath.Clean(wtPath)
 	if !isPathEqual(filepath.Dir(wt), root) {
-		return ""
+		return otherLedgerTaskOwner(wt)
 	}
 	for _, t := range unlandedOwners(events) {
 		if isPathEqual(filepath.Join(root, t), wt) {
 			return t
+		}
+	}
+	return ""
+}
+
+// otherLedgerTaskOwner returns "T (another ledger <L>)" when the cleaned wt
+// is <L>/.flywheel/worktrees/<T> and T is dispatched and unlanded in L's
+// ledger, else "" (issue #918).
+func otherLedgerTaskOwner(wt string) string {
+	parent := filepath.Dir(wt)
+	if !isPathEqual(filepath.Base(parent), "worktrees") || !isPathEqual(filepath.Base(filepath.Dir(parent)), ".flywheel") {
+		return ""
+	}
+	ledger := filepath.Dir(filepath.Dir(parent))
+	lEvents, err := ReadEvents(ledger)
+	if err != nil {
+		return ""
+	}
+	for _, t := range unlandedOwners(lEvents) {
+		if isPathEqual(filepath.Join(parent, t), wt) {
+			return t + " (another ledger " + filepath.ToSlash(ledger) + ")"
 		}
 	}
 	return ""

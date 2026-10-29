@@ -1880,7 +1880,9 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   while that worktree still has a dispatched, unlanded unit. A sibling that is another unit's
   `run --worktree` worktree, `<repo>/.flywheel/worktrees/<task>`, is read against the MAIN ledger
   instead: while `<task>` is dispatched and unlanded there, every changed path in it is attributed
-  `"<worktree>: <path> -> <task>"` (issue #386).
+  `"<worktree>: <path> -> <task>"` (issue #386). A task worktree `<L>/.flywheel/worktrees/<task>`
+  of another ledger L is read against L's ledger and attributed `"<worktree>: <path> -> <task>
+  (another ledger <L>)"` while `<task>` is dispatched and unlanded there (issue #918).
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.
