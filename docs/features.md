@@ -245,7 +245,10 @@ refuses the dispatch (rule `claude-dir`) and such a denial is named as the prote
 staging/claude/ -> .claude/`: `flywheel validate` copies every staged file to its destination
 before the gates, records a `staged` event, and treats each destination as owned through its owned
 source; an invalid stage line refuses (rule `stage`) and lint warns on one whose source the unit
-owns nothing under (issue #781). Validate notes the staging copies that remain, and `flywheel
+owns nothing under (issue #781). To edit an existing protected file the unit owns its staging
+file path (`staging/claude/domains.json`, not the directory), and `flywheel run` seeds that staging
+copy from the current destination at dispatch when it is missing (recorded as `seeded` on the
+`dispatched` event, issue #898). Validate notes the staging copies that remain, and `flywheel
 unstage <task>` removes them before landing (an `unstaged` event; it refuses, rule `stage`, when the
 staged content changed since validate), keeping the destinations, which stay owned through the
 recorded sources. The order is validate -> unstage -> validate again (the tree changed) -> inspect

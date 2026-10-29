@@ -271,7 +271,15 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `Load these skills before any other work: a, b.`; omitted when none; `Validate` accepts it only on a
   `dispatched` event, issue #695), `agent` and `agent_sha256` (the brief's `agent:` name as kept
   for the attempt and the sha256 hex of the agent file passed to claude `--agents`; omitted when
-  none; `Validate` accepts them only on a `dispatched` event, issue #755), `note`.
+  none; `Validate` accepts them only on a `dispatched` event, issue #755), `seeded` (issue
+  [#898](https://github.com/suzworx/flywheel/issues/898): the staging files run seeded before the
+  baseline, one entry per file sorted by `to`, as on `staged` but reversed: `from` the existing
+  protected destination, `to` the staging path, `sha256` the content's, `copied` true. For each
+  owned plain file path (no trailing `/`, `!` or glob) under a `stage:` line's `<from>` (the base
+  brief's lines unioned with the prompt's) whose staging copy is missing and whose destination is a
+  regular file, the destination's bytes are copied to the staging path atomically and run prints
+  `<task> seeded <to> from <from>`; a seed failure fails the run; omitted when nothing was seeded),
+  `note`.
 - Effect: `Derive` sets status `dispatched`, increments `Attempts`, and fixes this as the task's
   *current* attempt — every later `started`, `worker_plan`, `report`, `finished`, `validated`,
   `owns_checked` or `lost` event whose own `attempt` differs is stale and ignored (listed under
@@ -402,7 +410,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   stage lines union with the base brief's. A stage line with no `->`, an empty side, an absolute
   path or a `..` segment, the same path twice, one side inside the other, or a `<from>` Claude Code
   protects is refused before any gate (exit 6, rule `stage`) and is a `flywheel lint` problem; a
-  valid line whose `<from>` the unit owns nothing under is a lint warning.
+  valid line whose `<from>` the unit owns nothing under is a lint warning. At dispatch `flywheel run`
+  seeds each owned staging FILE whose staging copy is missing from its existing destination (issue
+  #898), recorded as `seeded` on the `dispatched` event.
 - Carries: `task`, `attempt`, `workdir` (as on `validated`), `staged` (one entry per staged file,
   sorted by `from`: `from` and `to` repo-relative paths, `sha256` the content's hex SHA-256, and
   `copied`, false when the destination already held the bytes). `Validate` requires a non-empty

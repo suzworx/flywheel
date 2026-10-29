@@ -127,6 +127,10 @@ type Event struct {
 	// brief's stage: lines copied before the gates (issue #781): from, to,
 	// sha256 and copied (false when the destination already held the bytes).
 	Staged []StagedFile `json:"staged,omitempty"`
+	// Seeded is a dispatched event's staging files flywheel run seeded from
+	// their existing destinations before the baseline (issue #898): from the
+	// destination, to the staging path, sha256 and copied (always true).
+	Seeded []StagedFile `json:"seeded,omitempty"`
 	// VsBase is a vs-base gate's comparison against the unit's base (issue
 	// #788), set on its validated event when its own reading failed plainly.
 	VsBase *VsBaseReading `json:"vs_base,omitempty"`
