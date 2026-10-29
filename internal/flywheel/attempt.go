@@ -33,12 +33,16 @@ var errNoPlannedBrief = errors.New("no planned event")
 // dispatched event with no header (every pre-existing ledger) falls back to
 // the base planned/amended header exactly as before. Only a correction
 // attempt (id `c<N>`) can
-// carry a delta: the `brief` of the latest `dispatched` event for that
-// attempt is parsed when its path differs from the base brief, and when its
-// content does too (compared by the parsed headers' SHA256 — a
-// byte-identical copy adds nothing). When it does, gate: lines come from
-// the delta when it declares any, otherwise from the base brief; owns is
-// the union of both, base first, without duplicates; needs stays the base
+// carry deltas: the `brief` of every correction dispatched after the task's
+// latest fresh `r<N>` dispatch, up to and including the current attempt's
+// latest `dispatched` event (see correctionDeltas; issue #912 — the tree is
+// cumulative, so a later correction keeps what an earlier one widened). A
+// delta counts when its path differs from the base brief and its content
+// does too (compared by the parsed headers' SHA256 — a byte-identical copy
+// adds nothing). gate: lines come from the current attempt's delta when it
+// declares any, otherwise from the base brief, never from an earlier delta;
+// owns, exclusive, needs-env and stage are the union of the base and every
+// delta, base first, in log order, without duplicates; needs stays the base
 // brief's. A delta file that is missing or unreadable is an error naming
 // it. Relative paths resolve against dir.
 func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []string, error) {
@@ -75,45 +79,85 @@ func AttemptBrief(dir string, events []Event, task string) (BriefHeader, []strin
 		return header, paths, nil
 	}
 
-	promptPath := ""
-	var promptEv *Event
+	deltas := correctionDeltas(events, task, attempt)
+	if len(deltas) == 0 {
+		return header, paths, nil
+	}
+	merged := header
+	for i, ev := range deltas {
+		latest := i == len(deltas)-1
+		if ev.Brief == basePath {
+			continue
+		}
+		prompt, err := briefHeaderAt(dir, ev.Brief, ev)
+		if err != nil {
+			return BriefHeader{}, nil, fmt.Errorf("read prompt %s: %w", ev.Brief, err)
+		}
+		if prompt.SHA256 == header.SHA256 {
+			continue
+		}
+		if !slices.Contains(paths, ev.Brief) {
+			paths = append(paths, ev.Brief)
+		}
+		// Gates come from the latest attempt's delta only: an earlier
+		// delta's gates were that attempt's (issue #912).
+		if latest && len(prompt.Gates) > 0 {
+			merged.Gates = prompt.Gates
+		}
+		merged.Owns = unionStrings(merged.Owns, prompt.Owns)
+		merged.Exclusive = unionStrings(merged.Exclusive, prompt.Exclusive)
+		// A correction cannot drop an environment requirement (issue #534).
+		merged.NeedsEnv = unionStrings(merged.NeedsEnv, prompt.NeedsEnv)
+		// Stage lines union as owns do (issue #781).
+		for _, m := range prompt.Stage {
+			if !slices.Contains(merged.Stage, m) {
+				merged.Stage = append(merged.Stage, m)
+			}
+		}
+		merged.stageInvalid = unionStrings(merged.stageInvalid, prompt.stageInvalid)
+	}
+	return merged, paths, nil
+}
+
+// correctionDeltas returns the dispatched events, in log order, whose briefs
+// are the correction deltas in force for task's correction attempt `attempt`
+// (issue #912): every correction (`c<N>`) dispatched after the task's latest
+// fresh (`r<N>`) dispatched event, up to and including attempt's own latest
+// dispatched event, one event per attempt (its latest). With no fresh
+// dispatch (a legacy ledger) every correction of the task counts. When
+// attempt has no dispatched event with a brief there is no delta at all, and
+// the result is nil; the last element is always attempt's own.
+func correctionDeltas(events []Event, task, attempt string) []*Event {
+	start, end := 0, -1
 	for i := range events {
 		e := &events[i]
-		if e.Task == task && e.Kind == "dispatched" && e.Attempt == attempt && e.Brief != "" {
-			promptPath = e.Brief
-			promptEv = e
+		if e.Task != task || e.Kind != "dispatched" || e.Attempt == "" {
+			continue
+		}
+		if e.Attempt[0] == 'r' {
+			start = i + 1
+		}
+		if e.Attempt == attempt && e.Brief != "" {
+			end = i
 		}
 	}
-	if promptPath == "" || promptPath == basePath {
-		return header, paths, nil
+	if end < start {
+		return nil
 	}
-
-	prompt, err := briefHeaderAt(dir, promptPath, promptEv)
-	if err != nil {
-		return BriefHeader{}, nil, fmt.Errorf("read prompt %s: %w", promptPath, err)
-	}
-	if prompt.SHA256 == header.SHA256 {
-		return header, paths, nil
-	}
-	paths = append(paths, promptPath)
-
-	merged := header
-	if len(prompt.Gates) > 0 {
-		merged.Gates = prompt.Gates
-	}
-	merged.Owns = unionStrings(header.Owns, prompt.Owns)
-	merged.Exclusive = unionStrings(header.Exclusive, prompt.Exclusive)
-	// A correction cannot drop an environment requirement (issue #534).
-	merged.NeedsEnv = unionStrings(header.NeedsEnv, prompt.NeedsEnv)
-	// Stage lines union as owns do (issue #781).
-	merged.Stage = header.Stage
-	for _, m := range prompt.Stage {
-		if !slices.Contains(merged.Stage, m) {
-			merged.Stage = append(merged.Stage, m)
+	var out []*Event
+	for i := start; i <= end; i++ {
+		e := &events[i]
+		if e.Task != task || e.Kind != "dispatched" || e.Brief == "" || e.Attempt == "" || e.Attempt[0] != 'c' {
+			continue
 		}
+		if e.Attempt == attempt && i != end {
+			continue
+		}
+		// A re-dispatched correction counts once, at its latest dispatch.
+		out = slices.DeleteFunc(out, func(o *Event) bool { return o.Attempt == e.Attempt })
+		out = append(out, e)
 	}
-	merged.stageInvalid = unionStrings(header.stageInvalid, prompt.stageInvalid)
-	return merged, paths, nil
+	return out
 }
 
 // latestBaseBriefAndAttempt scans events in order for task's latest
