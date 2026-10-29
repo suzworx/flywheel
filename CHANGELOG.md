@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.82.0](https://github.com/suzworx/flywheel/compare/v0.81.0...v0.82.0) (2026-10-29)
+
+
+### Features
+
+* config attest.lead_paths names lead-maintained tracking files attest's T3 path check skips ([#927](https://github.com/suzworx/flywheel/issues/927)) ([8aca25e](https://github.com/suzworx/flywheel/commit/8aca25e859c5307e7e024bb80138c4c8810acf3a)), closes [#895](https://github.com/suzworx/flywheel/issues/895)
+* flywheel run seeds an owned stage: staging file from its existing protected destination at dispatch ([#925](https://github.com/suzworx/flywheel/issues/925)) ([a330994](https://github.com/suzworx/flywheel/commit/a330994a0c609c76fe6a57aca3f35df8d5a92360)), closes [#898](https://github.com/suzworx/flywheel/issues/898)
+
 ## [0.81.0](https://github.com/suzworx/flywheel/compare/v0.80.3...v0.81.0) (2026-10-29)
 
 
