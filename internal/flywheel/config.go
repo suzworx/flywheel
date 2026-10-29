@@ -82,6 +82,8 @@ type Config struct {
 	Gates *GatesConfig `json:"gates,omitempty"`
 	// Attest tunes flywheel attest (issue #895).
 	Attest *AttestConfig `json:"attest,omitempty"`
+	// Ledger places the event log outside the checkout (issue #464).
+	Ledger *LedgerConfig `json:"ledger,omitempty"`
 }
 
 // AttestConfig tunes flywheel attest (issue #895).
@@ -1182,6 +1184,11 @@ func LoadConfig(dir string) (Config, bool, error) {
 		}
 		return Config{}, false, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if c.Ledger != nil {
+		if why := ledgerDirProblem(c.Ledger.Dir); why != "" {
+			return Config{}, false, fmt.Errorf("%s: ledger.dir %s", path, why)
+		}
+	}
 	if err := c.validateLoad(); err != nil {
 		return Config{}, false, err
 	}
@@ -1764,6 +1771,11 @@ func (c Config) validateLoad() error {
 			if why := attestLeadPathProblem(e); why != "" {
 				problems = append(problems, fmt.Sprintf("attest.lead_paths[%d]: entry %q %s", i, e, why))
 			}
+		}
+	}
+	if c.Ledger != nil {
+		if why := ledgerDirProblem(c.Ledger.Dir); why != "" {
+			problems = append(problems, "ledger.dir: "+why)
 		}
 	}
 	if c.Review != nil {

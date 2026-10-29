@@ -45,7 +45,7 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 	defer releaseFeedback()
 
 	// Then events.lock
-	releaseEvents, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
+	releaseEvents, err := acquireLedgerLock(dir, "events.lock", eventsLockTimings())
 	if err != nil {
 		return false, 0, err
 	}
@@ -56,7 +56,11 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 		return false, 0, err
 	}
 
-	legacyPath := filepath.Join(dir, ".flywheel", legacyLogName)
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return false, 0, err
+	}
+	legacyPath := filepath.Join(root, legacyLogName)
 
 	if sharded {
 		// Layout is already sharded. Check if we need to reseal.
@@ -79,7 +83,7 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 		}
 
 		// Get the last seal from @floor.jsonl
-		floorPath := filepath.Join(dir, ".flywheel", shardDirName, floorShard)
+		floorPath := filepath.Join(root, shardDirName, floorShard)
 		lastSeal, err := lastSealEvent(floorPath)
 		if err != nil {
 			return false, 0, err
@@ -155,7 +159,10 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 	}
 
 	// Create a temporary directory for atomicity
-	tmpDir, err := os.MkdirTemp(filepath.Join(dir, ".flywheel"), "events.tmp-*")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return false, 0, fmt.Errorf("create %s: %w", root, err)
+	}
+	tmpDir, err := os.MkdirTemp(root, "events.tmp-*")
 	if err != nil {
 		return false, 0, fmt.Errorf("create temp dir: %w", err)
 	}
@@ -176,7 +183,7 @@ func EnableShards(dir string, now time.Time) (sealed bool, legacyLines int, err 
 	}
 
 	// Atomically rename tmpDir to .flywheel/events, with retry on Windows
-	targetPath := filepath.Join(dir, ".flywheel", shardDirName)
+	targetPath := filepath.Join(root, shardDirName)
 	if err := renameWithRetry(tmpDir, targetPath); err != nil {
 		return false, 0, fmt.Errorf("rename %s to %s: %w", tmpDir, targetPath, err)
 	}

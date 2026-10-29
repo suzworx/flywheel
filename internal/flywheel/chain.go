@@ -174,7 +174,11 @@ func danglingReason(lines []string, i int, prev string) string {
 
 // verifyLegacyChain checks the legacy events.jsonl chain.
 func verifyLegacyChain(dir string, acks []Event) (LogChain, error) {
-	path := filepath.Join(dir, ".flywheel", "events.jsonl")
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return LogChain{}, err
+	}
+	path := filepath.Join(root, legacyLogName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -274,14 +278,18 @@ func verifyShardedChain(dir string, acks []Event) (LogChain, error) {
 	}
 
 	// Verify the seal exists and matches the legacy file's current state
-	legacyPath := filepath.Join(dir, ".flywheel", legacyLogName)
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return LogChain{}, err
+	}
+	legacyPath := filepath.Join(root, legacyLogName)
 	legacyHash, err := lastLineHash(legacyPath)
 	if err != nil {
 		return LogChain{}, err
 	}
 
 	// Get the last seal from @floor.jsonl
-	floorPath := filepath.Join(dir, ".flywheel", shardDirName, floorShard)
+	floorPath := filepath.Join(root, shardDirName, floorShard)
 	lastSeal, err := lastSealEvent(floorPath)
 	if err != nil {
 		return LogChain{}, err

@@ -37,7 +37,7 @@ while read -r lref lsha rref rsha; do
     flywheel verify --shipped --dir "$d" "$t" >&2 || { echo "flywheel: unit $t fails flywheel verify --shipped; fix its record before pushing" >&2; fail=1; }
   done
 done
-if [ -f "$d/.flywheel/events.jsonl" ] || [ -d "$d/.flywheel/events" ]; then
+if [ -f "$d/.flywheel/events.jsonl" ] || [ -d "$d/.flywheel/events" ] || [ -n "$FLYWHEEL_LEDGER_DIR" ] || grep -q '"ledger"' "$d/.flywheel/config.json" 2>/dev/null; then
   flywheel verify --dir "$d" --log >&2 || fail=1
 fi
 exit $fail

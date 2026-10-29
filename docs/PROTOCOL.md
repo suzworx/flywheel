@@ -2131,6 +2131,38 @@ The event log has two layouts, both append-only: the legacy single-file layout (
 
 The legacy layout is a single `.flywheel/events.jsonl` file, one JSON event object per line, appended by `AppendEvent`.
 
+### Ledger directory (`ledger.dir`)
+
+Both layouts live in `.flywheel/` by default, so a project that commits the log sees it rewritten by
+every branch switch and conflicted by every merge. The opt-in configuration key
+`"ledger": {"dir": "<value>"}` in `.flywheel/config.json` moves the log (`events.jsonl` or
+`events/`) outside the checkout (issue #464). Values:
+
+- `"home"`: `<user home>/.flywheel/ledgers/<id>`, where `<id>` is the first 16 hex characters of the
+  sha256 of the absolute, forward-slashed path `git rev-parse --path-format=absolute --git-common-dir`
+  prints, so every worktree of one clone shares it;
+- an absolute path;
+- `~/<path>`, under the user's home.
+
+The environment variable `FLYWHEEL_LEDGER_DIR`, when non-empty, overrides the config value (same value
+forms). Unset, every path is exactly the in-tree one. The log's location is read from the `ledger` key
+alone, never through the full config validation, so a broken unrelated key never hides the log.
+Refusals, each an error naming the path and `ledger.dir`:
+
+- `flywheel` refuses to load a config whose `ledger.dir` is empty or a relative path;
+- a resolved directory inside the checkout's work tree or its git directory;
+- a set `ledger.dir` while the in-tree log (`.flywheel/events.jsonl` or `.flywheel/events/`) still
+  exists — two live logs. Move those files into the ledger directory first.
+
+Readers never create the directory; writers create it. The locks that guard the log move with it:
+`<ledger dir>/locks/@events.lock` (in-tree: `.flywheel/events.lock`) and the per-shard
+`<ledger dir>/locks/<shard>.lock` (in-tree: `.flywheel/locks/<shard>.lock`), so two checkouts that
+share one ledger directory serialise their appends. The other `.flywheel/` locks stay in the
+checkout. The pre-push hook verifies the log when `ledger.dir` or `FLYWHEEL_LEDGER_DIR` is set.
+
+Not yet: `flywheel ci`, `flywheel doctor`, `flywheel fleet` and `flywheel backup` do not follow
+`ledger.dir` (issue #464); with it set they see no in-tree log.
+
 ### Sharded layout
 
 The sharded layout puts events under `.flywheel/events/`:

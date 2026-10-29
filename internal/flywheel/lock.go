@@ -164,6 +164,30 @@ func acquireRepoLock(dir, name string, timings repoLockTimings) (release func(),
 	return acquireLockFile(p, timings)
 }
 
+// acquireLedgerLock takes a lock guarding the event log: acquireRepoLock(dir,
+// name) while the log is in .flywheel/, else <ledger dir>/locks/<base of
+// name>, so checkouts sharing one ledger dir serialise (issue #464). There
+// events.lock is "@events.lock": a shard of a task named events owns
+// locks/events.lock, and AppendEvents takes that one while holding this.
+func acquireLedgerLock(dir, name string, timings repoLockTimings) (release func(), err error) {
+	root, external, err := EventLogDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !external {
+		return acquireRepoLock(dir, name, timings)
+	}
+	base := filepath.Base(name)
+	if name == "events.lock" {
+		base = "@events.lock"
+	}
+	p := filepath.Join(root, "locks", base)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return nil, fmt.Errorf("create %s: %w", filepath.Dir(p), err)
+	}
+	return acquireLockFile(p, timings)
+}
+
 // acquireLockFile is acquireRepoLock's machinery for the lock file at p,
 // whose directory must exist: a resource lock (issue #697) lives outside
 // .flywheel. timings.now and timings.sleep, when set, replace the clock and

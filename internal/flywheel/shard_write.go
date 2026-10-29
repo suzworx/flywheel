@@ -65,9 +65,9 @@ func appendSharded(dir string, events []Event, now time.Time) error {
 	return appendShardLines(dir, base, events, now)
 }
 
-// appendShardLines, under acquireRepoLock(dir, shardLockName(base),
+// appendShardLines, under acquireLedgerLock(dir, shardLockName(base),
 // eventsLockTimings()): read the shard's last complete line
-// (lastCompleteLineOf on .flywheel/events/<base>) and parse its ts (the
+// (lastCompleteLineOf on <EventLogDir>/events/<base>) and parse its ts (the
 // shard's last TS; zero if none/unparseable); T := nextStamp(now, thatTS,
 // observedLog(dir)); every event with an empty TS gets T formatted
 // RFC3339Nano (explicit TS values are kept); chain prev: the first event's
@@ -76,14 +76,18 @@ func appendSharded(dir string, events []Event, now time.Time) error {
 // ends in a torn byte (needsNewlinePrefix); ONE O_APPEND|O_CREATE write;
 // close; then observeLog(dir, T) and release.
 func appendShardLines(dir, base string, events []Event, now time.Time) error {
-	release, err := acquireRepoLock(dir, shardLockName(base), eventsLockTimings())
+	release, err := acquireLedgerLock(dir, shardLockName(base), eventsLockTimings())
 	if err != nil {
 		return err
 	}
 	defer release()
 
 	// Read the shard's last complete line
-	shardPath := filepath.Join(dir, ".flywheel", "events", base)
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return err
+	}
+	shardPath := filepath.Join(root, shardDirName, base)
 	lastLine, found, err := lastCompleteLineOf(shardPath)
 	if err != nil {
 		return err
@@ -152,7 +156,7 @@ func appendShardLines(dir, base string, events []Event, now time.Time) error {
 	}
 
 	// Ensure the directory exists
-	eventsDir := filepath.Join(dir, ".flywheel", "events")
+	eventsDir := filepath.Join(root, shardDirName)
 	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", eventsDir, err)
 	}
