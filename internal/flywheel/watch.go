@@ -54,7 +54,11 @@ func TailEvents(dir string, offset int64) ([]Event, int64, error) {
 		return nil, offset, fmt.Errorf("sharded log: use TailLog")
 	}
 
-	path := filepath.Join(dir, ".flywheel", "events.jsonl")
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return nil, offset, err
+	}
+	path := filepath.Join(root, legacyLogName)
 	// Read only what was appended since offset, never the whole log again
 	// (#305 review).
 	f, err := os.Open(path)

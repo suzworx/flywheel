@@ -115,6 +115,12 @@ order. Each shard has its own hash chain with a genesis block and a `sharded` se
 fields), and `flywheel verify --log` checks them all. Transient shard locks under
 `.flywheel/locks/` guard concurrent writes per shard and are git-ignored.
 
+Either layout can live outside the checkout: config `ledger.dir` (`"home"`, an absolute path or
+`~/<path>`; env `FLYWHEEL_LEDGER_DIR` overrides it) moves the log and its locks there, so branch
+switches and merges never rewrite it and every worktree of one clone can share it. It refuses a
+directory inside the checkout and a still-present in-tree log; `flywheel ci`, doctor, fleet and
+backup do not follow it yet ([#464](https://github.com/suzworx/flywheel/issues/464)).
+
 ## Measure, don't trust
 
 `flywheel validate` runs a task's gates and checks its `owns` boundary, recording supervisor

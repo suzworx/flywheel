@@ -23,7 +23,11 @@ const (
 // ShardedLayout reports whether dir uses the sharded log: .flywheel/events
 // is a directory. A regular file at that path is an error naming it.
 func ShardedLayout(dir string) (bool, error) {
-	eventsPath := filepath.Join(dir, ".flywheel", shardDirName)
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return false, err
+	}
+	eventsPath := filepath.Join(root, shardDirName)
 	info, err := os.Stat(eventsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -110,9 +114,13 @@ type logFile struct {
 // *.lock, *.tmp, names not ending in .jsonl) is ignored.
 func logFilesOf(dir string) ([]logFile, error) {
 	var files []logFile
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return nil, err
+	}
 
 	// Legacy file first
-	legacyPath := filepath.Join(dir, ".flywheel", legacyLogName)
+	legacyPath := filepath.Join(root, legacyLogName)
 	info, err := os.Stat(legacyPath)
 	if err != nil && !os.IsNotExist(err) {
 		// Never read the shards without the legacy prefix (#347 review).
@@ -123,7 +131,7 @@ func logFilesOf(dir string) ([]logFile, error) {
 	}
 
 	// Shard files in .flywheel/events/
-	eventsDir := filepath.Join(dir, ".flywheel", shardDirName)
+	eventsDir := filepath.Join(root, shardDirName)
 	entries, err := os.ReadDir(eventsDir)
 	if err != nil {
 		if os.IsNotExist(err) {

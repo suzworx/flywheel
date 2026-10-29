@@ -1055,11 +1055,14 @@ func appendEvents(dir string, events []Event, clock time.Time) error {
 	}
 	// Legacy path: create .flywheel, take the lock, re-check the layout, and
 	// only then stamp (a diverted batch must reach the shard unstamped).
-	dot := filepath.Join(dir, ".flywheel")
+	dot, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dot, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dot, err)
 	}
-	release, err := acquireRepoLock(dir, "events.lock", eventsLockTimings())
+	release, err := acquireLedgerLock(dir, "events.lock", eventsLockTimings())
 	if err != nil {
 		return err
 	}
@@ -1153,7 +1156,11 @@ func ReadEvents(dir string) ([]Event, error) {
 	} else if sharded {
 		return readShardedEvents(dir)
 	}
-	path := filepath.Join(dir, ".flywheel", "events.jsonl")
+	root, err := ledgerEventsRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root, legacyLogName)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

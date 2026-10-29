@@ -143,7 +143,10 @@ func runLogShard(dir string, stdout, stderr io.Writer, now time.Time) error {
 		}
 		return err
 	}
-	if sealed {
+	if root, external, rerr := flywheel.EventLogDir(dir); sealed && rerr == nil && external {
+		// ledger.dir (issue #464): name the real files outside the checkout.
+		fmt.Fprintf(stdout, "sealed %s at %d lines; new events go to %s\n", filepath.Join(root, "events.jsonl"), legacyLines, filepath.Join(root, "events")+string(filepath.Separator))
+	} else if sealed {
 		fmt.Fprintf(stdout, "sealed %s/.flywheel/events.jsonl at %d lines; new events go to .flywheel/events/\n", dir, legacyLines)
 	} else {
 		fmt.Fprintf(stdout, "%s already uses the sharded log\n", dir)
