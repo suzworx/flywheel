@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.81.0](https://github.com/suzworx/flywheel/compare/v0.80.3...v0.81.0) (2026-10-29)
+
+
+### Features
+
+* flywheel attest --scope tasks:a,b attests one unit of a trailer-less multi-unit squash ([#924](https://github.com/suzworx/flywheel/issues/924)) ([e9b989e](https://github.com/suzworx/flywheel/commit/e9b989ec4b80106af1deb4fe3a354cb2da75d2bd)), closes [#908](https://github.com/suzworx/flywheel/issues/908)
+
+
+### Bug Fixes
+
+* validate attributes another ledger's task worktree to that ledger's in-flight task ([#922](https://github.com/suzworx/flywheel/issues/922)) ([89e5ba3](https://github.com/suzworx/flywheel/commit/89e5ba3568fa98097923200695d7cc521fb54710)), closes [#918](https://github.com/suzworx/flywheel/issues/918)
+
 ## [0.80.3](https://github.com/suzworx/flywheel/compare/v0.80.2...v0.80.3) (2026-10-29)
 
 
