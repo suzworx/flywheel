@@ -1565,7 +1565,13 @@ working exactly as before.
   `session`; `Validate` refuses an external reading missing any of the three. Only the lead writes
   them, never a worker: `attest` refuses a worker session of the task (T4, and verify's T4 fails
   one), a task with no dispatched attempt (T5), and a commit that changed a path outside the
-  unit's `owns:` against its first parent (T3). With `--scope tasks:a,b` (issue
+  unit's `owns:` against its first parent (T3). The T3 path check skips `flywheel.md`, `.flywheel/`
+  and any path matching a `.flywheel/config.json` `attest.lead_paths` entry (issue
+  [#895](https://github.com/suzworx/flywheel/issues/895)): lead-maintained tracking files such as
+  `TASKS.md`, matched like `owns:` entries (exact path, prefix ending in `/`, or shell pattern). A
+  load refuses an entry that is empty, absolute, has a `..` segment, starts with `!` or is a bad
+  pattern; a T3 refusal's fix names the key. lead_paths widens nothing else (validate's owns check
+  is unchanged). With `--scope tasks:a,b` (issue
   [#908](https://github.com/suzworx/flywheel/issues/908)) the command reaches the same scoped check
   `land --pr` uses (`AttestScoped`, #831): for a squash holding several units' files, a path another
   listed unit owns is accepted, a path no listed unit owns is still T3, and a listed task not in the
