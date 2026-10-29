@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -79,6 +80,48 @@ type Config struct {
 	Skills *SkillsConfig `json:"skills,omitempty"`
 	// Gates tunes the environment every gate runs in (issue #809).
 	Gates *GatesConfig `json:"gates,omitempty"`
+	// Attest tunes flywheel attest (issue #895).
+	Attest *AttestConfig `json:"attest,omitempty"`
+}
+
+// AttestConfig tunes flywheel attest (issue #895).
+type AttestConfig struct {
+	// LeadPaths are lead-maintained tracking files (a project ledger such as
+	// TASKS.md) that attest's T3 path check skips like .flywheel/. Entries
+	// match like a brief's owns: entries: an exact path, a prefix ending in
+	// "/", or a shell pattern. They widen nothing else.
+	LeadPaths []string `json:"lead_paths,omitempty"`
+}
+
+// attestLeadPath reports whether p matches an attest.lead_paths entry.
+func (c Config) attestLeadPath(p string) bool {
+	if c.Attest == nil {
+		return false
+	}
+	for _, e := range c.Attest.LeadPaths {
+		if ownsEntryMatches(e, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// attestLeadPathProblem is why an attest.lead_paths entry is refused, or "".
+func attestLeadPathProblem(e string) string {
+	switch {
+	case strings.TrimSpace(e) == "":
+		return "must not be empty"
+	case path.IsAbs(e) || filepath.IsAbs(e) || filepath.VolumeName(e) != "" || (len(e) >= 2 && e[1] == ':'):
+		return "must be relative to the repository root"
+	case slices.Contains(strings.Split(filepath.ToSlash(e), "/"), ".."):
+		return "must not have a \"..\" segment"
+	case strings.HasPrefix(e, "!"):
+		return "must not be negated"
+	}
+	if _, err := path.Match(e, ""); errors.Is(err, path.ErrBadPattern) {
+		return "is not a valid pattern"
+	}
+	return ""
 }
 
 // GatesConfig tunes how gates run (issue #809).
@@ -1715,6 +1758,13 @@ func (c Config) validateLoad() error {
 	}
 	if n := c.LeadBuiltMaxChangedLines(); n < 0 {
 		problems = append(problems, fmt.Sprintf("lead_built.max_changed_lines: %d must not be negative", n))
+	}
+	if c.Attest != nil {
+		for i, e := range c.Attest.LeadPaths {
+			if why := attestLeadPathProblem(e); why != "" {
+				problems = append(problems, fmt.Sprintf("attest.lead_paths[%d]: entry %q %s", i, e, why))
+			}
+		}
 	}
 	if c.Review != nil {
 		if c.Review.PanelMinLines < 0 {

@@ -139,6 +139,9 @@ never as first pass.
 When CI measured a merged commit, `flywheel attest <task> --commit SHA --evidence URL --session S`
 records its gates as passing readings marked `source: external`, then `inspect --commit` and
 `land --commit` finish the unit (issue [#367](https://github.com/suzworx/flywheel/issues/367)).
+The lead's own tracking files (a project ledger such as `TASKS.md`) go in `.flywheel/config.json`
+`attest.lead_paths` (entries matched like `owns:` entries); attest's T3 path check skips them like
+`.flywheel/`, and they widen nothing else (issue [#895](https://github.com/suzworx/flywheel/issues/895)).
 For a squash that holds several units' files and no `Flywheel-Task:` trailers, attest each unit
 with `--scope tasks:a,b`: a path another listed unit owns is accepted, a path no listed unit owns is
 still refused T3, and an unknown task is a usage error

@@ -83,10 +83,16 @@ func AttestScoped(dir, task, commit, evidence, session string, scope []string) (
 			others = append(others, h.Owns)
 		}
 	}
+	// attest.lead_paths are the lead's own tracking files (issue #895): skipped
+	// like .flywheel/.
+	cfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return "", fmt.Errorf("attest %s: %w", task, err)
+	}
 	var outside []string
 	for _, line := range strings.Split(out, "\n") {
 		p := strings.TrimSpace(line)
-		if p == "" || p == "flywheel.md" || strings.HasPrefix(p, ".flywheel/") {
+		if p == "" || p == "flywheel.md" || strings.HasPrefix(p, ".flywheel/") || cfg.attestLeadPath(p) {
 			continue
 		}
 		if ownsContains(header.Owns, p) {
@@ -104,7 +110,7 @@ func AttestScoped(dir, task, commit, evidence, session string, scope []string) (
 		}
 	}
 	if len(outside) > 0 {
-		return "", &RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("commit %s changed paths outside %s's owns (%s); an attestation vouches for the unit's own change only", commit, task, strings.Join(outside, ", "))}
+		return "", &RuleRefusal{Rule: "T3", Fix: fmt.Sprintf("commit %s changed paths outside %s's owns (%s); an attestation vouches for the unit's own change only; a lead-maintained file goes in .flywheel/config.json attest.lead_paths", commit, task, strings.Join(outside, ", "))}
 	}
 
 	reading := func(gate, command string) Event {
