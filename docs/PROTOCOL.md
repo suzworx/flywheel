@@ -601,7 +601,9 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   **denied at dispatch** — the claude adapter's default `--disallowedTools` denies `git` commit,
   push, stash, reset, checkout, rebase, merge, add, rm, mv, restore, update-index, apply, tag,
   branch (so `git branch --show-current` too; use `git rev-parse --abbrev-ref HEAD`), switch,
-  cherry-pick, revert, am, worktree, clean, notes, replace, update-ref and gc — and **detected after
+  cherry-pick, revert, am, worktree, clean, notes, replace, update-ref and gc (stash and worktree
+  for their write forms only: `git stash list`/`show` and `git worktree list` stay allowed,
+  matching the git guard) — and **detected after
   each attempt** — on every exit path, before flywheel's own attempt commit (so its index refresh is
   never charged to the worker), flywheel compares the worktree's HEAD, branch, stash, index (`git
   diff --cached --name-only`) and tags with the state captured at dispatch, and `note` names what

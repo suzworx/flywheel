@@ -75,8 +75,8 @@ func TestSkillAllowResumed(t *testing.T) {
 		t.Errorf("resumed: --resume = %v, want [s1]", got)
 	}
 	deny := strings.Join(flagValues(args, "--disallowedTools"), " ")
-	if !strings.Contains(deny, "Bash(git stash:*)") {
-		t.Errorf("resumed: --disallowedTools = %q, want Bash(git stash:*) kept", deny)
+	if !strings.Contains(deny, "Bash(git stash push:*)") {
+		t.Errorf("resumed: --disallowedTools = %q, want Bash(git stash push:*) kept", deny)
 	}
 }
 

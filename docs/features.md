@@ -209,9 +209,10 @@ On the `claude` adapter, a worker's only way to run its own gate lines is its Ba
 `.flywheel/config.json` can therefore set `allowed_tools` and `disallowed_tools` (Claude Code
 tool patterns) to shape the dispatch's `--allowedTools`/`--disallowedTools`. Unset, a worker
 defaults to `allowed_tools: ["Bash"]` and a `disallowed_tools` covering the git-write family
-(`Bash(git commit:*)`, `Bash(git push:*)`, `Bash(git stash:*)`, `Bash(git reset:*)`,
-`Bash(git checkout:*)`, `Bash(git rebase:*)`, `Bash(git merge:*)`): the worker can run its own
-gates but still cannot commit, stash, reset, checkout, rebase or merge — the worker permission
+(`Bash(git commit:*)`, `Bash(git push:*)`, the stash write forms such as `Bash(git stash push:*)`,
+`Bash(git reset:*)`, `Bash(git checkout:*)`, `Bash(git rebase:*)`, `Bash(git merge:*)`): the worker
+can run its own gates but still cannot commit, stash, reset, checkout, rebase or merge, while the
+read-only `git stash list`/`show` and `git worktree list` stay allowed, as in the git guard — the worker permission
 policy is enforced by the permission layer, not by asking nicely. The default also denies
 `git fetch` and `git pull`, because they write refs and reach the network. An explicitly configured list
 replaces its default; it is not merged with it, so an operator can widen or narrow deliberately

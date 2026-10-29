@@ -1090,11 +1090,23 @@ func TestDefaultDisallowedIndexWrites(t *testing.T) {
 	for _, d := range defaultDisallowedTools {
 		has[d] = true
 	}
-	for _, sub := range []string{"commit", "push", "stash", "reset", "checkout", "rebase", "merge",
+	for _, sub := range []string{"commit", "push", "reset", "checkout", "rebase", "merge",
 		"add", "rm", "mv", "restore", "update-index", "apply", "tag", "branch", "switch",
-		"cherry-pick", "revert", "am", "worktree", "clean", "notes", "replace", "update-ref", "gc"} {
+		"cherry-pick", "revert", "am", "clean", "notes", "replace", "update-ref", "gc"} {
 		if !has["Bash(git "+sub+":*)"] {
 			t.Errorf("defaultDisallowedTools lacks Bash(git %s:*)", sub)
+		}
+	}
+	// Stash and worktree are denied for their write forms only (#916).
+	for _, p := range []string{"Bash(git stash)", "Bash(git stash push:*)", "Bash(git stash pop:*)",
+		"Bash(git worktree)", "Bash(git worktree add:*)"} {
+		if !has[p] {
+			t.Errorf("defaultDisallowedTools lacks %s", p)
+		}
+	}
+	for _, p := range []string{"Bash(git stash:*)", "Bash(git worktree:*)"} {
+		if has[p] {
+			t.Errorf("defaultDisallowedTools has %s, which denies read-only stash list / worktree list", p)
 		}
 	}
 	for _, sub := range []string{"status", "diff", "log"} {
