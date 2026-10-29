@@ -440,13 +440,17 @@ func (c Config) ReviewRequired() bool {
 
 // Worker configures a single CLI worker.
 type Worker struct {
-	Name         string     `json:"name"`
-	Adapter      string     `json:"adapter"` // "opencode", "sim", "claude", "codex", or "pi"
-	Model        string     `json:"model"`
-	Variant      string     `json:"variant,omitempty"`
-	MaxParallel  int        `json:"max_parallel,omitempty"`  // 0 means 1
-	StallTimeout int        `json:"stall_timeout,omitempty"` // whole seconds; 0 means the default 600
-	Fallbacks    []Fallback `json:"fallbacks,omitempty"`
+	Name         string `json:"name"`
+	Adapter      string `json:"adapter"` // "opencode", "sim", "claude", "codex", or "pi"
+	Model        string `json:"model"`
+	Variant      string `json:"variant,omitempty"`
+	MaxParallel  int    `json:"max_parallel,omitempty"`  // 0 means 1
+	StallTimeout int    `json:"stall_timeout,omitempty"` // whole seconds; 0 means the default 600
+	// ToolStallTimeout bounds one tool call's open time, read from the
+	// stream's tool_progress heartbeats (issue #917); whole seconds, 0 means
+	// the default 1800.
+	ToolStallTimeout int        `json:"tool_stall_timeout,omitempty"`
+	Fallbacks        []Fallback `json:"fallbacks,omitempty"`
 	// Routing picks the worker's model per dispatch from the per-model
 	// scoreboard (issue #474). Opt-in: no routing block means today's
 	// behaviour exactly. Edited in config.json, like fallbacks.
@@ -692,6 +696,18 @@ func (w Worker) stallTimeoutDuration() time.Duration {
 		return defaultStallTimeout
 	}
 	return time.Duration(w.StallTimeout) * time.Second
+}
+
+// defaultToolStallTimeout applies when a worker's ToolStallTimeout is unset (0).
+const defaultToolStallTimeout = 1800 * time.Second
+
+// toolStallTimeoutDuration returns the worker's configured tool stall
+// timeout, or the default 1800s when unset (issue #917).
+func (w Worker) toolStallTimeoutDuration() time.Duration {
+	if w.ToolStallTimeout <= 0 {
+		return defaultToolStallTimeout
+	}
+	return time.Duration(w.ToolStallTimeout) * time.Second
 }
 
 // defaultAllowedTools lets a worker run its own gate lines out of the box.
@@ -1340,6 +1356,9 @@ func (c Config) validateLoad() error {
 		if w.StallTimeout < 0 {
 			problems = append(problems, fmt.Sprintf("%s: stall_timeout %d must be >= 0", where, w.StallTimeout))
 		}
+		if w.ToolStallTimeout < 0 {
+			problems = append(problems, fmt.Sprintf("%s: tool_stall_timeout %d must be >= 0", where, w.ToolStallTimeout))
+		}
 		if err := w.validateMCP(); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", where, err))
 		}
@@ -1915,6 +1934,8 @@ func workerValue(w Worker, key string) (string, bool) {
 		return strconv.Itoa(w.MaxParallel), true
 	case "stall_timeout":
 		return strconv.Itoa(w.StallTimeout), true
+	case "tool_stall_timeout":
+		return strconv.Itoa(w.ToolStallTimeout), true
 	case "max_turns":
 		return strconv.Itoa(w.MaxTurns), true
 	case "unit_cost_usd":
@@ -1945,7 +1966,7 @@ func (c Config) validKeys() []string {
 	keys := []string{
 		"adapter", "fallbacks", "fallbacks.all", "feedback.submit",
 		"feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host", "limits.provider_error_retries", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries",
-		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
+		"limits.unit_cost_usd", "log.shards", "max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout", "tool_stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",
@@ -2034,7 +2055,7 @@ func (c *Config) Set(key, value string) error {
 		}
 	}
 	switch key {
-	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout", "max_turns", "unit_cost_usd":
+	case "model", "variant", "permission_mode", "adapter", "max_parallel", "stall_timeout", "tool_stall_timeout", "max_turns", "unit_cost_usd":
 		if len(c.Workers) == 0 {
 			return c.settableErr(key)
 		}
@@ -2261,7 +2282,7 @@ func (c *Config) Set(key, value string) error {
 
 // settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
 // default worker or as workers.<name>.<key>.
-var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "models_allowed", "permission_mode", "stall_timeout", "unit_cost_usd", "variant"}
+var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "models_allowed", "permission_mode", "stall_timeout", "tool_stall_timeout", "unit_cost_usd", "variant"}
 
 // parseMaxTurns parses a max_turns value: a non-negative integer, 0 clearing
 // it (issue #459).
@@ -2316,6 +2337,12 @@ func setWorkerValue(w *Worker, key, value string) error {
 			return fmt.Errorf("stall_timeout: value %q must be an integer", value)
 		}
 		w.StallTimeout = n
+	case "tool_stall_timeout":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("tool_stall_timeout: value %q must be an integer", value)
+		}
+		w.ToolStallTimeout = n
 	default:
 		return fmt.Errorf("unknown key %q; valid worker keys: %s", key, strings.Join(settableWorkerKeys, ", "))
 	}
@@ -2332,7 +2359,7 @@ func (c Config) settableKeys() []string {
 	keys := []string{
 		"adapter", "feedback.submit", "feedback.upstream", "limits.lost_after", "limits.max_turns", "limits.per_host",
 		"limits.provider_error_retries", "limits.quiet_wait", "limits.rate_limit_max_wait", "limits.rate_limit_pause_at", "limits.rate_limit_retries", "limits.unit_cost_usd",
-		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout",
+		"max_parallel", "max_turns", "model", "permission_mode", "review.allowed_tools", "review.group_gates", "review.panel", "review.panel_min_lines", "review.required", "stall_timeout", "tool_stall_timeout",
 		"unit_cost_usd", "variant",
 		"factory.skin", "integration.branch", "lead_built.max_changed_lines", "skills.require_loaded", "worktree.carry", "worktree.setup", "worktree.setup_timeout", "worktree.strict_links",
 		"staffing.lead.adapter", "staffing.lead.model", "staffing.lead.session",

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.80.2](https://github.com/suzworx/flywheel/compare/v0.80.1...v0.80.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* a correction keeps the owns every earlier correction delta widened, until the next fresh attempt ([#913](https://github.com/suzworx/flywheel/issues/913)) ([259565e](https://github.com/suzworx/flywheel/commit/259565e2c76d6404d4aa8b44110b9aad7765dfe2)), closes [#912](https://github.com/suzworx/flywheel/issues/912)
+* plain flywheel lint warns on a kind: fix brief that run refuses it until a red base probe is recorded ([#915](https://github.com/suzworx/flywheel/issues/915)) ([0aa5e7b](https://github.com/suzworx/flywheel/commit/0aa5e7b221bf0984a1b8ba09f078bf9321ab7095)), closes [#896](https://github.com/suzworx/flywheel/issues/896)
+
 ## [0.80.1](https://github.com/suzworx/flywheel/compare/v0.80.0...v0.80.1) (2026-10-29)
 
 

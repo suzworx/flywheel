@@ -518,7 +518,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   stopped the worker at a lease tick; the note is `stopped by suspend at <ts>`, the session is kept
   and `flywheel resume` continues it (see [`suspended`](#suspended)), issue #572; `start-failed`; `silent`;
   `stalled` — the run-file gap watchdog killed a run that had started but stopped producing lines
-  for the worker's stall timeout, issue #158), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
+  for the worker's stall timeout, issue #158, or whose stream's `tool_progress` heartbeat showed one
+  tool call open for the worker's `tool_stall_timeout` (whole seconds, default 1800; the heartbeats
+  keep the run file growing, so the gap watchdog never fires), with the note
+  `tool call <tool> open <elapsed>s (tool_stall_timeout <N>s)` first, issue #917), `note`, `steps`, `tokens`, `cost`, `peak_reasoning`
   (the largest single-step reasoning figure seen in the run, omitted from the line when 0, issue
   #156), `sha256` (of the whole run file), `wrote` (the attempt's distinct edit/write paths, sorted,
   at most 50, omitted when the attempt made no edits, issue #163; it also holds the worktree-relative

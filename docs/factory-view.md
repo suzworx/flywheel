@@ -219,7 +219,11 @@ UTC). They name the state, the reason and the next step as `flywheel recover` wo
   next: flywheel run k2.` (or that the factory is frozen)
 - dispatched: `queued: attempt 2 dispatched 3m ago, waiting for the worker to start.`
 - running: `building: attempt 2, 14 steps, running for 23m.`; `stalled` or `silent` when the floor
-  says so or nothing happened for longer than the worker's stall timeout, with the timeout
+  says so or nothing happened for longer than the worker's stall timeout, with the timeout. A
+  live run whose latest run-file line is a `tool_progress` heartbeat has an open tool call: it
+  is `stalled` once that call's elapsed reaches the default worker's `tool_stall_timeout`
+  (default 1800s) and `long-step` at half of it, since the heartbeats keep the file growing; any
+  later line clears it (issue #917)
 - finished: `rate-limited` (the model and its reset), `capped` (the output cap and the peak
   reasoning), `suspended` (frozen by suspend at a time; resumes at the thaw or on flywheel resume),
   `failed` (the finish reason), `validation failed` (the failing gates and the first failing
