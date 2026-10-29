@@ -64,6 +64,7 @@ first line stops matching `^# flywheel protocol v`.
   - [`resource_wait`](#resource_wait)
   - [`worktree_discarded`](#worktree_discarded)
   - [`retro`](#retro)
+  - [`recommitted`](#recommitted)
   - [`owns_checked`](#owns_checked)
   - [`inspected`](#inspected)
   - [`staffed`](#staffed)
@@ -545,11 +546,15 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `warning: <task> <attempt>: attempt commit left <n> changed path(s) uncommitted (outside owns):
   <paths>` and recorded as `uncommitted`; a commit failure never fails the run and is noted as
   `attempt commit failed: <err>`).
-- `uncommitted` (issue #477): the changed paths the attempt commit left out. Only a `finished` event
-  may carry it. While any of the task's latest `finished` event's `uncommitted` paths is still
+- `uncommitted` (issue #477): the changed paths the attempt commit left out. Only a `finished` or
+  a [`recommitted`](#recommitted) event may carry it. The task's latest `finished` or
+  `recommitted` event, in log order, supplies the list (a recommit with none clears it; a later
+  `finished` of a new attempt supersedes a recommit). While any of its paths is still
   changed (dirty or untracked) in the tree validate measures, the owns check fails with the single
   outside entry `left uncommitted by the attempt commit: <paths>` (replacing those bare paths,
   and even when a baseline or claim would excuse them): a PR cut from `fw/<task>` would lack them.
+  To clear it, amend owns to cover the paths (`flywheel log --kind amended`), then run
+  `flywheel worktree commit <task> --session S` (issue #897), never a hand-made git commit.
 - `reason` is the provider's own finish reason, passed through verbatim by the adapter rather than
   normalized by flywheel; `stop` is the only clean value. Other values seen in practice: `length`,
   `error`, `start-failed`, `silent`, `stalled` (above) and `unknown` — unknown meaning the provider
@@ -1607,6 +1612,27 @@ working exactly as before.
 - Carries: `task`, `session`, `note` and `paths` (the `--changed` paths, slash form). `--none` is
   recorded as empty `paths`; there is no other marker for it.
 - Effect: no status change. `Validate` requires a task, a `session` and a `note`.
+
+### `recommitted`
+- Written by: the CLI only, via `flywheel worktree commit <task> --session S [--note TEXT] [--dir
+  DIR]` ([#897](https://github.com/suzworx/flywheel/issues/897)), the lead's recorded re-run of the
+  attempt commit after amending owns to cover paths a clean stop left
+  [`uncommitted`](#finished). The task id may come before or after the flags; a missing task or
+  `--session` is usage (exit 2). The command resolves the task worktree
+  `<dir>/.flywheel/worktrees/<task>` with `fw/<task>` checked out; a task with no events in the
+  log, or no such task worktree, exits 1 naming it and records nothing. Owns are the owns validate
+  measures for the task's current attempt: the attempt's brief header with recorded amendments
+  and staged destinations applied (one shared helper, so the two cannot drift). The commit is
+  built exactly as a `finished` event's attempt commit (temporary index, flywheel identity,
+  message `<task> <attempt>`, compare-and-swap on `fw/<task>`; never the shared index), for the
+  task's latest attempt id. It prints `recommitted <task> <attempt>: <sha>` (or `: nothing to
+  commit`), then `still uncommitted (outside owns): <paths>` when changed paths remain outside
+  owns, all on stdout, and exits 0. A commit made but whose index refresh failed is still
+  recorded, then exits 1.
+- Carries: `task`, `attempt`, `session`, `commit` (omitted when nothing was committed),
+  `uncommitted` (the changed paths still outside owns) and `note`.
+- Effect: no status change. `Validate` requires a task and a `session`. Validate's owns check
+  reads this event's `uncommitted` as it reads a `finished` event's: the latest of the two wins.
 - Enforcement: config `lint.retro_required_since` (RFC 3339; `""`, the default, is off; any other
   value that does not parse fails config load naming the key). When set, a unit is due when its
   latest `landed` event (a `land_corrected` changes the commit, not the landing, so it does not

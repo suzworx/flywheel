@@ -369,7 +369,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	}
 	// A destination stays owned through the files earlier passes staged and
 	// flywheel unstage recorded, after its staging copy is gone.
-	owns := stagedOwns(header.Owns, append(slices.Clone(staged), recordedStaged(events, task)...))
+	owns := measuredOwns(header.Owns, staged, events, task)
 	tree, err := treeHash(wd)
 	if err != nil {
 		return GaugeResult{}, err
@@ -861,12 +861,14 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 }
 
 // leftUncommitted returns the uncommitted paths of task's latest finished
-// event (issue #477) that are still changed (dirty or untracked) in wd, in
-// recorded order; nil when there are none or wd cannot be read.
+// event (issue #477), or of a later recommitted event (issue #897), that
+// are still changed (dirty or untracked) in wd, in recorded order; nil when
+// there are none or wd cannot be read. A recommit with no uncommitted paths
+// clears the list; a later finished of a new attempt supersedes it.
 func leftUncommitted(wd string, events []Event, task string) []string {
 	var recorded []string
 	for _, e := range events {
-		if e.Task == task && e.Kind == "finished" {
+		if e.Task == task && (e.Kind == "finished" || e.Kind == "recommitted") {
 			recorded = e.Uncommitted
 		}
 	}
