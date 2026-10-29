@@ -328,7 +328,7 @@ func landedTree(dir, commit string) string {
 	if _, err := gitRun(dir, idx, []string{"read-tree", commit}); err != nil {
 		return ""
 	}
-	if _, err := gitRun(dir, idx, []string{"rm", "-r", "--cached", "--ignore-unmatch", "--", ".flywheel", "flywheel.md"}); err != nil {
+	if _, err := gitRun(dir, idx, []string{"rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", ".flywheel", "flywheel.md"}); err != nil {
 		return ""
 	}
 	out, err := gitRun(dir, idx, []string{"write-tree"})
