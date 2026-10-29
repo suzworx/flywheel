@@ -129,17 +129,27 @@ func (c LogChain) OK() bool { return c.BreakLine == 0 }
 // In sharded layout, it verifies the seal matches the legacy file's current
 // state.
 func VerifyLogChain(dir string) (LogChain, error) {
-	sharded, err := ShardedLayout(dir)
+	root, err := ledgerEventsRoot(dir)
 	if err != nil {
 		return LogChain{}, err
 	}
-	acks := reanchorAcks(dir)
+	return verifyLogChainAt(root, reanchorAcks(dir))
+}
 
-	if sharded {
-		return verifyShardedChain(dir, acks)
+// verifyLogChainAt is VerifyLogChain of the log in root (the directory
+// holding events.jsonl or events/) with the reanchored events acks; it never
+// resolves ledger.dir, so a backup's copy is checked by its own files.
+func verifyLogChainAt(root string, acks []Event) (LogChain, error) {
+	sharded, err := shardedLayoutAt(root)
+	if err != nil {
+		return LogChain{}, err
 	}
 
-	return verifyLegacyChain(dir, acks)
+	if sharded {
+		return verifyShardedChain(root, acks)
+	}
+
+	return verifyLegacyChain(root, acks)
 }
 
 // danglingBreak records the dangling-prev break at line i of lines on result
@@ -172,12 +182,8 @@ func danglingReason(lines []string, i int, prev string) string {
 	return "prev matches no earlier line"
 }
 
-// verifyLegacyChain checks the legacy events.jsonl chain.
-func verifyLegacyChain(dir string, acks []Event) (LogChain, error) {
-	root, err := ledgerEventsRoot(dir)
-	if err != nil {
-		return LogChain{}, err
-	}
+// verifyLegacyChain checks the legacy events.jsonl chain of the log in root.
+func verifyLegacyChain(root string, acks []Event) (LogChain, error) {
 	path := filepath.Join(root, legacyLogName)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -239,9 +245,9 @@ func verifyLegacyChain(dir string, acks []Event) (LogChain, error) {
 }
 
 // verifyShardedChain checks the sharded log chain: legacy file (if present),
-// every shard in logFilesOf order, and the seal.
-func verifyShardedChain(dir string, acks []Event) (LogChain, error) {
-	files, err := logFilesOf(dir)
+// every shard in logFilesOf order, and the seal, of the log in root.
+func verifyShardedChain(root string, acks []Event) (LogChain, error) {
+	files, err := logFilesAt(root)
 	if err != nil {
 		return LogChain{}, err
 	}
@@ -278,10 +284,6 @@ func verifyShardedChain(dir string, acks []Event) (LogChain, error) {
 	}
 
 	// Verify the seal exists and matches the legacy file's current state
-	root, err := ledgerEventsRoot(dir)
-	if err != nil {
-		return LogChain{}, err
-	}
 	legacyPath := filepath.Join(root, legacyLogName)
 	legacyHash, err := lastLineHash(legacyPath)
 	if err != nil {

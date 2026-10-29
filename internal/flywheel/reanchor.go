@@ -1,7 +1,9 @@
 package flywheel
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -35,6 +37,33 @@ func reanchorAcks(dir string) []Event {
 	for _, e := range events {
 		if e.Kind == "reanchored" {
 			acks = append(acks, e)
+		}
+	}
+	return acks
+}
+
+// reanchorAcksAt is reanchorAcks of the log in root (complete lines of every
+// log file), without resolving ledger.dir: the backup's copy is checked by
+// its own files, never by the ledger.dir its config.json names.
+func reanchorAcksAt(root string) []Event {
+	files, err := logFilesAt(root)
+	if err != nil {
+		return nil
+	}
+	var acks []Event
+	for _, lf := range files {
+		b, err := os.ReadFile(lf.Path)
+		if err != nil {
+			return nil
+		}
+		events, err := ParseEvents(bytes.NewReader(b[:bytes.LastIndexByte(b, '\n')+1]), false)
+		if err != nil {
+			return nil
+		}
+		for _, e := range events {
+			if e.Kind == "reanchored" {
+				acks = append(acks, e)
+			}
 		}
 	}
 	return acks

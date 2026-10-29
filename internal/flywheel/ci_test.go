@@ -50,6 +50,31 @@ func TestInitCIWritesAtRepoRoot(t *testing.T) {
 	}
 }
 
+// TestInitCILedgerDirGuard checks issue #464: the not-committed pre-check is
+// skipped when config.json has a "ledger" key or FLYWHEEL_LEDGER_DIR is set,
+// so verify's exit 8 reaches the inconclusive warning, which names ledger.dir.
+func TestInitCILedgerDirGuard(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	initGitRepoAt(t, root)
+	if _, _, err := InitCI(root, "dev"); err != nil {
+		t.Fatalf("InitCI: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "flywheel-audit.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(content)
+	for _, want := range []string{
+		`[ -z "$FLYWHEEL_LEDGER_DIR" ] && ! grep -q '"ledger"' "$FLYWHEEL_DIR/.flywheel/config.json" 2>/dev/null; then`,
+		"ledger.dir keeping the event log outside the repository",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("workflow lacks %q:\n%s", want, s)
+		}
+	}
+}
+
 // TestInitCISubdirTargetsFactory tests that InitCI places the file at the repo root
 // even when called from a subdirectory
 func TestInitCISubdirTargetsFactory(t *testing.T) {

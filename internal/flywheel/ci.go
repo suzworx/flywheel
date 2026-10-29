@@ -17,7 +17,8 @@ import (
 const ciAuditWorkflow = `# flywheel-audit: verify the factory's records on every pull request (issue #56).
 # Written by "flywheel init --ci"; a rerun never overwrites this file.
 # Make "flywheel-audit" a required status check in the branch ruleset so it cannot be skipped.
-# The event log (.flywheel/events.jsonl) must be committed for this job to have anything to verify.
+# The event log (.flywheel/events.jsonl) must be committed for this job to have anything to verify;
+# with ledger.dir it lives outside the repository and the audit is reported inconclusive.
 name: flywheel-audit
 on:
   pull_request:
@@ -41,7 +42,8 @@ jobs:
         env:
           FLYWHEEL_DIR: @FLYWHEEL_DIR@
         run: |
-          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ] && [ ! -d "$FLYWHEEL_DIR/.flywheel/events" ]; then
+          # ledger.dir keeps the log outside the repository: verify then exits 8 (inconclusive), not 1.
+          if [ ! -f "$FLYWHEEL_DIR/.flywheel/events.jsonl" ] && [ ! -d "$FLYWHEEL_DIR/.flywheel/events" ] && [ -z "$FLYWHEEL_LEDGER_DIR" ] && ! grep -q '"ledger"' "$FLYWHEEL_DIR/.flywheel/config.json" 2>/dev/null; then
             echo "::error::the event log is not committed; flywheel-audit needs the event log in the repository"
             exit 1
           fi
@@ -51,7 +53,7 @@ jobs:
           flywheel verify --all --log --dir "$FLYWHEEL_DIR" --workdir .
           rc=$?
           if [ "$rc" -eq 8 ]; then
-            echo "::warning::some checks were inconclusive (a pass whose tree this checkout cannot resolve); no violation was established"
+            echo "::warning::some checks were inconclusive (a pass whose tree this checkout cannot resolve, or ledger.dir keeping the event log outside the repository); no violation was established"
             exit 0
           fi
           exit "$rc"

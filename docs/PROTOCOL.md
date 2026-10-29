@@ -2190,8 +2190,28 @@ creates no `.flywheel/events.jsonl` and omits that piece, and fails on a refused
 `.flywheel/.gitignore` from init lists `runs/`, `worktrees/`, `locks/`, `claims/` and `leases/`
 (per-host runtime state); an existing one is never rewritten.
 
-Not yet: `flywheel verify`'s CI audit and `flywheel ledger backup` do not follow `ledger.dir`
-(issue #464, next unit); with it set they see no in-tree log.
+`flywheel verify` with `ledger.dir` set and a resolved directory that holds neither `events.jsonl`
+nor `events/` (a CI runner, or any host but the one the log lives on) is inconclusive, never a
+vacuous pass: before any task or chain check it prints `flywheel verify: inconclusive: ledger.dir
+places the event log at <dir>, which holds no log on this host (it is outside the checkout, so this
+checkout cannot be audited)` to stderr (with `--json`, the result JSON with one `LOG` item, `pass`
+false, `inconclusive` true and that reason) and exits 8; a refused `ledger.dir` exits 1. Unset, or
+an external directory that holds a log, verifies as before. The `flywheel init --ci` workflow skips
+its "the event log is not committed" pre-check when `.flywheel/config.json` has a `"ledger"` key or
+`FLYWHEEL_LEDGER_DIR` is set, so that exit 8 reaches its `::warning::` inconclusive branch (which
+names both causes: a tree this checkout cannot resolve, or `ledger.dir` keeping the log outside the
+repository) and the job passes without establishing anything. An existing workflow is never
+rewritten: rerun `flywheel init --ci` after deleting it to get the guard.
+
+`flywheel ledger backup` with `ledger.dir` set also copies the external `events.jsonl` and every
+file under `events/` (complete lines only, `*.tmp` and symlinks skipped as in `.flywheel/`, the
+directory's `locks/` and anything else left out) into the copy's `.flywheel/`, so manifest paths stay
+`.flywheel/events.jsonl` and `.flywheel/events/...`, and records the resolved directory as the
+manifest's (and `--json` result's) `ledger_dir`. A ledger directory that does not exist yet is fine:
+no events are copied. A destination inside the ledger directory is refused like one inside
+`.flywheel/`. The copy's chain is checked by its own files, never by the live directory its copied
+`config.json` names. To restore, copy `<path>/.flywheel` back, except that with `ledger_dir` in the
+manifest the event-log files go back into that directory (or `flywheel ledger move` them there).
 
 ### Sharded layout
 
