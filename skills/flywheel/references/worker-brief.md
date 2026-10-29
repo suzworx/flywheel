@@ -199,7 +199,10 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
   `--task` before dispatch, or lint reports a problem, `flywheel run` refuses the first dispatch
   and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
-  false turns it off, #648, #812); probing before dispatch stays the normal path, and a probe
+  false turns it off, #648, #812). When the worker writes the regression test, add a gate that
+  reproduces the defect on the base tree now (a short script or one-line assertion that exits
+  non-zero today), or `test -f <new test> && <run it>`; a name-filtered run matching no test
+  passes and is never the red gate alone (#889). Probing before dispatch stays the normal path, and a probe
   recorded after dispatch counts only when it ran on the dispatched base tree before any attempt
   finished (#833); a correction delta must keep the red-probed `gate:` line
   verbatim (add new gates as more lines) or `flywheel run` refuses it too (#825). A full-suite gate that fails on the base tree while CI is green
