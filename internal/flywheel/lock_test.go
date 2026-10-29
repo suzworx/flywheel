@@ -205,7 +205,7 @@ func acquireWithGuard(t *testing.T, dir string, timings repoLockTimings) (func()
 	select {
 	case r := <-done:
 		return r.release, r.err, time.Since(start)
-	case <-time.After(20 * time.Second):
+	case <-time.After(hangGuard(t)):
 		t.Fatal("acquireRepoLock hung")
 		return nil, nil, 0
 	}

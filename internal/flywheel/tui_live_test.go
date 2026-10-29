@@ -389,7 +389,7 @@ func TestTUILiveStopEndsLoop(t *testing.T) {
 		if err != nil {
 			t.Errorf("RunTUILoop() = %v, want nil", err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(hangGuard(t)):
 		t.Fatal("RunTUILoop did not stop")
 	}
 }
@@ -424,7 +424,7 @@ func TestTUIInstantKeysWhileFetching(t *testing.T) {
 		done <- RunTUILoop(TUIIO{Keys: keys, Ticks: ticks, Size: func() (int, int) { return 100, 20 }, Out: frames}, fetch)
 	}()
 	// Hang guards only: nothing below waits on the clock.
-	guard := func() <-chan time.Time { return time.After(10 * time.Second) }
+	guard := func() <-chan time.Time { return time.After(hangGuard(t)) }
 	next := func(what string) string {
 		t.Helper()
 		select {
