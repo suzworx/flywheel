@@ -1918,8 +1918,10 @@ gates (exit 5) without touching the log's legality.
   work cannot land at all. That is not a licence to put whole-workspace gates on narrow units. "The
   current attempt's prompt" is `AttemptBrief`'s result (issue #133):
   the base brief plus, when the current attempt dispatched a different file (a correction delta),
-  that file's `gate:` lines replacing the base's and its `owns:` unioned with the base's — an
-  `amended` event replaces which brief counts as the base outright. `owns:` entries are matched as
+  that file's `gate:` lines replacing the base's and its `owns:` unioned with the base's; the
+  union covers every correction delta dispatched since the task's latest fresh `r<N>` attempt, so
+  a later, narrower delta keeps what an earlier one widened (its `gate:` lines do not carry over,
+  issue #912) — an `amended` event replaces which brief counts as the base outright. `owns:` entries are matched as
   a literal path, a `dir/` prefix, or a `path.Match` shell pattern, all three checked the same way
   (issue #135, `ownsContains`). An entry starting with `!` is negated (issue #388) and takes the
   same three forms: a path is owned when some positive entry matches it and no negated entry does,

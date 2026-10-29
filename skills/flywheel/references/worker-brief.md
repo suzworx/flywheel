@@ -682,8 +682,8 @@ way, as **increments** — one delta per increment, each ending with its checks,
 STOP — and the next increment resumes the same session with the next delta.
 
 A correction delta inherits the base brief's owns, gates and needs-state links. To widen owns for
-this and later attempts, start the delta with an `owns:` line (its `gate:` lines replace the base
-gates), or record `flywheel log --task <id> --kind amended --brief <file>` before dispatching:
+this and later attempts, start the delta with an `owns:` line (every later correction keeps it until
+the next fresh attempt, issue #912; its `gate:` lines replace the base gates), or record `flywheel log --task <id> --kind amended --brief <file>` before dispatching:
 
 ```text
 owns: internal/x.go, internal/x_test.go

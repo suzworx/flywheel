@@ -597,3 +597,109 @@ func TestAttemptBriefFreshAmendedBeforeDispatchIgnored(t *testing.T) {
 		}
 	}
 }
+
+// TestAttemptBriefEarlierDeltaOwnsKept is issue #912: c2's delta narrows owns
+// back to a.go, yet c1's delta widened owns to b.go and the tree still holds
+// c1's change to it, so c2 is measured against both.
+func TestAttemptBriefEarlierDeltaOwnsKept(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "c1.txt", "owns: b.go\n\n# TASK c1\n")
+	writeAttemptBrief(t, dir, "c2.txt", "owns: a.go\ngate: exit 2\n\n# TASK c2\n")
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "c1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "c2.txt"},
+	}
+	header, paths, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if strings.Join(header.Owns, ",") != "a.go,b.go" {
+		t.Errorf("owns = %v, want [a.go b.go]", header.Owns)
+	}
+	if len(header.Gates) != 1 || header.Gates[0] != "exit 2" {
+		t.Errorf("gates = %v, want [exit 2] (c2's own gates)", header.Gates)
+	}
+	if strings.Join(paths, ",") != "brief.txt,c1.txt,c2.txt" {
+		t.Errorf("paths = %v, want [brief.txt c1.txt c2.txt]", paths)
+	}
+}
+
+// TestAttemptBriefDeltaBeforeFreshAttemptNotUnioned: a fresh r2 starts the
+// slate over, so c1's widened owns do not reach c3.
+func TestAttemptBriefDeltaBeforeFreshAttemptNotUnioned(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "c1.txt", "owns: b.go\n\n# TASK c1\n")
+	writeAttemptBrief(t, dir, "c3.txt", "owns: c.go\n\n# TASK c3\n")
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "c1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r2", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c3", Brief: "c3.txt"},
+	}
+	header, paths, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if strings.Join(header.Owns, ",") != "a.go,c.go" {
+		t.Errorf("owns = %v, want [a.go c.go] (no b.go from before r2)", header.Owns)
+	}
+	if strings.Join(paths, ",") != "brief.txt,c3.txt" {
+		t.Errorf("paths = %v, want [brief.txt c3.txt]", paths)
+	}
+}
+
+// TestAttemptBriefEarlierDeltaExclusiveKept: an earlier delta's exclusive
+// line stays in force for a later correction (issue #912).
+func TestAttemptBriefEarlierDeltaExclusiveKept(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "c1.txt", "owns: b.go\nexclusive: go.mod\n\n# TASK c1\n")
+	writeAttemptBrief(t, dir, "c2.txt", "owns: a.go\n\n# TASK c2\n")
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "c1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "c2.txt"},
+	}
+	header, _, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if strings.Join(header.Exclusive, ",") != "go.mod" {
+		t.Errorf("exclusive = %v, want [go.mod]", header.Exclusive)
+	}
+}
+
+// TestAttemptBriefEarlierDeltaGatesDoNotLeak: c1's gates were c1's only; c2
+// declares none, so c2 is gated by the base brief.
+func TestAttemptBriefEarlierDeltaGatesDoNotLeak(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeAttemptBrief(t, dir, "brief.txt", "owns: a.go\nneeds: none\ngate: exit 0\n\n# TASK\n")
+	writeAttemptBrief(t, dir, "c1.txt", "owns: b.go\ngate: exit 1\n\n# TASK c1\n")
+	writeAttemptBrief(t, dir, "c2.txt", "owns: c.go\n\n# TASK c2\n")
+	events := []Event{
+		{Task: "T1", Kind: "planned", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "r1", Brief: "brief.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c1", Brief: "c1.txt"},
+		{Task: "T1", Kind: "dispatched", Attempt: "c2", Brief: "c2.txt"},
+	}
+	header, _, err := AttemptBrief(dir, events, "T1")
+	if err != nil {
+		t.Fatalf("AttemptBrief() error = %v", err)
+	}
+	if len(header.Gates) != 1 || header.Gates[0] != "exit 0" {
+		t.Errorf("gates = %v, want [exit 0] (base gates, not c1's)", header.Gates)
+	}
+	if strings.Join(header.Owns, ",") != "a.go,b.go,c.go" {
+		t.Errorf("owns = %v, want [a.go b.go c.go]", header.Owns)
+	}
+}
