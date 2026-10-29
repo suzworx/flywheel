@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.2](https://github.com/suzworx/flywheel/compare/v0.79.1...v0.79.2) (2026-10-29)
+
+
+### Bug Fixes
+
+* the red-first refusal says what to gate when the worker writes the regression test ([#891](https://github.com/suzworx/flywheel/issues/891)) ([f46bb25](https://github.com/suzworx/flywheel/commit/f46bb25b16b0da6f2d9dca82e8629babbeeb7b01)), closes [#889](https://github.com/suzworx/flywheel/issues/889)
+
 ## [0.79.1](https://github.com/suzworx/flywheel/compare/v0.79.0...v0.79.1) (2026-10-28)
 
 
