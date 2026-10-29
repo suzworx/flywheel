@@ -52,6 +52,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   `lines` (otherwise the line whose `owns` cover the unit's is used).
 - **stage:** — `stage: <from> -> <to>` (repeatable, issue #781) maps a staging directory onto one
   the worker cannot write, e.g. `owns: staging/claude/` plus `stage: staging/claude/ -> .claude/`.
+  To edit an existing protected file, own its staging FILE path (`owns:
+  staging/claude/domains.json`, not the directory): `flywheel run` seeds it from the current
+  destination at dispatch when the staging copy is missing (issue #898).
   `flywheel validate` copies every file under `<from>` to the same path under `<to>` before the
   gates (a `staged` event), so the gates measure the real paths, and treats each destination as
   owned through its owned source. An invalid line (no `->`, an absolute or `..` path, a side

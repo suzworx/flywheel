@@ -872,6 +872,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		}
 	}
 
+	// Seed (issue #898): each owned staging file whose staging copy is missing
+	// gets its existing protected destination's bytes, before the baseline so
+	// the seeded copy is dirty at dispatch and never charged to the worker.
+	seeded, err := seedStage(wt, attemptOwns, unionStageMaps(baseHeader.Stage, promptHeader.Stage))
+	if err != nil {
+		return Result{}, err
+	}
+	for _, f := range seeded {
+		progress(o.Progress, fmt.Sprintf("%s seeded %s from %s", o.Task, f.To, f.From))
+	}
+
 	// Baseline: hash every path dirty at dispatch (the same read-only git
 	// commands the owns check uses) so validate can tell this unit's edits
 	// from the lead's or another worker's pre-existing ones. Not a git repo:
@@ -987,6 +998,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		Brief: promptBriefField, Note: dispatchedNote(policySHA, overlap, excl, gates), Tree: tree,
 		Baseline: baseline, Base: base, Worktrees: worktrees, Header: &promptHeader, Workdir: workdirField(wt, dir), Slot: slot,
 		Skills: attemptSkills, Agent: attemptAgent, AgentSHA256: agentSHA, Line: usedLine, Lead: o.Lead, Route: route,
+		Seeded: seeded,
 	}); err != nil {
 		return Result{}, err
 	}
