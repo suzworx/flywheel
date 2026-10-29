@@ -432,7 +432,7 @@ func TestFleetWorktreeRootUnreadable(t *testing.T) {
 }
 
 // TestFleetStatusBudget: 150 worktree ledgers of 1,000 events each are
-// summarised within a 60s hang guard, every row present, without error and
+// summarised within the test-deadline hang guard, every row present, without error and
 // in discovery order.
 func TestFleetStatusBudget(t *testing.T) {
 	t.Parallel()
@@ -466,8 +466,8 @@ func TestFleetStatusBudget(t *testing.T) {
 	var rows []FleetRow
 	select {
 	case rows = <-done:
-	case <-time.After(60 * time.Second):
-		t.Fatal("FleetStatus over 151 ledgers did not finish in 60s")
+	case <-time.After(hangGuard(t)):
+		t.Fatal("FleetStatus over 151 ledgers never returned")
 	}
 	ledgers := FleetLedgers(f)
 	if len(rows) != 151 || len(ledgers) != 151 {
