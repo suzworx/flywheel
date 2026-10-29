@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem;\n      a full-suite gate failing while CI is green on that commit is a problem, rule host-dependent-gate, lint.probe_ci)\n    --task ID with --probe records each probe in the ledger, so validate and explain can tell a broken gate from broken work\n    exit 1 on any problem; warnings alone exit 0", runLint)
+	register("lint", "check a brief file for problems\n    each line is labelled problem: or warning:, then a count line\n    --probe also runs each gate: once on the base tree (a failing gate warns, one that cannot start is a problem;\n      a full-suite gate failing while CI is green on that commit is a problem, rule host-dependent-gate, lint.probe_ci)\n    --task ID with --probe records each probe in the ledger, so validate and explain can tell a broken gate from broken work\n    without --probe, a kind: fix brief warns that run refuses it (rule red-first) until a red base probe is recorded with --probe --task\n    exit 1 on any problem; warnings alone exit 0", runLint)
 	registerHelp("lint", "flywheel lint <brief> [--probe [--task ID]] [--dir DIR]", func() *flag.FlagSet { fs, _ := lintFlags(); return fs })
 }
 
@@ -114,6 +114,15 @@ func runLint(args []string) {
 			if err := flywheel.RecordGateProbes(o.dir, o.task, header.Gates, probes); err != nil {
 				fmt.Fprintf(os.Stderr, "flywheel lint: %v\n", err)
 				os.Exit(1)
+			}
+		}
+	}
+	// Without --probe, a kind: fix brief learns red-first here, not from run's
+	// refusal (issue #896); a config that cannot load leaves the rule on.
+	if !o.probe {
+		if header, err := flywheel.ParseBriefHeader(brief); err == nil && header.Kind == "fix" {
+			if cfg, _, err := flywheel.LoadConfig(o.dir); err != nil || cfg.LintRedFirst() {
+				res.Warnings = append(res.Warnings, flywheel.RedFirstLintNote())
 			}
 		}
 	}

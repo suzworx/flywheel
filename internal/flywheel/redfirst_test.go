@@ -41,6 +41,18 @@ func TestRedFirstLintProblem(t *testing.T) {
 	}
 }
 
+// TestRedFirstLintNote pins plain lint's red-first warning: it names the rule
+// and the probe command that records the red base probe (issue #896).
+func TestRedFirstLintNote(t *testing.T) {
+	t.Parallel()
+	got := RedFirstLintNote()
+	for _, want := range []string{"kind: fix", "red-first", "flywheel lint --probe --task", "flywheel run"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("RedFirstLintNote() = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
 // redFirstProbe is a gate_probed event for T1 at ts with command cmd and rc.
 func redFirstProbe(ts, cmd string, rc int) Event {
 	return Event{TS: ts, Task: "T1", Kind: "gate_probed", Gate: "1", Command: cmd, RC: &rc}

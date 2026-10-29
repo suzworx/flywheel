@@ -200,7 +200,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   that fails on the base tree (the regression test) and passes after the fix: run the probe with
   `--task` before dispatch, or lint reports a problem, `flywheel run` refuses the first dispatch
   and `flywheel inspect --verdict pass` refuses with rule `red-first` (config `lint.red_first`
-  false turns it off, #648, #812). When the worker writes the regression test, add a gate that
+  false turns it off, #648, #812); plain `flywheel lint <brief>` (no `--probe`) warns on a
+  `kind: fix` brief so the plan -> `lint --probe --task <id>` -> run sequence is known before the
+  first refusal (#896). When the worker writes the regression test, add a gate that
   reproduces the defect on the base tree now (a short script or one-line assertion that exits
   non-zero today), or `test -f <new test> && <run it>`; a name-filtered run matching no test
   passes and is never the red gate alone (#889). Probing before dispatch stays the normal path, and a probe

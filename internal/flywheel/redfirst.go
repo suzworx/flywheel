@@ -11,6 +11,17 @@ import (
 const redFirstLintProblem = "kind: fix needs a gate that fails before the fix (a regression test); " +
 	"every gate passed on the base tree (rule red-first; lint.red_first false turns it off)"
 
+// RedFirstLintNote returns plain flywheel lint's warning (no --probe) for a
+// kind: fix brief with the rule on (issue #896): run refuses the unit until a
+// recorded probe shows a gate failing on the base tree, so the lead learns the
+// plan -> probe -> run sequence before the first refusal.
+func RedFirstLintNote() string {
+	return "kind: fix: `flywheel run` refuses this unit (rule red-first) until a gate fails on the base tree in a recorded probe; " +
+		"record it with `flywheel lint --probe --task <id> <brief>` before the first run " +
+		"(a gate that reproduces the defect on base, or `test -f <new test file> && <run it>`; " +
+		"a name-filtered run matching no test passes)"
+}
+
 // probeRed reports whether a gate probe counts as red on the base tree: the
 // gate started and failed (issue #648). A gate that cannot start (a spawn
 // error, exit 126 or 127) is not a regression test.
