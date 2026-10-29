@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.84.0](https://github.com/suzworx/flywheel/compare/v0.83.0...v0.84.0) (2026-10-29)
+
+
+### Features
+
+* doctor, fleet and init follow ledger.dir ([#931](https://github.com/suzworx/flywheel/issues/931)) ([cd017b5](https://github.com/suzworx/flywheel/commit/cd017b549c46059b956311619014ea381c8bd9d0)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+* the CI audit and ledger backup follow ledger.dir ([#933](https://github.com/suzworx/flywheel/issues/933)) ([b1bdb39](https://github.com/suzworx/flywheel/commit/b1bdb3974ac9365b1c441c26806c9b118c95e1a2)), closes [#464](https://github.com/suzworx/flywheel/issues/464)
+
 ## [0.83.0](https://github.com/suzworx/flywheel/compare/v0.82.0...v0.83.0) (2026-10-29)
 
 
