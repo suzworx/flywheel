@@ -29,7 +29,7 @@ func TestAttributeDenial(t *testing.T) {
 		{"quoted operator", `echo "a && git add x"`, deny, `Bash: unattributed (echo "a && git add x")`},
 		{"single quoted", `echo 'x; git add y' | wc -l`, deny, `Bash: unattributed (echo 'x; git add y' | wc -l)`},
 		{"env assignment", `FOO=1 git push origin`, deny, "Bash: Bash(git push:*) (git push origin)"},
-		{"or and pipe", "go vet ./... || git stash\nls", deny, "Bash: Bash(git stash:*) (git stash)"},
+		{"or and pipe", "go vet ./... || git stash\nls", deny, "Bash: Bash(git stash) (git stash)"},
 		{"exact", `ls -la && make clean`, []string{"Bash(make clean)"}, "Bash: Bash(make clean) (make clean)"},
 		{"exact no prefix", `make clean all`, []string{"Bash(make clean)"}, "Bash: unattributed (make clean all)"},
 		{"bare Bash skips cd", `cd /w && ls`, []string{"Bash"}, "Bash: Bash (ls)"},

@@ -706,13 +706,29 @@ var defaultAllowedTools = []string{"Bash"}
 // any write that slips through after each attempt. Denying `git branch` also
 // denies `git branch --show-current`; workers use `git rev-parse
 // --abbrev-ref HEAD`. Read-only git (status, diff, log, show) stays allowed.
+// Stash and worktree are denied for their write forms only: `git stash list`,
+// `git stash show` and `git worktree list` stay allowed, the same read-only
+// forms the git guard allows (issue #916). A stash write that slips through is
+// still caught after the attempt (the stash ref in githistory.go).
 var defaultDisallowedTools = []string{
-	"Bash(git commit:*)", "Bash(git push:*)", "Bash(git stash:*)",
+	"Bash(git commit:*)", "Bash(git push:*)",
+	"Bash(git stash)", "Bash(git stash push:*)", "Bash(git stash pop:*)", "Bash(git stash apply:*)",
+	"Bash(git stash drop:*)", "Bash(git stash clear:*)", "Bash(git stash save:*)",
+	"Bash(git stash store:*)", "Bash(git stash branch:*)", "Bash(git stash create:*)",
+	"Bash(git stash -u:*)", "Bash(git stash -k:*)", "Bash(git stash -p:*)", "Bash(git stash -a:*)",
+	"Bash(git stash -m:*)", "Bash(git stash -q:*)", "Bash(git stash -S:*)",
+	"Bash(git stash --include-untracked:*)", "Bash(git stash --keep-index:*)",
+	"Bash(git stash --no-keep-index:*)", "Bash(git stash --all:*)", "Bash(git stash --patch:*)",
+	"Bash(git stash --message:*)", "Bash(git stash --quiet:*)", "Bash(git stash --staged:*)",
+	"Bash(git stash --pathspec-from-file:*)", "Bash(git stash --:*)",
 	"Bash(git reset:*)", "Bash(git checkout:*)", "Bash(git rebase:*)", "Bash(git merge:*)",
 	"Bash(git add:*)", "Bash(git rm:*)", "Bash(git mv:*)", "Bash(git restore:*)",
 	"Bash(git update-index:*)", "Bash(git apply:*)", "Bash(git tag:*)", "Bash(git branch:*)",
 	"Bash(git switch:*)", "Bash(git cherry-pick:*)", "Bash(git revert:*)", "Bash(git am:*)",
-	"Bash(git worktree:*)", "Bash(git clean:*)", "Bash(git notes:*)", "Bash(git replace:*)",
+	"Bash(git worktree)", "Bash(git worktree add:*)", "Bash(git worktree remove:*)",
+	"Bash(git worktree move:*)", "Bash(git worktree prune:*)", "Bash(git worktree lock:*)",
+	"Bash(git worktree unlock:*)", "Bash(git worktree repair:*)",
+	"Bash(git clean:*)", "Bash(git notes:*)", "Bash(git replace:*)",
 	"Bash(git update-ref:*)", "Bash(git gc:*)", "Bash(git fetch:*)", "Bash(git pull:*)",
 }
 
