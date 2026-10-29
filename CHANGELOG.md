@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.80.3](https://github.com/suzworx/flywheel/compare/v0.80.2...v0.80.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* one tool call open past tool_stall_timeout stalls the run, though its heartbeats keep the run file growing ([#919](https://github.com/suzworx/flywheel/issues/919)) ([2094871](https://github.com/suzworx/flywheel/commit/2094871013690890ad8b075e3194a5dca803408b)), closes [#917](https://github.com/suzworx/flywheel/issues/917)
+* the claude deny list stops refusing read-only git stash list/show and git worktree list ([#921](https://github.com/suzworx/flywheel/issues/921)) ([ab760ea](https://github.com/suzworx/flywheel/commit/ab760ea0c3b7e4ba89b776b5b959df39b864d2ed)), closes [#916](https://github.com/suzworx/flywheel/issues/916)
+
 ## [0.80.2](https://github.com/suzworx/flywheel/compare/v0.80.1...v0.80.2) (2026-10-29)
 
 
