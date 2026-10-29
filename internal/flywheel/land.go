@@ -209,9 +209,9 @@ func landTaskGroup(dir, task, commit, note string, leadImplemented bool, reason,
 	// computed in a throwaway index seeded from the commit; the shared index
 	// is never touched. A commit that is not in this repository cannot
 	// resolve; the landed event then records an empty tree rather than
-	// failing, because landing must not become refusable for a reporting
-	// field.
-	tree := landedTree(dir, commit)
+	// failing (on that or any other landedTree error), because landing must
+	// not become refusable for a reporting field.
+	tree, _ := landedTree(dir, commit)
 
 	// Prefix the landed note with exception if provided
 	if exception != "" {
@@ -313,27 +313,39 @@ func signalList(sigs []SignalView) []string {
 // the landed tree is comparable with the tree a validate pass measured. It is
 // computed in a temporary GIT_INDEX_FILE, the way treeHash creates and
 // disposes of it: git read-tree the commit, git rm --cached the bookkeeping,
-// git write-tree; the shared git index is never touched. A commit that cannot
-// be read into the index (not in this repository) yields "" rather than an
-// error: the landed event then records an empty tree.
-func landedTree(dir, commit string) string {
+// git write-tree; the shared git index is never touched. A commit that does
+// not resolve in this repository returns errCommitNotFound (wrapped); any
+// other failure returns an error naming the step and carrying git's own
+// message (issue #907), so a broken step is never reported as a missing
+// commit.
+func landedTree(dir, commit string) (string, error) {
 	tmp, err := os.CreateTemp("", "fw-index-*")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("temporary index for commit %s: %w", commit, err)
 	}
 	idx := tmp.Name()
 	tmp.Close()
 	os.Remove(idx)
 	defer os.Remove(idx)
 	if _, err := gitRun(dir, idx, []string{"read-tree", commit}); err != nil {
-		return ""
+		// Only a failed read-tree asks whether the commit resolves, so a
+		// landing that succeeds spends no extra git process on it (Ship's
+		// git-process budget).
+		if _, cerr := gitRead(dir, []string{"cat-file", "-e", commit + "^{commit}"}); cerr != nil {
+			return "", fmt.Errorf("%w: %s", errCommitNotFound, commit)
+		}
+		return "", fmt.Errorf("read-tree %s: %w", commit, err)
 	}
 	if _, err := gitRun(dir, idx, []string{"rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", ".flywheel", "flywheel.md"}); err != nil {
-		return ""
+		return "", fmt.Errorf("rm --cached of the bookkeeping in commit %s: %w", commit, err)
 	}
 	out, err := gitRun(dir, idx, []string{"write-tree"})
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("write-tree of commit %s: %w", commit, err)
 	}
-	return strings.TrimSpace(out)
+	return strings.TrimSpace(out), nil
 }
+
+// errCommitNotFound is landedTree's error for a commit that does not resolve
+// in the repository (issue #907).
+var errCommitNotFound = errors.New("commit not found")

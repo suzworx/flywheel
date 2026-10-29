@@ -37,8 +37,8 @@ func TestAttestAppendsExternalReadings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attest() error = %v", err)
 	}
-	if want := landedTree(dir, commit); tree != want || tree == "" {
-		t.Errorf("Attest() tree = %q, want %q", tree, want)
+	if want, werr := landedTree(dir, commit); werr != nil || tree != want || tree == "" {
+		t.Errorf("Attest() tree = %q, want %q (landedTree error %v)", tree, want, werr)
 	}
 	events, err := ReadEvents(dir)
 	if err != nil {

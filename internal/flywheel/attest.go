@@ -1,6 +1,7 @@
 package flywheel
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -60,9 +61,12 @@ func AttestScoped(dir, task, commit, evidence, session string, scope []string) (
 	if err != nil {
 		return "", fmt.Errorf("attest %s: %w", task, err)
 	}
-	tree := landedTree(dir, commit)
-	if tree == "" {
+	tree, err := landedTree(dir, commit)
+	if errors.Is(err, errCommitNotFound) {
 		return "", fmt.Errorf("attest %s: commit %s is not in the repository at %s", task, commit, dir)
+	}
+	if err != nil {
+		return "", fmt.Errorf("attest %s: tree of commit %s: %w", task, commit, err)
 	}
 	out, err := gitRead(dir, []string{"diff", "--name-only", commit + "^", commit})
 	if err != nil {
