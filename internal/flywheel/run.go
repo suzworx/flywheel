@@ -273,6 +273,22 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		return Result{}, err
 	}
 
+	// A resume or delta with neither --worktree nor --workdir whose previous
+	// attempt ran in the task's own worktree is a --worktree correction (issue
+	// #894): the attempt commit, checkpoints and setup apply as for an explicit
+	// --worktree. Read without the dispatch lock: the decision is re-derivable
+	// from the log, and the lock still guards the collision checks below.
+	if !o.Worktree && o.Workdir == "" && (o.Resume || o.DeltaPath != "") {
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			if evs, rerr := ReadEvents(dir); rerr == nil {
+				if prev := recordedWorkdir(evs, o.Task); prev != "" && samePath(prev, filepath.Join(abs, ".flywheel", "worktrees", o.Task)) {
+					o.Worktree = true
+					progress(o.Progress, o.Task+" continuing in its task worktree: run as --worktree (issue #894)")
+				}
+			}
+		}
+	}
+
 	// --base (issue #456) names where a new task branch starts; only a
 	// worktree has a branch of its own to start there.
 	if o.Base != "" && !o.Worktree {
@@ -818,7 +834,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 		wt = absPath(o.Workdir)
 	} else if prev := recordedWorkdir(events, o.Task); (o.Resume || o.DeltaPath != "") && prev != "" && !samePath(prev, dir) {
 		// A resume or delta without --workdir or --worktree continues in the
-		// tree the previous attempt ran in.
+		// tree the previous attempt ran in: a --workdir tree (issue #545), used
+		// as it is like --workdir. The task's own worktree never reaches here:
+		// it was turned into --worktree above (issue #894).
 		wt = prev
 		progress(o.Progress, o.Task+" resuming in workdir "+prev)
 	} else {
