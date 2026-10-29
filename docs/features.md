@@ -139,6 +139,10 @@ never as first pass.
 When CI measured a merged commit, `flywheel attest <task> --commit SHA --evidence URL --session S`
 records its gates as passing readings marked `source: external`, then `inspect --commit` and
 `land --commit` finish the unit (issue [#367](https://github.com/suzworx/flywheel/issues/367)).
+For a squash that holds several units' files and no `Flywheel-Task:` trailers, attest each unit
+with `--scope tasks:a,b`: a path another listed unit owns is accepted, a path no listed unit owns is
+still refused T3, and an unknown task is a usage error
+(issue [#908](https://github.com/suzworx/flywheel/issues/908)).
 
 **Checks only a person can make.** A brief's `observe: <what to see and how to decide it>` line
 (issue [#842](https://github.com/suzworx/flywheel/issues/842)) names a check no shell command can
