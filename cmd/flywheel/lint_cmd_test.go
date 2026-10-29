@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -210,6 +211,60 @@ func TestLintProbeRecordsTask(t *testing.T) {
 	}
 	if !strings.Contains(evs[2].Reason, "definitely-not-a-command-xyz") {
 		t.Errorf("cannot-start gate reason = %q, want it to name the command", evs[2].Reason)
+	}
+}
+
+// lintKindBrief writes a structurally clean brief with header line kindLine
+// (empty for none) and one passing gate to dir/brief.md.
+func lintKindBrief(t *testing.T, dir, kindLine string) string {
+	t.Helper()
+	body := "owns: out.txt (new)\nneeds: none\n" + kindLine + "gate: exit 0\n" +
+		"\n# TASK: kind\n\n## Checks\nrun the gates.\n\n## Rules\n- At most one write per response.\n"
+	p := filepath.Join(dir, "brief.md")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	return p
+}
+
+// TestLintFixBriefWithoutProbeWarns checks plain lint (no --probe) warns that
+// run will refuse a kind: fix brief (rule red-first) and keeps exit 0, and
+// that red_first false or a brief that is not kind: fix gets no warning
+// (issue #896).
+func TestLintFixBriefWithoutProbeWarns(t *testing.T) {
+	t.Parallel()
+	note := flywheel.RedFirstLintNote()
+	fix := t.TempDir()
+	out, code := runLintProcess(t, lintKindBrief(t, fix, "kind: fix\n"), "--dir", fix)
+	if code != 0 || !strings.Contains(out, ": warning: "+note+"\n") {
+		t.Errorf("lint of a kind: fix brief: exit %d, stderr %q; want exit 0 and the red-first warning", code, out)
+	}
+	off := t.TempDir()
+	if _, err := flywheel.Init(off, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	cfgPath := filepath.Join(off, ".flywheel", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["lint"] = map[string]any{"red_first": false}
+	if data, err = json.Marshal(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runLintProcess(t, lintKindBrief(t, off, "kind: fix\n"), "--dir", off); code != 0 || strings.Contains(out, "red-first") {
+		t.Errorf("lint of a kind: fix brief with red_first false: exit %d, stderr %q; want exit 0 and no red-first warning", code, out)
+	}
+	plain := t.TempDir()
+	if out, code := runLintProcess(t, lintKindBrief(t, plain, ""), "--dir", plain); code != 0 || strings.Contains(out, "red-first") {
+		t.Errorf("lint of a brief without kind: fix: exit %d, stderr %q; want exit 0 and no red-first warning", code, out)
 	}
 }
 
