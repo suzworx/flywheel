@@ -172,9 +172,12 @@ type FleetLedger struct {
 // FleetLedgers discovers every ledger under f's roots: the root itself, its
 // git worktrees (read-only `git worktree list --porcelain`, skipped when git
 // fails), and the directories under .flywheel/worktrees and .claude/worktrees.
-// Only a directory holding .flywheel/events.jsonl or a shard directory counts.
-// Ledgers are de-duplicated by path (the first root reaching one keeps it)
-// and ordered by root, the root's own ledger first, then by path. A missing
+// Only a directory whose event log (EventLogDir: .flywheel, or the ledger.dir
+// directory) holds events.jsonl or a shard directory counts, or one whose
+// ledger.dir is set but fails to resolve, so its row shows the error.
+// Ledgers are de-duplicated by path and by event-log location — every
+// worktree of a clone with ledger.dir "home" shares one log — the first root
+// and path reaching one keeping it, and ordered by root, the root's own ledger first, then by path. A missing
 // root is one entry carrying Error, never a failure.
 func FleetLedgers(f Fleet) []FleetLedger {
 	var out []FleetLedger
@@ -187,10 +190,14 @@ func FleetLedgers(f Fleet) []FleetLedger {
 		var found []FleetLedger
 		add := func(p, kind string) {
 			p = filepath.Clean(p)
-			if seen[fleetKey(p)] || !hasLedger(p) {
+			if seen[fleetKey(p)] {
 				return
 			}
-			seen[fleetKey(p)] = true
+			key, ok := fleetLedgerKey(p)
+			if !ok || seen[key] {
+				return
+			}
+			seen[fleetKey(p)], seen[key] = true, true
 			name := r.Name
 			if kind != FleetKindRoot {
 				name = r.Name + "/" + filepath.Base(p)
@@ -224,13 +231,53 @@ func FleetLedgers(f Fleet) []FleetLedger {
 	return out
 }
 
-// hasLedger reports whether dir holds a flywheel ledger: an events.jsonl
-// file or a shard directory under .flywheel.
+// hasLedger reports whether dir holds a flywheel ledger (fleetLedgerKey).
 func hasLedger(dir string) bool {
-	if info, err := os.Stat(filepath.Join(dir, ".flywheel", "events.jsonl")); err == nil && !info.IsDir() {
+	_, ok := fleetLedgerKey(dir)
+	return ok
+}
+
+// fleetLedgerKey is dir's ledger identity for de-duplication and whether dir
+// has a ledger (issue #464): with ledger.dir set, the fleetKey of the resolved
+// directory (shared by every worktree of a clone with ledger.dir "home"), a
+// ledger when it holds events.jsonl or a shard directory; otherwise
+// fleetKey(dir), a ledger when .flywheel holds one. When EventLogDir fails (a
+// bad ledger.dir, two live logs) dir is still a ledger if ledger.dir is
+// configured, so the fleet row shows the read error instead of hiding it.
+func fleetLedgerKey(dir string) (key string, ok bool) {
+	logDir, external, err := EventLogDir(dir)
+	switch {
+	case err != nil:
+		return fleetKey(dir), holdsEventLog(filepath.Join(dir, ".flywheel")) || ledgerDirConfigured(dir)
+	case external:
+		return fleetKey(logDir), holdsEventLog(logDir)
+	}
+	return fleetKey(dir), holdsEventLog(logDir)
+}
+
+// holdsEventLog reports whether logDir holds an events.jsonl file or a shard
+// directory.
+func holdsEventLog(logDir string) bool {
+	if info, err := os.Stat(filepath.Join(logDir, legacyLogName)); err == nil && info.Mode().IsRegular() {
 		return true
 	}
-	return isDir(filepath.Join(dir, ".flywheel", shardDirName))
+	return isDir(filepath.Join(logDir, shardDirName))
+}
+
+// ledgerDirConfigured reports whether FLYWHEEL_LEDGER_DIR is set or dir's
+// .flywheel/config.json has a ledger key, whatever its value.
+func ledgerDirConfigured(dir string) bool {
+	if os.Getenv(ledgerDirEnv) != "" {
+		return true
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".flywheel", configFileName))
+	if err != nil {
+		return false
+	}
+	var c struct {
+		Ledger json.RawMessage `json:"ledger"`
+	}
+	return json.Unmarshal(b, &c) == nil && c.Ledger != nil
 }
 
 // gitWorktreePaths lists dir's git worktrees from `git worktree list

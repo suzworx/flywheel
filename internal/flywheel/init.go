@@ -37,7 +37,8 @@ Placeholder: completed tasks are logged here.
 // InitSeeded manages. Pieces are always returned in the same fixed order:
 // flywheel.md, then the six pieces under .flywheel/ (state.json,
 // events.jsonl, config.json, .gitignore, .gitattributes, briefs/), then
-// AGENTS.md last, when --agents-md requested it.
+// AGENTS.md last, when --agents-md requested it. events.jsonl is left out
+// when ledger.dir places the event log outside the tree (issue #464).
 type ScaffoldPiece struct {
 	Path  string // relative to dir, forward-slash (e.g. ".flywheel/state.json")
 	Added bool   // this call created it, or (flywheel.md only) force-reset it
@@ -80,7 +81,11 @@ func Init(dir string, force bool) (string, error) {
 // flywheel.md is the one piece force affects: with force, an existing
 // regular file there is replaced with the built-in template. Every other
 // piece is created only if missing and never overwritten, with or without
-// force. model and variant seed a freshly created config.json's default
+// force. When EventLogDir reports ledger.dir set (FLYWHEEL_LEDGER_DIR, or an
+// existing config.json's ledger.dir), events.jsonl is never created in the
+// tree, which would be a second live log; when it fails, init returns its
+// error before writing anything. model and variant seed a freshly created
+// config.json's default
 // worker (validated through WriteConfig); an existing config.json is never
 // touched.
 //
@@ -160,6 +165,10 @@ func initScaffold(dir string, force bool, cfg Config, seeded, agentsMD bool) (st
 
 	agentsMDPath := filepath.Join(abs, "AGENTS.md")
 
+	_, external, err := EventLogDir(abs)
+	if err != nil {
+		return "", nil, fmt.Errorf("init %s: %w", abs, err)
+	}
 	if err := preflightRegularFile(mdPath); err != nil {
 		return "", nil, err
 	}
@@ -270,10 +279,14 @@ func initScaffold(dir string, force bool, cfg Config, seeded, agentsMD bool) (st
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", statePath, err)
 	}
-	createdEvents, err = createIfMissing(eventsPath, []byte{})
-	if err != nil {
-		rollback()
-		return "", nil, fmt.Errorf("write %s: %w", eventsPath, err)
+	// With ledger.dir set the log lives outside the tree; an in-tree
+	// events.jsonl would be a second live log (issue #464).
+	if !external {
+		createdEvents, err = createIfMissing(eventsPath, []byte{})
+		if err != nil {
+			rollback()
+			return "", nil, fmt.Errorf("write %s: %w", eventsPath, err)
+		}
 	}
 	// --model and --variant seed a fresh config through WriteConfig; an
 	// existing one is left untouched for the caller to edit.
@@ -292,7 +305,7 @@ func initScaffold(dir string, force bool, cfg Config, seeded, agentsMD bool) (st
 			return "", nil, fmt.Errorf("write %s: %w", configPath, err)
 		}
 	}
-	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\nworktrees/\nlocks/\n"))
+	createdGitignore, err = createIfMissing(gitignorePath, []byte("runs/\nworktrees/\nlocks/\nclaims/\nleases/\n"))
 	if err != nil {
 		rollback()
 		return "", nil, fmt.Errorf("write %s: %w", gitignorePath, err)
@@ -308,12 +321,16 @@ func initScaffold(dir string, force bool, cfg Config, seeded, agentsMD bool) (st
 	pieces := []ScaffoldPiece{
 		{Path: "flywheel.md", Added: mdAdded},
 		{Path: ".flywheel/state.json", Added: createdState},
-		{Path: ".flywheel/events.jsonl", Added: createdEvents},
+	}
+	if !external {
+		pieces = append(pieces, ScaffoldPiece{Path: ".flywheel/events.jsonl", Added: createdEvents})
+	}
+	pieces = append(pieces, []ScaffoldPiece{
 		{Path: ".flywheel/config.json", Added: createdConfig},
 		{Path: ".flywheel/.gitignore", Added: createdGitignore},
 		{Path: ".flywheel/.gitattributes", Added: createdGitattributes},
 		{Path: ".flywheel/briefs/", Added: !briefsExisted},
-	}
+	}...)
 	if agentsMD {
 		pieces = append(pieces, ScaffoldPiece{Path: "AGENTS.md", Added: agentsMDWritten})
 	}

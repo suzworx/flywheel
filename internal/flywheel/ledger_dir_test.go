@@ -223,3 +223,118 @@ func TestLedgerDirBrokenConfigStillReads(t *testing.T) {
 	}
 	readCount(t, dir, 2)
 }
+
+// TestDoctorLedgerDir: with ledger.dir set doctor skips the committed-ledger
+// check and warns only about an unusable directory; a bad value, two live logs
+// and an interrupted ledger move are each a warning.
+func TestDoctorLedgerDir(t *testing.T) {
+	t.Parallel()
+	t.Run("external log", func(t *testing.T) {
+		t.Parallel()
+		dir, ext := ledgerDirRepo(t), t.TempDir()
+		writeLedgerConfig(t, dir, ledgerConfigBody(ext))
+		appendNotes(t, dir, "a")
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(external) = %q, want empty", got)
+		}
+		ents, _ := os.ReadDir(ext)
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), ".doctor-probe") {
+				t.Errorf("doctor left its probe %s in the ledger dir", e.Name())
+			}
+		}
+	})
+	t.Run("missing dir", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerDirRepo(t)
+		writeLedgerConfig(t, dir, ledgerConfigBody(filepath.Join(t.TempDir(), "later")))
+		if got := DoctorLedgerWarning(dir); got != "" {
+			t.Errorf("DoctorLedgerWarning(missing ledger dir) = %q, want empty", got)
+		}
+	})
+	t.Run("regular file", func(t *testing.T) {
+		t.Parallel()
+		dir, file := ledgerDirRepo(t), filepath.Join(t.TempDir(), "f")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeLedgerConfig(t, dir, ledgerConfigBody(file))
+		if got := DoctorLedgerWarning(dir); !strings.Contains(got, "not a directory") {
+			t.Errorf("DoctorLedgerWarning(file) = %q, want a not-a-directory warning", got)
+		}
+	})
+	t.Run("two live logs", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerDirRepo(t)
+		appendNotes(t, dir, "a")
+		writeLedgerConfig(t, dir, ledgerConfigBody(t.TempDir()))
+		if got := DoctorLedgerWarning(dir); !strings.Contains(got, "ledger move") {
+			t.Errorf("DoctorLedgerWarning(two logs) = %q, want it to name ledger move", got)
+		}
+	})
+	t.Run("interrupted move", func(t *testing.T) {
+		t.Parallel()
+		dir := ledgerDirRepo(t)
+		writeLedgerConfig(t, dir, ledgerConfigBody(t.TempDir()))
+		if err := os.MkdirAll(filepath.Join(dir, ".flywheel", ledgerMoveAside), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := DoctorLedgerWarning(dir); !strings.Contains(got, "interrupted") || !strings.Contains(got, ledgerMoveAside) {
+			t.Errorf("DoctorLedgerWarning(aside) = %q, want the interrupted-move warning", got)
+		}
+	})
+}
+
+// TestFleetLedgerDir: two worktrees sharing one ledger.dir are one ledger; an
+// in-tree ledger alongside is still listed, and so is a bad ledger.dir.
+func TestFleetLedgerDir(t *testing.T) {
+	t.Parallel()
+	dir, ext := ledgerDirRepo(t), t.TempDir()
+	writeLedgerConfig(t, dir, ledgerConfigBody(ext))
+	wt := filepath.Join(t.TempDir(), "wt")
+	ledgerGit(t, dir, "worktree", "add", "-q", "--detach", wt)
+	writeLedgerConfig(t, wt, ledgerConfigBody(ext))
+	appendNotes(t, dir, "a")
+	plain := t.TempDir()
+	appendNotes(t, plain, "b")
+	bad := t.TempDir()
+	writeLedgerConfig(t, bad, ledgerConfigBody("rel/ledger"))
+	f := Fleet{Roots: []FleetRoot{{Name: "main", Path: dir}, {Name: "wt", Path: wt}, {Name: "plain", Path: plain}, {Name: "bad", Path: bad}}}
+	var names []string
+	for _, l := range FleetLedgers(f) {
+		names = append(names, l.Name)
+	}
+	if strings.Join(names, " ") != "main plain bad" {
+		t.Errorf("FleetLedgers = %v, want [main plain bad]", names)
+	}
+	rows := FleetStatus(f, time.Now())
+	if len(rows) != 3 || rows[2].Error == "" || !strings.Contains(rows[2].Error, "ledger.dir") {
+		t.Errorf("bad ledger.dir row = %+v, want an Error naming ledger.dir", rows)
+	}
+}
+
+// TestInitLedgerDir: with ledger.dir set init creates no in-tree log and
+// reports no events.jsonl piece; a bad ledger.dir fails init.
+func TestInitLedgerDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeLedgerConfig(t, dir, ledgerConfigBody(t.TempDir()))
+	_, pieces, err := InitSeeded(dir, false, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noInTreeLog(t, dir)
+	for _, p := range pieces {
+		if p.Path == ".flywheel/events.jsonl" {
+			t.Errorf("pieces include %s with ledger.dir set", p.Path)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, ".flywheel", ".gitignore")); err != nil || !strings.Contains(string(b), "claims/\nleases/\n") {
+		t.Errorf(".gitignore = %q, %v; want claims/ and leases/", b, err)
+	}
+	bad := t.TempDir()
+	writeLedgerConfig(t, bad, ledgerConfigBody("rel/ledger"))
+	if _, err := Init(bad, false); err == nil || !strings.Contains(err.Error(), "ledger.dir") {
+		t.Errorf("Init(bad ledger.dir) = %v, want a ledger.dir error", err)
+	}
+}
