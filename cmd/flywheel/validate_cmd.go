@@ -223,6 +223,9 @@ func runValidate(args []string) {
 	if len(res.GatesUnrun) > 0 {
 		fmt.Printf("%s note: the worker never ran gate(s) %s itself; its report's claims about them are unmeasured\n", task, strings.Join(res.GatesUnrun, ", "))
 	}
+	if len(res.GatesStale) > 0 {
+		fmt.Printf("%s note: the worker did not rerun gate(s) %s after its last write; its report's claims about them are unmeasured\n", task, strings.Join(res.GatesStale, ", "))
+	}
 	for _, f := range res.Files {
 		line := fmt.Sprintf("%s file %s: %d lines", task, f.Path, f.Lines)
 		if strings.HasSuffix(strings.ToLower(f.Path), ".md") && f.Headings > 0 {

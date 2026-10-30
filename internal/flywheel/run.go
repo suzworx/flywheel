@@ -128,6 +128,7 @@ var workerPermissionPolicy = `{
 const workerRules = `- Stay inside owns: and the worktree. At most one write per response (at most 120 lines); batch read-only calls together.
 - Look up library APIs with the language's doc tool (go doc pkg.Symbol), never by reading or grepping library source, and never write probe programs.
 - Build or typecheck after each file; run the full checks at the end.
+- Nobody answers you while you run, and a message with no tool call ends the run. "One write per response" means one per step, so make the next write straight away: never stop to ask for a go-ahead or to announce a write you have not made. Stop only after your last write has passed the gates, or when you cannot go on, and then say what is left.
 - Report every command you ran and its real exit status; a claim is not evidence, the gauges re-measure it.
 - Git is read-only for you: never commit, push, fetch, pull, add (git add -N included), rm, mv, stash, reset or checkout; the guard refuses every git write, index writes included. To keep or compare work, copy files inside the worktree; flywheel checkpoints your written files itself, so never stash or commit. The lead fetches: if you need a remote commit, report it; the brief names the ref. To check a new file's whitespace without the index run git diff --no-index --check /dev/null <file>: it exits 1 when the file is clean (and when it is missing), 3 on whitespace errors, so never chain it with &&; test "$?" -ne 3 after it. git branch is denied as a whole: use git rev-parse --abbrev-ref HEAD for the current branch, and git merge-base --is-ancestor <commit> HEAD or git for-each-ref --contains <commit> for which branch contains a commit. Never write secrets. FLYWHEEL_BASE is always set in your shell to the unit's base commit: diff against it, never against HEAD. FLYWHEEL_TMP is your scratch directory inside your worktree (.flywheel/runs/, git-ignored): write logs and files there. TMPDIR, TEMP and TMP name a per-attempt temp directory outside any repository, for tools such as test runners; never write your own files to the system temp directory. Flywheel removes both when the attempt ends.
 - Your working directory is already the worktree: never prefix a command with cd.
@@ -1390,6 +1391,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	// gateCommands are the same commands unclipped: gate matching reads the
 	// full text, a gate chained after rune 300 still ran (issue #865).
 	var gateCommands []string
+	// lastWrite is len(gateCommands) at the worker's last observed write, -1
+	// with none: a gate only before it did not measure the final tree (#948).
+	lastWrite := -1
 	// skillsLoaded are the skills a claude stream loaded with its Skill tool,
 	// in order, each once (issue #695); nil for other adapters.
 	var skillsLoaded []string
@@ -1591,6 +1595,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 				}
 			}
 			if obs.Tool == "edit" || obs.Tool == "write" || obs.Tool == "delete" {
+				// A write only to flywheel's own files is not in the measured
+				// tree; a write with no path still counts (issue #948).
+				ownOnly := len(obsPaths(obs)) > 0
+				for _, p := range obsPaths(obs) {
+					ownOnly = ownOnly && isWorktreeOwnPath(wt, p)
+				}
+				if !ownOnly {
+					lastWrite = len(gateCommands)
+				}
 				for _, p := range obsPaths(obs) {
 					if p != "" && !wroteSeen[p] && len(wroteOrder) < 50 {
 						wroteSeen[p] = true
@@ -1598,13 +1611,15 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 					}
 				}
 			}
-			if obs.Command != "" && len(commands) < 100 {
-				c := obs.Command
-				if r := []rune(c); len(r) > 300 {
-					c = string(r[:300])
-				}
-				commands = append(commands, c)
+			if obs.Command != "" {
 				gateCommands = append(gateCommands, obs.Command)
+				if len(commands) < 100 {
+					c := obs.Command
+					if r := []rune(c); len(r) > 300 {
+						c = string(r[:300])
+					}
+					commands = append(commands, c)
+				}
 			}
 			if obs.Skill != "" && worker.Adapter == "claude" && !slices.Contains(skillsLoaded, obs.Skill) {
 				skillsLoaded = append(skillsLoaded, obs.Skill)
@@ -1968,11 +1983,16 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	// A clean stop names the gates the worker never ran itself (issue #365):
 	// a note and a progress line, no signal (the lead re-measures every gate).
-	var gatesUnrun []string
+	// It also names the gates it did not rerun after its last write (#948).
+	var gatesUnrun, gatesStale []string
 	if reason == "stop" {
 		gatesUnrun = unrunGates(dir, o.Task, gateCommands)
 		if len(gatesUnrun) > 0 {
 			note = joinNote(note, "gates never run by the worker: "+strings.Join(gatesUnrun, ", "))
+		}
+		gatesStale = staleGates(attemptGates(dir, o.Task), gateCommands, lastWrite)
+		if len(gatesStale) > 0 {
+			note = joinNote(note, "gates not rerun after the worker's last write: "+strings.Join(gatesStale, ", "))
 		}
 	}
 	// A rate limit names its reset on the note and records no signal: an
@@ -2036,7 +2056,7 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: o.Task, Kind: "finished", Session: session, Attempt: attempt, Model: model,
 		RC: rcPtr, Reason: reason, Note: note, Steps: steps, Tokens: tokPtr, Cost: cost, SHA256: runSHA,
-		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, SkillsLoaded: skillsLoaded, ResetAt: resetAt,
+		PeakReasoning: peak, Wrote: wrote, WroteFromTree: wroteFromTree, Commands: commands, GatesUnrun: gatesUnrun, GatesStale: gatesStale, SkillsLoaded: skillsLoaded, ResetAt: resetAt,
 		Commit: attemptCommit, LimitUtilization: limitUtil, LimitResetAt: limitResetAt, LimitWindow: limitWindow,
 		Checkpoint: checkpoint, Uncommitted: uncommitted, DeniedWrites: deniedWritePaths(wt, denials),
 	}); err != nil {
@@ -2087,6 +2107,9 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 	}
 	if len(gatesUnrun) > 0 {
 		progress(o.Progress, o.Task+" "+attempt+" never ran gate(s) "+strings.Join(gatesUnrun, ", "))
+	}
+	if len(gatesStale) > 0 {
+		progress(o.Progress, o.Task+" "+attempt+" did not rerun gate(s) "+strings.Join(gatesStale, ", ")+" after its last write")
 	}
 	if reason == "length" {
 		progress(o.Progress, fmt.Sprintf("%s %s hint: reason=length peak=%s reasoning tokens in one step; split files into named parts, use smaller increments, or try another variant", o.Task, attempt, tokensK(Tokens{Reasoning: peak})))
@@ -2929,6 +2952,27 @@ func isOutsideWorktree(dir, p string) bool {
 	return q != a && !strings.HasPrefix(q, a+"/")
 }
 
+// isWorktreeOwnPath reports whether p, from a tool_use observation, names
+// flywheel's own bookkeeping in the worktree rooted at dir (isFlywheelOwnPath).
+// A rooted p is made relative to both dir's absolute and its resolved path, so
+// a symlinked temp root such as macOS /var still matches; p itself need not
+// exist. A path outside the worktree is not flywheel's own (issue #948).
+func isWorktreeOwnPath(dir, p string) bool {
+	if !isRootedPath(p) {
+		return isFlywheelOwnPath(p)
+	}
+	roots := []string{absPath(dir)}
+	if a, err := filepath.Abs(dir); err == nil {
+		roots = append(roots, a)
+	}
+	for _, root := range roots {
+		if rel, err := filepath.Rel(root, p); err == nil && isFlywheelOwnPath(rel) {
+			return true
+		}
+	}
+	return false
+}
+
 // isSessionScratchpad reports whether p names a file under the scratchpad
 // Claude Code gives the worker session: the segments
 // claude/<project>/<session>/scratchpad/ followed by at least one more
@@ -3148,6 +3192,36 @@ func treeKey(p string) string {
 // when the log or the brief cannot be read. Live gates are not checked: a
 // worker never runs those (issue #365).
 func unrunGates(dir, task string, commands []string) []string {
+	var ids []string
+	for i, gate := range attemptGates(dir, task) {
+		if !gateRan(gate, commands) {
+			ids = append(ids, strconv.Itoa(i+1))
+		}
+	}
+	return ids
+}
+
+// staleGates returns the ids ("1", "2", ..) of the gates that ran in commands
+// but not in commands[lastWrite:], the commands after the worker's last write;
+// nil when it wrote nothing (lastWrite -1). A gate that never ran is not stale:
+// it belongs to unrunGates (issue #948).
+func staleGates(gates, commands []string, lastWrite int) []string {
+	if lastWrite < 0 {
+		return nil
+	}
+	var ids []string
+	for i, gate := range gates {
+		if gateRan(gate, commands) && !gateRan(gate, commands[lastWrite:]) {
+			ids = append(ids, strconv.Itoa(i+1))
+		}
+	}
+	return ids
+}
+
+// attemptGates returns the gates of the attempt's effective header, resolved
+// from a fresh read of the event log; nil when the log or the brief cannot be
+// read.
+func attemptGates(dir, task string) []string {
 	events, err := ReadEvents(dir)
 	if err != nil {
 		return nil
@@ -3156,13 +3230,7 @@ func unrunGates(dir, task string, commands []string) []string {
 	if err != nil {
 		return nil
 	}
-	var ids []string
-	for i, gate := range header.Gates {
-		if !gateRan(gate, commands) {
-			ids = append(ids, strconv.Itoa(i+1))
-		}
-	}
-	return ids
+	return header.Gates
 }
 
 // gateRan reports whether any command, whitespace collapsed, contains the
