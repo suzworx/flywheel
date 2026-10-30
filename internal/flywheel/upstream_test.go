@@ -66,6 +66,41 @@ func TestUpstreamDropped(t *testing.T) {
 	}
 }
 
+// TestUpstreamDroppedDiffConfig: a repository's diff prefix config does not
+// hide a dropped line from the header parse (issue #941).
+func TestUpstreamDroppedDiffConfig(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"diff.noprefix", "diff.mnemonicPrefix"} {
+		dir, base, m1 := upstreamRepo(t)
+		git(t, dir, []string{"config", key, "true"})
+		git(t, dir, []string{"merge", "-q", "--ff-only", "main"})
+		upstreamWrite(t, dir, "a.go", "package x\nvar u = 1\n", "unit drops X")
+		got, err := droppedUpstream(dir, base, m1, []string{"a.go"})
+		if want := []string{"a.go: var X = 9"}; err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("droppedUpstream(%s) = %q, %v; want %q", key, got, err, want)
+		}
+	}
+}
+
+// TestUpstreamDroppedSpacedPath: the tab git ends a spaced header path with is
+// not part of the path: a kept line is not reported, a removed one is reported
+// under the real name (issue #941).
+func TestUpstreamDroppedSpacedPath(t *testing.T) {
+	t.Parallel()
+	dir, _, _ := upstreamRepo(t)
+	git(t, dir, []string{"merge", "-q", "--ff-only", "main"})
+	base := upstreamWrite(t, dir, "a b.go", "package x\n", "spaced base")
+	m := upstreamWrite(t, dir, "a b.go", "package x\nvar Y = 1\n", "integration adds Y")
+	if got, err := droppedUpstream(dir, base, m, []string{"a b.go"}); err != nil || got != nil {
+		t.Fatalf("droppedUpstream(kept) = %q, %v; want nil", got, err)
+	}
+	upstreamWrite(t, dir, "a b.go", "package x\n", "unit drops Y")
+	got, err := droppedUpstream(dir, base, m, []string{"a b.go"})
+	if want := []string{"a b.go: var Y = 1"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("droppedUpstream(dropped) = %q, %v; want %q", got, err, want)
+	}
+}
+
 // droppedTask makes a validated-ready T1 owning a.go and u.go, dispatched on
 // main's B; M1 on main adds "var X = 9" to a.go; fw/T1 merges main (a merge
 // commit after a unit commit to u.go when mergeCommit, else a fast-forward)
