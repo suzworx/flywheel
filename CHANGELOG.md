@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.84.3](https://github.com/suzworx/flywheel/compare/v0.84.2...v0.84.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* the dropped-upstream check reads the diff under any repository config ([#944](https://github.com/suzworx/flywheel/issues/944)) ([cdaa27c](https://github.com/suzworx/flywheel/commit/cdaa27c9a9f3381ecfeadae014cebf40cfcc7dab)), closes [#941](https://github.com/suzworx/flywheel/issues/941)
+* validate reports when a unit removes lines an earlier fix added ([#942](https://github.com/suzworx/flywheel/issues/942)) ([cc50ee9](https://github.com/suzworx/flywheel/commit/cc50ee96d27983801318486f7fcbac354b09b79e)), closes [#940](https://github.com/suzworx/flywheel/issues/940)
+
 ## [0.84.2](https://github.com/suzworx/flywheel/compare/v0.84.1...v0.84.2) (2026-10-30)
 
 
