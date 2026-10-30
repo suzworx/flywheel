@@ -143,7 +143,8 @@ to drop them on the record, a `worktree_discarded` event (issue #851).
 When validate fails with `left uncommitted by the attempt commit: <paths>` and those paths belong
 to the unit, amend owns (`flywheel log --kind amended`), then run `flywheel worktree commit <task>
 --session S`: it re-runs the attempt commit on `fw/<task>` against the amended owns and records a
-`recommitted` event, never a hand-made git commit the ledger misses (issue #897).
+`recommitted` event, never a hand-made git commit the ledger misses (issue #897); validate prints
+this remedy as an `owns: hint:` line (issue #934).
 
 ### 1. Plan & brief
 Decompose the request into bounded, single-purpose tasks. Write each brief to a file (safe quoting,

@@ -797,7 +797,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 				kept = append(kept, p)
 			}
 		}
-		outside = append(kept, "left uncommitted by the attempt commit: "+strings.Join(left, ", "))
+		outside = append(kept, LeftUncommittedPrefix+strings.Join(left, ", "))
 	}
 	res.Outside = outside
 	if b := dispatchBase(events, task, attempt); b != "" {
@@ -859,6 +859,11 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	_, _ = WriteState(dir)
 	return res, nil
 }
+
+// LeftUncommittedPrefix starts the one owns outside entry naming the paths
+// the attempt commit left uncommitted (issue #477); validate keys its
+// recommit hint on it (issue #934).
+const LeftUncommittedPrefix = "left uncommitted by the attempt commit: "
 
 // leftUncommitted returns the uncommitted paths of task's latest finished
 // event (issue #477), or of a later recommitted event (issue #897), that

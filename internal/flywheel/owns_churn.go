@@ -68,7 +68,7 @@ func stripSpace(b []byte) string {
 func outsideChurn(wd, base string, outside []string) map[string]string {
 	var churn map[string]string
 	for _, o := range outside {
-		if strings.Contains(o, ": ") || strings.HasSuffix(o, " (git-ignored)") || strings.HasPrefix(o, "left uncommitted") {
+		if strings.Contains(o, ": ") || strings.HasSuffix(o, " (git-ignored)") || strings.HasPrefix(o, LeftUncommittedPrefix) {
 			continue
 		}
 		if c := churnClass(wd, base, o); c != "" {

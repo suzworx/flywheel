@@ -237,13 +237,11 @@ func runValidate(args []string) {
 		fmt.Printf("%s owns: ok\n", task)
 	} else {
 		fmt.Printf("%s owns: outside %s\n", task, strings.Join(res.Outside, ", "))
-		// A sibling entry reads "<worktree path>: <path>"; another session's
-		// edit there can be claimed from this ledger (issue #362).
-		for _, o := range res.Outside {
-			if wt, p, ok := strings.Cut(o, ": "); ok {
-				fmt.Printf("%s owns: hint: a path in a sibling worktree changed after dispatch; if another session made it, claim it: flywheel claim-edit --worktree %s --paths %s --session <your session>\n", task, wt, p)
-				break
-			}
+		for _, line := range siblingHint(task, res.Outside) {
+			fmt.Println(line)
+		}
+		for _, line := range leftUncommittedHint(task, res.Outside) {
+			fmt.Println(line)
 		}
 		for _, line := range outsideHints(task, res.Outside, res.Churn) {
 			fmt.Println(line)
@@ -364,6 +362,35 @@ func verdictLine(task string, res flywheel.GaugeResult) string {
 		return task + " validate: fail"
 	}
 	return task + " validate: fail: " + strings.Join(reasons, "; ")
+}
+
+// siblingHint returns one "owns: hint:" line, or none, for the first sibling
+// entry ("<worktree path>: <path>"): another session's edit there can be
+// claimed from this ledger (issue #362). The left-uncommitted entry is not a
+// sibling path (issue #934).
+func siblingHint(task string, outside []string) []string {
+	for _, o := range outside {
+		if strings.HasPrefix(o, flywheel.LeftUncommittedPrefix) {
+			continue
+		}
+		if wt, p, ok := strings.Cut(o, ": "); ok {
+			return []string{fmt.Sprintf("%s owns: hint: a path in a sibling worktree changed after dispatch; if another session made it, claim it: flywheel claim-edit --worktree %s --paths %s --session <your session>", task, wt, p)}
+		}
+	}
+	return nil
+}
+
+// leftUncommittedHint returns one "owns: hint:" line, or none, for the entry
+// naming the paths the attempt commit left uncommitted (issue #934): amend
+// owns, then recommit with flywheel worktree commit (issue #897).
+func leftUncommittedHint(task string, outside []string) []string {
+	for _, o := range outside {
+		if paths, ok := strings.CutPrefix(o, flywheel.LeftUncommittedPrefix); ok {
+			return []string{fmt.Sprintf("%s owns: hint: %s left uncommitted by the attempt commit; if they are the unit's work, amend owns to cover them (flywheel log --task %s --kind amended --brief <file> --note \"<why>\"), then recommit: flywheel worktree commit %s --session <your session>, then re-validate",
+				task, paths, task, task)}
+		}
+	}
+	return nil
 }
 
 // outsideHints returns one "owns: hint:" line, or none, for the outside paths

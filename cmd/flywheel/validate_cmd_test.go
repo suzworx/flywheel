@@ -200,6 +200,38 @@ func TestOutsideHint(t *testing.T) {
 	}
 }
 
+// TestOutsideHintLeftUncommitted checks the issue #934 hint: the entry the
+// attempt commit left uncommitted names the recommit remedy, and the sibling
+// hint no longer reads it as a worktree path.
+func TestOutsideHintLeftUncommitted(t *testing.T) {
+	t.Parallel()
+	left := flywheel.LeftUncommittedPrefix + "a.go, notes.txt"
+	cases := []struct {
+		name    string
+		outside []string
+		want    []string
+	}{
+		{"none", nil, nil},
+		{"ordinary paths", []string{"a.go", "b.go"}, nil},
+		{"sibling", []string{"/wt/a: x.go"}, nil},
+		{"left uncommitted", []string{"b.go", left},
+			[]string{`T1 owns: hint: a.go, notes.txt left uncommitted by the attempt commit; if they are the unit's work, amend owns to cover them (flywheel log --task T1 --kind amended --brief <file> --note "<why>"), then recommit: flywheel worktree commit T1 --session <your session>, then re-validate`}},
+	}
+	for _, c := range cases {
+		got := leftUncommittedHint("T1", c.outside)
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") || len(got) != len(c.want) {
+			t.Errorf("%s: leftUncommittedHint() =\n%q\nwant\n%q", c.name, got, c.want)
+		}
+	}
+	if got := siblingHint("T1", []string{flywheel.LeftUncommittedPrefix + "a.go"}); got != nil {
+		t.Errorf("siblingHint(left uncommitted) = %q, want nil", got)
+	}
+	want := "T1 owns: hint: a path in a sibling worktree changed after dispatch; if another session made it, claim it: flywheel claim-edit --worktree /wt/a --paths x.go --session <your session>"
+	if got := siblingHint("T1", []string{flywheel.LeftUncommittedPrefix + "a.go", "/wt/a: x.go"}); len(got) != 1 || got[0] != want {
+		t.Errorf("siblingHint(sibling) = %q, want %q", got, want)
+	}
+}
+
 // TestValidateVerdictLine checks the issue #857 verdict, validate's last
 // stdout line: pass, or fail with every reason joined by "; ".
 func TestValidateVerdictLine(t *testing.T) {
