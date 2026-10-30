@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.2](https://github.com/suzworx/flywheel/compare/v0.84.1...v0.84.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* validate attributes a landed unit's task-worktree content to that unit ([#938](https://github.com/suzworx/flywheel/issues/938)) ([f156928](https://github.com/suzworx/flywheel/commit/f156928fdd078a31a138237ede09c3dba1e035bf)), closes [#937](https://github.com/suzworx/flywheel/issues/937)
+
 ## [0.84.1](https://github.com/suzworx/flywheel/compare/v0.84.0...v0.84.1) (2026-10-30)
 
 
