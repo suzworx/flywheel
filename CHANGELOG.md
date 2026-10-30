@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.5](https://github.com/suzworx/flywheel/compare/v0.84.4...v0.84.5) (2026-10-30)
+
+
+### Bug Fixes
+
+* a clean stop names the gates the worker did not rerun after its last write ([#949](https://github.com/suzworx/flywheel/issues/949)) ([67ce4ab](https://github.com/suzworx/flywheel/commit/67ce4ab9efb220f31bb1f5dc30627808f3007464)), closes [#948](https://github.com/suzworx/flywheel/issues/948)
+
 ## [0.84.4](https://github.com/suzworx/flywheel/compare/v0.84.3...v0.84.4) (2026-10-30)
 
 
