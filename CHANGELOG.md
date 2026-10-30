@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.1](https://github.com/suzworx/flywheel/compare/v0.84.0...v0.84.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* validate names the worktree commit remedy for paths left uncommitted ([#935](https://github.com/suzworx/flywheel/issues/935)) ([c3d5724](https://github.com/suzworx/flywheel/commit/c3d5724886aef544557f2e26f6c41c47ceb64c5c)), closes [#934](https://github.com/suzworx/flywheel/issues/934)
+
 ## [0.84.0](https://github.com/suzworx/flywheel/compare/v0.83.0...v0.84.0) (2026-10-29)
 
 
