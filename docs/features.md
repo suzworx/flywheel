@@ -241,8 +241,10 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 worker can load them; issue #832),
 and `flywheel config validate` fails when such a list drops `Bash(git commit:*)`, `Bash(git push:*)`
 or `Bash(git reset:*)`. To deny a project command without touching the git-write list, use the
-top-level `worker_policy.deny` (issue #692): command prefixes such as `pio run -t upload` or
-`node scripts/flash.mjs`, appended as `Bash(<prefix>:*)` to every claude worker's list, checked as
+top-level `worker_policy.deny` (issue #692), which also keeps a worker from starting a heavy command
+(a claude prefix ends at a word boundary, so each script needs one entry by its exact name, as
+`npm run validate` does not cover `npm run validate:non-device`): command prefixes such as
+`pio run -t upload` or `node scripts/flash.mjs`, appended as `Bash(<prefix>:*)` to every claude worker's list, checked as
 `"<prefix>*": "deny"` in `.flywheel/opencode-worker.json` for opencode workers, and refused at
 dispatch on codex and pi workers, which cannot enforce a command deny list.
 A misspelt key is named with its nearest known key (`unknown key "allowedTools"; did you mean

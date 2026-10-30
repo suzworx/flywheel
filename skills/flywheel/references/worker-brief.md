@@ -253,6 +253,9 @@ only what those cannot know. One task per brief. Each brief must state, in plain
   (<holder>)`; a lock held past `limits.quiet_wait` leaves the gate unrun and its reading
   `inconclusive` (`resource busy: <name> held by <holder>`). The locks serialise validate's
   gates, not the worker's own runs.
+  To stop a worker starting a heavy command itself, list it in `worker_policy.deny` (see **No
+  side-effect commands**): a claude worker's prefix ends at a word boundary, so each script needs
+  one entry by its exact name (`npm run validate` does not cover `npm run validate:non-device`).
 - **kind:** — optional, one line: the kind of work (`feature`, `fix`, `refactor`, `test`, `docs`,
   `chore` or `perf` by default; config `lint.kinds` replaces the list, and `flywheel lint` refuses
   any other value or an empty line) so routing scores models on that kind's own record (issue #475).

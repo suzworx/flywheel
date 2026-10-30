@@ -30,6 +30,51 @@ func TestWorkerDenyClaudeAppends(t *testing.T) {
 	}
 }
 
+// TestWorkerPolicyDenyColon checks a colon inside a prefix names a colon-named
+// script on claude and opencode, while a trailing colon or :* stays refused
+// (issue #951), and that a claude prefix ends at a word boundary.
+func TestWorkerPolicyDenyColon(t *testing.T) {
+	t.Parallel()
+	const entry = "npm run validate:non-device"
+	const pattern = "Bash(npm run validate:non-device:*)"
+	p := &WorkerPolicy{Deny: []string{entry}}
+	if got := p.problems(); len(got) != 0 {
+		t.Errorf("problems(%q) = %v, want none", entry, got)
+	}
+	for _, bad := range []string{"make:", "pio run:*"} {
+		if got := (&WorkerPolicy{Deny: []string{bad}}).problems(); len(got) != 1 {
+			t.Errorf("problems(%q) = %v, want one problem", bad, got)
+		}
+	}
+
+	disallowed := claudeDisallowed(Worker{}, p)
+	if !slices.Contains(disallowed, pattern) {
+		t.Errorf("claudeDisallowed() = %v, want it to contain %q", disallowed, pattern)
+	}
+	want := "Bash: " + pattern + " (" + entry + " 2>&1)"
+	if got := attributeDenial(entry+" 2>&1 | tail -5", disallowed); got != want {
+		t.Errorf("attributeDenial() = %q, want %q", got, want)
+	}
+	if denyMatches(pattern, "npm run validate") {
+		t.Errorf("denyMatches(%q, %q) = true, want false", pattern, "npm run validate")
+	}
+	if denyMatches("Bash(npm run validate:*)", entry) {
+		t.Errorf("denyMatches(%q, %q) = true, want false", "Bash(npm run validate:*)", entry)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".flywheel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"permission": {"bash": {"*": "allow", "npm run validate:non-device*": "deny"}}}`
+	if err := os.WriteFile(filepath.Join(dir, ".flywheel", "opencode-worker.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkWorkerPolicy(dir, "opencode", p); err != nil {
+		t.Errorf("checkWorkerPolicy() = %v, want nil", err)
+	}
+}
+
 // TestWorkerDenyOpencodeCheck checks the opencode policy file must deny every
 // worker_policy.deny entry (issue #692), and that no entries means no check.
 func TestWorkerDenyOpencodeCheck(t *testing.T) {

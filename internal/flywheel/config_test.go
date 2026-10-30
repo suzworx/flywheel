@@ -1182,7 +1182,7 @@ func TestConfigValidateWorkerPolicy(t *testing.T) {
 		{"   ", "worker_policy.deny[1] must not be empty"},
 		{"pio run*", `worker_policy.deny[1] "pio run*" must be a plain command prefix`},
 		{"Bash(make)", `worker_policy.deny[1] "Bash(make)"`},
-		{"make:deploy", `worker_policy.deny[1] "make:deploy"`},
+		{"make:", `worker_policy.deny[1] "make:"`},
 	} {
 		c := base(&WorkerPolicy{Deny: []string{"make deploy", tc.entry}}, Worker{})
 		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
