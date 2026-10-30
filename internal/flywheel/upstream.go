@@ -104,7 +104,7 @@ func pendingUpstream(wd, from, to string, paths, owns []string) (string, error) 
 			sha, counted = strings.TrimSpace(line[1:]), false
 			continue
 		}
-		if line == "" || sha == "" || (!want[line] && !ownsContains(owns, line)) {
+		if line == "" || sha == "" || isFlywheelOwnPath(line) || (!want[line] && !ownsContains(owns, line)) {
 			continue
 		}
 		files[line] = true

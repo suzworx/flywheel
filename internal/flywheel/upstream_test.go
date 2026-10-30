@@ -161,6 +161,60 @@ func TestValidateDroppedFailsPass(t *testing.T) {
 	}
 }
 
+// TestValidateDroppedIgnoresOwnPaths: in a repository tracking flywheel.md, a
+// row an integration fix added to the status file and the next derive overwrote
+// is not the unit's dropped line, while an owned file's dropped line still fails
+// the pass (issue #945).
+func TestValidateDroppedIgnoresOwnPaths(t *testing.T) {
+	t.Parallel()
+	dir, err := initTaskOwns(t, []string{"a.go"}, []string{"exit 0"})
+	if err != nil {
+		t.Fatalf("initTaskOwns() error = %v", err)
+	}
+	git(t, dir, []string{"branch", "-M", "main"})
+	upstreamWrite(t, dir, ".gitignore", ".flywheel/\n", "track the status file")
+	base := upstreamWrite(t, dir, "flywheel.md", "# status\n", "status")
+	if err := AppendEvent(dir, Event{Task: "T1", Kind: "dispatched", Attempt: "r1", Base: base}); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, []string{"checkout", "-q", "-b", "fw/T1"})
+	git(t, dir, []string{"checkout", "-q", "main"})
+	upstreamWrite(t, dir, "flywheel.md", "# status\n| merged row |\n", "fix: status row")
+	upstreamWrite(t, dir, "a.go", "package x\n\nvar X = 9\n", "fix: add X")
+	git(t, dir, []string{"checkout", "-q", "fw/T1"})
+	git(t, dir, []string{"merge", "-q", "--ff-only", "main"})
+	upstreamWrite(t, dir, "flywheel.md", "# status\n| derived row |\n", "status derived")
+	upstreamWrite(t, dir, "a.go", "package x\n\nvar X = 9\nvar u = 1\n", "unit keeps X")
+	logFinished(t, dir, "T1", "w1")
+
+	res, err := ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask(kept) error = %v", err)
+	}
+	if !res.OK() || len(res.Dropped) != 0 {
+		t.Fatalf("ValidateTask(kept) = OK %v dropped %q, want a pass with nothing dropped", res.OK(), res.Dropped)
+	}
+	for _, fix := range res.FixLines {
+		if strings.Contains(fix, "flywheel.md") {
+			t.Fatalf("ValidateTask(kept) fix lines = %q, want no flywheel.md entry", res.FixLines)
+		}
+	}
+
+	upstreamWrite(t, dir, "a.go", "package x\n\nvar u = 1\n", "unit drops X")
+	res, err = ValidateTask(dir, "T1", ValidateOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("ValidateTask(dropped) error = %v", err)
+	}
+	if want := []string{"a.go: var X = 9"}; res.OK() || !reflect.DeepEqual(res.Dropped, want) {
+		t.Fatalf("ValidateTask(dropped) = OK %v dropped %q, want a failure on %q", res.OK(), res.Dropped, want)
+	}
+	for _, fix := range res.FixLines {
+		if strings.Contains(fix, "flywheel.md") {
+			t.Fatalf("ValidateTask(dropped) fix lines = %q, want no flywheel.md entry", res.FixLines)
+		}
+	}
+}
+
 // TestInspectRefusesDropped: a pass on a reading with dropped integration
 // lines is refused under T3, naming them and the rebased escape (issue #770).
 func TestInspectRefusesDropped(t *testing.T) {
@@ -195,5 +249,24 @@ func TestUpstreamPending(t *testing.T) {
 	upstreamWrite(t, dir, "b.txt", "b2\n", "M2")
 	if got, err := pendingUpstream(dir, m1, "main", []string{"a.go"}, []string{"a.go"}); err != nil || got != "" {
 		t.Fatalf("pendingUpstream(unowned only) = %q, %v; want none", got, err)
+	}
+}
+
+// TestUpstreamPendingIgnoresOwnPaths: an integration commit touching only
+// flywheel's own bookkeeping is neither named nor counted; a later one
+// touching the owned file is (issue #945).
+func TestUpstreamPendingIgnoresOwnPaths(t *testing.T) {
+	t.Parallel()
+	dir, _, m1 := upstreamRepo(t)
+	owns := []string{"a.go"}
+	git(t, dir, []string{"checkout", "-q", "main"})
+	upstreamWrite(t, dir, "flywheel.md", "# plan\n", "M2")
+	if got, err := pendingUpstream(dir, m1, "main", nil, owns); err != nil || got != "" {
+		t.Fatalf("pendingUpstream(own path only) = %q, %v; want none", got, err)
+	}
+	m3 := upstreamWrite(t, dir, "a.go", "package x\n\nvar X = 10\n", "M3")
+	got, err := pendingUpstream(dir, m1, "main", nil, owns)
+	if err != nil || !strings.HasPrefix(got, "1 integration commit(s)") || !strings.Contains(got, "a.go") || !strings.Contains(got, short7(m3)) || strings.Contains(got, "flywheel.md") {
+		t.Fatalf("pendingUpstream(owned) = %q, %v; want one commit %s naming a.go and not flywheel.md", got, err, short7(m3))
 	}
 }

@@ -832,9 +832,11 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	// Integration lines a hand merge dropped, and integration commits not yet
 	// merged, on owned files (issue #770). A git error skips the reading; a
 	// branch that merged nothing (fork == unitBase) costs no git process.
+	// Flywheel's own paths are derived, so a line lost there is not the unit's
+	// (issue #945).
 	var ownedChanged []string
 	for _, p := range changed {
-		if ownsContains(owns, p) {
+		if ownsContains(owns, p) && !isFlywheelOwnPath(p) {
 			ownedChanged = append(ownedChanged, p)
 		}
 	}
