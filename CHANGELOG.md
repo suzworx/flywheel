@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.4](https://github.com/suzworx/flywheel/compare/v0.84.3...v0.84.4) (2026-10-30)
+
+
+### Bug Fixes
+
+* validate skips flywheel's own generated files in its upstream readings ([#946](https://github.com/suzworx/flywheel/issues/946)) ([b5e4b8f](https://github.com/suzworx/flywheel/commit/b5e4b8fec5dfbfa575afc2a3e6eeb13a39311297)), closes [#945](https://github.com/suzworx/flywheel/issues/945)
+
 ## [0.84.3](https://github.com/suzworx/flywheel/compare/v0.84.2...v0.84.3) (2026-10-30)
 
 
