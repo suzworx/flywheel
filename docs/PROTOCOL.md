@@ -1902,7 +1902,12 @@ ruleset, it cannot be bypassed locally; it needs the event log committed, and an
   instead: while `<task>` is dispatched and unlanded there, every changed path in it is attributed
   `"<worktree>: <path> -> <task>"` (issue #386). A task worktree `<L>/.flywheel/worktrees/<task>`
   of another ledger L is read against L's ledger and attributed `"<worktree>: <path> -> <task>
-  (another ledger <L>)"` while `<task>` is dispatched and unlanded there (issue #918).
+  (another ledger <L>)"` while `<task>` is dispatched and unlanded there (issue #918). Once
+  `<task>` has landed, a changed path in its task worktree whose content (git blob) equals the path
+  in the `tree` of the task's latest `landed` event is attributed `"<worktree>: <path> -> <task>
+  (landed)"`, or `"... -> <task> (landed, another ledger <L>)"`; a landed event without a tree, a
+  deleted file or an edit after landing stays outside
+  ([#937](https://github.com/suzworx/flywheel/issues/937)).
 
 ### `goal`
 - Written by: `flywheel goal add`/`flywheel goal set`.

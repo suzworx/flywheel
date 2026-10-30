@@ -749,6 +749,10 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 				continue
 			}
 			taskOwner := taskWorktreeOwner(dir, fresh, wtPath)
+			landedOwner, landedAt := "", ""
+			if taskOwner == "" {
+				landedOwner, landedAt = landedTaskTree(dir, fresh, wtPath)
+			}
 			for _, p := range wtChanged {
 				if isFlywheelOwnPath(p) {
 					continue
@@ -764,6 +768,10 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 					}
 					if s := siblingClaim(fresh, task, wtPath, p, reading); s != "" {
 						attributed = append(attributed, wtPath+": "+p+" -> lead "+s)
+						continue
+					}
+					if landedOwner != "" && landedBlobMatches(wtPath, landedAt, p) {
+						attributed = append(attributed, wtPath+": "+p+" -> "+landedOwner)
 						continue
 					}
 					outside = append(outside, wtPath+": "+p)
@@ -1122,7 +1130,9 @@ func unlandedOwners(events []Event) []string {
 // worktreeOwner cannot see T in flight there. Any path in T's worktree is T's
 // work. A task worktree <L>/.flywheel/worktrees/<T> of ANOTHER ledger L is
 // read against L's own ledger the same way, returning "T (another ledger
-// <L>)" (issue #918); an unreadable L attributes nothing.
+// <L>)" (issue #918); an unreadable L attributes nothing. Once T has landed
+// its paths are T's only while they match T's landed tree (landedTaskTree,
+// issue #937).
 func taskWorktreeOwner(dir string, events []Event, wtPath string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -1143,7 +1153,7 @@ func taskWorktreeOwner(dir string, events []Event, wtPath string) string {
 
 // otherLedgerTaskOwner returns "T (another ledger <L>)" when the cleaned wt
 // is <L>/.flywheel/worktrees/<T> and T is dispatched and unlanded in L's
-// ledger, else "" (issue #918).
+// ledger, else "" (issue #918). A landed T is landedTaskTree's (issue #937).
 func otherLedgerTaskOwner(wt string) string {
 	parent := filepath.Dir(wt)
 	if !isPathEqual(filepath.Base(parent), "worktrees") || !isPathEqual(filepath.Base(filepath.Dir(parent)), ".flywheel") {
@@ -1160,6 +1170,61 @@ func otherLedgerTaskOwner(wt string) string {
 		}
 	}
 	return ""
+}
+
+// landedTaskTree returns, for the task worktree <L>/.flywheel/worktrees/<T>
+// that taskWorktreeOwner and otherLedgerTaskOwner recognise, the owner label
+// "T (landed)" ("T (landed, another ledger <L>)" for another ledger L) and
+// the Tree of T's latest landed event in that ledger: the main ledger events
+// when L is dir, else L's own ledger (issue #937). It returns "", "" for any
+// other worktree, an unreadable ledger, a task that never landed, or a landed
+// event without a tree. A path is T's only when landedBlobMatches agrees.
+func landedTaskTree(dir string, events []Event, wtPath string) (string, string) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", ""
+	}
+	wt := filepath.Clean(wtPath)
+	parent := filepath.Dir(wt)
+	suffix := ""
+	if !isPathEqual(parent, filepath.Clean(filepath.Join(abs, ".flywheel", "worktrees"))) {
+		if !isPathEqual(filepath.Base(parent), "worktrees") || !isPathEqual(filepath.Base(filepath.Dir(parent)), ".flywheel") {
+			return "", ""
+		}
+		ledger := filepath.Dir(filepath.Dir(parent))
+		if events, err = ReadEvents(ledger); err != nil {
+			return "", ""
+		}
+		suffix = ", another ledger " + filepath.ToSlash(ledger)
+	}
+	task, tree := "", ""
+	for _, e := range events {
+		if e.Kind == "landed" && e.Task != "" && isPathEqual(filepath.Join(parent, e.Task), wt) {
+			task, tree = e.Task, e.Tree
+		}
+	}
+	if task == "" || tree == "" {
+		return "", ""
+	}
+	return task + " (landed" + suffix + ")", tree
+}
+
+// landedBlobMatches reports whether the slash-separated path p in the
+// worktree wt has exactly the content of p in the landed tree: git's blob id
+// of tree:p equals git hash-object of the file (issue #937). Any git error, a
+// path absent from the tree or a deleted file is no match, so an edit made
+// after landing stays outside.
+func landedBlobMatches(wt, tree, p string) bool {
+	want, err := gitRead(wt, []string{"rev-parse", "--verify", "-q", tree + ":" + p})
+	if err != nil {
+		return false
+	}
+	got, err := gitRead(wt, []string{"hash-object", "--", p})
+	if err != nil {
+		return false
+	}
+	w, g := strings.TrimSpace(want), strings.TrimSpace(got)
+	return w != "" && w == g
 }
 
 // worktreeOwner reports the task in worktree W whose brief owns the changed

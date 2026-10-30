@@ -1151,7 +1151,8 @@ func TestValidateOtherWorktreePlannedOnlyTaskNotAttributed(t *testing.T) {
 // `run --worktree` worktree, <repo>/.flywheel/worktrees/<B>, is attributed to
 // B from the MAIN ledger while B is dispatched and unlanded there, even though
 // the worktree holds no ledger of its own (issue #386). Once B lands its path
-// is outside again, and a sibling outside .flywheel/worktrees/ keeps the
+// is outside again unless its content matches B's landed tree (issue #937;
+// these landed events carry no tree), and a sibling outside .flywheel/worktrees/ keeps the
 // worktree's own-ledger rule.
 func TestValidateTaskWorktreeSibling(t *testing.T) {
 	t.Parallel()
