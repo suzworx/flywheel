@@ -11,7 +11,8 @@ import (
 // is attributed to OTHER from L's ledger while OTHER is dispatched and
 // unlanded there, though the unit's own ledger A is a different checkout
 // (issue #918). Once OTHER lands in L, or L has no event log, the path is
-// outside again.
+// outside again: a landed task's path is attributed only when its content
+// matches the landed tree (issue #937), and this landed event carries none.
 func TestValidateOtherLedgerTaskWorktree(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
