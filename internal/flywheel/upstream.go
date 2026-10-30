@@ -19,7 +19,7 @@ func droppedUpstream(wd, from, to string, paths []string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	args := append([]string{"-c", "core.quotePath=false", "diff", "--no-renames", "--no-color", "--no-ext-diff", "-U0", from, to, "--"}, paths...)
+	args := append([]string{"-c", "core.quotePath=false", "diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "--no-ext-diff", "-U0", from, to, "--"}, paths...)
 	out, err := gitRead(wd, args)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,8 @@ func droppedUpstream(wd, from, to string, paths []string) ([]string, error) {
 	added := map[string][]string{}
 	var order []string
 	// Only the header lines between "diff --git" and the first "@@" name the
-	// file: an added line "++ b/x" reads "+++ b/x" in a hunk.
+	// file: an added line "++ b/x" reads "+++ b/x" in a hunk. Git ends a path
+	// holding whitespace with a tab.
 	file, header := "", false
 	for _, line := range strings.Split(out, "\n") {
 		switch {
@@ -36,9 +37,9 @@ func droppedUpstream(wd, from, to string, paths []string) ([]string, error) {
 		case strings.HasPrefix(line, "@@"):
 			header = false
 		case header && strings.HasPrefix(line, "--- a/"):
-			file = strings.TrimSuffix(strings.TrimPrefix(line, "--- a/"), "\r")
+			file = strings.TrimRight(strings.TrimPrefix(line, "--- a/"), "\t\r")
 		case header && strings.HasPrefix(line, "+++ b/"):
-			file = strings.TrimSuffix(strings.TrimPrefix(line, "+++ b/"), "\r")
+			file = strings.TrimRight(strings.TrimPrefix(line, "+++ b/"), "\t\r")
 		case header:
 		case strings.HasPrefix(line, "+") && file != "":
 			l := strings.TrimRight(line[1:], " \t\r")
