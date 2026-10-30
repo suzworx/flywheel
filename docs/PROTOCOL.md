@@ -547,7 +547,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   effective `gate:` lines that no recorded command contains, whitespace collapsed, or contains the
   gate's first 40 characters; matched against each command's full text, not the clipped
   `commands` entry, so a gate chained after character 300 still ran, issue #865; live gates are
-  not checked; omitted when empty, issue #365),
+  not checked; omitted when empty, issue #365), `gates_stale` (on a `stop` finish only: the ids of
+  the gates a recorded command ran before the worker's last Write, Edit or delete and none ran
+  after it, so disjoint from `gates_unrun`; a write made through the shell is not seen, and a write
+  only under `.flywheel/` does not count; omitted when empty, issue #948),
   `skills_loaded` (on every finish of a claude attempt: the skills its stream loaded through the
   `Skill` tool, the call's `input.skill`, in order, each once; omitted when none; `Validate`
   accepts it only on a `finished` event, issue #695),
@@ -607,6 +610,10 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   `<task> <attempt> never ran gate(s) <ids>` progress line; no signal is recorded (the lead
   re-measures every gate). `flywheel validate` prints `<task> note: the worker never ran gate(s)
   <ids> itself; its report's claims about them are unmeasured` after the gate lines (issue #365).
+  A non-empty `gates_stale` likewise adds `gates not rerun after the worker's last write: <ids>`,
+  prints `<task> <attempt> did not rerun gate(s) <ids> after its last write`, records no signal,
+  and `flywheel validate` prints `<task> note: the worker did not rerun gate(s) <ids> after its
+  last write; its report's claims about them are unmeasured` (issue #948).
 - Workers never write git (issue #423). The guarantee is two layers that do not depend on PATH:
   **denied at dispatch** — the claude adapter's default `--disallowedTools` denies `git` commit,
   push, stash, reset, checkout, rebase, merge, add, rm, mv, restore, update-index, apply, tag,

@@ -131,6 +131,9 @@ type GaugeResult struct {
 	// the gate ids the worker never ran itself (issue #365). A reading, never
 	// a gate.
 	GatesUnrun []string
+	// GatesStale copies the same event's gates_stale: the gate ids the worker
+	// did not rerun after its last write (issue #948). A reading, never a gate.
+	GatesStale []string
 	// SkillsNotLoaded are the skills the unit's claude dispatch named that
 	// its stream never loaded (skillsNotLoaded, issue #695), set only when
 	// skills.require_loaded is on. Not part of OK(): flywheel validate exits
@@ -196,16 +199,16 @@ func (r GaugeResult) OK() bool {
 	return r.Refused == "" && r.GatesOK && r.OwnsOK && len(r.Markers) == 0 && len(r.Dropped) == 0
 }
 
-// attemptGatesUnrun returns the GatesUnrun of the latest finished event of
-// task's attempt in events, or nil when there is none (issue #365).
-func attemptGatesUnrun(events []Event, task, attempt string) []string {
-	var unrun []string
+// attemptGateReadings returns the GatesUnrun and GatesStale of the latest
+// finished event of task's attempt in events, or nil when there is none
+// (issues #365, #948).
+func attemptGateReadings(events []Event, task, attempt string) (unrun, stale []string) {
 	for _, e := range events {
 		if e.Task == task && e.Kind == "finished" && e.Attempt == attempt {
-			unrun = e.GatesUnrun
+			unrun, stale = e.GatesUnrun, e.GatesStale
 		}
 	}
-	return unrun
+	return unrun, stale
 }
 
 // hostBlocked is the Windows Smart App Control message that intermittently
@@ -389,7 +392,7 @@ func ValidateTask(dir, task string, o ValidateOptions) (GaugeResult, error) {
 	res.Attempt = attempt
 	res.BriefPaths = briefPaths
 	res.GatesOK = true
-	res.GatesUnrun = attemptGatesUnrun(events, task, attempt)
+	res.GatesUnrun, res.GatesStale = attemptGateReadings(events, task, attempt)
 	res.Staged = staged
 	for _, f := range staged {
 		res.StagingLeft = append(res.StagingLeft, f.From)

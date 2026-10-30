@@ -330,6 +330,7 @@ mid-stream stall (no run-file line for the stall timeout while the process is st
 tool call open for the worker's `tool_stall_timeout`, default 1800 seconds, read from the
 stream's `tool_progress` heartbeats that keep the run file growing; the finished note says
 `tool call <tool> open <elapsed>s (tool_stall_timeout <N>s)`, issue #917).
+A clean stop names the gates the worker did not rerun after its last write ([#948](https://github.com/suzworx/flywheel/issues/948)).
 
 ## Routing, budgets and rate limits
 

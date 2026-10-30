@@ -140,6 +140,9 @@ type Event struct {
 	// GatesUnrun are the gate ids of the attempt's effective header that no
 	// recorded command contains (issue #365).
 	GatesUnrun []string `json:"gates_unrun,omitempty"`
+	// GatesStale are the gate ids a recorded command ran before the worker's
+	// last write and none ran after it; disjoint from GatesUnrun (issue #948).
+	GatesStale []string `json:"gates_stale,omitempty"`
 	// Tree is a content tree hash (treeHash): the measured tree on validated,
 	// the probed tree on gate_probed and the worker's tree at dispatch on
 	// dispatched (issue #833).

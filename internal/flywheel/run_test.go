@@ -5638,6 +5638,133 @@ func TestRunRecordsCommands(t *testing.T) {
 	}
 }
 
+// TestRunGatesStale: a clean stop names the gates the worker ran before its
+// last write and not after it, apart from the gates it never ran (issue #948).
+func TestRunGatesStale(t *testing.T) {
+	// not parallel: t.Setenv PATH
+	const (
+		gate1 = "go build ./..."
+		gate2 = "go test -count=1 ./..."
+		write = "" // a Write block rather than a shell command
+		// writeTo prefixes a step that writes the path after it; dirMark in
+		// that path stands for the test's dir.
+		writeTo = "write:"
+		dirMark = "<dir>/"
+		scratch = ".flywheel/runs/x.log"
+	)
+	var pad []string
+	for i := range 100 {
+		pad = append(pad, fmt.Sprintf("echo pad %d", i))
+	}
+	cases := []struct {
+		name      string
+		steps     []string
+		wantStale []string
+		wantUnrun []string
+	}{
+		{name: "gate before the write", steps: []string{gate1, write, gate2}, wantStale: []string{"1"}},
+		{name: "gates after the write", steps: []string{write, gate1, gate2}},
+		{name: "gate rerun after the write", steps: []string{gate1, write, gate1, gate2}},
+		{name: "no write", steps: []string{gate1}, wantUnrun: []string{"2"}},
+		{name: "stale and never run", steps: []string{gate1, write}, wantStale: []string{"1"}, wantUnrun: []string{"2"}},
+		{name: "gates after the command cap", steps: append(append([]string(nil), pad...), write, gate1, gate2)},
+		{name: "write to flywheel's scratch after the gates", steps: []string{gate1, gate2, writeTo + scratch}},
+		{name: "absolute write to flywheel's scratch after the gates", steps: []string{gate1, gate2, writeTo + dirMark + scratch}},
+		{name: "scratch write does not hide a real one", steps: []string{gate1, writeTo + scratch, writeTo + "a.go", gate2}, wantStale: []string{"1"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := setupTask(t)
+			brief := "gate: " + gate1 + "\ngate: " + gate2 + "\n\n# TASK\n"
+			if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+				t.Fatalf("write brief: %v", err)
+			}
+			cfg := Config{Version: 1, Workers: []Worker{{Name: "claude", Adapter: "claude", Model: "claude-sonnet-5"}}}
+			if err := WriteConfig(dir, cfg); err != nil {
+				t.Fatalf("WriteConfig() error = %v", err)
+			}
+			exe, err := os.Executable()
+			if err != nil {
+				t.Fatalf("os.Executable() error = %v", err)
+			}
+			binDir := t.TempDir()
+			fake := filepath.Join(binDir, "claude")
+			if runtime.GOOS == "windows" {
+				fake += ".exe"
+			}
+			if err := linkOrCopy(exe, fake); err != nil {
+				t.Fatalf("install fake claude: %v", err)
+			}
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			const session = "ses_stale_001"
+			var b strings.Builder
+			fmt.Fprintf(&b, `{"type":"system","subtype":"init","session_id":%q}`+"\n", session)
+			for _, step := range c.steps {
+				block := fmt.Sprintf(`{"type":"tool_use","name":"Bash","input":{"command":%q}}`, step)
+				if step == write {
+					block = `{"type":"tool_use","name":"Write","input":{"file_path":"a.go"}}`
+				}
+				if p, ok := strings.CutPrefix(step, writeTo); ok {
+					p = strings.ReplaceAll(p, dirMark, filepath.ToSlash(dir)+"/")
+					block = fmt.Sprintf(`{"type":"tool_use","name":"Write","input":{"file_path":%q}}`, filepath.FromSlash(p))
+				}
+				fmt.Fprintf(&b, `{"type":"assistant","session_id":%q,"message":{"content":[%s]}}`+"\n", session, block)
+			}
+			fmt.Fprintf(&b, `{"type":"result","subtype":"success","stop_reason":"stop_sequence","session_id":%q,"total_cost_usd":0.01}`+"\n", session)
+			stream := filepath.Join(t.TempDir(), "stream.jsonl")
+			if err := os.WriteFile(stream, []byte(b.String()), 0o644); err != nil {
+				t.Fatalf("write stream: %v", err)
+			}
+			t.Setenv(fakeClaudeEnv, stream)
+
+			var buf bytes.Buffer
+			res, err := Run(dir, RunOptions{Task: "T1", Progress: &buf})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if res.Reason != "stop" {
+				t.Fatalf("Run() reason = %q, want stop; progress:\n%s", res.Reason, buf.String())
+			}
+			evs, err := ReadEvents(dir)
+			if err != nil {
+				t.Fatalf("ReadEvents() error = %v", err)
+			}
+			var fin *Event
+			for i := range evs {
+				if evs[i].Kind == "finished" {
+					fin = &evs[i]
+				}
+			}
+			if fin == nil {
+				t.Fatalf("no finished event; events = %v", evs)
+			}
+			if !reflect.DeepEqual(fin.GatesStale, c.wantStale) {
+				t.Errorf("finished GatesStale = %q, want %q", fin.GatesStale, c.wantStale)
+			}
+			if !reflect.DeepEqual(fin.GatesUnrun, c.wantUnrun) {
+				t.Errorf("finished GatesUnrun = %q, want %q", fin.GatesUnrun, c.wantUnrun)
+			}
+			if len(c.wantStale) > 0 {
+				ids := strings.Join(c.wantStale, ", ")
+				if !strings.Contains(fin.Note, "gates not rerun after the worker's last write: "+ids) {
+					t.Errorf("finished Note = %q, want it to name gate(s) %s", fin.Note, ids)
+				}
+				if !strings.Contains(buf.String(), "T1 "+fin.Attempt+" did not rerun gate(s) "+ids+" after its last write") {
+					t.Errorf("progress lacks the did-not-rerun line:\n%s", buf.String())
+				}
+				return
+			}
+			if strings.Contains(fin.Note, "not rerun") {
+				t.Errorf("finished Note = %q, want no not-rerun note", fin.Note)
+			}
+			if strings.Contains(buf.String(), "did not rerun") {
+				t.Errorf("progress has a did-not-rerun line:\n%s", buf.String())
+			}
+		})
+	}
+}
+
 // TestGatesUnrun unit-tests gateRan (issue #365).
 func TestGatesUnrun(t *testing.T) {
 	t.Parallel()
