@@ -151,6 +151,53 @@ func TestValidateBaseProbeNote(t *testing.T) {
 	}
 }
 
+// TestValidateFixLinesReading checks validate prints the lines a unit removed
+// that an earlier fix added and still exits 0: a reading, never a failure
+// (issue #940).
+func TestValidateFixLinesReading(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	gitInitRepo(t, dir)
+	if _, err := flywheel.Init(dir, false); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	brief := "owns: a.txt\nneeds: none\ngate: exit 0\n\n# TASK x\n"
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte(brief), 0o644); err != nil {
+		t.Fatalf("write brief: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("keep\nstale\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	rebaseGit(t, dir, "add", "-A")
+	rebaseGit(t, dir, "commit", "-q", "-m", "fix: stop stale times")
+	base := strings.TrimSpace(rebaseGit(t, dir, "rev-parse", "HEAD"))
+	evs := []flywheel.Event{
+		{TS: "2026-09-26T00:00:00Z", Task: "T1", Kind: "planned", Brief: "b.txt"},
+		{TS: "2026-09-26T00:00:01Z", Task: "T1", Kind: "dispatched", Attempt: "r1", Base: base},
+	}
+	if err := flywheel.AppendEvents(dir, evs); err != nil {
+		t.Fatalf("AppendEvents() error = %v", err)
+	}
+	rebaseGit(t, dir, "checkout", "-q", "-b", "fw/T1")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	rebaseGit(t, dir, "add", "a.txt")
+	rebaseGit(t, dir, "commit", "-q", "-m", "unit removes the line")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNeedsEnvValidateRefusal$")
+	cmd.Env = append(os.Environ(), runValidateHelperEnv+"="+strings.Join([]string{"T1", "--dir", dir}, "\x1f"))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("validate = %v, want exit 0; stdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	want := "T1 fix lines removed: a.txt: 1 line(s) from fix " + base[:12] + " fix: stop stale times\n" +
+		"T1 fix lines removed: a reading, not a failure; check why that fix added them before landing\n"
+	if out := stdout.String(); !strings.Contains(out, want) {
+		t.Errorf("validate stdout lacks\n%s\ngot:\n%s", want, out)
+	}
+}
+
 // TestChurnHints checks the issue #647 hint: one line per churn class, sorted,
 // naming the paths and the restore command; none when nothing is labelled.
 func TestChurnHints(t *testing.T) {

@@ -1697,7 +1697,14 @@ working exactly as before.
   integration commits the branch merged — the unit's base up to its merge-base with the
   integration branch — added to a changed owned file that the tree no longer holds, compared
   without trailing space and `\r`; a deleted file drops all of them; lines trimmed and clipped to
-  80 characters; capped like `markers`; any fails the pass, exit 5, issue #770), `staged`
+  80 characters; capped like `markers`; any fails the pass, exit 5, issue #770), `fix_lines`
+  (optional, sorted `"<path>: <n> line(s) from fix <sha12> <subject>"` entries for non-blank lines
+  the unit removed from a changed owned file that an earlier fix commit added, measured from the
+  branch's merge-base with the integration branch so lines integration removed do not count, a
+  subject counting as a fix when it starts with `fix`, `fixes`, `fixed`, `hotfix` or `bugfix`; a
+  line-ending change or a pure rename removes nothing and a deleted file counts; subjects clipped
+  to 80 characters; capped like `markers`; a unit with no dispatch base has none; a reading, it
+  never affects whether a reading is clean, the exit code or inspect, issue #940), `staged`
   (optional, the files the brief's `stage:` lines staged before the gates, as on `staged`, issue
   #781), `persona` (`"supervisor"`).
 - Effect: no status change. T3 requires an `owns_checked` with an empty `outside`, empty

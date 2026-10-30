@@ -128,10 +128,14 @@ func explainLine(e Event) string {
 		return line
 
 	case "owns_checked":
-		if len(e.Outside) == 0 {
-			return "owns check: ok"
+		line := "owns check: ok"
+		if len(e.Outside) > 0 {
+			line = fmt.Sprintf("owns check: outside %s", strings.Join(e.Outside, ", "))
 		}
-		return fmt.Sprintf("owns check: outside %s", strings.Join(e.Outside, ", "))
+		if len(e.FixLines) > 0 {
+			line += "; removes fix lines: " + strings.Join(e.FixLines, ", ")
+		}
+		return line
 
 	case "inspected":
 		line := fmt.Sprintf("inspected %s by %s", e.Verdict, e.Session)
