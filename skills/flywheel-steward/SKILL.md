@@ -8,7 +8,7 @@ description: >-
   hold this persona.
 license: MIT
 metadata:
-  version: 0.84.5 # x-release-please-version
+  version: 0.84.6 # x-release-please-version
 ---
 
 # Flywheel Steward

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.6](https://github.com/suzworx/flywheel/compare/v0.84.5...v0.84.6) (2026-10-30)
+
+
+### Bug Fixes
+
+* worker_policy.deny accepts a colon inside an entry, so a colon-named script can be denied ([#952](https://github.com/suzworx/flywheel/issues/952)) ([6db4333](https://github.com/suzworx/flywheel/commit/6db433386024d787b3fdf53ecb897de6bae0b04b)), closes [#951](https://github.com/suzworx/flywheel/issues/951)
+
 ## [0.84.5](https://github.com/suzworx/flywheel/compare/v0.84.4...v0.84.5) (2026-10-30)
 
 
