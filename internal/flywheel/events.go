@@ -205,6 +205,11 @@ type Event struct {
 	// integration commits added to a changed owned file that the tree no
 	// longer holds (issue #770); a reading with any is not clean.
 	Dropped []string `json:"dropped,omitempty"`
+	// FixLines is an owns_checked event's "<path>: <n> line(s) from fix <sha12>
+	// <subject>" entries for lines the unit removed that an earlier fix commit
+	// added (issue #940). A reading, never a gate: it never affects whether a
+	// reading is clean.
+	FixLines []string `json:"fix_lines,omitempty"`
 	// Worktrees is a dispatched event's snapshot of the repo's OTHER
 	// worktrees at dispatch time: worktree path -> {path -> sha256} for every
 	// path changedPaths reports there (issue #87). Nil when dir is not a git

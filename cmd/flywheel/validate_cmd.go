@@ -280,6 +280,14 @@ func runValidate(args []string) {
 		}
 		fmt.Printf("%s dropped upstream lines: restore them, then run flywheel validate %s again\n", task, task)
 	}
+	// Lines the unit removed that an earlier fix added (issue #940): a reading,
+	// never a failure.
+	if len(res.FixLines) > 0 {
+		for _, l := range res.FixLines {
+			fmt.Printf("%s fix lines removed: %s\n", task, l)
+		}
+		fmt.Printf("%s fix lines removed: a reading, not a failure; check why that fix added them before landing\n", task)
+	}
 	if res.Pending != "" {
 		fmt.Printf("%s base: warning: %s\n", task, res.Pending)
 	}

@@ -156,6 +156,11 @@ type GaugeResult struct {
 	// that the tree no longer holds (droppedUpstream, issue #770): any fails
 	// the pass, and the owns_checked event records them.
 	Dropped []string `json:"dropped,omitempty"`
+	// FixLines lists, sorted, "<path>: <n> line(s) from fix <sha12> <subject>"
+	// for lines of changed owned files that an earlier fix commit added and the
+	// unit removed (removedFixLines, issue #940). A reading, never a gate: OK(),
+	// the exit code and inspect do not change, so a deliberate removal lands.
+	FixLines []string `json:"fix_lines,omitempty"`
 	// Pending is set when integration commits the branch has not merged yet
 	// (fork..integration ref) touch owned files (pendingUpstream, issue #770):
 	// "<n> integration commit(s) since the unit's base touch owned files ...:
@@ -851,6 +856,18 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 			res.Pending = pending
 		}
 	}
+	// Lines the unit removed that an earlier fix added (issue #940), measured
+	// from what it merged: lines integration removed are not the unit's. A git
+	// error skips the reading; a lead-built unit with no dispatch base has none.
+	if unitBase != "" {
+		from := upstream
+		if from == "" {
+			from = unitBase
+		}
+		if fixLines, err := removedFixLines(wd, from, ownedChanged); err == nil {
+			res.FixLines = fixLines
+		}
+	}
 	// A base squash-merged under the unit (issue #414) inflates the changed
 	// set with the base unit's pre-squash commits: warn, never refuse here.
 	if b, landedAs, baseTask, ok := SquashedBase(dir, events, task); ok {
@@ -859,7 +876,7 @@ func finishValidate(dir, wd, task, attempt, tree, commit string, owns, needsStat
 	if err := AppendEvent(dir, Event{
 		TS: "", Task: task, Kind: "owns_checked", Attempt: attempt,
 		Tree: tree, Commit: commit, Outside: outside, Churn: res.Churn, Baselined: baselined, Attributed: attributed,
-		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Dropped: res.Dropped, Persona: "supervisor", Workdir: workdirField(wd, dir),
+		Ignored: res.Ignored, Files: res.Files, Markers: res.Markers, Dropped: res.Dropped, FixLines: res.FixLines, Persona: "supervisor", Workdir: workdirField(wd, dir),
 		Note: res.Stacked, Staged: res.Staged,
 	}); err != nil {
 		return GaugeResult{}, err
