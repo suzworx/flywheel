@@ -43,18 +43,21 @@ func (p *WorkerPolicy) denyPrefixes() []string {
 }
 
 // problems reports worker_policy.deny entries that are empty or carry
-// pattern syntax (*, (, ) or :), which flywheel adds itself.
+// pattern syntax, which flywheel adds itself: *, ( or ) anywhere, or : as the
+// last character of the trimmed entry (make: would give Bash(make::*)). A
+// colon elsewhere is part of the command (npm run validate:non-device).
 func (p *WorkerPolicy) problems() []string {
 	if p == nil {
 		return nil
 	}
 	var out []string
 	for i, d := range p.Deny {
+		trimmed := strings.TrimSpace(d)
 		switch {
-		case strings.TrimSpace(d) == "":
+		case trimmed == "":
 			out = append(out, fmt.Sprintf("worker_policy.deny[%d] must not be empty", i))
-		case strings.ContainsAny(d, "*():"):
-			out = append(out, fmt.Sprintf("worker_policy.deny[%d] %q must be a plain command prefix: *, (, ) and : are pattern syntax flywheel adds itself", i, d))
+		case strings.ContainsAny(d, "*()") || strings.HasSuffix(trimmed, ":"):
+			out = append(out, fmt.Sprintf("worker_policy.deny[%d] %q must be a plain command prefix: *, (, ) anywhere and a trailing : are pattern syntax flywheel adds itself", i, d))
 		}
 	}
 	return out

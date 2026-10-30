@@ -1014,7 +1014,7 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
 - The **worker policy** (issue #692) is `.flywheel/config.json` `"worker_policy": {"deny": ["pio run -t upload", "node scripts/flash.mjs"]}`:
   command prefixes, as a worker would type them, that no worker may run (a device upload, a deploy, a
   publish). Each entry is added to the adapter's built-in deny list, never replacing it. `LoadConfig`
-  rejects an empty or whitespace-only entry and one containing `*`, `(`, `)` or `:` (pattern syntax
+  rejects an empty or whitespace-only entry and one containing `*`, `(`, `)` or a trailing `:` (pattern syntax
   flywheel adds itself), naming `worker_policy.deny[<i>]`. Enforcement per adapter: **claude** appends
   `Bash(<prefix>:*)` to the worker's resolved `--disallowedTools` (the git-write defaults, or its own
   `disallowed_tools`), deduplicated, and a denial is attributed to that pattern like a git one (the
