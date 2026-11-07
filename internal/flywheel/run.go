@@ -249,6 +249,17 @@ func Run(dir string, o RunOptions) (res Result, err error) {
 			}
 		}
 	}
+	// A resume or a correction without --worker stays on the worker that
+	// built the task's last attempt, so it never drops silently to the
+	// default or the line's cheaper worker (field feedback, epic #586).
+	if o.Worker == "" && (o.Resume || o.DeltaPath != "") {
+		if evs, rerr := ReadEvents(dir); rerr == nil {
+			if name, ok := BuilderWorker(cfg, evs, o.Task); ok && name != worker.Name {
+				worker, _ = cfg.Worker(name)
+				progress(o.Progress, fmt.Sprintf("%s continues on worker %s, which ran its last attempt (pass --worker to change it)", o.Task, name))
+			}
+		}
+	}
 	model := o.Model
 	if model == "" {
 		model = worker.Model

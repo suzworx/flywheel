@@ -137,7 +137,7 @@ func runLand(args []string) {
 
 	// Handle --commit path
 	if o.commit == "" {
-		fmt.Fprintf(os.Stderr, "flywheel land: --commit is required without --merge\n")
+		fmt.Fprintf(os.Stderr, "flywheel land: %s needs --commit <sha> (its commit on the integration branch), --merge (from its worktree) or --pr N --session S (a merged PR); a unit committed on a feature branch lands after that branch merges\n", task)
 		landUsage(os.Stderr)
 		os.Exit(2)
 	}
