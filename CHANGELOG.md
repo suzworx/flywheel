@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.7](https://github.com/suzworx/flywheel/compare/v0.84.6...v0.84.7) (2026-11-07)
+
+
+### Bug Fixes
+
+* a resume or correction without --worker stays on the worker that ran the last attempt ([#954](https://github.com/suzworx/flywheel/issues/954)) ([8029af0](https://github.com/suzworx/flywheel/commit/8029af01b935791de0c44a9776f6f36b6dba6283))
+
 ## [0.84.6](https://github.com/suzworx/flywheel/compare/v0.84.5...v0.84.6) (2026-10-30)
 
 
