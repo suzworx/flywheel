@@ -234,7 +234,7 @@ func claudeDirProblem(w Worker, owns []string) string {
 	if len(hits) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("owns %s on paths Claude Code protects (.claude/, .mcp.json): worker %q (claude) cannot write there (even with bypassPermissions); own a staging path and map it with `stage: staging/claude/ -> .claude/` (flywheel validate copies it), or staff the unit with a non-claude worker", strings.Join(hits, ", "), w.Name)
+	return fmt.Sprintf("owns %s on paths Claude Code protects (.claude/, .mcp.json): worker %q (claude) cannot write there (even with bypassPermissions); own a staging path and map it with `stage: staging/claude/ -> .claude/` (flywheel validate copies it), staff the unit with a non-claude worker, or drop it from owns, make the edit yourself and record it with `flywheel claim-edit --paths <path> --session <own>`", strings.Join(hits, ", "), w.Name)
 }
 
 // webResearchWords are the brief phrases that ask for web research (issue

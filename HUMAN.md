@@ -417,8 +417,9 @@ shout c1 report recorded
 shout c1 finished rc=0 reason=stop model=.flywheel/rehearsal.jsonl steps=2 tokens=285 cost=$0.0040
 ```
 
-`--resume` dispatches to the default worker. If the unit ran on another worker, pass
-`--worker <name>` too: a different agent CLI cannot resume another one's session.
+`--resume` (or `--delta`) without `--worker` continues on the worker that ran the task's last
+attempt, and a progress line names it. `--worker <name>` overrides that, but a different agent
+CLI cannot resume another one's session.
 
 Measure again. The gauges now read the brief plus the delta:
 
