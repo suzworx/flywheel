@@ -1533,6 +1533,79 @@ func TestReviewAllowedToolsConfig(t *testing.T) {
 	}
 }
 
+// TestWorkerToolsConfig covers workers.<name>.allowed_tools and
+// .disallowed_tools (issue #956): the key lists name them, Set and Get
+// round-trip ";;" or newline separated patterns through config.json, an unset
+// list reads "", an empty entry is refused, an empty value restores the
+// defaults, and WorkerToolWarnings flags a list without Bash and a deny list
+// missing the git-write core.
+func TestWorkerToolsConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	name := cfg.Workers[0].Name
+	allowKey, denyKey := "workers."+name+".allowed_tools", "workers."+name+".disallowed_tools"
+	for _, k := range []string{allowKey, denyKey} {
+		if !slices.Contains(cfg.validKeys(), k) || !slices.Contains(cfg.settableKeys(), k) {
+			t.Errorf("%s missing from validKeys or settableKeys", k)
+		}
+	}
+	if err := cfg.Set(allowKey, " Bash ;;WebFetch\nRead "); err != nil {
+		t.Fatalf("Set(%s) error = %v", allowKey, err)
+	}
+	if err := WriteConfig(dir, cfg); err != nil {
+		t.Fatalf("WriteConfig() error = %v", err)
+	}
+	loaded, _, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if v, err := loaded.Get(allowKey); err != nil || v != "Bash;;WebFetch;;Read" {
+		t.Errorf("Get(%s) = %q, %v; want Bash;;WebFetch;;Read", allowKey, v, err)
+	}
+	if v, err := loaded.Get(denyKey); err != nil || v != "" {
+		t.Errorf("Get(%s) unset = %q, %v; want \"\"", denyKey, v, err)
+	}
+	if err := loaded.Set(allowKey, "Read;;;;Grep"); err == nil || !strings.Contains(err.Error(), "allowed_tools") || !strings.Contains(err.Error(), "empty entry") {
+		t.Errorf("Set with an empty entry = %v, want an allowed_tools empty-entry refusal", err)
+	}
+	if got := loaded.Workers[0].AllowedTools; !slices.Equal(got, []string{"Bash", "WebFetch", "Read"}) {
+		t.Errorf("a refused Set changed the patterns to %q", got)
+	}
+	if err := loaded.Set(allowKey, ""); err != nil || loaded.Workers[0].AllowedTools != nil {
+		t.Errorf("empty Set = %v, patterns %q; want them cleared", err, loaded.Workers[0].AllowedTools)
+	}
+	if got := loaded.Workers[0].allowedTools(); !slices.Equal(got, []string{"Bash"}) {
+		t.Errorf("allowedTools() after clear = %q, want [Bash]", got)
+	}
+
+	warn := Config{Workers: []Worker{{Name: "c", Adapter: "claude"}, {Name: "o", Adapter: "opencode", AllowedTools: []string{"WebFetch"}}}}
+	warn.Workers[0].AllowedTools = []string{"WebFetch"}
+	if got := warn.WorkerToolWarnings("c"); len(got) != 1 || !strings.Contains(got[0], "Bash") {
+		t.Errorf("WorkerToolWarnings(claude, [WebFetch]) = %q, want one Bash line", got)
+	}
+	warn.Workers[0].AllowedTools = []string{"Bash(go test:*)", "WebFetch"}
+	if got := warn.WorkerToolWarnings("c"); len(got) != 0 {
+		t.Errorf("WorkerToolWarnings(claude, Bash(go test:*)) = %q, want none", got)
+	}
+	if got := warn.WorkerToolWarnings("o"); len(got) != 0 {
+		t.Errorf("WorkerToolWarnings(non-claude) = %q, want none", got)
+	}
+	var deny []string
+	for _, d := range defaultDisallowedTools {
+		if d != "Bash(git commit:*)" {
+			deny = append(deny, d)
+		}
+	}
+	warn.Workers[0].DisallowedTools = deny
+	if got := warn.WorkerToolWarnings("c"); len(got) != 1 || !strings.Contains(got[0], "Bash(git commit:*)") {
+		t.Errorf("WorkerToolWarnings(deny without git commit) = %q, want one line naming Bash(git commit:*)", got)
+	}
+	if got := warn.WorkerToolWarnings("nope"); got != nil {
+		t.Errorf("WorkerToolWarnings(unknown) = %q, want nil", got)
+	}
+}
+
 // TestPanelConfig covers review.panel and review.required (issue #420): the
 // default panel, Get/Set as a comma-separated persona list that keeps a
 // member's worker, the key lists, and validation refusing an unknown or

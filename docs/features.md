@@ -240,7 +240,12 @@ replaces its default; it is not merged with it, so an operator can widen or narr
 (one exception: a brief naming `skills:` adds `Skill` to the claude worker's allowed tools, so the
 worker can load them; issue #832),
 and `flywheel config validate` fails when such a list drops `Bash(git commit:*)`, `Bash(git push:*)`
-or `Bash(git reset:*)`. To deny a project command without touching the git-write list, use the
+or `Bash(git reset:*)`. Set a list without editing the file with
+`flywheel config set workers.<name>.allowed_tools "Bash;;WebFetch"` (or
+`workers.<name>.disallowed_tools`): patterns are separated by `;;` or newlines, an empty value
+restores the default, and `set` prints a warning (exit 0) when a claude worker's
+`workers.<name>.allowed_tools` has no `Bash` entry, or when a worker's `disallowed_tools` omits
+part of the git-write list (issue #956). To deny a project command without touching the git-write list, use the
 top-level `worker_policy.deny` (issue #692), which also keeps a worker from starting a heavy command
 (a claude prefix ends at a word boundary, so each script needs one entry by its exact name, as
 `npm run validate` does not cover `npm run validate:non-device`): command prefixes such as
