@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.8](https://github.com/suzworx/flywheel/compare/v0.84.7...v0.84.8) (2026-11-14)
+
+
+### Bug Fixes
+
+* config get/set read and change a worker's allowed_tools and disallowed_tools ([#957](https://github.com/suzworx/flywheel/issues/957)) ([574d0b7](https://github.com/suzworx/flywheel/commit/574d0b7a0d3b8d2bd347582919c920a9e879f771)), closes [#956](https://github.com/suzworx/flywheel/issues/956)
+
 ## [0.84.7](https://github.com/suzworx/flywheel/compare/v0.84.6...v0.84.7) (2026-11-07)
 
 
