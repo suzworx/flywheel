@@ -661,6 +661,16 @@ on `health`, `release_audited`, `reanchored` and `recovered` (`events.go`).
   (WebSearch, WebFetch, "web search", "search the web", "web fetch") and the default worker is a
   claude worker whose `allowed_tools` lack WebSearch/WebFetch and whose mode is not
   `bypassPermissions`.
+- `flywheel config get` and `config set` read and change `workers.<name>.allowed_tools` and
+  `workers.<name>.disallowed_tools` (issue #956); they have no bare default-worker form. `get`
+  returns the configured list joined with `;;`, or "" when the list is unset (the defaults).
+  `set` splits the value on newlines and on `;;` and trims each pattern; an empty value clears
+  the list back to the defaults, and an empty entry among others is refused with an
+  `empty entry` error that leaves the list unchanged. After a successful write, `set` prints
+  `flywheel config set: warning: <line>` to stderr and still exits 0 when a claude worker's
+  `allowed_tools` has no `Bash` or `Bash(...)` entry (the list replaces the default `["Bash"]`,
+  so the worker cannot run its own gates), and when the worker's `disallowed_tools` omits part
+  of the git-write core (the line `flywheel config validate` reports).
 - A claude worker's `--max-turns` (issue #459) is its `max_turns`, else `limits.max_turns`, else
   200; a negative value, or a worker `max_turns` on a non-claude worker, is a config error; set it
   with `flywheel config set workers.<name>.max_turns N` (0 clears it).

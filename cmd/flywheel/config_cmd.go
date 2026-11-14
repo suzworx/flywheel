@@ -109,6 +109,17 @@ func runConfigSet(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s = %s\n", positional[0], positional[1])
+	// A tool list replaces the adapter default; warn (exit stays 0) when it
+	// drops Bash or the git-write core (issue #956).
+	if rest, ok := strings.CutPrefix(positional[0], "workers."); ok {
+		for _, suffix := range []string{".allowed_tools", ".disallowed_tools"} {
+			if name, ok := strings.CutSuffix(rest, suffix); ok {
+				for _, line := range cfg.WorkerToolWarnings(name) {
+					fmt.Fprintf(os.Stderr, "flywheel config set: warning: %s\n", line)
+				}
+			}
+		}
+	}
 }
 
 func runConfigGet(args []string) {

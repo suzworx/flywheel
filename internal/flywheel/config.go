@@ -1826,6 +1826,44 @@ func (c Config) Worker(name string) (Worker, bool) {
 	return Worker{}, false
 }
 
+// WorkerToolWarnings returns advisory lines about the tool lists of the
+// worker called name, or nil when there is no such worker (issue #956): a
+// claude worker whose allowed_tools omits Bash, and that worker's
+// disallowedToolsProblems line.
+func (c Config) WorkerToolWarnings(name string) []string {
+	idx := -1
+	for i, w := range c.Workers {
+		if w.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	w := c.Workers[idx]
+	var out []string
+	if w.Adapter == "claude" && len(w.AllowedTools) > 0 {
+		hasBash := false
+		for _, t := range w.AllowedTools {
+			if t == "Bash" || strings.HasPrefix(t, "Bash(") {
+				hasBash = true
+				break
+			}
+		}
+		if !hasBash {
+			out = append(out, fmt.Sprintf("workers.%s.allowed_tools replaces the default [\"Bash\"] and has no Bash entry, so the worker cannot run its own gates; add Bash", name))
+		}
+	}
+	prefix := fmt.Sprintf("workers[%d].", idx)
+	for _, p := range c.disallowedToolsProblems() {
+		if strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Line returns the line with the given name.
 func (c Config) Line(name string) (Line, bool) {
 	for _, l := range c.Lines {
@@ -1973,15 +2011,21 @@ func (c Config) Get(key string) (string, error) {
 
 // defaultKey resolves the bare worker keys against the default worker.
 func (c Config) defaultKey(key string) (string, bool) {
-	if len(c.Workers) == 0 {
+	// The tool lists have no bare form; they are workers.<name>.<key> only.
+	if len(c.Workers) == 0 || key == "allowed_tools" || key == "disallowed_tools" {
 		return "", false
 	}
 	return workerValue(c.Workers[0], key)
 }
 
-// workerValue resolves a worker-scoped key.
+// workerValue resolves a worker-scoped key. The tool lists read as
+// configured, so an unset list (the defaults) reads as "".
 func workerValue(w Worker, key string) (string, bool) {
 	switch key {
+	case "allowed_tools":
+		return strings.Join(w.AllowedTools, groupGatesSep), true
+	case "disallowed_tools":
+		return strings.Join(w.DisallowedTools, groupGatesSep), true
 	case "model":
 		return w.Model, true
 	case "models_allowed":
@@ -2052,8 +2096,10 @@ func (c Config) validKeys() []string {
 // the default worker; every worker key is also addressable as
 // workers.<name>.<key>. The settable keys are settableWorkerKeys (worker;
 // an empty permission_mode clears it, max_turns takes a non-negative integer
-// and 0 clears it, unit_cost_usd a non-negative number and 0 clears it),
-// feedback.upstream, feedback.submit, limits.max_turns and
+// and 0 clears it, unit_cost_usd a non-negative number and 0 clears it;
+// allowed_tools and disallowed_tools are workers.<name>.<key> only and take
+// claude patterns parsed as review.allowed_tools is, an empty value restoring
+// the defaults), feedback.upstream, feedback.submit, limits.max_turns and
 // limits.unit_cost_usd (the same), limits.per_host, limits.rate_limit_retries,
 // limits.provider_error_retries, limits.rate_limit_max_wait,
 // limits.rate_limit_pause_at, limits.lost_after, limits.quiet_wait, review.panel
@@ -2269,16 +2315,9 @@ func (c *Config) Set(key, value string) error {
 	case "review.allowed_tools":
 		// Patterns separated by ";;" or newlines; an empty value clears them,
 		// an empty entry among others is refused.
-		var tools []string
-		if value = strings.TrimSpace(value); value != "" {
-			for _, line := range strings.Split(value, "\n") {
-				for _, p := range strings.Split(line, groupGatesSep) {
-					if p = strings.TrimSpace(p); p == "" {
-						return fmt.Errorf("review.allowed_tools: value %q has an empty entry; separate patterns with %q or newlines", value, groupGatesSep)
-					}
-					tools = append(tools, p)
-				}
-			}
+		tools, err := parseToolPatterns(key, value)
+		if err != nil {
+			return err
 		}
 		if c.Review == nil {
 			c.Review = &ReviewConfig{}
@@ -2342,9 +2381,28 @@ func (c *Config) Set(key, value string) error {
 	return c.settableErr(key)
 }
 
-// settableWorkerKeys lists the worker-scoped keys Set accepts, bare for the
-// default worker or as workers.<name>.<key>.
-var settableWorkerKeys = []string{"adapter", "max_parallel", "max_turns", "model", "models_allowed", "permission_mode", "stall_timeout", "tool_stall_timeout", "unit_cost_usd", "variant"}
+// settableWorkerKeys lists the worker-scoped keys Set accepts as
+// workers.<name>.<key>, and bare for the default worker except allowed_tools
+// and disallowed_tools, which are only workers.<name>.<key> (issue #956).
+var settableWorkerKeys = []string{"adapter", "allowed_tools", "disallowed_tools", "max_parallel", "max_turns", "model", "models_allowed", "permission_mode", "stall_timeout", "tool_stall_timeout", "unit_cost_usd", "variant"}
+
+// parseToolPatterns parses a list of claude tool patterns for key: patterns
+// separated by ";;" or newlines, each trimmed. An empty value clears the list
+// (nil); an empty entry among others is refused.
+func parseToolPatterns(key, value string) ([]string, error) {
+	var tools []string
+	if value = strings.TrimSpace(value); value != "" {
+		for _, line := range strings.Split(value, "\n") {
+			for _, p := range strings.Split(line, groupGatesSep) {
+				if p = strings.TrimSpace(p); p == "" {
+					return nil, fmt.Errorf("%s: value %q has an empty entry; separate patterns with %q or newlines", key, value, groupGatesSep)
+				}
+				tools = append(tools, p)
+			}
+		}
+	}
+	return tools, nil
+}
 
 // parseMaxTurns parses a max_turns value: a non-negative integer, 0 clearing
 // it (issue #459).
@@ -2405,6 +2463,18 @@ func setWorkerValue(w *Worker, key, value string) error {
 			return fmt.Errorf("tool_stall_timeout: value %q must be an integer", value)
 		}
 		w.ToolStallTimeout = n
+	case "allowed_tools", "disallowed_tools":
+		// Claude patterns, parsed as review.allowed_tools is; an empty value
+		// clears the list back to the defaults (issue #956).
+		tools, err := parseToolPatterns(key, value)
+		if err != nil {
+			return err
+		}
+		if key == "allowed_tools" {
+			w.AllowedTools = tools
+		} else {
+			w.DisallowedTools = tools
+		}
 	default:
 		return fmt.Errorf("unknown key %q; valid worker keys: %s", key, strings.Join(settableWorkerKeys, ", "))
 	}
